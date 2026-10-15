@@ -29,6 +29,7 @@ import type {
 } from '@1pos/validation';
 import { createHash, randomBytes } from 'node:crypto';
 import { recordAudit } from '../audit/audit.js';
+import { assertWithinLimit, assertWritable } from '../billing/entitlements.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { hasPermission, type ResourceScope } from '../auth/authorization.js';
 import { AuthService, type RequestMeta } from '../auth/auth.service.js';
@@ -83,6 +84,8 @@ export class TeamService extends TenantService {
         .innerJoin(users, eq(users.id, tenantMemberships.userId))
         .where(and(sql`lower(${users.email}) = ${input.email}`, eq(tenantMemberships.status, 'ACTIVE')));
       if (existing.length) throw new AppError('ALREADY_MEMBER', 'This person is already a member', HttpStatus.CONFLICT);
+      // A pending invitation reserves a seat, so acceptance needs no second check.
+      await assertWithinLimit(db, 'maxUsers');
       const [row] = await db
         .insert(memberInvitations)
         .values({
@@ -307,6 +310,7 @@ export class TeamService extends TenantService {
   /** Inside a tx with tenant context = invitation tenant. Locks the invitation so it can be used once. */
   private async join(tx: Tx, invitationId: string, tenantId: string, userId: string, correlationId: string | undefined): Promise<string> {
     const { db } = tx;
+    await assertWritable(db);
     const [inv] = await db
       .select(this.invitationColumns)
       .from(memberInvitations)

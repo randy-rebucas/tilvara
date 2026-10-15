@@ -10,6 +10,7 @@ import {
 } from '@1pos/validation';
 import { recordAudit } from '../audit/audit.js';
 import { seedCatalogDefaults } from '../catalog/catalog-defaults.js';
+import { TRIAL_DAYS, TRIAL_PLAN } from '../billing/entitlements.js';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -64,6 +65,7 @@ export class AuthService {
           await tx.setTenant(tenantId);
           await this.seedTenantAccess(tx, tenantId, userId, meta.correlationId);
           await seedCatalogDefaults(tx.db, tenantId);
+          await tx.client.query('SELECT platform_start_trial($1, $2, $3)', [tenantId, TRIAL_PLAN, TRIAL_DAYS]);
           return { userId, tenantId };
         },
         { correlationId: meta.correlationId },

@@ -4,6 +4,7 @@ import type { PermissionCode } from '@1pos/validation';
 import { recordAudit } from '../audit/audit.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { hasPermission, type ResourceScope } from '../auth/authorization.js';
+import { assertWritable } from '../billing/entitlements.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import type { TenantDb } from '../infrastructure/tenant-db.service.js';
 
@@ -50,7 +51,10 @@ export abstract class TenantService {
       throw new AppError('TENANT_SUSPENDED', 'This business is suspended; records are read-only', HttpStatus.FORBIDDEN);
     }
     try {
-      return await this.tenantDb.run(auth, fn);
+      return await this.tenantDb.run(auth, async (db) => {
+        await assertWritable(db);
+        return fn(db);
+      });
     } catch (e) {
       const pg = pgError(e);
       const conflict = pg.code === '23505' && pg.constraint ? this.conflicts[pg.constraint] : undefined;

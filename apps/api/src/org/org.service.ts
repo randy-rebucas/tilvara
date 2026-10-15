@@ -21,6 +21,7 @@ import type {
 } from '@1pos/validation';
 import { createHash, randomBytes } from 'node:crypto';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
+import { assertWithinLimit } from '../billing/entitlements.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -49,6 +50,7 @@ export class OrgService extends TenantService {
   createLegalEntity(auth: AuthContext, input: CreateLegalEntityInput) {
     this.assertCan(auth, 'org.manage');
     return this.mutate(auth, async (db) => {
+      await assertWithinLimit(db, 'maxLegalEntities');
       const [row] = await db
         .insert(legalEntities)
         .values({ ...input, tenantId: tenantOf(auth).tenantId })
@@ -101,6 +103,7 @@ export class OrgService extends TenantService {
       const entity = await this.legalEntity(db, input.legalEntityId);
       this.assertCan(auth, 'org.manage', { legalEntityId: entity.id });
       if (entity.archivedAt) throw archived('Legal entity');
+      await assertWithinLimit(db, 'maxBranches');
       const [row] = await db
         .insert(branches)
         .values({ ...input, tenantId: tenantOf(auth).tenantId })
@@ -159,6 +162,7 @@ export class OrgService extends TenantService {
       const branch = await this.branch(db, input.branchId);
       this.assertCan(auth, 'org.manage', { legalEntityId: branch.legalEntityId, branchId: branch.id });
       if (branch.archivedAt) throw archived('Branch');
+      await assertWithinLimit(db, 'maxRegisters');
       const [row] = await db
         .insert(registers)
         .values({ ...input, tenantId: tenantOf(auth).tenantId })
