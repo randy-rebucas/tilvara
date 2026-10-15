@@ -22,7 +22,7 @@ import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { dbNow } from '../common/clock.js';
+import { dbNow, effectiveNowSql } from '../common/clock.js';
 
 /** Allowed clock skew for "now" prices; anything earlier is a backdated price and refused. */
 const BACKDATE_TOLERANCE_MS = 60_000;
@@ -151,13 +151,13 @@ export class PricingService extends TenantService {
         SELECT cur.id AS price_id, cur.variant_id, v.sku, p.name AS product_name, v.name AS variant_name,
                cur.amount, cur.effective_from, nxt.amount AS next_amount, nxt.effective_from AS next_effective_from
           FROM (SELECT DISTINCT ON (variant_id) * FROM product_prices
-                 WHERE price_list_id = ${priceListId} AND effective_from <= now()
+                 WHERE price_list_id = ${priceListId} AND effective_from <= ${effectiveNowSql}
                  ORDER BY variant_id, effective_from DESC) cur
           JOIN product_variants v ON v.tenant_id = cur.tenant_id AND v.id = cur.variant_id
           JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
           LEFT JOIN LATERAL (SELECT amount, effective_from FROM product_prices n
                               WHERE n.price_list_id = cur.price_list_id AND n.variant_id = cur.variant_id
-                                AND n.effective_from > now()
+                                AND n.effective_from > ${effectiveNowSql}
                               ORDER BY n.effective_from ASC LIMIT 1) nxt ON true
          WHERE v.archived_at IS NULL
          ORDER BY p.name, v.sku`);
@@ -251,7 +251,7 @@ export class PricingService extends TenantService {
 
   /** Price in force at `at` for a variant in a branch. Exported for the checkout engine (Phase 2). */
   async effectivePrice(db: Database, branchId: string, variantId: string, at?: Date): Promise<EffectivePrice | null> {
-    const atSql = at ? sql`${at.toISOString()}::timestamptz` : sql`now()`;
+    const atSql = at ? sql`${at.toISOString()}::timestamptz` : effectiveNowSql;
     const { rows } = await db.execute<{
       id: string;
       price_list_id: string;

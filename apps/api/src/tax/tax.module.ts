@@ -7,5 +7,6 @@ import { TaxService } from './tax.service.js';
   imports: [CatalogModule],
   controllers: [TaxController],
   providers: [TaxService],
+  exports: [TaxService],
 })
 export class TaxModule {}

@@ -24,13 +24,29 @@ import { PricingService } from '../catalog/pricing.service.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { dbNow } from '../common/clock.js';
+import { dbNow, effectiveNow } from '../common/clock.js';
 import { engineProfile, insertProfile, profilesInForce, profileView } from './tax-profiles.js';
 
 /** Clock-skew tolerance for "effective now"; the DB trigger allows 5 minutes. */
 const BACKDATE_TOLERANCE_MS = 60_000;
 
-const unprocessable = (code: string, message: string, details?: Record<string, unknown>) =>
+export interface LineMeta {
+  variantId: string;
+  sku: string;
+  name: string;
+  taxCategoryCode: string;
+  vatTreatment: string;
+  unitPrice: string;
+  quantity: string;
+  priceIncludesTax: boolean;
+  priceId: string;
+  priceListId: string;
+  trackInventory: boolean;
+}
+
+export type CartComputation = Awaited<ReturnType<TaxService['computeCart']>>;
+
+export const unprocessable = (code: string, message: string, details?: Record<string, unknown>) =>
   new AppError(code, message, HttpStatus.UNPROCESSABLE_ENTITY, details);
 
 @Injectable()
@@ -52,7 +68,7 @@ export class TaxService extends TenantService {
       await this.entity(db, legalEntityId);
       this.assertCan(auth, 'org.read', { legalEntityId });
       const rows = await db.select().from(taxProfiles).where(eq(taxProfiles.legalEntityId, legalEntityId)).orderBy(desc(taxProfiles.effectiveFrom));
-      const now = (await dbNow(db)).getTime();
+      const now = (await effectiveNow(db)).getTime();
       const views = rows.map(profileView);
       const inForce = views.find((v) => Date.parse(v.effectiveFrom) <= now)?.id ?? null;
       return { data: views.map((v) => ({ ...v, state: v.id === inForce ? 'IN_FORCE' : Date.parse(v.effectiveFrom) > now ? 'SCHEDULED' : 'SUPERSEDED' })) };
@@ -104,102 +120,110 @@ export class TaxService extends TenantService {
    * Read-only; checkout persists the same computation with its snapshot.
    */
   quote(auth: AuthContext, input: TaxQuoteInput) {
-    return this.read(auth, async (db) => {
-      const at = await dbNow(db);
-      const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
-      if (!branch) throw notFound('Branch');
-      const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };
-      this.assertCan(auth, 'sales.create', scope);
-      if (branch.archivedAt) throw archived('Branch');
-      if (input.lines.some((l) => l.discount && !toDec(l.discount).isZero())) this.assertCan(auth, 'sales.discount', scope);
+    return this.read(auth, (db) => this.computeCart(db, auth, input));
+  }
 
-      const profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
-      if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
+  /**
+   * The single pricing + tax path (quote and checkout). Runs inside the caller's tenant
+   * transaction; `branch` may be pre-loaded (and locked) by the caller.
+   */
+  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput) {
+    const at = await effectiveNow(db);
+    const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
+    if (!branch) throw notFound('Branch');
+    const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };
+    this.assertCan(auth, 'sales.create', scope);
+    if (branch.archivedAt) throw archived('Branch');
+    if (input.lines.some((l) => l.discount && !toDec(l.discount).isZero())) this.assertCan(auth, 'sales.discount', scope);
 
-      const variantIds = [...new Set(input.lines.map((l) => l.variantId))];
-      const items = await db
-        .select({
-          variantId: productVariants.id,
-          sku: productVariants.sku,
-          variantName: productVariants.name,
-          variantArchivedAt: productVariants.archivedAt,
-          productName: products.name,
-          productArchivedAt: products.archivedAt,
-          soldBy: products.soldBy,
-          allowsFraction: unitsOfMeasure.allowsFraction,
-          vatTreatment: taxCategories.vatTreatment,
-          taxCategoryCode: taxCategories.code,
-        })
-        .from(productVariants)
-        .innerJoin(products, eq(products.id, productVariants.productId))
-        .innerJoin(taxCategories, eq(taxCategories.id, products.taxCategoryId))
-        .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.uomId))
-        .where(inArray(productVariants.id, variantIds));
-      const byVariant = new Map(items.map((i) => [i.variantId, i]));
+    const profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
+    if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
 
-      const schemeCodes = [...new Set(input.lines.flatMap((l) => (l.statutory ? [l.statutory.scheme] : [])))];
-      const schemes = await this.schemesInForce(db, schemeCodes, at);
+    const variantIds = [...new Set(input.lines.map((l) => l.variantId))];
+    const items = await db
+      .select({
+        variantId: productVariants.id,
+        sku: productVariants.sku,
+        variantName: productVariants.name,
+        variantArchivedAt: productVariants.archivedAt,
+        productName: products.name,
+        productArchivedAt: products.archivedAt,
+        soldBy: products.soldBy,
+        allowsFraction: unitsOfMeasure.allowsFraction,
+        vatTreatment: taxCategories.vatTreatment,
+        taxCategoryCode: taxCategories.code,
+        trackInventory: products.trackInventory,
+      })
+      .from(productVariants)
+      .innerJoin(products, eq(products.id, productVariants.productId))
+      .innerJoin(taxCategories, eq(taxCategories.id, products.taxCategoryId))
+      .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.uomId))
+      .where(inArray(productVariants.id, variantIds));
+    const byVariant = new Map(items.map((i) => [i.variantId, i]));
 
-      const meta: Record<string, unknown>[] = [];
-      let currency: string | undefined;
-      const lines: TaxLineInput[] = [];
-      for (const [index, l] of input.lines.entries()) {
-        const lineId = l.id ?? String(index + 1);
-        const item = byVariant.get(l.variantId);
-        if (!item || item.variantArchivedAt || item.productArchivedAt) throw new AppError('NOT_FOUND', 'Item not found', HttpStatus.NOT_FOUND, { line: lineId });
-        if (item.soldBy === 'UNIT' && !item.allowsFraction && !toDec(l.quantity).isInteger()) {
-          throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is sold in whole units', { line: lineId });
-        }
-        const price = await this.pricing.effectivePrice(db, branch.id, l.variantId, at);
-        if (!price) throw new AppError('ITEM_NOT_PRICED', 'This item has no price at this branch', HttpStatus.CONFLICT, { line: lineId });
-        if (currency && price.currency !== currency) throw unprocessable('MIXED_CURRENCY', 'Items are priced in different currencies', { line: lineId });
-        currency = price.currency;
+    const schemeCodes = [...new Set(input.lines.flatMap((l) => (l.statutory ? [l.statutory.scheme] : [])))];
+    const schemes = await this.schemesInForce(db, schemeCodes, at);
 
-        let statutory: TaxLineInput['statutory'];
-        if (l.statutory) {
-          const scheme = schemes.get(l.statutory.scheme);
-          if (!scheme) throw unprocessable('UNKNOWN_SCHEME', `No discount scheme ${l.statutory.scheme} is in force`, { line: lineId });
-          statutory = { scheme, ...(l.statutory.share && { share: l.statutory.share }) };
-        }
-        lines.push({
-          id: lineId,
-          unitPrice: price.amount,
-          quantity: l.quantity,
-          priceIncludesTax: price.pricesIncludeTax,
-          vatTreatment: item.vatTreatment,
-          ...(l.discount && { discount: l.discount }),
-          ...(statutory && { statutory }),
-        });
-        meta.push({
-          variantId: l.variantId,
-          sku: item.sku,
-          name: item.variantName ? `${item.productName} — ${item.variantName}` : item.productName,
-          taxCategoryCode: item.taxCategoryCode,
-          vatTreatment: item.vatTreatment,
-          unitPrice: toDec(price.amount).toString(),
-          quantity: l.quantity,
-          priceIncludesTax: price.pricesIncludeTax,
-          priceId: price.priceId,
-          priceListId: price.priceListId,
-        });
+    const meta: LineMeta[] = [];
+    let currency: string | undefined;
+    const lines: TaxLineInput[] = [];
+    for (const [index, l] of input.lines.entries()) {
+      const lineId = l.id ?? String(index + 1);
+      const item = byVariant.get(l.variantId);
+      if (!item || item.variantArchivedAt || item.productArchivedAt) throw new AppError('NOT_FOUND', 'Item not found', HttpStatus.NOT_FOUND, { line: lineId });
+      if (item.soldBy === 'UNIT' && !item.allowsFraction && !toDec(l.quantity).isInteger()) {
+        throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is sold in whole units', { line: lineId });
       }
-      if (!currency || !isCurrencyCode(currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${currency} is not supported`);
+      const price = await this.pricing.effectivePrice(db, branch.id, l.variantId, at);
+      if (!price) throw new AppError('ITEM_NOT_PRICED', 'This item has no price at this branch', HttpStatus.CONFLICT, { line: lineId });
+      if (currency && price.currency !== currency) throw unprocessable('MIXED_CURRENCY', 'Items are priced in different currencies', { line: lineId });
+      currency = price.currency;
 
-      try {
-        const result = calculateTax({ currency, profile: engineProfile(profile) }, lines);
-        return {
-          branchId: branch.id,
-          legalEntityId: branch.legalEntityId,
-          at: at.toISOString(),
-          taxProfile: profile,
-          ...result,
-          lines: result.lines.map((l, i) => ({ ...meta[i], ...l })),
-        };
-      } catch (e) {
-        if (e instanceof TaxError) throw unprocessable(e.code, e.message, e.lineId ? { line: e.lineId } : undefined);
-        throw e;
+      let statutory: TaxLineInput['statutory'];
+      if (l.statutory) {
+        const scheme = schemes.get(l.statutory.scheme);
+        if (!scheme) throw unprocessable('UNKNOWN_SCHEME', `No discount scheme ${l.statutory.scheme} is in force`, { line: lineId });
+        statutory = { scheme, ...(l.statutory.share && { share: l.statutory.share }) };
       }
-    });
+      lines.push({
+        id: lineId,
+        unitPrice: price.amount,
+        quantity: l.quantity,
+        priceIncludesTax: price.pricesIncludeTax,
+        vatTreatment: item.vatTreatment,
+        ...(l.discount && { discount: l.discount }),
+        ...(statutory && { statutory }),
+      });
+      meta.push({
+        variantId: l.variantId,
+        sku: item.sku,
+        name: item.variantName ? `${item.productName} — ${item.variantName}` : item.productName,
+        taxCategoryCode: item.taxCategoryCode,
+        vatTreatment: item.vatTreatment,
+        unitPrice: toDec(price.amount).toString(),
+        quantity: l.quantity,
+        priceIncludesTax: price.pricesIncludeTax,
+        priceId: price.priceId,
+        priceListId: price.priceListId,
+        trackInventory: item.trackInventory,
+      });
+    }
+    if (!currency || !isCurrencyCode(currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${currency} is not supported`);
+
+    try {
+      const result = calculateTax({ currency, profile: engineProfile(profile) }, lines);
+      return {
+        branchId: branch.id,
+        legalEntityId: branch.legalEntityId,
+        at: at.toISOString(),
+        taxProfile: profile,
+        ...result,
+        lines: result.lines.map((l, i) => ({ ...(meta[i] as LineMeta), ...l })),
+      };
+    } catch (e) {
+      if (e instanceof TaxError) throw unprocessable(e.code, e.message, e.lineId ? { line: e.lineId } : undefined);
+      throw e;
+    }
   }
 
   private async schemesInForce(db: Database, codes: string[], at: Date): Promise<Map<string, DiscountScheme>> {

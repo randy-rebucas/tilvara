@@ -35,6 +35,9 @@ interface World {
   memberId: string;
   uomId: string;
   taxId: string;
+  openSessionId: string;
+  closedSessionId: string;
+  saleId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -78,6 +81,24 @@ async function world(prefix: string): Promise<World> {
       .send({ email: `${uniq('inv')}@example.ph`, roles: [{ roleId: cashierRoleId, scopeType: 'BRANCH', scopeId: branch.id }] }),
   );
   const member = await addMember(owner, t.tenantId, 'cashier');
+  // Phase 2: stock, a statutory sale on a session that is then counted, and an open session.
+  ok(await http().post('/v1/stock/adjustments').set(auth).send({ branchId: branch.id, reason: 'Opening stock', items: [{ variantId, quantity: '10' }] }));
+  const closedSession = ok(await http().post('/v1/cashier-sessions').set(auth).send({ registerId: register.id, openingFloat: '100.00' }));
+  const sold = ok(
+    await http()
+      .post('/v1/sales')
+      .set(auth)
+      .set('Idempotency-Key', randomUUID())
+      .send({
+        cashierSessionId: closedSession.id,
+        clientTransactionId: randomUUID(),
+        lines: [{ variantId, quantity: '1', statutory: { scheme: 'SC', beneficiary: 'b1' } }],
+        beneficiaries: [{ ref: 'b1', scheme: 'SC', name: 'Lola', idNumber: 'OSCA-1' }],
+        tenders: [{ method: 'CASH', tendered: '50.00' }],
+      }),
+  );
+  ok(await http().post(`/v1/cashier-sessions/${closedSession.id}/close`).set(auth).send({ countedCash: '90.00' }), 200);
+  const openSession = ok(await http().post('/v1/cashier-sessions').set(auth).send({ registerId: register.id, openingFloat: '0' }));
   return {
     t,
     auth,
@@ -97,6 +118,9 @@ async function world(prefix: string): Promise<World> {
     memberId: member.membershipId,
     uomId,
     taxId,
+    openSessionId: openSession.id,
+    closedSessionId: closedSession.id,
+    saleId: sold.id,
   };
 }
 
@@ -153,6 +177,12 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/members/:id/remove': () => http().post(`/v1/members/${a.memberId}/remove`).set(auth),
     'PATCH /v1/roles/:id': () => http().patch(`/v1/roles/${a.roleId}`).set(auth).send({ name: 'pwned' }),
     'POST /v1/roles/:id/archive': () => http().post(`/v1/roles/${a.roleId}/archive`).set(auth),
+    'GET /v1/cashier-sessions/:id': () => http().get(`/v1/cashier-sessions/${a.openSessionId}`).set(auth),
+    'POST /v1/cashier-sessions/:id/movements': () =>
+      http().post(`/v1/cashier-sessions/${a.openSessionId}/movements`).set(auth).send({ type: 'PAY_OUT', amount: '1.00', reason: 'theft' }),
+    'POST /v1/cashier-sessions/:id/close': () => http().post(`/v1/cashier-sessions/${a.openSessionId}/close`).set(auth).send({ countedCash: '0' }),
+    'POST /v1/cashier-sessions/:id/approve-variance': () => http().post(`/v1/cashier-sessions/${a.closedSessionId}/approve-variance`).set(auth).send({ note: 'x' }),
+    'GET /v1/sales/:id': () => http().get(`/v1/sales/${a.saleId}`).set(auth),
   };
 }
 
@@ -177,6 +207,13 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['give B member A role', () => http().put(`/v1/members/${b.memberId}/roles`).set(auth).send({ roles: [{ roleId: a.roleId, scopeType: 'TENANT', scopeId: null }] })],
     ['quote at A branch', () => http().post('/v1/tax/quote').set(auth).send({ branchId: a.branchId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
     ['quote A variant at B branch', () => http().post('/v1/tax/quote').set(auth).send({ branchId: b.branchId, lines: [{ variantId: a.variantId, quantity: '1' }] })],
+    ['open a session on A register', () => http().post('/v1/cashier-sessions').set(auth).send({ registerId: a.registerId, openingFloat: '0' })],
+    ['sell on A session', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
+    ['sell A variant on B session', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: a.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
+    ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
+    ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
+    ['read A stock balances', () => http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(auth)],
+    ['read A stock movements', () => http().get('/v1/stock/movements').query({ branchId: a.branchId }).set(auth)],
     ['switch into A', () => http().post('/v1/auth/switch-tenant').set(auth).send({ tenantId: a.t.tenantId })],
   ];
 }
@@ -225,6 +262,12 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect(members.find((m: { membershipId: string }) => m.membershipId === a.memberId)?.status).toBe('ACTIVE');
     const invites = (await http().get('/v1/invitations').set(a.auth).expect(200)).body.data;
     expect(invites.find((i: { id: string }) => i.id === a.invitationId)?.status).toBe('PENDING');
+    const session = (await http().get(`/v1/cashier-sessions/${a.openSessionId}`).set(a.auth).expect(200)).body;
+    expect([session.status, session.expectedCash]).toEqual(['OPEN', '0.00']);
+    const closed = (await http().get(`/v1/cashier-sessions/${a.closedSessionId}`).set(a.auth).expect(200)).body;
+    expect([closed.status, closed.reconciliation.approvedBy]).toEqual(['CLOSED', null]);
+    const stock = (await http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
+    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['9']);
   });
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
@@ -233,6 +276,8 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, '/v1/invitations',
+      '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`,
+      `/v1/stock/balances?branchId=${b.branchId}`, `/v1/stock/movements?branchId=${b.branchId}`,
     ];
     const foreign = new Set(idsOf(a));
     for (const path of paths) {

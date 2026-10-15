@@ -1,6 +1,7 @@
 import { Dec } from '@1pos/money';
 import { sql, taxProfiles, type Database } from '@1pos/database';
 import type { TaxProfile } from '@1pos/tax';
+import { effectiveNowSql } from '../common/clock.js';
 
 /** Defaults are configuration, not law (ADR-0008); a tax adviser confirms them per entity. */
 export const DEFAULT_VAT_RATE = '0.12';
@@ -62,7 +63,7 @@ export function profileView(r: Row | RawRow): TaxProfileView {
       };
 }
 
-const atOrNow = (at?: Date) => (at ? sql`${at.toISOString()}::timestamptz` : sql`now()`);
+const atOrNow = (at?: Date) => (at ? sql`${at.toISOString()}::timestamptz` : effectiveNowSql);
 
 /** The profile in force at `at` (default: DB now) for each entity (latest effective_from <= at). */
 export async function profilesInForce(db: Database, legalEntityIds: readonly string[], at?: Date): Promise<Map<string, TaxProfileView>> {

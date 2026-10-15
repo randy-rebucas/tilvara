@@ -85,6 +85,8 @@ export const registers = pgTable(
   },
   (t) => [
     unique('registers_tenant_id_id_unique').on(t.tenantId, t.id),
+    /** Lets sales/sessions reference (branch, register) together so they can never disagree. */
+    unique('registers_tenant_branch_id_unique').on(t.tenantId, t.branchId, t.id),
     unique('registers_branch_code_unique').on(t.tenantId, t.branchId, t.code),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     check('registers_code_format', sql`${t.code} ~ '^[A-Z0-9][A-Z0-9-]{0,19}$'`),

@@ -3,7 +3,7 @@
 _Last updated: 2026-10-16 (session 3)_
 
 ## Current phase
-**Phase 2 — Retail transaction engine: IN PROGRESS.** Slice 1 (tax foundation) done and verified this session.
+**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`) and 2 (sales core) done and verified this session.
 Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
 
 ### Phase 2 slice 1 — tax foundation (session 3)
@@ -14,12 +14,18 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 - Defect found & fixed: price and profile effective dates mixed the API host clock with the DB clock (Docker drift ≈0.2 s) → a just-set price/profile could read as "not yet effective". The DB clock is now the single clock for effective dating (`apps/api/src/common/clock.ts`).
 - Guards worked as intended: the schema guard flagged the new global table (allow-listed with reason) and the router guard flagged the 2 new `:id` routes (added to the attack matrix + 2 quote smuggling cases).
 
+### Phase 2 slice 2 — sales core (session 3)
+- ADR-0009. Migrations 0016/0017: `cashier_sessions`, `cash_movements`, `cash_reconciliations`, `sequence_counters`, `sales`, `sale_beneficiaries`, `sale_lines`, `sale_tenders`, `stock_movements`, `stock_balances` — forced RLS, append-only evidence tables, session state-machine + open-session triggers, approve-once trigger, SECURITY DEFINER balance trigger (app can read, never write balances).
+- API: `POST/GET /v1/cashier-sessions`, `GET /v1/cashier-sessions/:id`, `POST …/:id/movements|close|approve-variance`, `POST /v1/sales` (Idempotency-Key **required**), `GET /v1/sales`, `GET /v1/sales/:id`, `POST /v1/stock/adjustments`, `GET /v1/stock/balances|movements`.
+- Tests (`sales.test.ts`, 19): full shift reconciles (lines→totals, tenders→due+change, drawer→due, stock→−qty, expected cash, zero-variance close); retry replays; 5 concurrent same-key → 1 sale; same clientTransactionId under new key → DUPLICATE_TRANSACTION; key required; 10 concurrent sales → numbers 1..10 and a failed sale consumes none; 5 failure modes leave no rows; stale total reports the new amount; beneficiary validation; one open session per register; not-owner/closed-session refusals; variance approval by another user, self-approval refused, approve once; branch scope; stock permissions, negative stock visible; append-only evidence and read-only balances.
+- **Defect found & fixed:** intermittent "TAX_PROFILE_MISSING"/not-yet-priced right after setup. Root cause measured, not guessed: the Docker DB clock stepped back ≈0.9 s between transactions (later session `opened_at` < earlier profile `effective_from`). Fix: effective-date resolution allows 5 s skew (ADR-0009 §8), regression test added; 10/10 stress runs green (was ~1 in 3–8 failing).
+
 ## Verified in session 3 (commands actually run, all green)
 | Command | Result |
 |---|---|
 | `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
 | `pnpm test` | **82 passed** (tax 27, money 15, config 6, validation 5, observability 5, workers 2, api 17) |
-| `pnpm test:integration` | **136 passed** — database 21, api **107** (incl. tax 15, isolation 9), workers 8 |
+| `pnpm test:integration` | **156 passed** — database 21, api **127** (sales 19, tax 18, isolation 9, …), workers 8 |
 | `pnpm test:e2e:web` | **19/19** against live API + `next start` |
 | dev DB | migrated 0014/0015; backfill verified |
 
@@ -52,5 +58,5 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 slice 2 — sales core.** (1) `@1pos/pricing` only if promotions are needed now — otherwise reuse the quote path. (2) Cashier sessions: open/close per register with opening float, cash movements (pay-in/out), expected vs counted, variance approval (`cash.session`, `cash.reconcile`). (3) Sales: `sales` + `sale_lines` (+ tax snapshot columns from the quote result) + `sale_payments`, append-only, created by `POST /v1/sales` with **required** Idempotency-Key, server recomputes via the quote path, cash tender with change, split tender ready; statutory lines require beneficiary name + ID number and are refused in production while the scheme is PENDING. (4) Stock ledger movement per sale line, balance = Σ movements. (5) Payment adapter port + `DevPaymentProvider`; PayMongo skeleton later. Each new tenant table must pass the schema guard and get isolation fixture rows + attack-matrix cases.
+**Phase 2 slice 3 — payments and receipts.** (1) ADR for non-cash payments: `payment_intents` created before calling a provider (never inside the sale transaction), provider adapter port, `DevPaymentProvider` (deterministic success/decline/timeout for tests), reconcile-on-timeout instead of re-charging; PayMongo adapter skeleton behind config (no keys yet). (2) Split tender across cash + intent-backed methods in `POST /v1/sales`. (3) Receipt data endpoint (`GET /v1/sales/:id/receipt`) clearly marked "not an official invoice" while invoicing is DISABLED. (4) Then slice 4: voids/returns/refunds (append-only, stock restored only on RESTOCK disposition, cash refunds as drawer movements) and slice 5: basic reports reconciling to source rows; slice 6: POS browser checkout UI.
 Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6).

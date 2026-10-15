@@ -10,7 +10,8 @@
 - Money/quantities: `@1pos/money` only, decimal strings on the wire, never JS numbers.
 - New tenant tables are policed automatically: `rls-catalog.test.ts` (schema rules) and `isolation.test.ts` (needs fixture rows in every tenant table; every new `:id` route needs a case in its attack matrix).
 - Tenant data: only inside `withTenant(pool, tenantId, fn)` from `@1pos/database`; tenant id from the server-side session only. Every new tenant table needs: `tenant_id`, `UNIQUE(tenant_id,id)`, composite FKs, `ENABLE`+`FORCE` RLS policy, grants for `onepos_app`, and a case in the cross-tenant test suite.
-- Tax: compute only via `@1pos/tax` (ADR-0008) fed by the quote path (`TaxService.quote`); VAT status/rounding live in versioned `tax_profiles`. Effective dating uses the DB clock (`apps/api/src/common/clock.ts` / SQL `now()`), never `new Date()`.
+- Tax: compute only via `@1pos/tax` (ADR-0008) fed by the quote path (`TaxService.quote`); VAT status/rounding live in versioned `tax_profiles`. Effective dating uses the DB clock with a 5 s skew allowance (`effectiveNowSql` / `effectiveNow()` in `apps/api/src/common/clock.ts`), never `new Date()` or bare `now()` for "in force" checks.
+- Checkout: only via `SalesService.create` (ADR-0009): required Idempotency-Key + clientTransactionId, server recompute via `TaxService.computeCart`, everything in one transaction.
 - Financial/inventory/audit tables are append-only (trigger `app_forbid_mutation`); corrections are new rows.
 - NestJS: every constructor dependency uses explicit `@Inject(Token)` — Vitest does not emit decorator metadata (SWC native binding fails on this machine, so it was removed).
 - Drizzle wraps pg errors (`Failed query: …`); the Postgres error is on `err.cause`.

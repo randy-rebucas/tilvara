@@ -110,6 +110,23 @@ describe('tax profiles', () => {
     expect(dup.body.error.code).toBe('TAX_PROFILE_EXISTS');
   });
 
+  it('tolerates DB clock steps: a change stamped ≤ 5 s ahead is in force, beyond that it is scheduled', async () => {
+    const s = await shop('tp-skew');
+    const v = await item(s);
+    const insert = (offset: string) =>
+      asOwnerInTenant(owner, s.t.tenantId, (c) =>
+        c.query(
+          `INSERT INTO tax_profiles (tenant_id, legal_entity_id, effective_from, vat_status, vat_rate, percentage_tax_rate)
+           VALUES ($1, $2, now() + $3::interval, 'NON_VAT', 0, 0.03)`,
+          [s.t.tenantId, s.entityId, offset],
+        ),
+      );
+    await insert('30 seconds');
+    expect((await quote(s, [{ variantId: v, quantity: '1' }]).expect(200)).body.taxProfile.vatStatus).toBe('VAT');
+    await insert('2 seconds');
+    expect((await quote(s, [{ variantId: v, quantity: '1' }]).expect(200)).body.taxProfile.vatStatus).toBe('NON_VAT');
+  });
+
   it('cannot be backdated, through the API or directly in the database', async () => {
     const s = await shop('tp-back');
     const res = await http()
