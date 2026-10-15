@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>1POS — Salapi</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Archivo+Narrow:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F4F1E8;--blue:#2A5DA8;--violet:#6B4C9A;--red:#B8302E;--orange:#E07B1F;--green:#1E5B3A;--ink:#1D1F24;--muted:#5D6068;--hair:#CFC9B8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:1440px;height:900px;overflow:hidden;background:var(--paper);font-family:Archivo,system-ui;color:var(--ink)}
+.band{height:64px;background:var(--blue);color:#fff;display:flex;align-items:center;padding:0 28px;gap:36px;
+ background-image:repeating-linear-gradient(115deg,rgba(255,255,255,.06) 0 1px,transparent 1px 7px)}
+.logo{font-weight:700;font-size:24px;letter-spacing:.04em}
+.tabs{display:flex;gap:4px}
+.tabs a{padding:8px 14px;border-radius:4px;font-size:15px;color:#DCE6F5}
+.tabs a.on{background:rgba(255,255,255,.16);color:#fff}
+.who{margin-left:auto;font-size:14px;display:flex;gap:14px;align-items:center}
+.ser{font-family:'Archivo Narrow';letter-spacing:.08em;font-variant-numeric:tabular-nums}
+.wrap{padding:26px 28px;display:grid;grid-template-columns:1fr 340px;gap:24px}
+h1{font-size:30px;font-weight:700}
+.sub{color:var(--muted);margin-top:4px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:20px}
+.note{background:#fff;border:1px solid var(--hair);border-radius:6px;padding:16px;position:relative;overflow:hidden}
+.note:before{content:"";position:absolute;inset:4px;border:1px solid var(--hair);border-radius:4px;pointer-events:none}
+.note .den{position:absolute;right:0;top:0;bottom:0;width:8px}
+.note small{color:var(--muted);font-size:13px}
+.note b{display:block;font-size:26px;margin-top:6px;font-variant-numeric:tabular-nums}
+.note .ser{font-size:12px;color:var(--muted);margin-top:6px}
+.sec{font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:26px 0 10px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--hair);border-radius:6px;overflow:hidden;font-size:14px}
+th{text-align:left;font-weight:600;color:var(--muted);font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:10px 14px;border-bottom:1px solid var(--hair);background:#FBF9F3}
+td{padding:12px 14px;border-bottom:1px solid #EEE9DC}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.chip{display:inline-block;border-radius:3px;padding:2px 8px;font-size:12px;font-weight:600;color:#fff}
+.side .note{margin-bottom:14px}
+.steps li{list-style:none;display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px dashed var(--hair);font-size:14px}
+.steps li span:last-child{font-weight:600}
+.btn{display:inline-block;margin-top:12px;background:var(--blue);color:#fff;border-radius:4px;padding:9px 14px;font-weight:600;font-size:14px}
+</style></head><body>
+<div class="band"><span class="logo">1POS</span>
+<nav class="tabs"><a class="on">Overview</a><a>Products</a><a>Prices</a><a>Locations</a><a>Team</a><a>Subscription</a></nav>
+<span class="who"><span>Alpha Trading Corp ▾</span><span>EN · FIL</span><span>Maria Santos</span></span></div>
+<div class="wrap"><section>
+<h1>Overview</h1><p class="sub">Makati Main · today, Asia/Manila</p>
+<div class="kpis">
+<div class="note"><span class="den" style="background:var(--blue)"></span><small>Products</small><b>148</b><div class="ser">3 UNPRICED</div></div>
+<div class="note"><span class="den" style="background:var(--violet)"></span><small>Branches</small><b>2</b><div class="ser">MKT-01 · QC-02</div></div>
+<div class="note"><span class="den" style="background:var(--orange)"></span><small>Registers</small><b>2</b><div class="ser">1 TERMINAL PAIRED</div></div>
+<div class="note"><span class="den" style="background:var(--green)"></span><small>Team</small><b>3</b><div class="ser">1 INVITE PENDING</div></div>
+</div>
+<div class="sec">Recently changed prices</div>
+<table><tr><th>SKU</th><th>Item</th><th>Price list</th><th class="num">Was</th><th class="num">Now</th><th>Effective</th></tr>
+<tr><td class="ser">LM-PC-CHILI</td><td>Lucky Me Pancit Canton Chilimansi</td><td><span class="chip" style="background:var(--blue)">Standard</span></td><td class="num">₱16.00</td><td class="num">₱16.50</td><td>Today 09:00</td></tr>
+<tr><td class="ser">CK-290</td><td>Coke Mismo 290ml</td><td><span class="chip" style="background:var(--violet)">Mall</span></td><td class="num">₱22.00</td><td class="num">₱25.00</td><td>Oct 16, 00:00</td></tr>
+<tr><td class="ser">RICE-DN-KG</td><td>Dinorado rice (per kg)</td><td><span class="chip" style="background:var(--blue)">Standard</span></td><td class="num">₱62.00</td><td class="num">₱64.00</td><td>Today 08:12</td></tr>
+<tr><td class="ser">SV-WRAP</td><td>Gift wrap (service)</td><td><span class="chip" style="background:var(--blue)">Standard</span></td><td class="num">—</td><td class="num">₱30.00</td><td>Yesterday</td></tr>
+</table></section>
+<aside class="side">
+<div class="note"><small>Subscription</small><b>Growth trial</b><div class="ser">11 DAYS LEFT · FULL ACCESS</div></div>
+<div class="note"><small>Finish setup</small>
+<ul class="steps"><li><span>Legal entity</span><span>✓</span></li><li><span>First branch</span><span>✓</span></li><li><span>Register &amp; terminal</span><span>Next</span></li><li><span>Invite team</span><span>—</span></li></ul>
+<span class="btn">Add register</span></div>
+</aside></div></body></html>

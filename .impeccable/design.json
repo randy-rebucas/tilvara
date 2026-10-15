@@ -1,0 +1,175 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-15T00:00:00Z",
+  "title": "Design System: 1POS Admin",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "Note Paper", "canonical": "#f4f1e8", "tonalRamp": ["#2b2920", "#4a463a", "#6e6957", "#948d77", "#b8b19a", "#d6d0bb", "#ebe6d6", "#f4f1e8"] },
+      "paper-deep": { "role": "neutral", "displayName": "Deep Paper", "canonical": "#ebe6d6" },
+      "note": { "role": "neutral", "displayName": "Note White", "canonical": "#ffffff" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#1d1f24", "tonalRamp": ["#1d1f24", "#33363d", "#4a4d55", "#555962", "#7a7d84", "#a3a5ab", "#cdcfd3", "#eef0f2"] },
+      "muted": { "role": "neutral", "displayName": "Muted Ink", "canonical": "#555962" },
+      "hair": { "role": "neutral", "displayName": "Hairline", "canonical": "#cfc9b8" },
+      "hair-soft": { "role": "neutral", "displayName": "Soft Hairline", "canonical": "#e7e1d1" },
+      "table-head": { "role": "neutral", "displayName": "Table Head", "canonical": "#fbf9f3" },
+      "blue": { "role": "primary", "displayName": "₱1000 Note Blue", "canonical": "#2a5da8", "tonalRamp": ["#0f2240", "#173563", "#1f4885", "#2a5da8", "#5a83c2", "#8fabd8", "#c9d8ef", "#e9eff8"] },
+      "blue-deep": { "role": "primary", "displayName": "Deep Note Blue", "canonical": "#1f4885" },
+      "blue-ink": { "role": "primary", "displayName": "Band Ink", "canonical": "#dce6f5" },
+      "violet": { "role": "secondary", "displayName": "₱100 Violet", "canonical": "#6b4c9a", "tonalRamp": ["#22182f", "#36264d", "#4f386f", "#6b4c9a", "#8c72b5", "#ad9bcc", "#d3c9e4", "#f0ecf6"] },
+      "orange": { "role": "tertiary", "displayName": "₱20 Orange (text)", "canonical": "#b85f12", "tonalRamp": ["#3a1d05", "#5e300a", "#8a470e", "#b85f12", "#e07b1f", "#eca35f", "#f5cda3", "#fcefe1"] },
+      "orange-soft": { "role": "tertiary", "displayName": "₱20 Orange (stripe)", "canonical": "#e07b1f" },
+      "green": { "role": "tertiary", "displayName": "₱200 Green", "canonical": "#1e5b3a", "tonalRamp": ["#0a1f14", "#123823", "#184a2f", "#1e5b3a", "#3f805c", "#74a88a", "#b5d4c1", "#e8f2ec"] },
+      "red": { "role": "error", "displayName": "Alarm Red", "canonical": "#b8302e", "tonalRamp": ["#3d0f0e", "#621918", "#8c2423", "#b8302e", "#d0605e", "#e29a98", "#efc8c6", "#fbeceb"] },
+      "amber-bg": { "role": "warning", "displayName": "Warn Wash", "canonical": "#fbf0dc" },
+      "info-bg": { "role": "info", "displayName": "Info Wash", "canonical": "#e9eff8" },
+      "info-border": { "role": "info", "displayName": "Info Edge", "canonical": "#c5d4ea" },
+      "info-text": { "role": "info", "displayName": "Info Ink", "canonical": "#1f3b66" },
+      "error-bg": { "role": "error", "displayName": "Error Wash", "canonical": "#fbeceb" },
+      "error-border": { "role": "error", "displayName": "Error Edge", "canonical": "#efc8c6" },
+      "warn-border": { "role": "warning", "displayName": "Warn Edge", "canonical": "#ead3a6" },
+      "warn-text": { "role": "warning", "displayName": "Warn Ink", "canonical": "#6b4a12" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Auth page headlines only (sign-in, sign-up, accept-invite)." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles, followed by a muted lede (max 68ch)." },
+      "figure": { "displayName": "Figure", "purpose": "KPI counts on overview notes; plan name on the subscription note." },
+      "title": { "displayName": "Title", "purpose": "Note and panel titles." },
+      "body": { "displayName": "Body", "purpose": "All running UI text; table cells at 0.875rem." },
+      "label": { "displayName": "Label", "purpose": "Form labels and button text." },
+      "section-title": { "displayName": "Section Title", "purpose": "Uppercase muted h2 for page sections; the heading itself, never an eyebrow." },
+      "serial": { "displayName": "Serial", "purpose": "SKUs, barcodes, TINs, branch/register/BIR codes, counts, EN/FIL toggle. Sits below the title it identifies." },
+      "money": { "displayName": "Money", "purpose": "Every peso amount: ₱ with centavos, tabular, right-aligned, nowrap." }
+    },
+    "shadows": [
+      { "name": "note-rest", "value": "0 1px 2px rgb(60 50 20 / 0.06), 0 4px 12px -6px rgb(60 50 20 / 0.12)", "purpose": "Every note panel at rest." },
+      { "name": "note-hover", "value": "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)", "purpose": "Linked KPI notes on hover only." }
+    ],
+    "motion": [
+      { "name": "state", "value": "120ms ease-out", "purpose": "Button and input colour, border and shadow transitions." },
+      { "name": "reveal", "value": "380ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Page content rise (4px, from 40% opacity); only when prefers-reduced-motion is no-preference." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "xl", "value": "1280px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single next action per view; Note Blue fill.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Price your products <svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m9 18 6-6-6-6\"/></svg></button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; height: 2.25rem; padding: 0 0.9rem; border-radius: 5px; font-family: Archivo, system-ui, sans-serif; font-weight: 600; font-size: 0.875rem; white-space: nowrap; border: 1px solid #cfc9b8; background: #fff; color: #1d1f24; cursor: pointer; transition: background-color 120ms ease-out, border-color 120ms ease-out; } .ds-btn-primary { background: #2a5da8; border-color: #2a5da8; color: #fff; } .ds-btn-primary:hover { background: #1f4885; border-color: #1f4885; } .ds-btn:focus-visible { outline: 2px solid #2a5da8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button (Disclosure trigger)",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default button; opens inline add panels with a leading plus.",
+      "html": "<button class=\"ds-btn2\"><svg aria-hidden=\"true\" width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg> Add branch</button>",
+      "css": ".ds-btn2 { display: inline-flex; align-items: center; gap: 0.4rem; height: 2.25rem; padding: 0 0.9rem; border-radius: 5px; font-family: Archivo, system-ui, sans-serif; font-weight: 600; font-size: 0.875rem; border: 1px solid #cfc9b8; background: #fff; color: #1d1f24; cursor: pointer; transition: border-color 120ms ease-out; } .ds-btn2:hover { border-color: #b6ae98; } .ds-btn2:focus-visible { outline: 2px solid #2a5da8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive row action (Revoke); red text, red edge on hover.",
+      "html": "<button class=\"ds-btn-danger\">Revoke</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; height: 2rem; padding: 0 0.625rem; border-radius: 5px; font-family: Archivo, system-ui, sans-serif; font-weight: 600; font-size: 0.8125rem; border: 1px solid #cfc9b8; background: #fff; color: #b8302e; cursor: pointer; transition: background-color 120ms ease-out, border-color 120ms ease-out; } .ds-btn-danger:hover { border-color: #b8302e; background: #fff6f5; } .ds-btn-danger:focus-visible { outline: 2px solid #2a5da8; outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label above, hint or error below; blue focus, red invalid.",
+      "html": "<div class=\"ds-field\"><label for=\"ds-tin\">TIN</label><input id=\"ds-tin\" class=\"ds-input\" placeholder=\"123-456-789\"><p class=\"ds-hint\">Nine digits; branch code is separate.</p></div>",
+      "css": ".ds-field { font-family: Archivo, system-ui, sans-serif; color: #1d1f24; } .ds-field label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.3rem; } .ds-input { width: 100%; height: 2.4rem; padding: 0 0.7rem; border-radius: 5px; border: 1px solid #cfc9b8; background: #fff; color: #1d1f24; font-size: 0.9375rem; caret-color: #2a5da8; } .ds-input::placeholder { color: #7a7d84; } .ds-input:hover { border-color: #b6ae98; } .ds-input:focus { outline: 2px solid #2a5da8; outline-offset: 0; border-color: #2a5da8; } .ds-input[aria-invalid=\"true\"] { border-color: #b8302e; } .ds-hint { font-size: 0.8125rem; color: #555962; margin-top: 0.3rem; }"
+    },
+    {
+      "name": "Blue Band Navigation",
+      "kind": "nav",
+      "refersTo": "band",
+      "description": "Header band with diagonal security lines, wordmark and permission-filtered tabs.",
+      "html": "<header class=\"ds-band\"><span class=\"ds-mark\">1POS</span><nav class=\"ds-tabs\"><a href=\"#\" aria-current=\"page\">Overview</a><a href=\"#\">Products</a><a href=\"#\">Prices</a><a href=\"#\">Locations</a><a href=\"#\">Team</a></nav></header>",
+      "css": ".ds-band { display: flex; align-items: center; gap: 1.5rem; height: 64px; padding: 0 28px; color: #fff; font-family: Archivo, system-ui, sans-serif; background-color: #2a5da8; background-image: repeating-linear-gradient(115deg, rgb(255 255 255 / 0.055) 0 1px, transparent 1px 7px); } .ds-mark { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.04em; } .ds-tabs { display: flex; gap: 4px; } .ds-tabs a { padding: 6px 12px; border-radius: 4px; font-size: 0.9375rem; color: #dce6f5; text-decoration: none; transition: background-color 120ms ease-out; } .ds-tabs a:hover { background: rgb(255 255 255 / 0.1); color: #fff; } .ds-tabs a[aria-current=\"page\"] { background: rgb(255 255 255 / 0.18); color: #fff; font-weight: 600; } .ds-tabs a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Denomination Note (KPI)",
+      "kind": "card",
+      "refersTo": "note-panel",
+      "description": "Signature record panel: white stock, double hairline frame, right-edge denomination stripe, serial line below the figure.",
+      "html": "<div class=\"ds-paper\"><a href=\"#\" class=\"ds-note\"><span class=\"ds-denom\" style=\"background:#6b4c9a\"></span><span class=\"ds-kpi-label\">Branches</span><span class=\"ds-kpi-fig\">1</span><span class=\"ds-serial\">MKT-01</span></a></div>",
+      "css": ".ds-paper { background: #f4f1e8; padding: 24px; font-family: Archivo, system-ui, sans-serif; } .ds-note { position: relative; display: block; width: 220px; padding: 16px 24px 16px 16px; background: #fff; color: #1d1f24; text-decoration: none; border: 1px solid #cfc9b8; border-radius: 6px; box-shadow: 0 1px 2px rgb(60 50 20 / 0.06), 0 4px 12px -6px rgb(60 50 20 / 0.12); transition: box-shadow 120ms ease-out; } .ds-note::before { content: \"\"; position: absolute; inset: 4px; border: 1px solid #e7e1d1; border-radius: 4px; pointer-events: none; } .ds-note:hover { box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); } .ds-note:focus-visible { outline: 2px solid #2a5da8; outline-offset: 2px; } .ds-denom { position: absolute; top: 0; right: 0; bottom: 0; width: 7px; border-radius: 0 6px 6px 0; } .ds-kpi-label { position: relative; display: block; font-size: 0.8125rem; color: #555962; } .ds-kpi-fig { position: relative; display: block; margin-top: 4px; font-size: 1.75rem; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; } .ds-serial { position: relative; display: block; margin-top: 8px; font-family: 'Archivo Narrow', Archivo, sans-serif; font-size: 0.8125rem; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: #555962; }"
+    },
+    {
+      "name": "Price Row (money + serial)",
+      "kind": "custom",
+      "description": "Table row with a serial SKU and narrow tabular money, right-aligned.",
+      "html": "<table class=\"ds-tbl\"><thead><tr><th>SKU</th><th>Product name</th><th class=\"ds-num\">Current</th></tr></thead><tbody><tr><td class=\"ds-sku\">BB-33</td><td>Bear Brand Powdered Milk 33g</td><td class=\"ds-num ds-money\">₱12.75</td></tr><tr><td class=\"ds-sku\">CK-290</td><td>Coke Mismo 290ml</td><td class=\"ds-num ds-money\">₱22.00</td></tr></tbody></table>",
+      "css": ".ds-tbl { width: 100%; border-collapse: collapse; font-family: Archivo, system-ui, sans-serif; font-size: 0.875rem; color: #1d1f24; background: #fff; } .ds-tbl th { text-align: left; font-weight: 600; font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: #555962; padding: 0.6rem 0.9rem; border-bottom: 1px solid #cfc9b8; background: #fbf9f3; } .ds-tbl td { padding: 0.7rem 0.9rem; border-bottom: 1px solid #e7e1d1; } .ds-tbl tr:last-child td { border-bottom: 0; } .ds-tbl tbody tr:hover td { background: #fbf9f3; } .ds-num { text-align: right !important; } .ds-sku { font-family: 'Archivo Narrow', Archivo, sans-serif; letter-spacing: 0.08em; text-transform: uppercase; font-variant-numeric: tabular-nums; white-space: nowrap; } .ds-money { font-family: 'Archivo Narrow', Archivo, sans-serif; font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; white-space: nowrap; }"
+    },
+    {
+      "name": "Chip and Tag",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Chip = solid denomination property; tag = neutral hairline status.",
+      "html": "<span class=\"ds-chip\">Default</span> <span class=\"ds-tag\">Active</span> <span class=\"ds-tag ds-tag-red\">Revoked</span>",
+      "css": ".ds-chip, .ds-tag { display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px; font-family: Archivo, system-ui, sans-serif; font-size: 0.75rem; font-weight: 600; white-space: nowrap; } .ds-chip { background: #2a5da8; color: #fff; } .ds-tag { border: 1px solid #cfc9b8; color: #555962; background: #fff; } .ds-tag-red { color: #b8302e; }"
+    },
+    {
+      "name": "Callout",
+      "kind": "custom",
+      "refersTo": "callout-info",
+      "description": "Plain-truth banner: info (disabled/planned), warn (read-only), error.",
+      "html": "<div role=\"status\" class=\"ds-callout ds-info\">Official BIR invoicing is off until your compliance setup is reviewed.</div><div role=\"status\" class=\"ds-callout ds-warn\">This business is read-only. You can still see every record.</div>",
+      "css": ".ds-callout { border-radius: 5px; border: 1px solid; padding: 12px 16px; margin-bottom: 8px; font-family: Archivo, system-ui, sans-serif; font-size: 0.875rem; } .ds-info { background: #e9eff8; color: #1f3b66; border-color: #c5d4ea; } .ds-warn { background: #fbf0dc; color: #6b4a12; border-color: #ead3a6; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Salapi (Peso Notes)",
+    "overview": "The admin reads like Philippine currency. On a banknote, the colour tells you the denomination at a glance and the serial number tells you exactly which note you're holding. Here, a record's denomination colour shows what kind of record it is (catalog, location, register, team), and a tracked, tabular serial line shows which one it is (SKU, branch code, TIN, count). An owner should be able to tell what kind of record a panel holds, and which one, before reading its title.\n\nThe surface is warm note-paper. Records sit on it as pure white \"notes\". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and inline forms that keep a task on the page instead of moving it into a modal. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.\n\nThis identity is provisional. 1POS has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.",
+    "keyCharacteristics": [
+      "Warm paper ground (paper) with pure white record notes (note). The two whites never trade places.",
+      "Denomination colour always means the kind of record, and nothing else.",
+      "Right-edge denomination stripe on each record panel.",
+      "Serial line in tracked narrow caps with tabular numerals, placed below the title.",
+      "Money in Archivo Narrow with tabular numerals, right-aligned, never wrapped.",
+      "Blue band with diagonal security lines across the top.",
+      "Inline disclosure forms. No modals.",
+      "Bilingual EN/FIL. All copy comes from the message catalog."
+    ],
+    "rules": [
+      { "name": "The Denomination Rule", "body": "Each colour names exactly one kind of record: blue for catalog, prices and the primary action; violet for locations; orange for registers and terminals; green for team; red only for destructive actions and errors. A colour never means anything else. Picking a colour for decoration or for variety breaks the system.", "section": "colors" },
+      { "name": "The Blue Tick Rule", "body": "Status marks (done ticks, \"next\" markers, selection) use blue, the action colour. They never use green. Green means team.", "section": "colors" },
+      { "name": "The Two Whites Rule", "body": "Panels are pure white (note) on warm paper (paper). Never tint a panel and never put white directly on white. The contrast between the two whites is what makes a record look like a note.", "section": "colors" },
+      { "name": "The Serial Below Rule", "body": "A serial line sits below the title it identifies (title, then serial). A tracked caps line is never placed above a heading. This system has no eyebrows or kickers.", "section": "typography" },
+      { "name": "The Narrow Money Rule", "body": "Money and identifiers are always set in Archivo Narrow with tabular numerals. Body Archivo never carries a price, and a price never wraps.", "section": "typography" },
+      { "name": "The Stacked Row Rule", "body": "Below md (768px), a table whose key figure (a price) would scroll off-screen becomes a stacked list. Each row shows the identity on the left and the money on the right, so the figure is always visible.", "section": "layout" },
+      { "name": "The Paper Lift Rule", "body": "Shadows are warm-tinted (rgb(60 50 20)), low and soft. Only notes are lifted. Hard offset shadows and floating overlays are not part of this world.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do pick the stripe, chip and meter colour from the record's kind: blue for catalog and prices, violet for locations, orange for registers and terminals, green for team.",
+      "Do put a serial line (code, SKU, TIN, count) directly below every record title, in Archivo Narrow tracked caps with tabular numerals.",
+      "Do set every peso amount with the money style, ₱ and centavos from the decimal string, right-aligned and nowrap.",
+      "Do keep panels pure white (#ffffff) on note paper (#f4f1e8), with the double hairline frame.",
+      "Do use the blue band with diagonal security lines as the top of every page, auth pages included.",
+      "Do add records with an inline disclosure panel that expands in place.",
+      "Do turn a table into stacked rows below 768px whenever its key figure would scroll off-screen.",
+      "Do route every string through the EN/FIL message catalog (src/i18n/messages.ts).",
+      "Do use blue for status ticks, the \"next\" marker and selection."
+    ],
+    "donts": [
+      "Don't use red for anything other than destructive actions, errors, revoked or read-only states, and exhausted limits.",
+      "Don't use green for success or completion. Green means team.",
+      "Don't put an uppercase tracked line (an eyebrow or kicker) above a heading. Section titles are themselves the h2.",
+      "Don't open modals for create or edit flows.",
+      "Don't hard-code UI copy in components, or ship a string in only one language.",
+      "Don't tint panels or float them with hard or offset shadows.",
+      "Don't fall back to a grey sidebar with a generic blue button.",
+      "Don't treat Salapi as final brand. It is provisional until 1POS has a real identity."
+    ]
+  }
+}

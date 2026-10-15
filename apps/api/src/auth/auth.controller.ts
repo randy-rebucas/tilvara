@@ -64,6 +64,7 @@ export class AuthController {
   async me(@Auth() auth: AuthContext) {
     return {
       userId: auth.userId,
+      user: await this.auth.profile(auth.userId),
       activeTenant: auth.tenant
         ? {
             tenantId: auth.tenant.tenantId,

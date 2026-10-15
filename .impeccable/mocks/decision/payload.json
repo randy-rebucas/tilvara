@@ -1,0 +1,128 @@
+{
+  "title": "Choose the visual world for the 1POS admin",
+  "question": "The roll assigned Route Board. Keep it, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Route Board",
+      "kicker": "THE ROLL",
+      "lineage": "Jeepney and bus route signboards (Philippine street signage)",
+      "thesis": "Every screen tells you exactly where a change applies, the way a route board tells you where the jeep goes.",
+      "palette": ["#12305B", "#FFC914", "#F3F4F1", "#1A1A1A", "#1F7A4D", "#C2331B"],
+      "materials": ["painted signboard yellow", "deep route-navy shell", "condensed signage caps (Barlow Condensed) over Barlow text"],
+      "viewport": "Navy left rail with sections; a yellow route plate under the header reads ALPHA TRADING CORP › MAKATI MAIN › ALL REGISTERS and is the scope picker; setup checklist and branch cards below.",
+      "risk": "Yellow plate can read as decoration if it ever appears where it does not set scope; condensed caps tire at body sizes.",
+      "raised": [
+        { "from": "challenger-zone-sheets", "raise": "Signboard yellow is reserved for one meaning only: where this applies (scope). Never a button, never a highlight." },
+        { "from": "challenger-labanotation", "raise": "Plan limits drawn as exact-length segmented bars: 3 of 5 seats is five cells, three filled." },
+        { "from": "challenger-botanical-folio", "raise": "Branch and register cards share one fixed scale and baseline so branches compare at a glance." },
+        { "from": "challenger-character-catalog", "raise": "Team members render as uniform cells with fixed fields: name, role plate, scope plate, status." },
+        { "from": "challenger-bitmap-specimen", "raise": "A strict five-step type scale; display caps appear only on plates and page titles." }
+      ],
+      "html": ".impeccable/mocks/decision/assigned.html"
+    },
+    {
+      "id": "model-pick",
+      "label": "Salapi (Peso Notes)",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "Philippine peso banknote series",
+      "thesis": "The admin as currency: denomination colours mark what kind of thing you are looking at, serial figures mark exactly which one.",
+      "palette": ["#F4F1E8", "#2A5DA8", "#6B4C9A", "#B8302E", "#E07B1F", "#1E5B3A"],
+      "materials": ["fine guilloche hairline borders", "tabular serial numerals", "denomination colour bands"],
+      "viewport": "Light note-paper ground, a blue header band, KPI tiles framed in hairline guilloche, IDs and money in serial tabular figures.",
+      "risk": "Money-centric and on-topic, so it is the most familiar move for a POS; guilloche can slide into ornament.",
+      "html": ".impeccable/mocks/decision/model-pick.html"
+    },
+    {
+      "id": "challenger-ticket-wallet",
+      "label": "Coupon Book",
+      "verdict": "competitive",
+      "lineage": "Jet-age airline ticket wallet",
+      "thesis": "Setup as a coupon book: each leg (entity, branch, register) tears off when done; nothing disappears, it is stamped VOID.",
+      "palette": ["#FFFFFF", "#1C2E5A", "#C8102E", "#5B3A8C"],
+      "materials": ["carbon-copy coupon stock", "ruled fare boxes", "rubber-stamp states"],
+      "viewport": "Onboarding as a row of coupons, the current leg open; archived records carry a red VOID stamp instead of vanishing.",
+      "case": "Holds product clarity (archive-not-delete states read instantly) but owners do not identify with airline ephemera.",
+      "risk": "Reads retro-costume on dense tables; stamps must stay rare.",
+      "hero": "https://impeccable.style/worlds/cards/vernacular-ephemera-jet-age-ticket-wallet-hero.webp",
+      "html": ".impeccable/mocks/decision/challenger-ticket-wallet.html"
+    },
+    {
+      "id": "challenger-zone-sheets",
+      "label": "Exposure Record",
+      "verdict": "declined",
+      "lineage": "Darkroom exposure record sheets",
+      "thesis": "Overlapping translucent sheets on an eleven-step zone ramp.",
+      "palette": ["#E9E9E6", "#7A7A76", "#2B2B29", "#D1007A"],
+      "materials": ["backlit neutrals", "hatch density"],
+      "viewport": "Stacked sheets slide aside instead of replacing the field.",
+      "risk": "Foreign to shop owners; hatching hides money figures.",
+      "case": "Loses both axes for PH shop owners.",
+      "kept": "One colour reserved for exactly one meaning."
+    },
+    {
+      "id": "challenger-labanotation",
+      "label": "Dance Score",
+      "verdict": "declined",
+      "lineage": "Labanotation",
+      "thesis": "Length of a block is its exact duration.",
+      "palette": ["#FFFFFF", "#111111", "#BDBDBD"],
+      "materials": ["score paper", "shaded blocks"],
+      "viewport": "Bilateral columns read upward.",
+      "risk": "Unreadable without training.",
+      "case": "Loses both axes.",
+      "kept": "Quantity drawn as exact geometry (limit bars)."
+    },
+    {
+      "id": "challenger-botanical-folio",
+      "label": "Botanical Folio",
+      "verdict": "declined",
+      "lineage": "Seasonal botanical plates",
+      "thesis": "Fixed scale and ground make stages comparable.",
+      "palette": ["#F3EBD8", "#3E6B3A", "#B3261E"],
+      "materials": ["engraved plates", "sepia rules"],
+      "viewport": "Five plates on one baseline.",
+      "risk": "Cream-and-serif default for a working tool.",
+      "case": "Loses both axes.",
+      "kept": "Identical scale for comparable things (branch cards)."
+    },
+    {
+      "id": "challenger-character-catalog",
+      "label": "Character Goods Catalog",
+      "verdict": "declined",
+      "lineage": "Mascot roster catalogs",
+      "thesis": "A finite roster, each cell with fixed personal furniture.",
+      "palette": ["#FCE4EC", "#E3F2FD", "#FFF59D"],
+      "materials": ["pastel cells", "bubble name plates"],
+      "viewport": "Ranked mascot grid.",
+      "risk": "Toy-like for financial records.",
+      "case": "Loses both axes.",
+      "kept": "Uniform cells with fixed fields (team roster)."
+    },
+    {
+      "id": "challenger-bitmap-specimen",
+      "label": "Bitmap Specimen",
+      "verdict": "declined",
+      "lineage": "Emigre bitmap specimens",
+      "thesis": "One form repeated at strict size steps.",
+      "palette": ["#FFFFFF", "#000000", "#FF3B00"],
+      "materials": ["pixel display type", "halftone"],
+      "viewport": "Poster-scale pixel headline.",
+      "risk": "Novelty over trust.",
+      "case": "Loses both axes.",
+      "kept": "A strict type scale."
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "A Shopify/Square-style admin executed at full craft: white, neutral sidebar, one blue accent.",
+    "palette": ["#FFFFFF", "#F6F6F7", "#111827", "#2563EB"],
+    "materials": ["clean grid", "neutral cards", "system type"],
+    "viewport": "Gray sidebar, page title, setup checklist card, stats row.",
+    "risk": "Indistinguishable from competitors by design.",
+    "html": ".impeccable/mocks/decision/canon.html"
+  },
+  "steer": true
+}

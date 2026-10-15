@@ -16,7 +16,9 @@
     "db:down": "docker compose down",
     "db:generate": "pnpm --filter @1pos/database db:generate",
     "db:migrate": "pnpm --filter @1pos/database db:migrate",
-    "dev:api": "pnpm --filter @1pos/api dev"
+    "dev:api": "pnpm --filter @1pos/api dev",
+    "dev:web": "pnpm --filter @1pos/admin-web dev",
+    "test:e2e:web": "node apps/admin-web/e2e/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

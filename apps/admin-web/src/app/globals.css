@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+/* Salapi — the admin reads like Philippine currency. Denomination colours name the KIND of record;
+   serial figures name WHICH one. Red is reserved for destructive actions and errors. */
+@theme {
+  --color-paper: #f4f1e8;
+  --color-paper-deep: #ebe6d6;
+  --color-note: #ffffff;
+  --color-ink: #1d1f24;
+  --color-muted: #555962;
+  --color-hair: #cfc9b8;
+  --color-hair-soft: #e7e1d1;
+
+  --color-blue: #2a5da8;      /* ₱1000 — catalog, prices, primary actions */
+  --color-blue-deep: #1f4885;
+  --color-blue-ink: #dce6f5;  /* text on the blue band */
+  --color-violet: #6b4c9a;    /* ₱100 — locations */
+  --color-orange: #b85f12;    /* ₱20 — registers & terminals (darkened for text contrast) */
+  --color-orange-soft: #e07b1f;
+  --color-green: #1e5b3a;     /* ₱200-ish green — team */
+  --color-red: #b8302e;       /* errors / destructive only */
+  --color-amber-bg: #fbf0dc;
+
+  --font-sans: var(--font-archivo), system-ui, sans-serif;
+  --font-serial: var(--font-archivo-narrow), var(--font-archivo), sans-serif;
+
+  --radius-note: 6px;
+}
+
+@layer base {
+  html { background: var(--color-paper); color: var(--color-ink); }
+  body { font-family: var(--font-sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  ::selection { background: #c9d8ef; color: var(--color-ink); }
+  :focus-visible { outline: 2px solid var(--color-blue); outline-offset: 2px; border-radius: 3px; }
+  input, select, textarea { caret-color: var(--color-blue); }
+  a { text-underline-offset: 3px; }
+  table { font-variant-numeric: tabular-nums; }
+  * { scrollbar-color: var(--color-hair) transparent; scrollbar-width: thin; }
+  h1, h2, h3 { text-wrap: balance; }
+}
+
+@layer components {
+  /* The blue band: ₱1000 note blue with faint diagonal security lines. */
+  .band {
+    background-color: var(--color-blue);
+    background-image: repeating-linear-gradient(115deg, rgb(255 255 255 / 0.055) 0 1px, transparent 1px 7px);
+  }
+
+  /* A record "note": white stock, double hairline frame, denomination stripe on the right edge. */
+  .note {
+    position: relative;
+    background: var(--color-note);
+    border: 1px solid var(--color-hair);
+    border-radius: var(--radius-note);
+    box-shadow: 0 1px 2px rgb(60 50 20 / 0.06), 0 4px 12px -6px rgb(60 50 20 / 0.12);
+  }
+  .note::before {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    border: 1px solid var(--color-hair-soft);
+    border-radius: 4px;
+    pointer-events: none;
+  }
+  .note > * { position: relative; }
+  .denom {
+    position: absolute !important;
+    top: 0; right: 0; bottom: 0;
+    width: 7px;
+    border-radius: 0 var(--radius-note) var(--radius-note) 0;
+  }
+
+  /* Serial figures: tracked narrow caps with tabular numerals for codes, SKUs, TINs, counts. */
+  .serial {
+    font-family: var(--font-serial);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .money { font-family: var(--font-serial); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; white-space: nowrap; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+    height: 2.25rem; padding: 0 0.9rem; border-radius: 5px;
+    font-weight: 600; font-size: 0.875rem; white-space: nowrap;
+    border: 1px solid var(--color-hair); background: var(--color-note); color: var(--color-ink);
+    transition: background-color 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+  }
+  .btn:hover { border-color: #b6ae98; background: #fff; }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-primary { background: var(--color-blue); border-color: var(--color-blue); color: #fff; }
+  .btn-primary:hover { background: var(--color-blue-deep); border-color: var(--color-blue-deep); }
+  .btn-danger { color: var(--color-red); }
+  .btn-danger:hover { border-color: var(--color-red); background: #fff6f5; }
+
+  .field label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.3rem; }
+  .field .hint { font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.3rem; }
+  .input {
+    width: 100%; height: 2.4rem; padding: 0 0.7rem; border-radius: 5px;
+    border: 1px solid var(--color-hair); background: #fff; color: var(--color-ink); font-size: 0.9375rem;
+  }
+  .input::placeholder { color: #7a7d84; }
+  .input:hover { border-color: #b6ae98; }
+  .input:focus { outline: 2px solid var(--color-blue); outline-offset: 0; border-color: var(--color-blue); }
+  .input[aria-invalid="true"] { border-color: var(--color-red); }
+
+  .tbl { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 0.875rem; }
+  .tbl th {
+    text-align: left; font-weight: 600; font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--color-muted); padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--color-hair); background: #fbf9f3;
+  }
+  .tbl td { padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--color-hair-soft); vertical-align: middle; }
+  .tbl .serial { white-space: nowrap; }
+  .tbl tr:last-child td { border-bottom: 0; }
+  .tbl .num { text-align: right; }
+
+  .chip {
+    display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px;
+    font-size: 0.75rem; font-weight: 600; color: #fff; white-space: nowrap;
+  }
+  .tag {
+    display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px;
+    font-size: 0.75rem; font-weight: 600; border: 1px solid var(--color-hair); color: var(--color-muted); background: #fff;
+  }
+  .section-title { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); }
+}
+
+/* Tabs that scroll off the right edge fade out, so hidden tabs are discoverable. */
+@media (max-width: 1023px) {
+  .nav-fade { mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .reveal { animation: reveal 380ms cubic-bezier(0.16, 1, 0.3, 1) both; }
+  @keyframes reveal { from { opacity: 0.4; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+}

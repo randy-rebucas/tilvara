@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>1POS — Coupon Book</title>
+<link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&family=Courier+Prime:wght@700&display=swap" rel="stylesheet">
+<style>
+:root{--navy:#1C2E5A;--red:#C8102E;--carbon:#5B3A8C;--ink:#16181D;--muted:#666B75;--rule:#D7DAE0;--stock:#FFFFFF;--ground:#EEF0F4}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:1440px;height:900px;overflow:hidden;background:var(--ground);font-family:'Work Sans',system-ui;color:var(--ink)}
+.top{height:62px;background:var(--navy);color:#fff;display:flex;align-items:center;padding:0 32px;gap:32px}
+.top .lg{font-weight:700;font-size:22px;letter-spacing:.1em}
+.top nav{display:flex;gap:22px;font-size:14px;color:#C5CDE0}
+.top nav .on{color:#fff;border-bottom:2px solid var(--red);padding-bottom:4px}
+.top .r{margin-left:auto;font-size:14px}
+.page{padding:28px 32px}
+h1{font-size:28px;font-weight:700}
+.sub{color:var(--muted);margin-top:4px}
+.book{display:flex;gap:0;margin-top:24px}
+.cp{flex:1;background:var(--stock);border:1px solid var(--rule);border-radius:4px;padding:18px 20px;position:relative;height:250px}
+.cp+.cp{border-left:2px dashed var(--rule);border-radius:0 4px 4px 0}
+.cp .head{display:flex;justify-content:space-between;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--navy);font-weight:700;border-bottom:1px solid var(--rule);padding-bottom:8px}
+.box{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--rule);margin-top:12px}
+.box div{padding:8px 10px;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule);font-size:12px;color:var(--muted)}
+.box div:nth-child(2n){border-right:0}
+.box b{display:block;font-family:'Courier Prime';color:var(--carbon);font-size:15px;margin-top:2px}
+.stamp{position:absolute;right:18px;bottom:18px;border:3px solid;border-radius:6px;padding:4px 10px;font-weight:700;letter-spacing:.12em;transform:rotate(-8deg);font-size:15px}
+.ok{color:#1F7A4D}.void{color:var(--red)}
+.cp.cur{outline:3px solid var(--navy)}
+.cp .act{position:absolute;left:20px;bottom:18px;background:var(--navy);color:#fff;border-radius:4px;padding:9px 14px;font-weight:600;font-size:14px}
+.sec{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:700;margin:28px 0 10px}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--rule);font-size:14px}
+th{text-align:left;padding:10px 14px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--rule)}
+td{padding:12px 14px;border-bottom:1px solid #EEF0F3}
+td.mono{font-family:'Courier Prime';color:var(--carbon)}
+.mini{font-size:12px;font-weight:700;letter-spacing:.1em;border:2px solid;border-radius:4px;padding:1px 6px;display:inline-block;transform:rotate(-3deg)}
+</style></head><body>
+<div class="top"><span class="lg">1POS</span><nav><span class="on">Setup</span><span>Products</span><span>Prices</span><span>Locations</span><span>Team</span><span>Subscription</span></nav><span class="r">Alpha Trading Corp · Maria Santos · EN/FIL</span></div>
+<div class="page"><h1>Your setup coupons</h1><p class="sub">Each leg tears off when it is done. Nothing is deleted; retired records are stamped VOID and stay on file.</p>
+<div class="book">
+<div class="cp"><div class="head"><span>Leg 1 · Legal entity</span><span>No. 000001</span></div>
+<div class="box"><div>Registered name<b>ALPHA TRADING CORP</b></div><div>TIN<b>123-456-789</b></div><div>VAT status<b>VAT</b></div><div>Prices<b>INCL. VAT</b></div></div><span class="stamp ok">VALIDATED</span></div>
+<div class="cp"><div class="head"><span>Leg 2 · Branch</span><span>No. 000002</span></div>
+<div class="box"><div>Branch<b>MAKATI MAIN</b></div><div>Code<b>MKT-01</b></div><div>BIR branch<b>00000</b></div><div>Zone<b>ASIA/MANILA</b></div></div><span class="stamp ok">VALIDATED</span></div>
+<div class="cp cur"><div class="head"><span>Leg 3 · Register</span><span>No. 000003</span></div>
+<div class="box"><div>Register<b>—</b></div><div>Code<b>—</b></div><div>Terminal<b>NOT PAIRED</b></div><div>Price list<b>STANDARD</b></div></div><span class="act">Issue register</span></div>
+<div class="cp"><div class="head"><span>Leg 4 · Team</span><span>No. 000004</span></div>
+<div class="box"><div>Members<b>1</b></div><div>Pending<b>0</b></div><div>Seats<b>1 / 30</b></div><div>Plan<b>GROWTH TRIAL</b></div></div></div>
+</div>
+<div class="sec">Recent records</div>
+<table><tr><th>Record</th><th>Name</th><th>Ref</th><th>Status</th><th>When</th></tr>
+<tr><td>Branch</td><td>Quezon City</td><td class="mono">QC-02</td><td><span class="mini ok">ACTIVE</span></td><td>Today 09:12</td></tr>
+<tr><td>Terminal</td><td>iPad Counter 1</td><td class="mono">tpk_…9f2a</td><td><span class="mini void">VOID</span></td><td>Yesterday</td></tr>
+<tr><td>Price list</td><td>Mall pricing</td><td class="mono">PL-0002</td><td><span class="mini ok">ACTIVE</span></td><td>Oct 13</td></tr>
+</table></div></body></html>

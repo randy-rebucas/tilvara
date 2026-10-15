@@ -19,6 +19,8 @@
 - `pnpm build` · `pnpm typecheck` · `pnpm lint` · `pnpm test` (unit) · `pnpm test:integration` (needs db:up; migrates `onepos_test` automatically)
 - `pnpm db:generate` (drizzle-kit DDL) · custom SQL: `pnpm --filter @1pos/database exec drizzle-kit generate --custom --name=<name>` · `pnpm db:migrate` (needs `pnpm build` first)
 - `pnpm dev:api` → http://127.0.0.1:4320/v1/health/ready
+- Admin web: `pnpm dev:web` → http://127.0.0.1:3320 (needs API on 4320). BFF only: browser → `/api/auth/*` + `/api/v1/*` proxy (CSRF header `x-onepos-request: 1`); tokens live in httpOnly cookies, never in JS. All copy via `src/i18n/messages.ts` (EN + FIL). Follow DESIGN.md (Salapi world) for UI changes. Next.js 16: read `node_modules/next/dist/docs` before using unfamiliar APIs (middleware is `proxy.ts`).
+- E2E: start API (`RATE_LIMITS_ENABLED=false` locally) + `next start`, then `pnpm test:e2e:web` (headless Edge via CDP; screenshots → `.impeccable/review/`).
 - Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
 - New tenant-data writes go through `TenantService.mutate()` (subscription write check + idempotency + 409 mapping); emit side effects with `emitEvent()` in the same tx, never call external services inside a DB transaction.
 - Drizzle `db.execute()` returns timestamps as strings (raw `client.query` returns Dates).

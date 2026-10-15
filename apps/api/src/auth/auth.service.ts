@@ -179,6 +179,20 @@ export class AuthService {
     return { accessToken: access.token, accessTokenExpiresAt: access.expiresAt.toISOString() };
   }
 
+  /** The signed-in user's own profile (RLS: a user can always read themself). */
+  profile(userId: string): Promise<{ email: string; displayName: string }> {
+    return this.tenantDb.tx(
+      async (tx) => {
+        const { rows } = await tx.client.query<{ email: string; display_name: string }>(
+          'SELECT email, display_name FROM users WHERE id = $1',
+          [userId],
+        );
+        return { email: rows[0]!.email, displayName: rows[0]!.display_name };
+      },
+      { userId },
+    );
+  }
+
   async memberships(userId: string): Promise<MembershipSummary[]> {
     const { rows } = await this.database.pool.query<{
       membership_id: string;

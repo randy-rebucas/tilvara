@@ -3,7 +3,7 @@
 _Last updated: 2026-10-15 (session 1)_
 
 ## Current phase
-**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing · 4 team management (invitations, roles, anti-escalation) · 5 entitlements, idempotency, outbox + worker.
+**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing · 4 team management (invitations, roles, anti-escalation) · 5 entitlements, idempotency, outbox + worker · 6 admin web (Salapi design, BFF auth, EN/FIL).
 Phase 0 done (commit 159b94e).
 
 ## User decisions (2026-10-15)
@@ -19,6 +19,9 @@ Phase 0 done (commit 159b94e).
 | `pnpm test` | **43 passed** (money 15, config 6, validation 5, api 15, workers 2) |
 | `pnpm test:integration` | database **14**, api **77** (auth 20 + org 12 + catalog 16 + team 14 + billing 8 + reliability 7), workers **8** → **99 passed** (Postgres 18, runtime role `onepos_app`) |
 | worker binary | `node dist/main.js` boots against dev DB (`worker started`) |
+| admin web | `next build` ok (13 routes); `pnpm test:e2e:web` → **19/19** against live API+web (sign-up via UI, httpOnly tokens, CSRF refusal, entity via UI, branch/register/terminal/products via BFF, ₱ formatting, search, subscription, Filipino, 390px no horizontal scroll, sign-out). Design finish review: **ship** for scored fixes (uncaptured screens not yet reviewed). |
+
+Admin web design: user chose the "Salapi (Peso Notes)" direction on the decision page (PRODUCT.md at repo root; direction contract in `apps/admin-web/.impeccable/surfaces/apps-admin-web.md`; DESIGN.md + `.impeccable/design.json` describe the built system). Filipino strings are a first translation — **needs native-speaker review**. Local E2E: run the API with `RATE_LIMITS_ENABLED=false` (signup is limited to 5/10 min per IP).
 
 Billing/reliability/worker coverage: trial → full access; lapsed trial / past-due after grace / canceled → 402 read-only with data still readable; tenants can't change subscriptions (grants); plan caps incl. 6 parallel creations vs cap 2 → exactly 2; seat cap counts pending invites. Idempotent replay (same body, `Idempotent-Replayed`), 5 concurrent duplicates → 1 creation, key reuse with other payload/user → 422, failed attempts not recorded, keys tenant-scoped. Outbox events written atomically (none on rollback); worker delivers once per event in the event tenant's RLS context, backoff → DEAD, expired lease reclaimed and late ack refused, 3 competing workers never double-process, cross-tenant payload can't leak (RLS).
 
@@ -42,5 +45,5 @@ API integration coverage (apps/api/test/integration/auth.test.ts): permission ca
 - Node's `crypto.argon2` is used (Node ≥ 24.7); still marked experimental by Node — revisit if it changes.
 
 ## Next task (start here)
-Phase 1 slice 6 — **admin-web** (`apps/admin-web`, Next.js 16 App Router + Tailwind 4 + shadcn/ui, port 3320): sign-up/sign-in, tenant picker, onboarding (legal entity → branch → register), team (invite, roles), catalog (products, prices), subscription view. Auth via httpOnly cookies set by Next route handlers (BFF) — tokens never in JS-readable storage; API base URL server-side only. Load the `impeccable`/`ui-ux-pro-max` skill for design. Real loading/empty/error states; every control functional or clearly marked "planned". Playwright smoke test.
-Then **Phase 1 exit review**: cross-tenant suite completeness per table, OpenAPI generation, pino/OTel logging, docs refresh → declare Phase 1 exit criterion met (or list gaps).
+**Phase 1 exit review** (last Phase 1 step): (1) audit the cross-tenant suite against every tenant table (list in DATA_MODEL.md) and add missing cases; (2) OpenAPI generation from controllers/zod into `docs/api/openapi.json`; (3) structured logging (pino) with correlation/tenant ids + OTel hooks; (4) capture & review remaining admin screens (sign-up, picker, forms, errors, 390 widths); (5) docs refresh → declare the Phase 1 exit criterion ("multiple tenants configure their businesses without unauthorized access") met, or list gaps.
+Then **Phase 2 — retail transaction engine** (tax engine incl. SC/PWD, checkout, cash sessions, PayMongo adapter skeleton, stock ledger, POS browser app).
