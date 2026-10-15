@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { withTenant } from '@1pos/database';
+import { enrichLogContext } from '@1pos/observability';
 import { isPermissionCode, type PermissionCode } from '@1pos/validation';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -60,6 +61,8 @@ export class AuthGuard implements CanActivate {
       auth.tenant = { tenantId: claims.tid, membershipId: ctx.membership_id, status: ctx.tenant_status, grants };
     }
     req.auth = auth;
+    // Only verified ids go into logs: the tenant after membership was re-checked above.
+    enrichLogContext({ userId: auth.userId, tenantId: auth.tenant?.tenantId });
 
     const required = this.reflector.getAllAndOverride<PermissionCode[]>(REQUIRED_PERMISSIONS, targets) ?? [];
     const needsTenant = required.length > 0 || this.reflector.getAllAndOverride<boolean>(REQUIRES_TENANT, targets);

@@ -4,7 +4,8 @@ import { AppError } from './http-error.filter.js';
 
 /** Validates and normalises a request part with a shared @1pos/validation schema. */
 export class ZodPipe<T> implements PipeTransform<unknown, T> {
-  constructor(private readonly schema: ZodType<T>) {}
+  /** Public so the OpenAPI generator can describe the request from the same schema. */
+  constructor(readonly schema: ZodType<T>) {}
 
   transform(value: unknown): T {
     const parsed = this.schema.safeParse(value);

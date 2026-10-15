@@ -13,6 +13,7 @@
   "dependencies": {
     "@1pos/config": "workspace:*",
     "@1pos/database": "workspace:*",
+    "@1pos/observability": "workspace:*",
     "pg": "^8.23.1"
   },
   "devDependencies": {

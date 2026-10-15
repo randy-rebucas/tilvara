@@ -4,6 +4,7 @@ const isProd = (env: NodeJS.ProcessEnv) => env.NODE_ENV === 'production';
 
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.url(),
   REDIS_URL: z.url().optional(),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4320),
@@ -34,6 +35,7 @@ export class EnvValidationError extends Error {
 
 export const workerEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.url(),
   WORKER_ID: z.string().min(1).max(100).optional(),
   OUTBOX_POLL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),

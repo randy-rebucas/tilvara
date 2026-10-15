@@ -8,15 +8,16 @@ import { configureApp } from '../../src/bootstrap.js';
 import { ENV } from '../../src/infrastructure/env.provider.js';
 import { loadServerEnv, type ServerEnv } from '@1pos/config';
 import { PasswordService } from '../../src/auth/password.service.js';
+import type { Logger } from '@1pos/observability';
 
-export async function createApp(envOverrides: Partial<ServerEnv> = {}): Promise<INestApplication> {
+export async function createApp(envOverrides: Partial<ServerEnv> = {}, logger?: Logger): Promise<INestApplication> {
   const builder = Test.createTestingModule({ imports: [AppModule] });
   if (Object.keys(envOverrides).length > 0) {
     builder.overrideProvider(ENV).useValue({ ...loadServerEnv(), ...envOverrides });
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication();
-  configureApp(app);
+  configureApp(app, logger);
   await app.init();
   // Adversarial tests fire many parallel requests at one server.
   app.getHttpServer().setMaxListeners(50);

@@ -1,4 +1,5 @@
 import { withTenant, type Database } from '@1pos/database';
+import { withLogContext } from '@1pos/observability';
 import type { Pool } from 'pg';
 
 export interface OutboxEvent {
@@ -83,34 +84,42 @@ export class OutboxProcessor {
         attempts: r.attempts,
         correlationId: r.correlation_id,
       };
-      const handler = this.o.handlers[event.topic];
-      try {
-        if (handler) {
-          await withTenant(this.o.pool, event.tenantId, (db) => handler(event, db), {
-            correlationId: event.correlationId ?? undefined,
-          });
-        }
-        // Events without a consumer yet are acknowledged; they stay in the table for future replay.
-        const ok = await this.o.pool.query<{ ok: boolean }>('SELECT outbox_complete($1, $2) AS ok', [event.id, this.o.workerId]);
-        if (ok.rows[0]?.ok) result.done++;
-        else this.o.logger.error('outbox lease lost before completion', { eventId: event.id, topic: event.topic });
-      } catch (err) {
-        const message = err instanceof Error ? `${err.name}: ${err.message.split('\nparams:')[0]}` : 'unknown error';
-        const { rows: f } = await this.o.pool.query<{ status: string | null }>('SELECT outbox_fail($1, $2, $3, $4) AS status', [
-          event.id,
-          this.o.workerId,
-          message,
-          this.o.retryDelaySeconds(event.attempts),
-        ]);
-        if (f[0]?.status === 'DEAD') {
-          result.dead++;
-          this.o.logger.error('outbox event dead-lettered', { eventId: event.id, topic: event.topic, attempts: event.attempts });
-        } else {
-          result.retried++;
-          this.o.logger.info('outbox event will retry', { eventId: event.id, topic: event.topic, attempts: event.attempts });
-        }
-      }
+      // Log lines from the handler and from this loop carry the originating request's ids.
+      await withLogContext(
+        { correlationId: event.correlationId ?? undefined, tenantId: event.tenantId, eventId: event.id },
+        () => this.process(event, result),
+      );
     }
     return result;
+  }
+
+  private async process(event: OutboxEvent, result: RunResult): Promise<void> {
+    const handler = this.o.handlers[event.topic];
+    try {
+      if (handler) {
+        await withTenant(this.o.pool, event.tenantId, (db) => handler(event, db), {
+          correlationId: event.correlationId ?? undefined,
+        });
+      }
+      // Events without a consumer yet are acknowledged; they stay in the table for future replay.
+      const ok = await this.o.pool.query<{ ok: boolean }>('SELECT outbox_complete($1, $2) AS ok', [event.id, this.o.workerId]);
+      if (ok.rows[0]?.ok) result.done++;
+      else this.o.logger.error('outbox lease lost before completion', { eventId: event.id, topic: event.topic });
+    } catch (err) {
+      const message = err instanceof Error ? `${err.name}: ${err.message.split('\nparams:')[0]}` : 'unknown error';
+      const { rows: f } = await this.o.pool.query<{ status: string | null }>('SELECT outbox_fail($1, $2, $3, $4) AS status', [
+        event.id,
+        this.o.workerId,
+        message,
+        this.o.retryDelaySeconds(event.attempts),
+      ]);
+      if (f[0]?.status === 'DEAD') {
+        result.dead++;
+        this.o.logger.error('outbox event dead-lettered', { eventId: event.id, topic: event.topic, attempts: event.attempts });
+      } else {
+        result.retried++;
+        this.o.logger.info('outbox event will retry', { eventId: event.id, topic: event.topic, attempts: event.attempts });
+      }
+    }
   }
 }

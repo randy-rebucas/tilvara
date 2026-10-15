@@ -178,13 +178,18 @@ export class PricingService extends TenantService {
 
   priceHistory(auth: AuthContext, variantId: string) {
     this.assertCan(auth, 'catalog.read');
-    return this.read(auth, async (db) => ({
-      data: await db
-        .select()
-        .from(productPrices)
-        .where(eq(productPrices.variantId, variantId))
-        .orderBy(asc(productPrices.priceListId), asc(productPrices.effectiveFrom)),
-    }));
+    return this.read(auth, async (db) => {
+      // 404 for unknown (incl. other tenants') variants, like every other id-addressed route.
+      const [variant] = await db.select({ id: productVariants.id }).from(productVariants).where(eq(productVariants.id, variantId));
+      if (!variant) throw notFound('Variant');
+      return {
+        data: await db
+          .select()
+          .from(productPrices)
+          .where(eq(productPrices.variantId, variantId))
+          .orderBy(asc(productPrices.priceListId), asc(productPrices.effectiveFrom)),
+      };
+    });
   }
 
   /**

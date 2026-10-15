@@ -1,16 +1,17 @@
 import { loadWorkerEnv } from '@1pos/config';
+import { createLogger } from '@1pos/observability';
 import { hostname } from 'node:os';
 import pg from 'pg';
 import { buildHandlers, DevWorkerMailer } from './handlers.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
 
-const logger: Logger = {
-  info: (msg, meta) => console.log(JSON.stringify({ level: 'info', msg, ...meta, at: new Date().toISOString() })),
-  error: (msg, meta) => console.error(JSON.stringify({ level: 'error', msg, ...meta, at: new Date().toISOString() })),
-};
-
 async function main(): Promise<void> {
   const env = loadWorkerEnv();
+  const log = createLogger({ service: 'worker', level: env.LOG_LEVEL });
+  const logger: Logger = {
+    info: (msg, meta) => log.info(meta ?? {}, msg),
+    error: (msg, meta) => log.error(meta ?? {}, msg),
+  };
   const workerId = env.WORKER_ID ?? `${hostname()}:${process.pid}`;
   const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 5 });
   const processor = new OutboxProcessor({

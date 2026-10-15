@@ -17,7 +17,7 @@ import type { AuthedRequest } from '../auth/auth-context.js';
 import { AppError } from './http-error.filter.js';
 import { TenantDb } from './tenant-db.service.js';
 
-const IDEMPOTENT = 'onepos:idempotent';
+export const IDEMPOTENT = 'onepos:idempotent';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RETENTION_HOURS = 24;
 
