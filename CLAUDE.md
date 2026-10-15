@@ -8,6 +8,7 @@
 - Never claim tests passed unless they were run in this session; quote the command.
 - Never claim BIR accreditation/compliance. Production invoice issuance stays disabled until the compliance gate in `docs/compliance/` is cleared.
 - Money/quantities: `@1pos/money` only, decimal strings on the wire, never JS numbers.
+- New tenant tables are policed automatically: `rls-catalog.test.ts` (schema rules) and `isolation.test.ts` (needs fixture rows in every tenant table; every new `:id` route needs a case in its attack matrix).
 - Tenant data: only inside `withTenant(pool, tenantId, fn)` from `@1pos/database`; tenant id from the server-side session only. Every new tenant table needs: `tenant_id`, `UNIQUE(tenant_id,id)`, composite FKs, `ENABLE`+`FORCE` RLS policy, grants for `onepos_app`, and a case in the cross-tenant test suite.
 - Financial/inventory/audit tables are append-only (trigger `app_forbid_mutation`); corrections are new rows.
 - NestJS: every constructor dependency uses explicit `@Inject(Token)` — Vitest does not emit decorator metadata (SWC native binding fails on this machine, so it was removed).
@@ -22,6 +23,9 @@
 - Admin web: `pnpm dev:web` → http://127.0.0.1:3320 (needs API on 4320). BFF only: browser → `/api/auth/*` + `/api/v1/*` proxy (CSRF header `x-onepos-request: 1`); tokens live in httpOnly cookies, never in JS. All copy via `src/i18n/messages.ts` (EN + FIL). Follow DESIGN.md (Salapi world) for UI changes. Next.js 16: read `node_modules/next/dist/docs` before using unfamiliar APIs (middleware is `proxy.ts`).
 - E2E: start API (`RATE_LIMITS_ENABLED=false` locally) + `next start`, then `pnpm test:e2e:web` (headless Edge via CDP; screenshots → `.impeccable/review/`).
 - Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
+- OpenAPI: `pnpm build` then `pnpm --filter @1pos/api openapi` → `docs/api/openapi.json` (a unit test fails if it drifts from the routes).
+- Design review captures: with API + web running, `node apps/admin-web/e2e/review.mjs` → `.impeccable/review/screens/` (both E2E scripts share `e2e/cdp.mjs`).
+- Logging: `@1pos/observability` (`createLogger`, `withLogContext`, `enrichLogContext`); `LOG_LEVEL` env. Never log bodies, query strings, headers or tokens.
 - New tenant-data writes go through `TenantService.mutate()` (subscription write check + idempotency + 409 mapping); emit side effects with `emitEvent()` in the same tx, never call external services inside a DB transaction.
 - Drizzle `db.execute()` returns timestamps as strings (raw `client.query` returns Dates).
 

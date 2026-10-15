@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Archivo's ₱ has hairline bars that vanish at 13–15px, so the sign reads as "P". Only U+20B1
+   comes from a system face with sturdier bars; every other character stays Archivo. */
+@font-face {
+  font-family: "Peso Sign";
+  src: local("Segoe UI"), local("SegoeUI"), local("Roboto"), local("SF Pro Text"), local("Helvetica Neue"), local("Noto Sans");
+  unicode-range: U+20B1;
+}
+
 /* Salapi — the admin reads like Philippine currency. Denomination colours name the KIND of record;
    serial figures name WHICH one. Red is reserved for destructive actions and errors. */
 @theme {
@@ -21,8 +29,8 @@
   --color-red: #b8302e;       /* errors / destructive only */
   --color-amber-bg: #fbf0dc;
 
-  --font-sans: var(--font-archivo), system-ui, sans-serif;
-  --font-serial: var(--font-archivo-narrow), var(--font-archivo), sans-serif;
+  --font-sans: "Peso Sign", var(--font-archivo), system-ui, sans-serif;
+  --font-serial: "Peso Sign", var(--font-archivo-narrow), var(--font-archivo), sans-serif;
 
   --radius-note: 6px;
 }

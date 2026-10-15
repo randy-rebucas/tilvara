@@ -2,11 +2,38 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useT } from '@/i18n/client';
 import { send, type ApiFailure, type Result } from '@/lib/client-api';
 
 /** Form submission state: pending flag, last error, field issues; refreshes server data on success. */
+export interface ValidationIssue {
+  path: string;
+  message: string;
+  code?: string;
+  origin?: string;
+  minimum?: number;
+  maximum?: number;
+  format?: string;
+}
+
+/**
+ * Generic zod issues get translated wording; schema-authored messages (e.g. the business web
+ * address rule, regex hints) are specific and kept as sent.
+ */
+export function issueMessage(issue: ValidationIssue, t: ReturnType<typeof useT>['t']): string {
+  const { code, origin, minimum, maximum, format } = issue;
+  if (code === 'invalid_type') return t('validation.required');
+  if (code === 'too_small' && origin === 'string') return minimum === 1 ? t('validation.required') : t('validation.minLength', { n: minimum ?? 0 });
+  if (code === 'too_big' && origin === 'string') return t('validation.maxLength', { n: maximum ?? 0 });
+  if (code === 'too_small' && origin === 'array' && minimum === 1) return t('validation.required');
+  if (code === 'invalid_format' && format === 'email') return t('validation.email');
+  if (code === 'invalid_format' && format === 'uuid') return t('validation.choose');
+  return issue.message;
+}
+
 export function useSubmit() {
   const router = useRouter();
+  const { t } = useT();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ApiFailure | null>(null);
 
@@ -25,10 +52,11 @@ export function useSubmit() {
     return r;
   }
 
-  /** Field-level message from a VALIDATION_FAILED response, if any. */
+  /** Field-level message from a VALIDATION_FAILED response, if any, in the UI language. */
   function fieldError(path: string): string | undefined {
-    const issues = (error?.details?.issues as { path: string; message: string }[] | undefined) ?? [];
-    return issues.find((i) => i.path === path)?.message;
+    const issues = (error?.details?.issues as ValidationIssue[] | undefined) ?? [];
+    const issue = issues.find((i) => i.path === path);
+    return issue && issueMessage(issue, t);
   }
 
   return { pending, error, setError, submit, fieldError };

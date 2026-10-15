@@ -11,7 +11,19 @@ export class ZodPipe<T> implements PipeTransform<unknown, T> {
     const parsed = this.schema.safeParse(value);
     if (!parsed.success) {
       throw new AppError('VALIDATION_FAILED', 'Request validation failed', HttpStatus.BAD_REQUEST, {
-        issues: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+        // code + bounds let clients show their own (translated) wording; message stays the fallback.
+        issues: parsed.error.issues.map((i) => {
+          const extra = i as { minimum?: unknown; maximum?: unknown; format?: unknown; origin?: unknown };
+          return {
+            path: i.path.join('.'),
+            message: i.message,
+            code: i.code,
+            ...(extra.origin !== undefined && { origin: String(extra.origin) }),
+            ...(extra.minimum !== undefined && { minimum: Number(extra.minimum) }),
+            ...(extra.maximum !== undefined && { maximum: Number(extra.maximum) }),
+            ...(extra.format !== undefined && { format: String(extra.format) }),
+          };
+        }),
       });
     }
     return parsed.data;

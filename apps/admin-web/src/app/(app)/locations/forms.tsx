@@ -71,7 +71,7 @@ function BranchFields({ close, entities }: { close: () => void; entities: LegalE
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-4" noValidate>
-      <SelectField label={t('loc.entities')} name="legalEntityId">
+      <SelectField label={t('loc.entityOne')} name="legalEntityId">
         {entities.map((e) => <option key={e.id} value={e.id}>{e.registeredName}</option>)}
       </SelectField>
       <TextField label={t('loc.branchName')} name="name" required autoFocus error={fieldError('name')} />
@@ -99,7 +99,7 @@ function RegisterFields({ close, branches }: { close: () => void; branches: Bran
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
-      <SelectField label={t('loc.branches')} name="branchId">
+      <SelectField label={t('loc.branchOne')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
       <TextField label={t('loc.registerName')} name="name" required autoFocus placeholder="Counter 1" error={fieldError('name')} />
@@ -130,7 +130,7 @@ function TerminalFields({ close, registers, onSecret }: { close: () => void; reg
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
-      <SelectField label={t('loc.registers')} name="registerId">
+      <SelectField label={t('loc.registerOne')} name="registerId">
         {registers.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
       </SelectField>
       <TextField label={t('loc.terminalName')} name="name" required autoFocus placeholder="iPad Counter 1" error={fieldError('name')} />
