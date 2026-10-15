@@ -42,11 +42,17 @@ export class HttpErrorFilter implements ExceptionFilter {
       return;
     }
 
-    // Unknown error: log internally (no request body), return a generic message.
-    this.logger.error(
-      { correlationId, err: exception instanceof Error ? { name: exception.name, message: exception.message } : 'unknown' },
-      exception instanceof Error ? exception.stack : undefined,
-    );
+    // Unknown error: log internally (no request body, no SQL parameters — they may hold PII
+    // or token hashes), return a generic message.
+    const err = exception as { name?: string; message?: string; cause?: { code?: string } };
+    this.logger.error({
+      correlationId,
+      err: {
+        name: err?.name ?? 'unknown',
+        message: (err?.message ?? '').split('\nparams:')[0]!.slice(0, 500),
+        pgCode: err?.cause?.code,
+      },
+    });
     res
       .status(HttpStatus.INTERNAL_SERVER_ERROR)
       .json({ error: { code: 'INTERNAL', message: 'An unexpected error occurred.', correlationId } });

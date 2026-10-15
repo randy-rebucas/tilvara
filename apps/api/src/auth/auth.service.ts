@@ -78,7 +78,7 @@ export class AuthService {
       }
       throw e;
     }
-    return this.issue(ids.userId, ids.tenantId, meta);
+    return this.issueSession(ids.userId, ids.tenantId, meta);
   }
 
   async login(input: LoginInput, meta: RequestMeta): Promise<AuthResponse> {
@@ -127,7 +127,7 @@ export class AuthService {
         { userId: rec.user_id, correlationId: meta.correlationId },
       );
     }
-    return this.issue(rec.user_id, tenantId, meta, memberships);
+    return this.issueSession(rec.user_id, tenantId, meta, memberships);
   }
 
   async refresh(refreshToken: string, tenantId: string | undefined): Promise<{ activeTenantId: string | null; tokens: TokenPair }> {
@@ -187,7 +187,8 @@ export class AuthService {
     }));
   }
 
-  private async issue(
+  /** Create a session and token pair (also used by invitation acceptance). */
+  async issueSession(
     userId: string,
     tenantId: string | null,
     meta: RequestMeta,

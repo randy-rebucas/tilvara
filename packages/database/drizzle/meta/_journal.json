@@ -57,6 +57,20 @@
       "when": 1792038825013,
       "tag": "0007_catalog_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792039814551,
+      "tag": "0008_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792039815813,
+      "tag": "0009_team_rls",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,7 @@
 _Last updated: 2026-10-15 (session 1)_
 
 ## Current phase
-**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing.
+**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing · 4 team management (invitations, roles, anti-escalation).
 Phase 0 done (commit 159b94e).
 
 ## User decisions (2026-10-15)
@@ -16,7 +16,10 @@ Phase 0 done (commit 159b94e).
 |---|---|
 | `pnpm build` / `pnpm typecheck` / `pnpm exec oxlint apps packages` | all ok, lint exit 0 |
 | `pnpm test` | money 15, config 5, validation 5, api 15 → **40 passed** |
-| `pnpm test:integration` | database **14 passed**, api **48 passed** (auth 20 + org 12 + catalog 16; Postgres 18, runtime role `onepos_app`) |
+| `pnpm test` | **41 passed** (config now 6) |
+| `pnpm test:integration` | database **14 passed**, api **62 passed** (auth 20 + org 12 + catalog 16 + team 14; Postgres 18, runtime role `onepos_app`) |
+
+Team coverage (apps/api/test/integration/team.test.ts): invite → accept as new user (signed in, scoped grants) / as existing user (email must match); tokens one-time; duplicate pending / already-member refused; revoked & expired unusable; garbage token generic 404; branch admin invites only within own branch; admin can't mint owners or create roles with permissions they lack; system roles read-only; admin can't suspend/demote owner; cashier can't invite; role change/suspend/reactivate/remove take effect on next request; last active owner protected (LAST_OWNER); custom role lifecycle; cross-tenant team attacks all 404.
 
 Catalog coverage (apps/api/test/integration/catalog.test.ts): signup seeds UoMs/tax categories/default price list; product+variants+barcodes+prices; search by name/SKU/barcode with LIKE-wildcard escaping; cursor pagination; SKU/barcode uniqueness + reuse after archive; weighted/service/last-variant rules; money must be decimal strings ≤ 4 dp; acyclic category tree; lookup by barcode/SKU with branch price list override and default fallback; unpriced → null; scheduled prices + backdating refused; price history append-only (grant + trigger); single default list; cashier read-only; cross-tenant read/modify/extend/price/lookup/reference attempts all 404; codes unique per tenant only.
 
@@ -36,5 +39,5 @@ API integration coverage (apps/api/test/integration/auth.test.ts): permission ca
 - Node's `crypto.argon2` is used (Node ≥ 24.7); still marked experimental by Node — revisit if it changes.
 
 ## Next task (start here)
-Phase 1 slice 4 — **team management**: invitations (`member_invitations`: email, role assignments with scopes, hashed one-time token, expiry; accept flow creates user if needed + membership; email sending behind a `Mailer` port with a `DevMailer` that logs/stores — no real SMTP yet), role assignment/unassignment endpoints (`members.manage`; cannot remove the last owner; cannot grant a permission you don't hold — no privilege escalation), suspend/remove member, custom roles (`roles.manage`, permissions subset). Cross-tenant + escalation tests.
-Then slice 5: plans/subscriptions/entitlements guard + `idempotency_records` middleware + `outbox_events` & worker skeleton; slice 6: admin-web (Next.js + Tailwind + shadcn) for onboarding, org, catalog, team.
+Phase 1 slice 5 — **platform reliability & entitlements**: `plans` / `subscriptions` / entitlement limits (e.g. max branches, registers, users; feature flags like `restaurant`) with a server-side entitlement check used by org/team services (limit reached → 403 ENTITLEMENT_REQUIRED; billing failure → grace → read-only, never data loss); `idempotency_records` + `Idempotency-Key` interceptor (fingerprint, replay, 422 on reuse with different payload, 409 in-progress); `outbox_events` written in-transaction + `apps/workers` skeleton claiming with `FOR UPDATE SKIP LOCKED`, retries/backoff/DEAD, tenant context from the row. Tests for each.
+Then slice 6: admin-web (Next.js + Tailwind + shadcn) for onboarding, org, catalog, team. Then Phase 1 exit review (cross-tenant suite completeness, docs).

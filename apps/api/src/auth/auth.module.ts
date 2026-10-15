@@ -18,6 +18,6 @@ import { TokenService } from './token.service.js';
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
-  exports: [TokenService],
+  exports: [TokenService, AuthService, PasswordService],
 })
 export class AuthModule {}

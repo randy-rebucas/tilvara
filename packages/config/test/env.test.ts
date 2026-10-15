@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EnvValidationError, loadServerEnv } from '../src/index.js';
+import { EnvValidationError, loadServerEnv, productionIssues } from '../src/index.js';
 
 const base = {
   NODE_ENV: 'development',
@@ -37,8 +37,14 @@ describe('loadServerEnv', () => {
     ).toThrow(/RATE_LIMITS_ENABLED/);
   });
 
-  it('accepts a real secret in production', () => {
-    const env = loadServerEnv({ ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'x'.repeat(48) });
-    expect(env.NODE_ENV).toBe('production');
+  it('refuses the dev mailer in production (no real provider exists yet)', () => {
+    expect(() => loadServerEnv({ ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'x'.repeat(48) })).toThrow(/MAILER_DRIVER/);
+  });
+
+  it('accepts a real secret with otherwise production-safe settings', () => {
+    const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
+    expect(productionIssues(env)).toEqual([
+      'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
+    ]);
   });
 });

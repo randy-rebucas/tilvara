@@ -12,6 +12,10 @@ export const serverEnvSchema = z.object({
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
   /** Comma-separated origins allowed by CORS (admin web, POS browser mode). */
   CORS_ORIGINS: z.string().default('http://127.0.0.1:3320,http://localhost:3320'),
+  /** Base URL of the admin web app, used in emailed links (invitations). */
+  APP_PUBLIC_URL: z.url().default('http://127.0.0.1:3320'),
+  /** Only 'dev' exists so far (stores mail in memory/logs). Refused in production until a real provider is added. */
+  MAILER_DRIVER: z.enum(['dev']).default('dev'),
   /** Test-only escape hatch; refused in production. */
   RATE_LIMITS_ENABLED: z
     .enum(['true', 'false'])
@@ -40,13 +44,21 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
   if (isProd(env)) {
-    if (!parsed.data.RATE_LIMITS_ENABLED) {
-      throw new EnvValidationError(['RATE_LIMITS_ENABLED: cannot be disabled in production']);
-    }
-    const secret = parsed.data.JWT_ACCESS_SECRET.toLowerCase();
-    if (DEV_SECRET_MARKERS.some((m) => secret.includes(m))) {
-      throw new EnvValidationError(['JWT_ACCESS_SECRET: development placeholder secret used in production']);
-    }
+    const issues = productionIssues(parsed.data);
+    if (issues.length > 0) throw new EnvValidationError(issues);
   }
   return parsed.data;
+}
+
+/** Settings that are fine for development but must never reach production. */
+export function productionIssues(cfg: ServerEnv): string[] {
+  const issues: string[] = [];
+  if (DEV_SECRET_MARKERS.some((m) => cfg.JWT_ACCESS_SECRET.toLowerCase().includes(m))) {
+    issues.push('JWT_ACCESS_SECRET: development placeholder secret used in production');
+  }
+  if (!cfg.RATE_LIMITS_ENABLED) issues.push('RATE_LIMITS_ENABLED: cannot be disabled in production');
+  if (cfg.MAILER_DRIVER === 'dev') {
+    issues.push('MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)');
+  }
+  return issues;
 }
