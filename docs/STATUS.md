@@ -3,7 +3,7 @@
 _Last updated: 2026-10-16 (session 3)_
 
 ## Current phase
-**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`) and 3 (payments + receipts) done and verified this session.
+**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`), 3 (payments + receipts, `67486d7`) and 4 (voids/returns) done and verified this session.
 Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
 
 ### Phase 2 slice 1 — tax foundation (session 3)
@@ -26,12 +26,17 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 - `PAYMENT_PROVIDER=dev` only (production boot refuses it); `PAYMENT_TIMEOUT_MS` (default 15 s).
 - Tests: 9 payment cases (split tender reconciles, card-only moves no cash, retry → same intent and 1 charge, decline, lost response → UNKNOWN → reconcile SUCCEEDED with 1 charge, never-received → FAILED, cancel, mismatch/overpayment/double tender leave no sale, owner-only + key required); receipt unit tests (never "official receipt", TIN with branch code, local time, VAT/non-VAT breakdowns, SC block) + API check; isolation +4 id routes, +3 smuggling cases, intents/events in the DB sweep.
 
+### Phase 2 slice 4 — voids and returns (session 3)
+- ADR-0011. Migrations 0020/0021: `sale_returns`, `sale_return_lines` (forced RLS, append-only, open-session trigger, within-sold trigger); `cash_movements` gains REFUND (negative, linked to the return); `stock_movements` gains RETURN (positive, linked to the return line) with direction checks.
+- API: `POST /v1/sales/:id/returns` (Idempotency-Key required; VOID or RETURN), `GET /v1/sales/:id/returns`; sale view shows `returnedQuantity` per line.
+- Tests (7): exact three-way proration + restock + drawer back to float; DAMAGED not restocked; SC return refunds what was paid; void once, only in its session; cashier forbidden, stale refund, insufficient drawer cash (nothing written); 4 concurrent returns of the last unit → exactly one; replayed void; append-only. Isolation: +2 id routes, +1 smuggling case, return tables in the DB sweep.
+
 ## Verified in session 3 (commands actually run, all green)
 | Command | Result |
 |---|---|
 | `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
 | `pnpm test` | **87 passed** (tax 27, api 22, money 15, config 6, validation 5, observability 5, workers 2) |
-| `pnpm test:integration` | **165 passed** — database 21, api **136** (sales+payments 28, tax 18, isolation 9, …), workers 8 |
+| `pnpm test:integration` | **172 passed** — database 21, api **143** (sales+payments+returns 35, tax 18, isolation 9, …), workers 8 |
 | `pnpm test:e2e:web` | **19/19** against live API + `next start` |
 | dev DB | migrated 0014/0015; backfill verified |
 
@@ -64,5 +69,5 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 slice 4 — voids, returns and refunds.** Append-only `sale_returns` + `sale_return_lines` referencing original sale lines (never edit the sale): quantity ≤ sold − already returned (row-locked), refund amounts prorated from the line's own snapshot (tax buckets reversed proportionally, statutory discount included), disposition per line (RESTOCK → +qty stock movement; DAMAGED/DISPOSED → none), refund tender: cash from the current open session (drawer movement REFUND, negative) or back to the original payment intent (provider refund outside the tx, same intent/reconcile pattern). Same-session void = full return with reason, `sales.void`; returns need `sales.refund` (manager approval for cashiers). Then slice 5: basic reports reconciling to source rows (sales summary, by product/cashier/tender, refunds/voids, tax summary, SC/PWD book); slice 6: POS browser checkout UI.
-Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter (needs sandbox keys).
+**Phase 2 slice 5 — basic reports** (each must reconcile to source rows, tested): sales summary per branch/day (gross, discounts, statutory, VAT buckets, net of returns), by product, by cashier, by tender method, returns/voids, tax summary (VATable / VAT / exempt / zero-rated / percentage-tax sales), SC/PWD sales book (name, ID, gross, discount, sale/return numbers — RR 5-2017 §5.9), cashier-session (X-reading-like) report. Read-only, `reports.read` with branch scope; date ranges in the branch timezone. Then slice 6: POS browser checkout UI (`apps/pos-desktop` browser mode) and the Phase 2 exit review ("complete retail transactions reconcile under normal, retry, and failure conditions").
+Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds (needs sandbox keys).

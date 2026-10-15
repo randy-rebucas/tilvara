@@ -4,6 +4,7 @@ import {
   cashierSessionListQuerySchema,
   cashMovementSchema,
   closeCashierSessionSchema,
+  createSaleReturnSchema,
   createSaleSchema,
   idParamSchema,
   openCashierSessionSchema,
@@ -15,6 +16,7 @@ import {
   type CashMovementInput,
   type CloseCashierSessionInput,
   type CreateSaleInput,
+  type CreateSaleReturnInput,
   type OpenCashierSessionInput,
   type SaleListQuery,
   type StockAdjustmentInput,
@@ -26,6 +28,7 @@ import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { CashService } from './cash.service.js';
 import { SalesService } from './sales.service.js';
 import { StockService } from './stock.service.js';
+import { ReturnsService } from './returns.service.js';
 
 const id = new ZodPipe(idParamSchema);
 
@@ -37,6 +40,7 @@ export class SalesController {
     @Inject(CashService) private readonly cash: CashService,
     @Inject(SalesService) private readonly sales: SalesService,
     @Inject(StockService) private readonly stock: StockService,
+    @Inject(ReturnsService) private readonly returns: ReturnsService,
   ) {}
 
   // cashier sessions
@@ -90,6 +94,18 @@ export class SalesController {
   @Get('sales/:id')
   getSale(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
     return this.sales.get(auth, saleId);
+  }
+
+/** Void or return; refunds cash from an open drawer. Idempotency-Key is mandatory. */
+  @Idempotent({ required: true })
+  @Post('sales/:id/returns')
+  createReturn(@Auth() auth: AuthContext, @Param('id', id) saleId: string, @Body(new ZodPipe(createSaleReturnSchema)) body: CreateSaleReturnInput) {
+    return this.returns.create(auth, saleId, body);
+  }
+
+  @Get('sales/:id/returns')
+  listReturns(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
+    return this.returns.list(auth, saleId);
   }
 
   @Get('sales/:id/receipt')

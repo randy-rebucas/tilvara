@@ -31,6 +31,7 @@ import { emitEvent } from '../outbox/outbox.js';
 import { TaxService, unprocessable } from '../tax/tax.service.js';
 import { loadSession } from './cash.service.js';
 import { buildReceipt } from './receipt.js';
+import { nextNumber } from '../common/sequence.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -39,15 +40,6 @@ const MONEY_FIELDS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
   'vatExemptSales', 'zeroRatedSales', 'percentageTaxSales', 'amountDue',
 ] as const;
-
-/** Next value of a gapless per-scope counter, under the counter row's lock (rolls back with the tx). */
-async function nextNumber(db: Database, tenantId: string, scopeId: string, name: string): Promise<number> {
-  const { rows } = await db.execute<{ value: string }>(sql`
-    INSERT INTO sequence_counters (tenant_id, scope_id, name, next_value) VALUES (${tenantId}, ${scopeId}, ${name}, 2)
-    ON CONFLICT (tenant_id, scope_id, name) DO UPDATE SET next_value = sequence_counters.next_value + 1
-    RETURNING (next_value - 1)::text AS value`);
-  return Number(rows[0]!.value);
-}
 
 @Injectable()
 export class SalesService extends TenantService {
@@ -328,6 +320,9 @@ export class SalesService extends TenantService {
   }
 
   private async view(db: Database, s: SaleRow) {
+    const { rows: returned } = await db.execute<{ sale_line_id: string; quantity: string }>(
+      sql`SELECT rl.sale_line_id, sum(rl.quantity)::text AS quantity FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id WHERE r.sale_id = ${s.id} GROUP BY 1`,
+    );
     const [lines, tenders, beneficiaries] = await Promise.all([
       db.select().from(saleLines).where(eq(saleLines.saleId, s.id)).orderBy(saleLines.lineNo),
       db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)),
@@ -336,7 +331,8 @@ export class SalesService extends TenantService {
     return {
       ...this.summary(s),
       lines: lines.map((l) => {
-        const out: Record<string, unknown> = { ...l, quantity: toDec(l.quantity).toString(), unitPrice: toDec(l.unitPrice).toString() };
+        const back = returned.find((r) => r.sale_line_id === l.id)?.quantity ?? '0';
+        const out: Record<string, unknown> = { ...l, quantity: toDec(l.quantity).toString(), unitPrice: toDec(l.unitPrice).toString(), returnedQuantity: toDec(back).toString() };
         for (const k of MONEY_FIELDS) out[k] = fixed(l[k]);
         return out;
       }),

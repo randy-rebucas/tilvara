@@ -466,3 +466,128 @@ describe('non-cash payments (ADR-0010)', () => {
       .expect(400);
   });
 });
+
+describe('voids and returns (ADR-0011)', () => {
+  const ret = (auth: Auth, saleId: string, body: Record<string, unknown>, key = randomUUID()) =>
+    http().post(`/v1/sales/${saleId}/returns`).set(auth).set('Idempotency-Key', key).send(body);
+  const balance = async (s: Store, variantId: string) =>
+    (await http().get('/v1/stock/balances').query({ branchId: s.branchId, variantId }).set(s.manager).expect(200)).body.data[0]?.quantity;
+
+  it('three partial returns of an uneven line add up exactly to the sale, restock and refund from the drawer', async () => {
+    const s = await store('ret-exact');
+    const vat = ((await http().get('/v1/tax-categories').set(s.auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
+    const pc = ((await http().get('/v1/uoms').set(s.auth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
+    const created = await http()
+      .post('/v1/products')
+      .set(s.auth)
+      .send({ name: 'Pancit Canton', taxCategoryId: vat, uomId: pc, variants: [{ sku: uniq('PC'), price: '16.50' }] })
+      .expect(201);
+    const noodles = created.body.variants[0].id as string;
+    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: noodles, quantity: '10' }] }).expect(201);
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: noodles, quantity: '3' }], '50.00')).expect(201)).body;
+    expect(sold).toMatchObject({ amountDue: '49.50', vatableSales: '44.20', vatAmount: '5.30' });
+    const lineId = sold.lines[0].id;
+    const returns = [];
+    for (let i = 0; i < 3; i++) {
+      returns.push((await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Expired', lines: [{ saleLineId: lineId, quantity: '1', disposition: 'RESTOCK' }] }).expect(201)).body);
+    }
+    expect(returns.map((r) => [r.returnNumber, r.vatableSales, r.vatAmount, r.amountDue])).toEqual([
+      [1, '14.73', '1.77', '16.50'],
+      [2, '14.73', '1.77', '16.50'],
+      [3, '14.74', '1.76', '16.50'],
+    ]);
+    const over = await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: [{ saleLineId: lineId, quantity: '1', disposition: 'RESTOCK' }] }).expect(422);
+    expect(over.body.error).toMatchObject({ code: 'RETURN_EXCEEDS_SOLD', details: { remaining: '0' } });
+    expect(await balance(s, noodles)).toBe('10');
+    expect(await count(s, `SELECT sum(amount) AS n FROM cash_movements WHERE type = 'REFUND'`)).toBe(-49.5);
+    expect((await http().get(`/v1/cashier-sessions/${session.id}`).set(s.cashier)).body.expectedCash).toBe('1000.00');
+    expect((await http().get(`/v1/sales/${sold.id}`).set(s.cashier)).body.lines[0].returnedQuantity).toBe('3');
+    expect((await http().get(`/v1/sales/${sold.id}/returns`).set(s.cashier).expect(200)).body.data).toHaveLength(3);
+  });
+
+  it('damaged goods are refunded but not restocked', async () => {
+    const s = await store('ret-damaged');
+    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
+    await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Dented can', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201);
+    expect(await balance(s, s.cola)).toBe('3');
+  });
+
+  it('returning an SC line refunds what the beneficiary paid (discount and VAT exemption carried over)', async () => {
+    const s = await store('ret-sc');
+    const session = await openSession(s);
+    const sold = (await post(
+      s.cashier,
+      sale(session.id, [{ variantId: s.cola, quantity: '2', statutory: { scheme: 'SC', beneficiary: 'lolo' } }], '50.00', {
+        beneficiaries: [{ ref: 'lolo', scheme: 'SC', name: 'Jose Rizal', idNumber: 'OSCA-1861' }],
+      }),
+    ).expect(201)).body;
+    expect(sold.amountDue).toBe('32.00');
+    const r = (await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Wrong flavour', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }], expectedRefund: '16.00' }).expect(201)).body;
+    expect(r).toMatchObject({ amountDue: '16.00', vatExemptSales: '20.00', statutoryDiscount: '4.00', vatAmount: '0.00' });
+  });
+
+  it('a void reverses the whole sale in its own session, once', async () => {
+    const s = await store('ret-void');
+    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }, { variantId: s.wrap, quantity: '1' }], '100.00')).expect(201)).body;
+    const v = (await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'Customer left' }).expect(201)).body;
+    expect(v).toMatchObject({ kind: 'VOID', amountDue: sold.amountDue, gross: sold.gross });
+    expect(v.lines).toHaveLength(2);
+    expect(await balance(s, s.cola)).toBe('5');
+    expect((await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'again' }).expect(409)).body.error.code).toBe('ALREADY_RETURNED');
+
+    const other = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    await http().post(`/v1/cashier-sessions/${session.id}/close`).set(s.cashier).send({ countedCash: '1022.40' }).expect(200);
+    const next = await openSession(s);
+    const late = await ret(s.manager, other.id, { cashierSessionId: next.id, kind: 'VOID', reason: 'too late' }).expect(422);
+    expect(late.body.error.code).toBe('VOID_OUTSIDE_SESSION');
+  });
+
+  it('cashiers need a manager; refunds need cash in the drawer; the refund the cashier saw must match', async () => {
+    const s = await store('ret-rules');
+    const session = await openSession(s, s.cashier, '0');
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '22.40')).expect(201)).body;
+    const line = [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }];
+    await ret(s.cashier, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: line }).expect(403);
+    await ret(s.cashier, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'x' }).expect(403);
+    expect((await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: line, expectedRefund: '20.00' }).expect(409)).body.error).toMatchObject({ code: 'REFUND_CHANGED', details: { refund: '22.40' } });
+    await http().post(`/v1/cashier-sessions/${session.id}/movements`).set(s.cashier).send({ type: 'PAY_OUT', amount: '10.00', reason: 'Supplies' }).expect(201);
+    const short = await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: line }).expect(422);
+    expect(short.body.error).toMatchObject({ code: 'INSUFFICIENT_DRAWER_CASH', details: { available: '12.40' } });
+    expect(await count(s, `SELECT count(*) AS n FROM sale_returns`)).toBe(0);
+  });
+
+  it('concurrent returns of the last unit: exactly one succeeds; a retried return is replayed', async () => {
+    const s = await store('ret-race');
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    const body = { cashierSessionId: session.id, kind: 'RETURN', reason: 'race', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] };
+    const res = await Promise.all(Array.from({ length: 4 }, () => ret(s.manager, sold.id, body)));
+    expect(res.map((r) => r.status).sort()).toEqual([201, 422, 422, 422]);
+    const winner = res.find((r) => r.status === 201)!;
+    const key = randomUUID();
+    const s2 = await store('ret-replay');
+    const sess2 = await openSession(s2);
+    const sold2 = (await post(s2.cashier, sale(sess2.id, [{ variantId: s2.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    const body2 = { cashierSessionId: sess2.id, kind: 'VOID', reason: 'retry' };
+    const a = await ret(s2.manager, sold2.id, body2, key).expect(201);
+    const b = await ret(s2.manager, sold2.id, body2, key).expect(201);
+    expect([b.body.id, b.headers['idempotent-replayed']]).toEqual([a.body.id, 'true']);
+    expect(winner.body.returnNumber).toBe(1);
+  });
+
+  it('return documents are evidence: never edited or deleted', async () => {
+    const s = await store('ret-immut');
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'x' }).expect(201);
+    for (const q of ['UPDATE sale_returns SET reason = \'edited\'', 'DELETE FROM sale_return_lines']) {
+      const err = await asOwnerInTenant(owner, s.t.tenantId, (c) => c.query(q)).then(() => null, (e: Error) => e.message);
+      expect(err).toMatch(/append-only|not allowed|forbidden/i);
+    }
+  });
+});

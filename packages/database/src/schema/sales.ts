@@ -62,7 +62,7 @@ export const cashierSessions = pgTable(
   ],
 );
 
-export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT'] as const;
+export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND'] as const;
 export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
 
 /** Append-only drawer ledger; expected cash = Σ amount (signed: + into the drawer). */
@@ -76,18 +76,22 @@ export const cashMovements = pgTable(
     amount: money('amount').notNull(),
     reason: text('reason'),
     saleId: uuid('sale_id'),
+    saleReturnId: uuid('sale_return_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('cash_movements_tenant_id_id_unique').on(t.tenantId, t.id),
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
+    // Declared later in this file; resolved lazily.
+    foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
     index('cash_movements_session_idx').on(t.tenantId, t.cashierSessionId),
-    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT')`),
+    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND')`),
     check(
       'cash_movements_sign_check',
-      sql`(${t.type} = 'PAY_OUT' AND ${t.amount} < 0) OR (${t.type} IN ('PAY_IN') AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
+      sql`(${t.type} IN ('PAY_OUT','REFUND') AND ${t.amount} < 0) OR (${t.type} IN ('PAY_IN') AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
     ),
+    check('cash_movements_refund_link', sql`(${t.type} = 'REFUND') = (${t.saleReturnId} IS NOT NULL)`),
     check('cash_movements_reason_check', sql`${t.type} NOT IN ('PAY_IN','PAY_OUT') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],
 );
@@ -358,9 +362,75 @@ export const saleTenders = pgTable(
   ],
 );
 
+// ------------------------------------------------------------------ returns (ADR-0011)
+
+/**
+ * A void or (partial) return of a completed sale. Append-only; the sale itself is never edited.
+ * Amounts are positive and mean "given back".
+ */
+export const saleReturns = pgTable(
+  'sale_returns',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    saleId: uuid('sale_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    registerId: uuid('register_id').notNull(),
+    /** Session whose drawer paid the refund. */
+    cashierSessionId: uuid('cashier_session_id').notNull(),
+    kind: text('kind').notNull(),
+    returnNumber: bigint('return_number', { mode: 'number' }).notNull(),
+    reason: text('reason').notNull(),
+    processedBy: uuid('processed_by').notNull(),
+    currency: char('currency', { length: 3 }).notNull(),
+    ...taxBuckets(),
+    refundMethod: text('refund_method').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('sale_returns_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('sale_returns_register_number_unique').on(t.tenantId, t.registerId, t.returnNumber),
+    foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
+    index('sale_returns_sale_idx').on(t.tenantId, t.saleId),
+    check('sale_returns_kind_check', sql`${t.kind} IN ('VOID','RETURN')`),
+    check('sale_returns_reason_check', sql`length(trim(${t.reason})) > 0`),
+    check('sale_returns_refund_method_check', sql`${t.refundMethod} IN ('CASH')`),
+    check(
+      'sale_returns_buckets_check',
+      sql`${t.amountDue} = ${t.vatableSales} + ${t.vatAmount} + ${t.vatExemptSales} + ${t.zeroRatedSales} + ${t.percentageTaxSales} - ${t.statutoryDiscount}`,
+    ),
+  ],
+);
+
+export const saleReturnLines = pgTable(
+  'sale_return_lines',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    saleReturnId: uuid('sale_return_id').notNull(),
+    saleLineId: uuid('sale_line_id').notNull(),
+    quantity: qty('quantity').notNull(),
+    disposition: text('disposition').notNull(),
+    ...taxBuckets(),
+  },
+  (t) => [
+    unique('sale_return_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('sale_return_lines_once_per_return').on(t.tenantId, t.saleReturnId, t.saleLineId),
+    foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleLineId], foreignColumns: [saleLines.tenantId, saleLines.id] }),
+    index('sale_return_lines_line_idx').on(t.tenantId, t.saleLineId),
+    check('sale_return_lines_quantity_positive', sql`${t.quantity} > 0`),
+    check('sale_return_lines_disposition_check', sql`${t.disposition} IN ('RESTOCK','DAMAGED')`),
+  ],
+);
+
 // ------------------------------------------------------------------ stock
 
-export const STOCK_MOVEMENT_TYPES = ['SALE', 'ADJUSTMENT'] as const;
+export const STOCK_MOVEMENT_TYPES = ['SALE', 'ADJUSTMENT', 'RETURN'] as const;
 
 /** Append-only inventory ledger; stock_balances is derived from it by trigger. */
 export const stockMovements = pgTable(
@@ -375,6 +445,7 @@ export const stockMovements = pgTable(
     reason: text('reason'),
     saleId: uuid('sale_id'),
     saleLineId: uuid('sale_line_id'),
+    saleReturnLineId: uuid('sale_return_line_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -384,10 +455,13 @@ export const stockMovements = pgTable(
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     foreignKey({ columns: [t.tenantId, t.saleLineId], foreignColumns: [saleLines.tenantId, saleLines.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleReturnLineId], foreignColumns: [saleReturnLines.tenantId, saleReturnLines.id] }),
     index('stock_movements_item_idx').on(t.tenantId, t.branchId, t.variantId, t.createdAt),
-    check('stock_movements_type_check', sql`${t.type} IN ('SALE','ADJUSTMENT')`),
+    check('stock_movements_type_check', sql`${t.type} IN ('SALE','ADJUSTMENT','RETURN')`),
     check('stock_movements_nonzero', sql`${t.quantity} <> 0`),
-    check('stock_movements_sale_link', sql`(${t.type} = 'SALE') = (${t.saleLineId} IS NOT NULL AND ${t.saleId} IS NOT NULL)`),
+    check('stock_movements_sale_link', sql`(${t.type} IN ('SALE','RETURN')) = (${t.saleLineId} IS NOT NULL AND ${t.saleId} IS NOT NULL)`),
+    check('stock_movements_return_link', sql`(${t.type} = 'RETURN') = (${t.saleReturnLineId} IS NOT NULL)`),
+    check('stock_movements_direction', sql`(${t.type} = 'SALE' AND ${t.quantity} < 0) OR (${t.type} = 'RETURN' AND ${t.quantity} > 0) OR ${t.type} = 'ADJUSTMENT'`),
     check('stock_movements_reason', sql`${t.type} <> 'ADJUSTMENT' OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],
 );

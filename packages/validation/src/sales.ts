@@ -116,6 +116,41 @@ export const createPaymentIntentSchema = z.object({
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
+/** Void (full reversal in the original session) or return of some quantities, refunded in cash. */
+export const createSaleReturnSchema = z
+  .object({
+    /** Open session whose drawer pays the refund (same branch as the sale). */
+    cashierSessionId: z.uuid(),
+    kind: z.enum(['VOID', 'RETURN']),
+    reason: z.string().trim().min(1).max(200),
+    lines: z
+      .array(
+        z.object({
+          saleLineId: z.uuid(),
+          quantity: z
+            .string()
+            .trim()
+            .regex(/^\d{1,14}(\.\d{1,4})?$/, 'Use a plain decimal string such as "1"')
+            .refine((v) => Number(v) > 0, 'Quantity must be greater than zero'),
+          disposition: z.enum(['RESTOCK', 'DAMAGED']),
+        }),
+      )
+      .max(200)
+      .optional(),
+    /** The refund the cashier saw; refused if the server computes a different amount. */
+    expectedRefund: amountSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind === 'VOID' && v.lines) ctx.addIssue({ code: 'custom', path: ['lines'], message: 'A void reverses the whole sale; do not list lines' });
+    if (v.kind === 'RETURN' && !v.lines?.length) ctx.addIssue({ code: 'custom', path: ['lines'], message: 'List the lines being returned' });
+    const ids = new Set<string>();
+    for (const [i, l] of (v.lines ?? []).entries()) {
+      if (ids.has(l.saleLineId)) ctx.addIssue({ code: 'custom', path: ['lines', i, 'saleLineId'], message: 'Each sale line once per return' });
+      ids.add(l.saleLineId);
+    }
+  });
+export type CreateSaleReturnInput = z.infer<typeof createSaleReturnSchema>;
+
 export const saleListQuerySchema = z.object({
   cashierSessionId: z.uuid().optional(),
   registerId: z.uuid().optional(),
