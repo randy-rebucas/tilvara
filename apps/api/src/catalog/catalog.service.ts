@@ -30,6 +30,7 @@ import type {
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
+import { emitEvent } from '../outbox/outbox.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 
 type ProductRow = typeof products.$inferSelect;
@@ -168,6 +169,12 @@ export class CatalogService extends TenantService {
         .returning();
       for (const v of input.variants) await this.insertVariant(db, auth, product!.id, v);
       await this.audit(db, auth, 'product.created', 'product', product!.id, { variants: input.variants.length });
+      await emitEvent(db, {
+        tenantId: tenantOf(auth).tenantId,
+        topic: 'catalog.product_created',
+        payload: { productId: product!.id },
+        correlationId: auth.correlationId,
+      });
       return this.productView(db, product!.id);
     });
   }

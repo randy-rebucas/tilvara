@@ -19,6 +19,9 @@
 - `pnpm build` · `pnpm typecheck` · `pnpm lint` · `pnpm test` (unit) · `pnpm test:integration` (needs db:up; migrates `onepos_test` automatically)
 - `pnpm db:generate` (drizzle-kit DDL) · custom SQL: `pnpm --filter @1pos/database exec drizzle-kit generate --custom --name=<name>` · `pnpm db:migrate` (needs `pnpm build` first)
 - `pnpm dev:api` → http://127.0.0.1:4320/v1/health/ready
+- Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
+- New tenant-data writes go through `TenantService.mutate()` (subscription write check + idempotency + 409 mapping); emit side effects with `emitEvent()` in the same tx, never call external services inside a DB transaction.
+- Drizzle `db.execute()` returns timestamps as strings (raw `client.query` returns Dates).
 
 ## Environment gotchas (this Windows machine)
 - npm/pnpm network is very slow (installs take 10–25 min) — run `pnpm install` in the background.

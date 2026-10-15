@@ -32,6 +32,28 @@ export class EnvValidationError extends Error {
   }
 }
 
+export const workerEnvSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  DATABASE_URL: z.url(),
+  WORKER_ID: z.string().min(1).max(100).optional(),
+  OUTBOX_POLL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
+  OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
+  OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
+  MAILER_DRIVER: z.enum(['dev']).default('dev'),
+});
+export type WorkerEnv = z.infer<typeof workerEnvSchema>;
+
+export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
+  const parsed = workerEnvSchema.safeParse(env);
+  if (!parsed.success) {
+    throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
+  }
+  if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') {
+    throw new EnvValidationError(['MAILER_DRIVER: the dev mailer cannot be used in production']);
+  }
+  return parsed.data;
+}
+
 const DEV_SECRET_MARKERS = ['dev-only', 'change-me', 'changeme'];
 
 /**

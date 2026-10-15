@@ -6,6 +6,7 @@ import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { hasPermission, type ResourceScope } from '../auth/authorization.js';
 import { assertWritable } from '../billing/entitlements.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
+import { claimIdempotency, completeIdempotency } from '../infrastructure/idempotency.js';
 import type { TenantDb } from '../infrastructure/tenant-db.service.js';
 
 export const notFound = (what: string) => new AppError('NOT_FOUND', `${what} not found`, HttpStatus.NOT_FOUND);
@@ -53,7 +54,10 @@ export abstract class TenantService {
     try {
       return await this.tenantDb.run(auth, async (db) => {
         await assertWritable(db);
-        return fn(db);
+        const idem = await claimIdempotency(db);
+        const result = await fn(db);
+        if (idem) await completeIdempotency(db, idem, result);
+        return result;
       });
     } catch (e) {
       const pg = pgError(e);

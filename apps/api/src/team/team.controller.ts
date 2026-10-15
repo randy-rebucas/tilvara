@@ -16,6 +16,7 @@ import {
 } from '@1pos/validation';
 import { Auth, Public, RequireTenant, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
+import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { TeamService } from './team.service.js';
 
@@ -27,6 +28,7 @@ export class TeamController {
 
   // invitations
   @RequireTenant()
+  @Idempotent()
   @Post('invitations')
   invite(@Auth() auth: AuthContext, @Body(new ZodPipe(createInvitationSchema)) body: CreateInvitationInput) {
     return this.team.createInvitation(auth, body);

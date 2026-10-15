@@ -7,9 +7,12 @@ import { CatalogModule } from './catalog/catalog.module.js';
 import { NotificationsModule } from './notifications/notifications.module.js';
 import { TeamModule } from './team/team.module.js';
 import { BillingController } from './billing/billing.controller.js';
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { IdempotencyInterceptor } from './infrastructure/idempotency.js';
 
 @Module({
   imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule],
   controllers: [BillingController],
+  providers: [{ provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor }],
 })
 export class AppModule {}

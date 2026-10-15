@@ -32,6 +32,7 @@ import {
   type VariantInput,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { CatalogService } from './catalog.service.js';
 import { PricingService } from './pricing.service.js';
@@ -73,6 +74,7 @@ export class CatalogController {
     return { data: await this.catalog.listCategories(auth) };
   }
 
+  @Idempotent()
   @Post('categories')
   createCategory(@Auth() auth: AuthContext, @Body(new ZodPipe(createCategorySchema)) body: CreateCategoryInput) {
     return this.catalog.createCategory(auth, body);
@@ -95,6 +97,7 @@ export class CatalogController {
     return this.catalog.listProducts(auth, query);
   }
 
+  @Idempotent()
   @Post('products')
   createProduct(@Auth() auth: AuthContext, @Body(new ZodPipe(createProductSchema)) body: CreateProductInput) {
     return this.catalog.createProduct(auth, body);
@@ -116,6 +119,7 @@ export class CatalogController {
     return this.catalog.archiveProduct(auth, productId);
   }
 
+  @Idempotent()
   @Post('products/:id/variants')
   addVariant(@Auth() auth: AuthContext, @Param('id', id) productId: string, @Body(new ZodPipe(addVariantSchema)) body: VariantInput) {
     return this.catalog.addVariant(auth, productId, body);
@@ -160,6 +164,7 @@ export class CatalogController {
     return { data: await this.pricing.listPriceLists(auth) };
   }
 
+  @Idempotent()
   @Post('price-lists')
   createPriceList(@Auth() auth: AuthContext, @Body(new ZodPipe(createPriceListSchema)) body: CreatePriceListInput) {
     return this.pricing.createPriceList(auth, body);
@@ -175,6 +180,7 @@ export class CatalogController {
     return this.pricing.currentPrices(auth, listId);
   }
 
+  @Idempotent()
   @Post('price-lists/:id/prices')
   setPrices(@Auth() auth: AuthContext, @Param('id', id) listId: string, @Body(new ZodPipe(setPricesSchema)) body: SetPricesInput) {
     return this.pricing.setPrices(auth, listId, body);

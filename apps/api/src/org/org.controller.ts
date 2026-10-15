@@ -19,6 +19,7 @@ import {
   type UpdateRegisterInput,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { OrgService } from './org.service.js';
 
@@ -38,6 +39,7 @@ export class OrgController {
     return { data: await this.org.listLegalEntities(auth) };
   }
 
+  @Idempotent()
   @Post('legal-entities')
   createLegalEntity(@Auth() auth: AuthContext, @Body(new ZodPipe(createLegalEntitySchema)) body: CreateLegalEntityInput) {
     return this.org.createLegalEntity(auth, body);
@@ -63,6 +65,7 @@ export class OrgController {
     return { data: await this.org.listBranches(auth) };
   }
 
+  @Idempotent()
   @Post('branches')
   createBranch(@Auth() auth: AuthContext, @Body(new ZodPipe(createBranchSchema)) body: CreateBranchInput) {
     return this.org.createBranch(auth, body);
@@ -84,6 +87,7 @@ export class OrgController {
     return { data: await this.org.listRegisters(auth) };
   }
 
+  @Idempotent()
   @Post('registers')
   createRegister(@Auth() auth: AuthContext, @Body(new ZodPipe(createRegisterSchema)) body: CreateRegisterInput) {
     return this.org.createRegister(auth, body);

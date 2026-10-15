@@ -3,7 +3,7 @@
 _Last updated: 2026-10-15 (session 1)_
 
 ## Current phase
-**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing · 4 team management (invitations, roles, anti-escalation).
+**Phase 1 — Platform foundation: IN PROGRESS.** Slices done and verified: 1 identity/onboarding/RBAC read side · 2 organization (legal entities, branches, registers, terminals) · 3 catalog & pricing · 4 team management (invitations, roles, anti-escalation) · 5 entitlements, idempotency, outbox + worker.
 Phase 0 done (commit 159b94e).
 
 ## User decisions (2026-10-15)
@@ -16,8 +16,11 @@ Phase 0 done (commit 159b94e).
 |---|---|
 | `pnpm build` / `pnpm typecheck` / `pnpm exec oxlint apps packages` | all ok, lint exit 0 |
 | `pnpm test` | money 15, config 5, validation 5, api 15 → **40 passed** |
-| `pnpm test` | **41 passed** (config now 6) |
-| `pnpm test:integration` | database **14 passed**, api **62 passed** (auth 20 + org 12 + catalog 16 + team 14; Postgres 18, runtime role `onepos_app`) |
+| `pnpm test` | **43 passed** (money 15, config 6, validation 5, api 15, workers 2) |
+| `pnpm test:integration` | database **14**, api **77** (auth 20 + org 12 + catalog 16 + team 14 + billing 8 + reliability 7), workers **8** → **99 passed** (Postgres 18, runtime role `onepos_app`) |
+| worker binary | `node dist/main.js` boots against dev DB (`worker started`) |
+
+Billing/reliability/worker coverage: trial → full access; lapsed trial / past-due after grace / canceled → 402 read-only with data still readable; tenants can't change subscriptions (grants); plan caps incl. 6 parallel creations vs cap 2 → exactly 2; seat cap counts pending invites. Idempotent replay (same body, `Idempotent-Replayed`), 5 concurrent duplicates → 1 creation, key reuse with other payload/user → 422, failed attempts not recorded, keys tenant-scoped. Outbox events written atomically (none on rollback); worker delivers once per event in the event tenant's RLS context, backoff → DEAD, expired lease reclaimed and late ack refused, 3 competing workers never double-process, cross-tenant payload can't leak (RLS).
 
 Team coverage (apps/api/test/integration/team.test.ts): invite → accept as new user (signed in, scoped grants) / as existing user (email must match); tokens one-time; duplicate pending / already-member refused; revoked & expired unusable; garbage token generic 404; branch admin invites only within own branch; admin can't mint owners or create roles with permissions they lack; system roles read-only; admin can't suspend/demote owner; cashier can't invite; role change/suspend/reactivate/remove take effect on next request; last active owner protected (LAST_OWNER); custom role lifecycle; cross-tenant team attacks all 404.
 
@@ -39,5 +42,5 @@ API integration coverage (apps/api/test/integration/auth.test.ts): permission ca
 - Node's `crypto.argon2` is used (Node ≥ 24.7); still marked experimental by Node — revisit if it changes.
 
 ## Next task (start here)
-Phase 1 slice 5 — **platform reliability & entitlements**: `plans` / `subscriptions` / entitlement limits (e.g. max branches, registers, users; feature flags like `restaurant`) with a server-side entitlement check used by org/team services (limit reached → 403 ENTITLEMENT_REQUIRED; billing failure → grace → read-only, never data loss); `idempotency_records` + `Idempotency-Key` interceptor (fingerprint, replay, 422 on reuse with different payload, 409 in-progress); `outbox_events` written in-transaction + `apps/workers` skeleton claiming with `FOR UPDATE SKIP LOCKED`, retries/backoff/DEAD, tenant context from the row. Tests for each.
-Then slice 6: admin-web (Next.js + Tailwind + shadcn) for onboarding, org, catalog, team. Then Phase 1 exit review (cross-tenant suite completeness, docs).
+Phase 1 slice 6 — **admin-web** (`apps/admin-web`, Next.js 16 App Router + Tailwind 4 + shadcn/ui, port 3320): sign-up/sign-in, tenant picker, onboarding (legal entity → branch → register), team (invite, roles), catalog (products, prices), subscription view. Auth via httpOnly cookies set by Next route handlers (BFF) — tokens never in JS-readable storage; API base URL server-side only. Load the `impeccable`/`ui-ux-pro-max` skill for design. Real loading/empty/error states; every control functional or clearly marked "planned". Playwright smoke test.
+Then **Phase 1 exit review**: cross-tenant suite completeness per table, OpenAPI generation, pino/OTel logging, docs refresh → declare Phase 1 exit criterion met (or list gaps).
