@@ -7,6 +7,7 @@ import { AppModule } from '../../src/app.module.js';
 import { configureApp } from '../../src/bootstrap.js';
 import { ENV } from '../../src/infrastructure/env.provider.js';
 import { loadServerEnv, type ServerEnv } from '@1pos/config';
+import { PasswordService } from '../../src/auth/password.service.js';
 
 export async function createApp(envOverrides: Partial<ServerEnv> = {}): Promise<INestApplication> {
   const builder = Test.createTestingModule({ imports: [AppModule] });
@@ -54,3 +55,58 @@ export function ownerPool(): pg.Pool {
 }
 
 export const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+/** Arrange a member with a system role at a scope (invitation API not built yet). */
+export async function addMember(
+  owner: pg.Pool,
+  tenantId: string,
+  roleKey: string,
+  scope: { type: 'TENANT' | 'LEGAL_ENTITY' | 'BRANCH' | 'REGISTER'; id: string | null } = { type: 'TENANT', id: null },
+): Promise<{ email: string; userId: string; membershipId: string }> {
+  const email = `${uniq(roleKey)}@example.ph`;
+  const hash = await new PasswordService().hash(PASSWORD);
+  const c = await owner.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    const u = await c.query<{ id: string }>('SELECT auth_register_user($1, $2, $3) AS id', [email, roleKey, hash]);
+    const m = await c.query<{ id: string }>(
+      `INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2) RETURNING id`,
+      [tenantId, u.rows[0]!.id],
+    );
+    await c.query(
+      `INSERT INTO membership_roles (tenant_id, membership_id, role_id, scope_type, scope_id)
+       SELECT $1, $2, id, $4, $5 FROM roles WHERE tenant_id = $1 AND key = $3`,
+      [tenantId, m.rows[0]!.id, roleKey, scope.type, scope.id],
+    );
+    await c.query('COMMIT');
+    return { email, userId: u.rows[0]!.id, membershipId: m.rows[0]!.id };
+  } catch (e) {
+    await c.query('ROLLBACK');
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+/** Run SQL as the schema owner inside a tenant context (FORCE RLS applies to the owner too). */
+export async function asOwnerInTenant<T>(owner: pg.Pool, tenantId: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+  const c = await owner.connect();
+  try {
+    await c.query('BEGIN');
+    await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+    const r = await fn(c);
+    await c.query('COMMIT');
+    return r;
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export async function loginToken(app: INestApplication, email: string): Promise<string> {
+  const res = await request(app.getHttpServer()).post('/v1/auth/login').send({ email, password: PASSWORD }).expect(200);
+  return res.body.tokens.accessToken;
+}

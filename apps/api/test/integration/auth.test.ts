@@ -3,8 +3,7 @@ import { PERMISSIONS } from '@1pos/validation';
 import type pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PasswordService } from '../../src/auth/password.service.js';
-import { bearer, createApp, ownerPool, PASSWORD, signup, uniq, type SignedUp } from './helpers.js';
+import { addMember as addMemberWith, bearer, createApp, ownerPool, PASSWORD, signup, uniq, type SignedUp } from './helpers.js';
 
 let app: INestApplication;
 let owner: pg.Pool;
@@ -20,33 +19,8 @@ afterAll(async () => {
   await owner.end();
 });
 
-/** Arrange a second member in a tenant with a given system role (no invite API yet). */
-async function addMember(tenantId: string, roleKey: string, scope: { type: string; id: string | null } = { type: 'TENANT', id: null }) {
-  const email = `${uniq(roleKey)}@example.ph`;
-  const hash = await new PasswordService().hash(PASSWORD);
-  const c = await owner.connect();
-  try {
-    await c.query('BEGIN');
-    await c.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-    const u = await c.query<{ id: string }>('SELECT auth_register_user($1, $2, $3) AS id', [email, roleKey, hash]);
-    const m = await c.query<{ id: string }>(
-      `INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2) RETURNING id`,
-      [tenantId, u.rows[0]!.id],
-    );
-    await c.query(
-      `INSERT INTO membership_roles (tenant_id, membership_id, role_id, scope_type, scope_id)
-       SELECT $1, $2, id, $4, $5 FROM roles WHERE tenant_id = $1 AND key = $3`,
-      [tenantId, m.rows[0]!.id, roleKey, scope.type, scope.id],
-    );
-    await c.query('COMMIT');
-    return { email, userId: u.rows[0]!.id, membershipId: m.rows[0]!.id };
-  } catch (e) {
-    await c.query('ROLLBACK');
-    throw e;
-  } finally {
-    c.release();
-  }
-}
+const addMember = (tenantId: string, roleKey: string, scope?: Parameters<typeof addMemberWith>[3]) =>
+  addMemberWith(owner, tenantId, roleKey, scope);
 
 function login(email: string, extra: Record<string, unknown> = {}) {
   return http().post('/v1/auth/login').send({ email, password: PASSWORD, ...extra });
@@ -212,7 +186,17 @@ describe('authorization & tenant isolation', () => {
   });
 
   it('branch-scoped roles do not grant tenant-wide permissions', async () => {
-    const mgr = await addMember(a.tenantId, 'branch_manager', { type: 'BRANCH', id: '0199a000-0000-7000-8000-0000000000b1' });
+    const le = await http()
+      .post('/v1/legal-entities')
+      .set(bearer(a.access))
+      .send({ registeredName: 'Alpha Corp', vatStatus: 'VAT' })
+      .expect(201);
+    const branch = await http()
+      .post('/v1/branches')
+      .set(bearer(a.access))
+      .send({ legalEntityId: le.body.id, code: 'MAIN', name: 'Main' })
+      .expect(201);
+    const mgr = await addMember(a.tenantId, 'branch_manager', { type: 'BRANCH', id: branch.body.id });
     const token = (await login(mgr.email).expect(200)).body.tokens.accessToken;
     const me = await http().get('/v1/me').set(bearer(token)).expect(200);
     expect(me.body.activeTenant.grants.every((g: { scopeType: string }) => g.scopeType === 'BRANCH')).toBe(true);

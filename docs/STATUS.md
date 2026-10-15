@@ -3,7 +3,7 @@
 _Last updated: 2026-10-15 (session 1)_
 
 ## Current phase
-**Phase 1 — Platform foundation: IN PROGRESS.** Slice 1 (identity, onboarding, RBAC read side) done and verified.
+**Phase 1 — Platform foundation: IN PROGRESS.** Slice 1 (identity, onboarding, RBAC read side) and slice 2 (organization: legal entities, branches, registers, terminals) done and verified.
 Phase 0 done (commit 159b94e).
 
 ## User decisions (2026-10-15)
@@ -16,7 +16,9 @@ Phase 0 done (commit 159b94e).
 |---|---|
 | `pnpm build` / `pnpm typecheck` / `pnpm exec oxlint apps packages` | all ok, lint exit 0 |
 | `pnpm test` | money 15, config 5, validation 5, api 15 → **40 passed** |
-| `pnpm test:integration` | database **14 passed**, api **20 passed** (Postgres 18, runtime role `onepos_app`) |
+| `pnpm test:integration` | database **14 passed**, api **32 passed** (auth 20 + org 12; Postgres 18, runtime role `onepos_app`) |
+
+Org coverage (apps/api/test/integration/org.test.ts): owner setup with TIN/code normalisation and safe defaults (invoicing DISABLED); TIN/code/BIR-code conflicts; production invoicing mode rejected; input validation; terminal credential shown once, hash unreadable by app role, revocation final (DB trigger); archive ordering; branch-scoped admin sees/manages only its branch; role scope must reference a real node of the same tenant (trigger); cross-tenant list/modify/attach attempts all 404; cashier denied.
 
 API integration coverage (apps/api/test/integration/auth.test.ts): permission catalog = DB seed; atomic signup (dup email/slug → 409, no orphan user on rollback); login auto-select / generic errors / lockout after 5 failures; refresh rotation, reuse revokes the family + its access tokens, concurrent refresh → exactly one wins; logout immediate; forged/malformed tokens; cross-tenant switch/refresh/login denied; members/roles lists tenant-isolated; cashier lacks roles/members; branch-scoped grant ≠ tenant-wide; removed member loses access next request; TENANT_REQUIRED + switch-tenant; audit rows per tenant; signup rate limit.
 
@@ -32,5 +34,5 @@ API integration coverage (apps/api/test/integration/auth.test.ts): permission ca
 - Node's `crypto.argon2` is used (Node ≥ 24.7); still marked experimental by Node — revisit if it changes.
 
 ## Next task (start here)
-Phase 1 slice 2 — **organization**: `legal_entities` (TIN, registered name/address, VAT status, invoicing settings placeholder), `tax_profiles`, `branches` (BIR branch code, timezone), `registers`, `terminals` (registration + hashed credential + revoke). Migration with RLS/composite FKs/grants; validate `membership_roles.scope_id` against these tables (trigger); CRUD endpoints with `org.read`/`org.manage`/`terminals.manage`; audit; cross-tenant tests.
-Then slice 3: catalog (categories, products, variants, barcodes, UoM, tax categories), price lists; slice 4: invitations + role assignment; slice 5: plans/entitlements, idempotency + outbox; slice 6: admin-web.
+Phase 1 slice 3 — **catalog & pricing**: `units_of_measure` (+ conversions), `tax_categories` (VATABLE / VAT_EXEMPT / ZERO_RATED codes — just classification; rates come in Phase 2 tax engine), `categories` (tree), `products` + `product_variants` (SKU, track_inventory, sold_by WEIGHT/UNIT, archive-not-delete), `barcodes` (multiple per variant, unique per tenant among active), `price_lists` (+ branch assignment) and effective-dated `product_prices` (NUMERIC(20,4) via @1pos/money, decimal strings on the wire). Endpoints with `catalog.read|manage`, `prices.manage`, barcode lookup endpoint for POS, cross-tenant tests.
+Then slice 4: invitations + role assignment/custom roles; slice 5: plans/entitlements, idempotency + outbox; slice 6: admin-web (Next.js).

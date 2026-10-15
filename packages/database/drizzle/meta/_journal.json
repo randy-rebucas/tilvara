@@ -29,6 +29,20 @@
       "when": 1792035468523,
       "tag": "0003_identity_rls_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792036717967,
+      "tag": "0004_organization",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792036719307,
+      "tag": "0005_organization_rls",
+      "breakpoints": true
     }
   ]
 }

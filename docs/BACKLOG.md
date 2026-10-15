@@ -31,8 +31,8 @@ Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file
 1. 🟡 Identity: ✅ users, argon2id (node:crypto), login with lockout, JWT access (15 min), rotating refresh with reuse detection, logout/revoke, switch-tenant, `/me`. ⬜ TOTP MFA for privileged roles, ⬜ password reset (needs email adapter), ⬜ Redis-backed rate limiter (in-memory now)
 2. ✅ Tenant provisioning via `POST /v1/auth/signup` (user + tenant + 6 system roles + owner membership, atomic)
 3. 🟡 Roles/permissions: ✅ catalog (35 codes), role templates, scoped grants (`hasPermission`), global AuthGuard + `@RequirePermissions`, `GET /v1/members`, `GET /v1/roles`. ⬜ invitations, role assignment/custom-role endpoints, scope-id validation once org tables exist
-4. ⬜ Legal entities + tax profiles (VAT status, TIN, registered name/address, rounding policy)
-5. ⬜ Branches, registers, terminals (registration + credential + revoke)
+4. 🟡 Legal entities ✅ (TIN, VAT status, registered name/address, RDO, price display, rounding, invoicing mode DISABLED/DEV_SERIES only). ⬜ effective-dated `tax_profiles` (moved to Phase 2 with the tax engine — VAT status changes after sales exist must be versioned)
+5. ✅ Branches (BIR branch code), registers, terminals (one-time credential, hash not readable by app role, final revocation), archive-not-delete with child checks, scope-aware permissions, role-scope validation trigger. ⬜ terminal authentication for API calls (Phase 2)
 6. ⬜ Catalog: categories, products, variants, barcodes, UoM, tax categories; archive-not-delete
 7. ⬜ Price lists + effective-dated prices
 8. ⬜ Plans, subscriptions, entitlements (server-enforced guard; grace/read-only behaviour)
