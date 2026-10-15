@@ -20,6 +20,7 @@ const NON_TENANT_TABLES: Record<string, string> = {
   user_sessions: 'no runtime access at all; only auth_* SECURITY DEFINER functions',
   permissions: 'global read-only permission catalog',
   plans: 'global read-only plan catalog',
+  discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
 };
 
 /** Tenant tables whose tenant_id may be NULL; such rows match no tenant policy (fail closed). */
@@ -93,7 +94,7 @@ describe('schema isolation catalog', () => {
     const writes = await q<{ table: string; priv: string }>(`
       SELECT table_name AS table, privilege_type AS priv FROM information_schema.table_privileges
        WHERE grantee = 'onepos_app' AND table_schema = 'public'
-         AND table_name IN ('permissions', 'plans', 'user_sessions', 'tenants', 'users')
+         AND table_name IN ('permissions', 'plans', 'discount_schemes', 'user_sessions', 'tenants', 'users')
          AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE')`);
     expect(writes).toEqual([]);
     const sessionReads = await q(`SELECT 1 FROM information_schema.column_privileges

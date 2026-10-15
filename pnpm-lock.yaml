@@ -81,6 +81,9 @@ importers:
       '@1pos/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@1pos/tax':
+        specifier: workspace:*
+        version: link:../../packages/tax
       '@1pos/validation':
         specifier: workspace:*
         version: link:../../packages/validation
@@ -186,6 +189,12 @@ importers:
       pino:
         specifier: ^10.4.0
         version: 10.4.0
+
+  packages/tax:
+    dependencies:
+      '@1pos/money':
+        specifier: workspace:*
+        version: link:../money
 
   packages/validation:
     dependencies:

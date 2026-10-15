@@ -15,7 +15,7 @@ export const ROUNDING_MODES = ['HALF_UP', 'HALF_EVEN'] as const;
 export const INVOICING_MODES = ['DISABLED', 'DEV_SERIES'] as const;
 export type InvoicingMode = (typeof INVOICING_MODES)[number];
 
-/** A taxpayer. Not necessarily the subscription owner. */
+/** A taxpayer. Not necessarily the subscription owner. VAT status and rounding live in versioned tax_profiles. */
 export const legalEntities = pgTable(
   'legal_entities',
   {
@@ -27,12 +27,10 @@ export const legalEntities = pgTable(
     tradeName: text('trade_name'),
     /** 9-digit TIN without branch code; nullable until invoicing is configured. */
     tin: char('tin', { length: 9 }),
-    vatStatus: text('vat_status').$type<VatStatus>().notNull(),
     registeredAddress: text('registered_address'),
     rdoCode: text('rdo_code'),
     currency: char('currency', { length: 3 }).notNull().default('PHP'),
     priceDisplay: text('price_display').$type<PriceDisplayMode>().notNull().default('TAX_INCLUSIVE'),
-    roundingMode: text('rounding_mode').$type<(typeof ROUNDING_MODES)[number]>().notNull().default('HALF_UP'),
     invoicingMode: text('invoicing_mode').$type<InvoicingMode>().notNull().default('DISABLED'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -42,9 +40,7 @@ export const legalEntities = pgTable(
     unique('legal_entities_tenant_id_id_unique').on(t.tenantId, t.id),
     uniqueIndex('legal_entities_tenant_tin_unique').on(t.tenantId, t.tin).where(sql`${t.tin} IS NOT NULL`),
     check('legal_entities_tin_format', sql`${t.tin} IS NULL OR ${t.tin} ~ '^[0-9]{9}$'`),
-    check('legal_entities_vat_status_check', sql`${t.vatStatus} IN ('VAT','NON_VAT')`),
     check('legal_entities_price_display_check', sql`${t.priceDisplay} IN ('TAX_INCLUSIVE','TAX_EXCLUSIVE')`),
-    check('legal_entities_rounding_check', sql`${t.roundingMode} IN ('HALF_UP','HALF_EVEN')`),
     check('legal_entities_invoicing_mode_check', sql`${t.invoicingMode} IN ('DISABLED','DEV_SERIES')`),
   ],
 );

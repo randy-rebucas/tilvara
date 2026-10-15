@@ -40,14 +40,15 @@ export const createLegalEntitySchema = z.object({
 });
 export type CreateLegalEntityInput = z.infer<typeof createLegalEntitySchema>;
 
+/** VAT status and rounding are versioned tax profiles (POST /legal-entities/:id/tax-profiles), not editable here. */
 export const updateLegalEntitySchema = createLegalEntitySchema
-  .omit({ priceDisplay: true, roundingMode: true })
+  .omit({ priceDisplay: true, roundingMode: true, vatStatus: true })
   .partial()
   .extend({
     priceDisplay: z.enum(['TAX_INCLUSIVE', 'TAX_EXCLUSIVE']).optional(),
-    roundingMode: z.enum(['HALF_UP', 'HALF_EVEN']).optional(),
     invoicingMode: z.enum(['DISABLED', 'DEV_SERIES']).optional(),
   })
+  .strict()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
 export type UpdateLegalEntityInput = z.infer<typeof updateLegalEntitySchema>;
 

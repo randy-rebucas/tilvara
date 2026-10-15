@@ -351,7 +351,8 @@ export class CatalogService extends TenantService {
         priceListId: list.id,
         variantId: variant!.id,
         amount: v.price,
-        effectiveFrom: new Date(),
+        // DB clock, the same one prices are resolved against (common/clock.ts).
+        effectiveFrom: sql`now()`,
         createdBy: auth.userId,
       });
     }

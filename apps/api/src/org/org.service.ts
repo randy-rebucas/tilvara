@@ -25,6 +25,25 @@ import { assertWithinLimit } from '../billing/entitlements.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
+import { insertProfile, profilesInForce, scheduledProfiles, type TaxProfileView } from '../tax/tax-profiles.js';
+
+type LegalEntityRow = typeof legalEntities.$inferSelect;
+
+/** Legal entity plus the tax profile in force (and the next scheduled one), ADR-0008. */
+async function withTaxProfiles(db: Database, rows: LegalEntityRow[]) {
+  const ids = rows.map((r) => r.id);
+  const [current, next] = await Promise.all([profilesInForce(db, ids), scheduledProfiles(db, ids)]);
+  return rows.map((r) => {
+    const taxProfile: TaxProfileView | null = current.get(r.id) ?? null;
+    return {
+      ...r,
+      vatStatus: taxProfile?.vatStatus ?? null,
+      roundingMode: taxProfile?.roundingMode ?? null,
+      taxProfile,
+      scheduledTaxProfile: next.get(r.id) ?? null,
+    };
+  });
+}
 
 @Injectable()
 export class OrgService extends TenantService {
@@ -43,7 +62,7 @@ export class OrgService extends TenantService {
   listLegalEntities(auth: AuthContext) {
     return this.tenantDb.run(auth, async (db) => {
       const rows = await db.select().from(legalEntities).orderBy(asc(legalEntities.registeredName));
-      return rows.filter((r) => this.can(auth, 'org.read', { legalEntityId: r.id }));
+      return withTaxProfiles(db, rows.filter((r) => this.can(auth, 'org.read', { legalEntityId: r.id })));
     });
   }
 
@@ -51,12 +70,13 @@ export class OrgService extends TenantService {
     this.assertCan(auth, 'org.manage');
     return this.mutate(auth, async (db) => {
       await assertWithinLimit(db, 'maxLegalEntities');
-      const [row] = await db
-        .insert(legalEntities)
-        .values({ ...input, tenantId: tenantOf(auth).tenantId })
-        .returning();
-      await this.audit(db, auth, 'legal_entity.created', 'legal_entity', row!.id, { vatStatus: row!.vatStatus });
-      return row!;
+      const { vatStatus, roundingMode, ...entity } = input;
+      const tenantId = tenantOf(auth).tenantId;
+      const [row] = await db.insert(legalEntities).values({ ...entity, tenantId }).returning();
+      // The initial tax profile is created atomically with the entity.
+      await insertProfile(db, { tenantId, legalEntityId: row!.id, vatStatus, roundingMode, createdBy: auth.userId, note: 'Initial profile' });
+      await this.audit(db, auth, 'legal_entity.created', 'legal_entity', row!.id, { vatStatus });
+      return (await withTaxProfiles(db, [row!]))[0]!;
     });
   }
 
@@ -67,7 +87,7 @@ export class OrgService extends TenantService {
       if (current.archivedAt) throw archived('Legal entity');
       const [row] = await db.update(legalEntities).set(input).where(eq(legalEntities.id, id)).returning();
       await this.audit(db, auth, 'legal_entity.updated', 'legal_entity', id, { fields: Object.keys(input) });
-      return row!;
+      return (await withTaxProfiles(db, [row!]))[0]!;
     });
   }
 
@@ -75,7 +95,7 @@ export class OrgService extends TenantService {
     return this.mutate(auth, async (db) => {
       const current = await this.legalEntity(db, id);
       this.assertCan(auth, 'org.manage', { legalEntityId: id });
-      if (current.archivedAt) return current;
+      if (current.archivedAt) return (await withTaxProfiles(db, [current]))[0]!;
       const active = await db
         .select({ id: branches.id })
         .from(branches)
@@ -86,7 +106,7 @@ export class OrgService extends TenantService {
       }
       const [row] = await db.update(legalEntities).set({ archivedAt: new Date() }).where(eq(legalEntities.id, id)).returning();
       await this.audit(db, auth, 'legal_entity.archived', 'legal_entity', id);
-      return row!;
+      return (await withTaxProfiles(db, [row!]))[0]!;
     });
   }
 

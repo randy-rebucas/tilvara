@@ -22,6 +22,7 @@ import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
+import { dbNow } from '../common/clock.js';
 
 /** Allowed clock skew for "now" prices; anything earlier is a backdated price and refused. */
 const BACKDATE_TOLERANCE_MS = 60_000;
@@ -109,7 +110,7 @@ export class PricingService extends TenantService {
       if (missing.length) throw new AppError('NOT_FOUND', 'Variant not found', HttpStatus.NOT_FOUND, { variantIds: missing });
       if (found.some((f) => f.archivedAt)) throw archived('Variant');
 
-      const now = Date.now();
+      const now = (await dbNow(db)).getTime();
       const rows = input.items.map((i) => {
         const effectiveFrom = i.effectiveFrom ? new Date(i.effectiveFrom) : new Date(now);
         if (effectiveFrom.getTime() < now - BACKDATE_TOLERANCE_MS) {
@@ -249,7 +250,8 @@ export class PricingService extends TenantService {
   }
 
   /** Price in force at `at` for a variant in a branch. Exported for the checkout engine (Phase 2). */
-  async effectivePrice(db: Database, branchId: string, variantId: string, at: Date = new Date()): Promise<EffectivePrice | null> {
+  async effectivePrice(db: Database, branchId: string, variantId: string, at?: Date): Promise<EffectivePrice | null> {
+    const atSql = at ? sql`${at.toISOString()}::timestamptz` : sql`now()`;
     const { rows } = await db.execute<{
       id: string;
       price_list_id: string;
@@ -269,7 +271,7 @@ export class PricingService extends TenantService {
       SELECT pp.id, pp.price_list_id, pp.amount, pl.currency, pl.prices_include_tax, pp.effective_from
         FROM list
         JOIN price_lists pl ON pl.id = list.id
-        JOIN product_prices pp ON pp.price_list_id = list.id AND pp.variant_id = ${variantId} AND pp.effective_from <= ${at}
+        JOIN product_prices pp ON pp.price_list_id = list.id AND pp.variant_id = ${variantId} AND pp.effective_from <= ${atSql}
        ORDER BY pp.effective_from DESC
        LIMIT 1`);
     const r = rows[0];

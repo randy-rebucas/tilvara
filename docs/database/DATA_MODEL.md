@@ -29,7 +29,7 @@ erDiagram
   roles ||--o{ membership_roles : ""
   roles ||--o{ role_permissions : grants
   legal_entities ||--o{ branches : operates
-  legal_entities ||--|| tax_profiles : "has current"
+  legal_entities ||--|{ tax_profiles : "versions (effective-dated)"
   branches ||--o{ registers : has
   registers ||--o{ terminals : "bound to"
   registers ||--o{ cashier_sessions : opens
@@ -65,7 +65,7 @@ erDiagram
 
 | Phase | Tables |
 |---|---|
-| 1 Platform | ✅ `tenants`, ✅ `audit_logs` (Phase 0 foundation), ✅ `users`, ✅ `user_sessions`, ✅ `tenant_memberships`, ✅ `roles`, ✅ `permissions`, ✅ `role_permissions`, ✅ `membership_roles` (scope_type/scope_id — replaces the planned `membership_scopes`), `plans`, `subscriptions`, `entitlements`, ✅ `legal_entities`, `tax_profiles` (→ Phase 2), ✅ `branches`, ✅ `registers`, ✅ `terminals`, ✅ `categories`, ✅ `products`, ✅ `product_variants`, ✅ `barcodes`, ✅ `units_of_measure`, ✅ `price_lists`, ✅ `branch_price_lists`, ✅ `product_prices` (append-only), ✅ `tax_categories`, `tax_rules` (→ Phase 2), `idempotency_records`, `outbox_events` |
+| 1 Platform | ✅ `tenants`, ✅ `audit_logs` (Phase 0 foundation), ✅ `users`, ✅ `user_sessions`, ✅ `tenant_memberships`, ✅ `roles`, ✅ `permissions`, ✅ `role_permissions`, ✅ `membership_roles` (scope_type/scope_id — replaces the planned `membership_scopes`), `plans`, `subscriptions`, `entitlements`, ✅ `legal_entities`, ✅ `tax_profiles` (append-only, effective-dated, no backdating; replaces `legal_entities.vat_status/rounding_mode`), ✅ `discount_schemes` (global, SC/PWD, PENDING_PROFESSIONAL_REVIEW), ✅ `branches`, ✅ `registers`, ✅ `terminals`, ✅ `categories`, ✅ `products`, ✅ `product_variants`, ✅ `barcodes`, ✅ `units_of_measure`, ✅ `price_lists`, ✅ `branch_price_lists`, ✅ `product_prices` (append-only), ✅ `tax_categories`, `tax_rules` (superseded by tax_profiles + tax_categories.vat_treatment + discount_schemes, ADR-0008), `idempotency_records`, `outbox_events` |
 | 2 Retail engine | `checkout_intents`, `sales`, `sale_lines`, `sale_line_taxes`, `sale_tenders`, `payment_intents`, `payment_transactions`, `returns`, `return_lines`, `refunds`, `cashier_sessions`, `cash_movements`, `cash_reconciliations`, `invoice_sequences`, `invoices`, `invoice_lines`, `invoice_events`, `inventory_items`, `inventory_locations`, `stock_movements`, `stock_balances`, `customers` |
 | 3 Inventory/purchasing/accounting | `suppliers`, `purchase_orders(+lines)`, `goods_receipts(+lines)`, `supplier_returns(+lines)`, `stock_transfers(+lines)`, `stock_counts(+lines)`, `stock_reservations`, `accounts`, `journal_entries`, `journal_lines`, `accounting_periods`, `posting_rules` |
 | 4 Restaurant | `menus`, `menu_versions`, `menu_items`, `modifier_groups`, `modifiers`, `menu_item_modifier_groups`, `dining_areas`, `restaurant_tables`, `orders`, `order_lines`, `order_line_modifiers`, `kitchen_stations`, `order_tickets`, `ticket_items`, `recipes`, `recipe_versions`, `recipe_ingredients`, `service_charges` |

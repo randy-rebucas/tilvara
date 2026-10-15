@@ -1,14 +1,27 @@
 # 1POS — Status
 
-_Last updated: 2026-10-15 (session 2)_
+_Last updated: 2026-10-16 (session 3)_
 
 ## Current phase
-**Phase 1 — Platform foundation: DONE** (exit review completed in session 2, commits `5878fc8` + the exit-review UI commit).
-Exit criterion — *multiple tenants configure their businesses without unauthorized access* — **met**: schema-wide isolation guard + full cross-tenant API/DB sweep green (see below). Non-blocking Phase 1 gaps are listed under "Carried forward".
+**Phase 2 — Retail transaction engine: IN PROGRESS.** Slice 1 (tax foundation) done and verified this session.
+Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
 
-**Phase 2 — Retail transaction engine: NOT STARTED.** See "Next task".
+### Phase 2 slice 1 — tax foundation (session 3)
+- ADR-0008 (`docs/decisions/ADR-0008-tax-engine.md`): seller = versioned `tax_profiles`, item = `tax_categories.vat_treatment`, buyer entitlement = platform `discount_schemes`; pure engine; per-line centavo rounding; snapshots; review gate.
+- DB: migrations 0014 (tables + backfill: every existing legal entity got its current VAT status/rounding as an initial profile — dev DB: 10 VAT, 2 non-VAT — then `legal_entities.vat_status/rounding_mode` dropped) and 0015 (forced RLS, append-only + no-backdating triggers, grants, SC/PWD seed).
+- `@1pos/tax`: golden vectors ₱1,120 → ₱800 (VAT seller, SC) and ₱1,120 → ₱896 (non-VAT, PWD), mixed carts, exclusive prices, partial beneficiary share, refusals (stacking, unsupported VAT-keeping schemes, bad profiles), 2,000 random carts checking every peso is accounted for once.
+- API: `GET/POST /v1/legal-entities/:id/tax-profiles` (create needs `tax.manage`; VAT status no longer editable via PATCH — 400), `GET /v1/discount-schemes`, `POST /v1/tax/quote` (server-authoritative price + tax for a cart at a branch; cashier allowed incl. SC/PWD; ordinary discounts need `sales.discount`; branch scope enforced; `requiresProfessionalReview` flag).
+- Defect found & fixed: price and profile effective dates mixed the API host clock with the DB clock (Docker drift ≈0.2 s) → a just-set price/profile could read as "not yet effective". The DB clock is now the single clock for effective dating (`apps/api/src/common/clock.ts`).
+- Guards worked as intended: the schema guard flagged the new global table (allow-listed with reason) and the router guard flagged the 2 new `:id` routes (added to the attack matrix + 2 quote smuggling cases).
 
-Phase 0 done (`159b94e`). Phase 1 slices: 1 identity/onboarding/RBAC · 2 organization · 3 catalog & pricing · 4 team · 5 entitlements, idempotency, outbox + worker · 6 admin web · exit review.
+## Verified in session 3 (commands actually run, all green)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
+| `pnpm test` | **82 passed** (tax 27, money 15, config 6, validation 5, observability 5, workers 2, api 17) |
+| `pnpm test:integration` | **136 passed** — database 21, api **107** (incl. tax 15, isolation 9), workers 8 |
+| `pnpm test:e2e:web` | **19/19** against live API + `next start` |
+| dev DB | migrated 0014/0015; backfill verified |
 
 ## User decisions (2026-10-15)
 - **No GitHub remote yet** — keep the repo local; CI deferred. Don't create one until asked.
@@ -39,5 +52,5 @@ Phase 0 done (`159b94e`). Phase 1 slices: 1 identity/onboarding/RBAC · 2 organi
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 slice 1 — tax foundation.** (1) Read SPEC §Phase 2 + `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md`; write ADR for the tax engine. (2) Effective-dated `tax_profiles` per legal entity (VAT/NON_VAT changes versioned; sales snapshot the profile) with RLS + guard/sweep coverage (the isolation suites will force fixture rows for new tables). (3) `@1pos/tax` pure package: VAT-inclusive/exclusive line math, exempt, zero-rated, rounding per entity setting, exhaustive unit tests with worked examples. (4) SC/PWD discount rules implemented behind a feature gate and marked **UNVERIFIED** until a PH tax professional signs off the worked examples (MVP gate #6).
-Then: checkout intents + cash tender + idempotent sale persistence, cashier sessions, stock ledger, PayMongo adapter skeleton (Dev adapter first), POS browser app.
+**Phase 2 slice 2 — sales core.** (1) `@1pos/pricing` only if promotions are needed now — otherwise reuse the quote path. (2) Cashier sessions: open/close per register with opening float, cash movements (pay-in/out), expected vs counted, variance approval (`cash.session`, `cash.reconcile`). (3) Sales: `sales` + `sale_lines` (+ tax snapshot columns from the quote result) + `sale_payments`, append-only, created by `POST /v1/sales` with **required** Idempotency-Key, server recomputes via the quote path, cash tender with change, split tender ready; statutory lines require beneficiary name + ID number and are refused in production while the scheme is PENDING. (4) Stock ledger movement per sale line, balance = Σ movements. (5) Payment adapter port + `DevPaymentProvider`; PayMongo skeleton later. Each new tenant table must pass the schema guard and get isolation fixture rows + attack-matrix cases.
+Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6).
