@@ -1,0 +1,29 @@
+{
+  "name": "1pos",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "oxlint apps packages",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration --concurrency=1",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "db:up": "docker compose up -d postgres redis",
+    "db:down": "docker compose down",
+    "db:generate": "pnpm --filter @1pos/database db:generate",
+    "db:migrate": "pnpm --filter @1pos/database db:migrate",
+    "dev:api": "pnpm --filter @1pos/api dev"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "oxlint": "^1.88.0",
+    "prettier": "^3.4.2",
+    "turbo": "^2.11.8",
+    "typescript": "~6.0.2",
+    "vitest": "^4.1.2"
+  }
+}

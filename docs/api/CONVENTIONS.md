@@ -1,0 +1,41 @@
+# 1POS — API Conventions
+
+- Base path: `/v1`. Breaking changes → `/v2`; additive changes stay in `v1`.
+- JSON, `camelCase` fields. Money: `{ "amount": "123.45", "currency": "PHP" }` — amounts are **strings**. Quantities: strings.
+- IDs: UUIDv7 strings. Timestamps: RFC 3339 UTC (`2026-10-15T03:12:00.000Z`); `businessDate` as `YYYY-MM-DD`.
+- Tenant scope: from the access token's membership. URLs never carry a tenant id that is trusted for authorization.
+- Auth: `Authorization: Bearer <access JWT>`; terminals additionally send `X-Terminal-Id` + signed terminal credential.
+- Idempotency: mutating financial endpoints **require** `Idempotency-Key` (UUID). Same key + same request fingerprint → original response (status + body) replayed with `Idempotent-Replayed: true`. Same key + different fingerprint → `422 IDEMPOTENCY_KEY_REUSED`. Key still in progress → `409 IDEMPOTENCY_IN_PROGRESS`.
+- Correlation: clients may send `X-Correlation-Id`; the API generates one otherwise and returns it on every response and in error bodies.
+- Pagination: cursor based — `?limit=50&cursor=<opaque>` → `{ data: [...], nextCursor: string | null }`.
+- Concurrency control for master data: `ETag`/`If-Match` (row version) → `412` on conflict.
+
+## Error format
+
+```json
+{
+  "error": {
+    "code": "PRICE_CHANGED",
+    "message": "Prices changed since the cart was priced.",
+    "details": { "...": "..." },
+    "correlationId": "01JA..."
+  }
+}
+```
+
+| HTTP | When |
+|---|---|
+| 400 `VALIDATION_FAILED` | schema validation (details lists field issues) |
+| 401 `UNAUTHENTICATED` | missing/expired token |
+| 403 `FORBIDDEN` / `ENTITLEMENT_REQUIRED` | permission or plan missing |
+| 404 `NOT_FOUND` | also returned for other tenants' resources (never 403 — no existence oracle) |
+| 409 business conflicts | `PRICE_CHANGED`, `INSUFFICIENT_STOCK`, `SESSION_NOT_OPEN`, `INVALID_STATE_TRANSITION` |
+| 422 `IDEMPOTENCY_KEY_REUSED` | |
+| 429 `RATE_LIMITED` | with `Retry-After` |
+| 500 `INTERNAL` | no internals leaked; correlation id included |
+
+## Webhooks (outbound, Phase 5+)
+Signed with HMAC-SHA256 over `timestamp.body`, headers `X-1POS-Signature`, `X-1POS-Timestamp`, `X-1POS-Event-Id`; at-least-once delivery; receivers dedupe on event id.
+
+## Documentation
+OpenAPI generated from the Nest controllers + zod contracts (Phase 1), published under `docs/api/openapi.json`.

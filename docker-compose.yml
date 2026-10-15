@@ -1,0 +1,32 @@
+name: onepos
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: onepos_owner
+      POSTGRES_PASSWORD: ${POSTGRES_OWNER_PASSWORD:-onepos_owner_dev}
+      POSTGRES_DB: onepos
+    ports:
+      - "127.0.0.1:55460:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./infra/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onepos_owner -d onepos"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:56400:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
