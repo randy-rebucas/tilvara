@@ -8,7 +8,14 @@ import {
   saleLines,
   sales,
   saleTenders,
+  branches,
   cashMovements,
+  inArray,
+  legalEntities,
+  registers,
+  users,
+  paymentEvents,
+  paymentIntents,
   sql,
   stockMovements,
   type Database,
@@ -23,6 +30,7 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TaxService, unprocessable } from '../tax/tax.service.js';
 import { loadSession } from './cash.service.js';
+import { buildReceipt } from './receipt.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -88,18 +96,40 @@ export class SalesService extends TenantService {
         throw unprocessable('SCHEME_PENDING_REVIEW', 'Statutory discounts are disabled until a tax professional signs off the computation (ADR-0008)');
       }
 
-      // Tenders: apply in order; only the last tender may produce change.
-      let remaining = due;
-      const tenders = input.tenders.map((t, i) => {
+      // Non-cash tenders: authorized payment intents of this checkout, locked and applied first (ADR-0010).
+      const intentIds = input.tenders.flatMap((t) => (t.method === 'INTENT' ? [t.paymentIntentId] : []));
+      if (new Set(intentIds).size !== intentIds.length) throw unprocessable('DUPLICATE_TENDER', 'A payment can be tendered once');
+      const intents = intentIds.length
+        ? await db.select().from(paymentIntents).where(inArray(paymentIntents.id, intentIds)).for('update')
+        : [];
+      for (const pid of intentIds) {
+        const p = intents.find((x) => x.id === pid);
+        if (!p) throw new AppError('NOT_FOUND', 'Payment not found', HttpStatus.NOT_FOUND, { paymentIntentId: pid });
+        if (p.saleId) throw new AppError('PAYMENT_CONSUMED', 'This payment already paid for another sale', HttpStatus.CONFLICT, { paymentIntentId: pid });
+        if (p.status !== 'SUCCEEDED') {
+          throw new AppError('PAYMENT_NOT_SUCCEEDED', `This payment is ${p.status.toLowerCase()}`, HttpStatus.CONFLICT, { paymentIntentId: pid, status: p.status });
+        }
+        if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== cart.currency) {
+          throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: pid });
+        }
+      }
+      const electronic = intents.reduce((a, p) => a.plus(p.amount), new Dec(0));
+      if (electronic.gt(due)) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: cart.totals.amountDue });
+
+      // Cash covers the rest; only the last cash tender may give change.
+      let remaining = due.minus(electronic);
+      const cashTenders = input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : []));
+      const cash = cashTenders.map(({ t, i }) => {
         if (remaining.isZero() && !due.isZero()) throw unprocessable('UNNECESSARY_TENDER', 'The sale is already paid', { tender: i });
         const tendered = toDec(t.tendered);
         const applied = Dec.min(tendered, remaining);
         remaining = remaining.minus(applied);
-        return { method: t.method, tendered, applied, change: tendered.minus(applied) };
+        return { tendered, applied, change: tendered.minus(applied) };
       });
       if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: cart.totals.amountDue });
-      if (tenders.slice(0, -1).some((t) => t.change.gt(0))) throw unprocessable('UNNECESSARY_TENDER', 'Only the last tender may give change');
-      const tendered = tenders.reduce((a, t) => a.plus(t.tendered), new Dec(0));
+      if (cash.slice(0, -1).some((t) => t.change.gt(0))) throw unprocessable('UNNECESSARY_TENDER', 'Only the last tender may give change');
+      const cashApplied = cash.reduce((a, t) => a.plus(t.applied), new Dec(0));
+      const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic);
       const change = tendered.minus(due);
 
       const saleNumber = await nextNumber(db, tenantId, session.registerId, 'SALE');
@@ -165,18 +195,18 @@ export class SalesService extends TenantService {
         )
         .returning({ id: saleLines.id, lineNo: saleLines.lineNo });
 
-      await db.insert(saleTenders).values(
-        tenders.map((t) => ({
-          tenantId,
-          saleId: sale!.id,
-          method: t.method,
-          amount: t.applied.toString(),
-          tendered: t.tendered.toString(),
-          change: t.change.toString(),
-        })),
-      );
-      // Net cash into the drawer = what the sale cost (tendered minus change).
-      await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'SALE', amount: due.toString(), saleId: sale!.id, createdBy: auth.userId });
+      await db.insert(saleTenders).values([
+        ...intents.map((p) => ({ tenantId, saleId: sale!.id, method: p.method, paymentIntentId: p.id, amount: p.amount, tendered: p.amount, change: '0' })),
+        ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString() })),
+      ]);
+      for (const p of intents) {
+        await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, p.id));
+        await db.insert(paymentEvents).values({ tenantId, paymentIntentId: p.id, type: 'CONSUMED', detail: { saleId: sale!.id }, createdBy: auth.userId });
+      }
+      // Net cash into the drawer = the cash part of the sale (tendered minus change).
+      if (cash.length) {
+        await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'SALE', amount: cashApplied.toString(), saleId: sale!.id, createdBy: auth.userId });
+      }
 
       const stock = cart.lines.flatMap((l, i) =>
         l.trackInventory
@@ -211,6 +241,51 @@ export class SalesService extends TenantService {
       if (!sale) throw notFound('Sale');
       this.assertCanRead(auth, sale);
       return this.view(db, sale);
+    });
+  }
+
+  /** Receipt data (not an invoice while invoicing is DISABLED), built from the sale's own snapshot. */
+  receipt(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [sale] = await db.select().from(sales).where(eq(sales.id, id));
+      if (!sale) throw notFound('Sale');
+      this.assertCanRead(auth, sale);
+      const [[entity], [branch], [register], [cashier], lines, tenders, beneficiaries] = await Promise.all([
+        db.select().from(legalEntities).where(eq(legalEntities.id, sale.legalEntityId)),
+        db.select().from(branches).where(eq(branches.id, sale.branchId)),
+        db.select().from(registers).where(eq(registers.id, sale.registerId)),
+        db.select({ displayName: users.displayName }).from(users).where(eq(users.id, sale.cashierUserId)),
+        db.select().from(saleLines).where(eq(saleLines.saleId, id)).orderBy(saleLines.lineNo),
+        db.select().from(saleTenders).where(eq(saleTenders.saleId, id)).orderBy(saleTenders.createdAt, saleTenders.id),
+        db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, id)),
+      ]);
+      const snapshot = sale.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
+      return buildReceipt({
+        invoicingMode: entity!.invoicingMode,
+        seller: { registeredName: entity!.registeredName, tradeName: entity!.tradeName, registeredAddress: entity!.registeredAddress, tin: entity!.tin, vatStatus: snapshot.vatStatus },
+        branch: { name: branch!.name, code: branch!.code, birBranchCode: branch!.birBranchCode, address: branch!.address, timezone: branch!.timezone },
+        register: { code: register!.code, name: register!.name },
+        cashierName: cashier?.displayName ?? 'Cashier',
+        sale: {
+          ...Object.fromEntries([...MONEY_FIELDS, 'amountTendered', 'changeDue'].map((k) => [k, fixed(sale[k as keyof SaleRow] as string)])),
+          saleNumber: sale.saleNumber,
+          completedAt: sale.completedAt,
+          currency: sale.currency,
+          vatRate: snapshot.vatRate,
+        } as Parameters<typeof buildReceipt>[0]['sale'],
+        lines: lines.map((l) => ({
+          name: l.name,
+          quantity: toDec(l.quantity).toString(),
+          unitPrice: l.unitPrice,
+          gross: l.gross,
+          discount: l.discount,
+          statutoryDiscount: l.statutoryDiscount,
+          vatTreatment: l.vatTreatment,
+          beneficiaryId: l.beneficiaryId,
+        })),
+        tenders: tenders.map((t) => ({ method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),
+        beneficiaries,
+      });
     });
   }
 

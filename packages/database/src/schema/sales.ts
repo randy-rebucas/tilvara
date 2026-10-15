@@ -259,7 +259,76 @@ export const saleLines = pgTable(
   ],
 );
 
-export const TENDER_METHODS = ['CASH'] as const;
+// ------------------------------------------------------------------ payments (ADR-0010)
+
+export const PAYMENT_METHODS = ['CARD', 'QR', 'EWALLET'] as const;
+export const PAYMENT_INTENT_STATUSES = ['PROCESSING', 'SUCCEEDED', 'FAILED', 'UNKNOWN', 'CANCELED'] as const;
+export type PaymentIntentStatus = (typeof PAYMENT_INTENT_STATUSES)[number];
+
+/**
+ * A non-cash payment attempt, committed before the provider is called. The intent id is the
+ * provider idempotency key; `request_key` is the client's Idempotency-Key.
+ */
+export const paymentIntents = pgTable(
+  'payment_intents',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    registerId: uuid('register_id').notNull(),
+    cashierSessionId: uuid('cashier_session_id').notNull(),
+    clientTransactionId: text('client_transaction_id').notNull(),
+    requestKey: uuid('request_key').notNull(),
+    provider: text('provider').notNull(),
+    method: text('method').notNull(),
+    amount: money('amount').notNull(),
+    currency: char('currency', { length: 3 }).notNull(),
+    status: text('status').$type<PaymentIntentStatus>().notNull().default('PROCESSING'),
+    providerReference: text('provider_reference'),
+    failureCode: text('failure_code'),
+    saleId: uuid('sale_id'),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('payment_intents_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('payment_intents_request_key_unique').on(t.tenantId, t.requestKey),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
+    foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
+    index('payment_intents_session_idx').on(t.tenantId, t.cashierSessionId, t.clientTransactionId),
+    check('payment_intents_status_check', sql`${t.status} IN ('PROCESSING','SUCCEEDED','FAILED','UNKNOWN','CANCELED')`),
+    check('payment_intents_method_check', sql`${t.method} IN ('CARD','QR','EWALLET')`),
+    check('payment_intents_amount_positive', sql`${t.amount} > 0`),
+    check('payment_intents_consumed_only_succeeded', sql`${t.saleId} IS NULL OR ${t.status} = 'SUCCEEDED'`),
+  ],
+);
+
+/** Append-only payment evidence: every request, outcome and settlement (sanitized, never card data). */
+export const paymentEvents = pgTable(
+  'payment_events',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    paymentIntentId: uuid('payment_intent_id').notNull(),
+    type: text('type').notNull(),
+    detail: jsonb('detail'),
+    createdBy: uuid('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('payment_events_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
+    index('payment_events_intent_idx').on(t.tenantId, t.paymentIntentId),
+    check(
+      'payment_events_type_check',
+      sql`${t.type} IN ('AUTHORIZE_REQUESTED','AUTHORIZED','DECLINED','TIMEOUT','RECONCILED','CANCEL_REQUESTED','CANCELED','CONSUMED')`,
+    ),
+  ],
+);
+
+export const TENDER_METHODS = ['CASH', ...PAYMENT_METHODS] as const;
 
 export const saleTenders = pgTable(
   'sale_tenders',
@@ -268,6 +337,8 @@ export const saleTenders = pgTable(
     tenantId: uuid('tenant_id').notNull(),
     saleId: uuid('sale_id').notNull(),
     method: text('method').notNull(),
+    /** Set for non-cash tenders: the consumed payment intent. */
+    paymentIntentId: uuid('payment_intent_id'),
     /** Applied to the sale. */
     amount: money('amount').notNull(),
     tendered: money('tendered').notNull(),
@@ -278,7 +349,11 @@ export const saleTenders = pgTable(
     unique('sale_tenders_tenant_id_id_unique').on(t.tenantId, t.id),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     index('sale_tenders_sale_idx').on(t.tenantId, t.saleId),
-    check('sale_tenders_method_check', sql`${t.method} IN ('CASH')`),
+    check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET')`),
+    check('sale_tenders_intent_check', sql`(${t.method} = 'CASH') = (${t.paymentIntentId} IS NULL)`),
+    check('sale_tenders_no_electronic_change', sql`${t.method} = 'CASH' OR ${t.change} = 0`),
+    foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
+    uniqueIndex('sale_tenders_intent_once').on(t.tenantId, t.paymentIntentId).where(sql`${t.paymentIntentId} IS NOT NULL`),
     check('sale_tenders_amounts_check', sql`${t.amount} >= 0 AND ${t.change} >= 0 AND ${t.tendered} - ${t.change} = ${t.amount}`),
   ],
 );

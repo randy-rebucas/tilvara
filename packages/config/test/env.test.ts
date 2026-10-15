@@ -45,6 +45,7 @@ describe('loadServerEnv', () => {
     const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
+      'PAYMENT_PROVIDER: the dev payment simulator cannot be used in production',
     ]);
   });
 });

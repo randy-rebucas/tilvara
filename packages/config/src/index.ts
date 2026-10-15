@@ -17,6 +17,13 @@ export const serverEnvSchema = z.object({
   APP_PUBLIC_URL: z.url().default('http://127.0.0.1:3320'),
   /** Only 'dev' exists so far (stores mail in memory/logs). Refused in production until a real provider is added. */
   MAILER_DRIVER: z.enum(['dev']).default('dev'),
+  /**
+   * Non-cash payment provider. Only the deterministic dev simulator exists; PayMongo is the chosen
+   * provider (user decision 2026-10-15) and is added once sandbox keys are available.
+   */
+  PAYMENT_PROVIDER: z.enum(['dev']).default('dev'),
+  /** Provider call timeout; a timed-out authorization is reconciled, never retried blindly. */
+  PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
   /** Test-only escape hatch; refused in production. */
   RATE_LIMITS_ENABLED: z
     .enum(['true', 'false'])
@@ -83,6 +90,9 @@ export function productionIssues(cfg: ServerEnv): string[] {
   if (!cfg.RATE_LIMITS_ENABLED) issues.push('RATE_LIMITS_ENABLED: cannot be disabled in production');
   if (cfg.MAILER_DRIVER === 'dev') {
     issues.push('MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)');
+  }
+  if (cfg.PAYMENT_PROVIDER === 'dev') {
+    issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
   return issues;
 }

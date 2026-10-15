@@ -67,8 +67,14 @@ export const createSaleSchema = z
     clientTransactionId: ref,
     lines: z.array(saleLineSchema).min(1).max(200),
     beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
+    /** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
     tenders: z
-      .array(z.object({ method: z.literal('CASH'), tendered: amountSchema }))
+      .array(
+        z.discriminatedUnion('method', [
+          z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+          z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
+        ]),
+      )
       .min(1)
       .max(10),
     /** The total the cashier saw; if the server total differs (price changed), the sale is refused. */
@@ -100,6 +106,15 @@ export const createSaleSchema = z
     }
   });
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
+
+export const createPaymentIntentSchema = z.object({
+  cashierSessionId: z.uuid(),
+  /** The checkout this payment belongs to (same id the sale will carry). */
+  clientTransactionId: ref,
+  method: z.enum(['CARD', 'QR', 'EWALLET']),
+  amount: positiveAmount,
+});
+export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
 export const saleListQuerySchema = z.object({
   cashierSessionId: z.uuid().optional(),

@@ -127,6 +127,20 @@
       "when": 1792082179658,
       "tag": "0017_sales_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792085685074,
+      "tag": "0018_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792085687447,
+      "tag": "0019_payments_rls",
+      "breakpoints": true
     }
   ]
 }

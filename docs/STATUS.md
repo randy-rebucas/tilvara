@@ -3,7 +3,7 @@
 _Last updated: 2026-10-16 (session 3)_
 
 ## Current phase
-**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`) and 2 (sales core) done and verified this session.
+**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`) and 3 (payments + receipts) done and verified this session.
 Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
 
 ### Phase 2 slice 1 — tax foundation (session 3)
@@ -20,12 +20,18 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 - Tests (`sales.test.ts`, 19): full shift reconciles (lines→totals, tenders→due+change, drawer→due, stock→−qty, expected cash, zero-variance close); retry replays; 5 concurrent same-key → 1 sale; same clientTransactionId under new key → DUPLICATE_TRANSACTION; key required; 10 concurrent sales → numbers 1..10 and a failed sale consumes none; 5 failure modes leave no rows; stale total reports the new amount; beneficiary validation; one open session per register; not-owner/closed-session refusals; variance approval by another user, self-approval refused, approve once; branch scope; stock permissions, negative stock visible; append-only evidence and read-only balances.
 - **Defect found & fixed:** intermittent "TAX_PROFILE_MISSING"/not-yet-priced right after setup. Root cause measured, not guessed: the Docker DB clock stepped back ≈0.9 s between transactions (later session `opened_at` < earlier profile `effective_from`). Fix: effective-date resolution allows 5 s skew (ADR-0009 §8), regression test added; 10/10 stress runs green (was ~1 in 3–8 failing).
 
+### Phase 2 slice 3 — payments and receipts (session 3)
+- ADR-0010. Migrations 0018/0019: `payment_intents` (trigger: PROCESSING → SUCCEEDED|FAILED|UNKNOWN; UNKNOWN → SUCCEEDED|FAILED; SUCCEEDED → CANCELED if unconsumed; consumed once; identity immutable), append-only `payment_events`; `sale_tenders` gains CARD/QR/EWALLET with `payment_intent_id` (unique, no change on electronic tenders).
+- API: `POST /v1/payment-intents` (Idempotency-Key required, stored on the intent), `GET /v1/payment-intents?cashierSessionId=`, `GET /v1/payment-intents/:id` (with events), `POST …/:id/reconcile`, `POST …/:id/cancel`; `POST /v1/sales` accepts `{ method: 'INTENT', paymentIntentId }` tenders; `GET /v1/sales/:id/receipt`.
+- `PAYMENT_PROVIDER=dev` only (production boot refuses it); `PAYMENT_TIMEOUT_MS` (default 15 s).
+- Tests: 9 payment cases (split tender reconciles, card-only moves no cash, retry → same intent and 1 charge, decline, lost response → UNKNOWN → reconcile SUCCEEDED with 1 charge, never-received → FAILED, cancel, mismatch/overpayment/double tender leave no sale, owner-only + key required); receipt unit tests (never "official receipt", TIN with branch code, local time, VAT/non-VAT breakdowns, SC block) + API check; isolation +4 id routes, +3 smuggling cases, intents/events in the DB sweep.
+
 ## Verified in session 3 (commands actually run, all green)
 | Command | Result |
 |---|---|
 | `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
-| `pnpm test` | **82 passed** (tax 27, money 15, config 6, validation 5, observability 5, workers 2, api 17) |
-| `pnpm test:integration` | **156 passed** — database 21, api **127** (sales 19, tax 18, isolation 9, …), workers 8 |
+| `pnpm test` | **87 passed** (tax 27, api 22, money 15, config 6, validation 5, observability 5, workers 2) |
+| `pnpm test:integration` | **165 passed** — database 21, api **136** (sales+payments 28, tax 18, isolation 9, …), workers 8 |
 | `pnpm test:e2e:web` | **19/19** against live API + `next start` |
 | dev DB | migrated 0014/0015; backfill verified |
 
@@ -58,5 +64,5 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 slice 3 — payments and receipts.** (1) ADR for non-cash payments: `payment_intents` created before calling a provider (never inside the sale transaction), provider adapter port, `DevPaymentProvider` (deterministic success/decline/timeout for tests), reconcile-on-timeout instead of re-charging; PayMongo adapter skeleton behind config (no keys yet). (2) Split tender across cash + intent-backed methods in `POST /v1/sales`. (3) Receipt data endpoint (`GET /v1/sales/:id/receipt`) clearly marked "not an official invoice" while invoicing is DISABLED. (4) Then slice 4: voids/returns/refunds (append-only, stock restored only on RESTOCK disposition, cash refunds as drawer movements) and slice 5: basic reports reconciling to source rows; slice 6: POS browser checkout UI.
-Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6).
+**Phase 2 slice 4 — voids, returns and refunds.** Append-only `sale_returns` + `sale_return_lines` referencing original sale lines (never edit the sale): quantity ≤ sold − already returned (row-locked), refund amounts prorated from the line's own snapshot (tax buckets reversed proportionally, statutory discount included), disposition per line (RESTOCK → +qty stock movement; DAMAGED/DISPOSED → none), refund tender: cash from the current open session (drawer movement REFUND, negative) or back to the original payment intent (provider refund outside the tx, same intent/reconcile pattern). Same-session void = full return with reason, `sales.void`; returns need `sales.refund` (manager approval for cashiers). Then slice 5: basic reports reconciling to source rows (sales summary, by product/cashier/tender, refunds/voids, tax summary, SC/PWD book); slice 6: POS browser checkout UI.
+Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter (needs sandbox keys).

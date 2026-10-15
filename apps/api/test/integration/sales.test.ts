@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DevPaymentProvider } from '../../src/payments/provider.js';
 import { addMember, asOwnerInTenant, bearer, createApp, loginToken, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
 
 let app: INestApplication;
@@ -10,7 +11,8 @@ let owner: pg.Pool;
 const http = () => request(app.getHttpServer());
 
 beforeAll(async () => {
-  app = await createApp();
+  // Short provider timeout so the dev simulator lost-response cases resolve quickly.
+  app = await createApp({ PAYMENT_TIMEOUT_MS: 400 });
   owner = ownerPool();
 });
 
@@ -87,8 +89,15 @@ async function assertReconciles(s: Store, saleId: string) {
     const { rows: [t] } = await c.query(`SELECT sum(amount) AS applied, sum(tendered) AS tendered, sum(change) AS change FROM sale_tenders WHERE sale_id = $1`, [saleId]);
     expect(Number(t.applied)).toBe(Number(sl.amount_due));
     expect(Number(t.tendered) - Number(t.change)).toBe(Number(sl.amount_due));
+    const { rows: [ct] } = await c.query(`SELECT count(*)::int AS n, coalesce(sum(amount), 0) AS applied FROM sale_tenders WHERE sale_id = $1 AND method = 'CASH'`, [saleId]);
     const { rows: cash } = await c.query(`SELECT amount FROM cash_movements WHERE sale_id = $1`, [saleId]);
-    expect(cash.map((r) => Number(r.amount))).toEqual([Number(sl.amount_due)]);
+    expect(cash.map((r) => Number(r.amount))).toEqual(ct.n ? [Number(ct.applied)] : []);
+    const { rows: [el] } = await c.query(
+      `SELECT coalesce(sum(t.amount), 0) AS tendered, coalesce(sum(p.amount), 0) AS intents, count(*) FILTER (WHERE p.sale_id = t.sale_id)::int AS stamped, count(t.id)::int AS n
+         FROM sale_tenders t LEFT JOIN payment_intents p ON p.id = t.payment_intent_id WHERE t.sale_id = $1 AND t.method <> 'CASH'`,
+      [saleId],
+    );
+    expect([Number(el.tendered), el.stamped]).toEqual([Number(el.intents), el.n]);
     const { rows: stock } = await c.query(
       `SELECT l.quantity AS sold, m.quantity AS moved, p.track_inventory
          FROM sale_lines l JOIN product_variants v ON v.id = l.variant_id JOIN products p ON p.id = v.product_id
@@ -120,6 +129,15 @@ describe('a full cashier shift', () => {
     expect(sc.body.beneficiaries).toMatchObject([{ schemeCode: 'SC', name: 'Corazon Dela Cruz', idNumber: 'OSCA-0001' }]);
     expect(sc.body.lines[0].beneficiaryId).toBe(sc.body.beneficiaries[0].id);
     await assertReconciles(s, sc.body.id);
+    const receipt = (await http().get(`/v1/sales/${sc.body.id}/receipt`).set(s.cashier).expect(200)).body;
+    expect(receipt).toMatchObject({
+      documentType: 'SALES_RECEIPT',
+      notice: 'THIS IS NOT AN OFFICIAL INVOICE',
+      seller: { tinLabel: 'VAT REG TIN' },
+      transaction: { reference: 'R1-000002', register: 'Counter 1' },
+      totals: { vatExemptSales: '20.00', vatExemption: '2.40', statutoryDiscount: '4.00', amountDue: '16.00', change: '4.00' },
+      statutory: [{ scheme: 'SC', name: 'Corazon Dela Cruz', idNumber: 'OSCA-0001', discount: '4.00', signatureLine: true }],
+    });
 
     await http().post(`/v1/cashier-sessions/${session.id}/movements`).set(s.cashier).send({ type: 'PAY_OUT', amount: '50.00', reason: 'Ice delivery' }).expect(201);
     const detail = (await http().get(`/v1/cashier-sessions/${session.id}`).set(s.cashier).expect(200)).body;
@@ -309,5 +327,142 @@ describe('stock ledger', () => {
     } finally {
       await app.end();
     }
+  });
+});
+
+describe('non-cash payments (ADR-0010)', () => {
+  const intent = (auth: Auth, body: Record<string, unknown>, key = randomUUID()) =>
+    http().post('/v1/payment-intents').set(auth).set('Idempotency-Key', key).send(body);
+
+  it('card + cash split: the intent is applied first, cash covers the rest with change, and the intent is consumed once', async () => {
+    const s = await store('pay-split');
+    const session = await openSession(s);
+    const clientTransactionId = randomUUID();
+    const card = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId, method: 'CARD', amount: '30.00' }).expect(201);
+    expect(card.body).toMatchObject({ status: 'SUCCEEDED', amount: '30.00', saleId: null, providerReference: expect.stringMatching(/^dev_/) });
+    const body = {
+      cashierSessionId: session.id,
+      clientTransactionId,
+      lines: [{ variantId: s.cola, quantity: '2' }],
+      tenders: [{ method: 'INTENT', paymentIntentId: card.body.id }, { method: 'CASH', tendered: '20.00' }],
+    };
+    const res = await post(s.cashier, body).expect(201);
+    expect(res.body).toMatchObject({ amountDue: '44.80', amountTendered: '50.00', changeDue: '5.20' });
+    expect(res.body.tenders.map((t: { method: string; amount: string; change: string }) => [t.method, t.amount, t.change])).toEqual([
+      ['CARD', '30.00', '0.00'],
+      ['CASH', '14.80', '5.20'],
+    ]);
+    await assertReconciles(s, res.body.id);
+    const after = (await http().get(`/v1/payment-intents/${card.body.id}`).set(s.cashier).expect(200)).body;
+    expect(after.saleId).toBe(res.body.id);
+    expect(after.events.map((e: { type: string }) => e.type)).toEqual(['AUTHORIZE_REQUESTED', 'AUTHORIZED', 'CONSUMED']);
+    const reuse = await post(s.cashier, { ...body, clientTransactionId: randomUUID() }).expect(409);
+    expect(reuse.body.error.code).toBe('PAYMENT_CONSUMED');
+    await http().post(`/v1/payment-intents/${card.body.id}/cancel`).set(s.cashier).expect(409);
+  });
+
+  it('a fully card-paid sale moves no cash', async () => {
+    const s = await store('pay-card');
+    const session = await openSession(s);
+    const clientTransactionId = randomUUID();
+    const qr = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId, method: 'QR', amount: '22.40' }).expect(201);
+    const res = await post(s.cashier, {
+      cashierSessionId: session.id,
+      clientTransactionId,
+      lines: [{ variantId: s.cola, quantity: '1' }],
+      tenders: [{ method: 'INTENT', paymentIntentId: qr.body.id }],
+    }).expect(201);
+    await assertReconciles(s, res.body.id);
+    expect(await count(s, `SELECT count(*) AS n FROM cash_movements WHERE sale_id = $1`, [res.body.id])).toBe(0);
+    expect((await http().get(`/v1/cashier-sessions/${session.id}`).set(s.cashier).expect(200)).body.expectedCash).toBe('1000.00');
+  });
+
+  it('a retried intent request returns the same intent and never charges twice', async () => {
+    const s = await store('pay-retry');
+    const session = await openSession(s);
+    const body = { cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '10.00' };
+    const key = randomUUID();
+    const a = await intent(s.cashier, body, key).expect(201);
+    const b = await intent(s.cashier, body, key).expect(201);
+    expect(b.body.id).toBe(a.body.id);
+    expect(app.get(DevPaymentProvider).chargeCount(a.body.id)).toBe(1);
+    const other = await intent(s.cashier, { ...body, amount: '11.00' }, key).expect(422);
+    expect(other.body.error.code).toBe('IDEMPOTENCY_KEY_REUSED');
+  });
+
+  it('declines are recorded and cannot pay for a sale', async () => {
+    const s = await store('pay-decline');
+    const session = await openSession(s);
+    const clientTransactionId = randomUUID();
+    const d = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId, method: 'CARD', amount: '22.51' }).expect(201);
+    expect(d.body).toMatchObject({ status: 'FAILED', failureCode: 'card_declined' });
+    const res = await post(s.cashier, {
+      cashierSessionId: session.id,
+      clientTransactionId,
+      lines: [{ variantId: s.cola, quantity: '1' }],
+      tenders: [{ method: 'INTENT', paymentIntentId: d.body.id }],
+    }).expect(409);
+    expect(res.body.error.code).toBe('PAYMENT_NOT_SUCCEEDED');
+  });
+
+  it('a lost provider response becomes UNKNOWN; reconcile finds the charge instead of charging again', async () => {
+    const s = await store('pay-lost');
+    const session = await openSession(s);
+    const p = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '22.52' }).expect(201);
+    expect(p.body.status).toBe('UNKNOWN');
+    const r = await http().post(`/v1/payment-intents/${p.body.id}/reconcile`).set(s.cashier).expect(200);
+    expect(r.body.status).toBe('SUCCEEDED');
+    expect(app.get(DevPaymentProvider).chargeCount(p.body.id)).toBe(1);
+    const events = (await http().get(`/v1/payment-intents/${p.body.id}`).set(s.cashier)).body.events.map((e: { type: string }) => e.type);
+    expect(events).toEqual(['AUTHORIZE_REQUESTED', 'TIMEOUT', 'RECONCILED']);
+  });
+
+  it('a request the provider never received reconciles to FAILED', async () => {
+    const s = await store('pay-never');
+    const session = await openSession(s);
+    const p = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'EWALLET', amount: '22.53' }).expect(201);
+    expect(p.body.status).toBe('UNKNOWN');
+    const r = await http().post(`/v1/payment-intents/${p.body.id}/reconcile`).set(s.cashier).expect(200);
+    expect(r.body).toMatchObject({ status: 'FAILED', failureCode: 'not_received_by_provider' });
+  });
+
+  it('an unused authorized payment can be cancelled (voided at the provider), then cannot be used', async () => {
+    const s = await store('pay-cancel');
+    const session = await openSession(s);
+    const clientTransactionId = randomUUID();
+    const p = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId, method: 'CARD', amount: '22.40' }).expect(201);
+    expect((await http().post(`/v1/payment-intents/${p.body.id}/cancel`).set(s.cashier).expect(200)).body.status).toBe('CANCELED');
+    await post(s.cashier, {
+      cashierSessionId: session.id,
+      clientTransactionId,
+      lines: [{ variantId: s.cola, quantity: '1' }],
+      tenders: [{ method: 'INTENT', paymentIntentId: p.body.id }],
+    }).expect(409);
+  });
+
+  it('refuses intents from another checkout, overpayment and double tendering — and records nothing', async () => {
+    const s = await store('pay-guard');
+    const session = await openSession(s);
+    const ctx = randomUUID();
+    const big = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId: ctx, method: 'CARD', amount: '100.00' }).expect(201);
+    const other = await intent(s.cashier, { cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '5.00' }).expect(201);
+    const sell = (tenders: unknown[]) =>
+      post(s.cashier, { cashierSessionId: session.id, clientTransactionId: ctx, lines: [{ variantId: s.cola, quantity: '1' }], tenders });
+    expect((await sell([{ method: 'INTENT', paymentIntentId: big.body.id }])).body.error.code).toBe('OVERPAYMENT');
+    expect((await sell([{ method: 'INTENT', paymentIntentId: other.body.id }, { method: 'CASH', tendered: '50.00' }])).body.error.code).toBe('PAYMENT_MISMATCH');
+    expect((await sell([{ method: 'INTENT', paymentIntentId: big.body.id }, { method: 'INTENT', paymentIntentId: big.body.id }])).body.error.code).toBe('DUPLICATE_TENDER');
+    expect(await count(s, `SELECT count(*) AS n FROM sales`)).toBe(0);
+  });
+
+  it('only the session owner takes payments on it, and the Idempotency-Key is required', async () => {
+    const s = await store('pay-owner');
+    const session = await openSession(s);
+    const res = await intent(s.manager, { cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '1.00' }).expect(403);
+    expect(res.body.error.code).toBe('NOT_SESSION_OWNER');
+    await http()
+      .post('/v1/payment-intents')
+      .set(s.cashier)
+      .send({ cashierSessionId: session.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '1.00' })
+      .expect(400);
   });
 });

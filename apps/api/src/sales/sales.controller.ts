@@ -92,6 +92,11 @@ export class SalesController {
     return this.sales.get(auth, saleId);
   }
 
+  @Get('sales/:id/receipt')
+  receipt(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
+    return this.sales.receipt(auth, saleId);
+  }
+
   // stock
   @Idempotent()
   @Post('stock/adjustments')
