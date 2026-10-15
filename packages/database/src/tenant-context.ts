@@ -15,38 +15,56 @@ export class InvalidTenantContextError extends Error {
   }
 }
 
-export interface TenantTxOptions {
+export interface TxOptions {
   isolation?: IsolationLevel;
   /** Propagated to `app.correlation_id` for triggers/audit. */
   correlationId?: string;
-  /** Propagated to `app.user_id` for triggers/audit. */
+  /** Propagated to `app.user_id` (RLS on users, audit). Must come from the verified session. */
   userId?: string;
 }
 
+/** @deprecated alias kept for readability at call sites */
+export type TenantTxOptions = TxOptions;
+
+export interface Tx {
+  db: Database;
+  client: PoolClient;
+  /** Switch the RLS tenant for the rest of this transaction (e.g. right after provisioning). */
+  setTenant(tenantId: string): Promise<void>;
+  setUser(userId: string): Promise<void>;
+}
+
+function assertUuid(id: string): void {
+  if (!UUID.test(id)) throw new InvalidTenantContextError();
+}
+
 /**
- * Run `fn` inside a transaction whose Row-Level Security context is `tenantId`.
- *
- * The context is set with `set_config(..., is_local => true)`, so it is discarded at
- * COMMIT/ROLLBACK: a pooled connection can never carry one request's tenant into the
- * next (ADR-0004). `tenantId` must come from the server-side session, never from input.
+ * Run `fn` in a transaction. Context settings are transaction-local
+ * (`set_config(..., true)`), so they vanish at COMMIT/ROLLBACK and a pooled
+ * connection can never leak one request's identity into the next (ADR-0004).
  */
-export async function withTenant<T>(
-  pool: Pool,
-  tenantId: string,
-  fn: (db: Database, client: PoolClient) => Promise<T>,
-  options: TenantTxOptions = {},
-): Promise<T> {
-  if (!UUID.test(tenantId)) throw new InvalidTenantContextError();
+export async function transaction<T>(pool: Pool, fn: (tx: Tx) => Promise<T>, options: TxOptions = {}): Promise<T> {
+  if (options.userId) assertUuid(options.userId);
   const client = await pool.connect();
   try {
     await client.query(`BEGIN ISOLATION LEVEL ${options.isolation ?? 'READ COMMITTED'}`);
     await client.query(
-      `SELECT set_config('app.tenant_id', $1, true),
-              set_config('app.user_id', $2, true),
-              set_config('app.correlation_id', $3, true)`,
-      [tenantId, options.userId ?? '', options.correlationId ?? ''],
+      `SELECT set_config('app.user_id', $1, true), set_config('app.correlation_id', $2, true)`,
+      [options.userId ?? '', options.correlationId ?? ''],
     );
-    const result = await fn(drizzle(client, { schema }), client);
+    const tx: Tx = {
+      db: drizzle(client, { schema }),
+      client,
+      async setTenant(tenantId) {
+        assertUuid(tenantId);
+        await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId]);
+      },
+      async setUser(userId) {
+        assertUuid(userId);
+        await client.query(`SELECT set_config('app.user_id', $1, true)`, [userId]);
+      },
+    };
+    const result = await fn(tx);
     await client.query('COMMIT');
     return result;
   } catch (err) {
@@ -55,4 +73,25 @@ export async function withTenant<T>(
   } finally {
     client.release();
   }
+}
+
+/**
+ * Run `fn` inside a transaction whose Row-Level Security context is `tenantId`.
+ * `tenantId` must come from the server-side session, never from request input.
+ */
+export async function withTenant<T>(
+  pool: Pool,
+  tenantId: string,
+  fn: (db: Database, client: PoolClient) => Promise<T>,
+  options: TxOptions = {},
+): Promise<T> {
+  assertUuid(tenantId);
+  return transaction(
+    pool,
+    async (tx) => {
+      await tx.setTenant(tenantId);
+      return fn(tx.db, tx.client);
+    },
+    options,
+  );
 }

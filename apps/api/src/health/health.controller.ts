@@ -1,7 +1,9 @@
 import { Controller, Get, HttpStatus, Inject } from '@nestjs/common';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
+import { Public } from '../auth/auth-context.js';
 
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(@Inject(DatabasePool) private readonly db: DatabasePool) {}

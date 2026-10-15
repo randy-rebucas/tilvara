@@ -3,41 +3,34 @@
 _Last updated: 2026-10-15 (session 1)_
 
 ## Current phase
-**Phase 0 — Repository & architecture: DONE** (except CI pipeline, deferred until a git remote exists).
-**Next: Phase 1 — Platform foundation.**
+**Phase 1 — Platform foundation: IN PROGRESS.** Slice 1 (identity, onboarding, RBAC read side) done and verified.
+Phase 0 done (commit 159b94e).
 
-## Verified this session (commands actually run, all green)
+## User decisions (2026-10-15)
+- **No GitHub remote yet** — keep the repo local; CI deferred. Don't create one until asked.
+- **Payment provider: PayMongo** (Phase 2 payment adapter targets PayMongo; dev adapter until keys are provided).
+- **Hosting: cloud** (specific provider/region still open — keep Docker images provider-neutral).
+
+## Verified (commands actually run this session, all green)
 | Command | Result |
 |---|---|
-| `pnpm build` | 4/4 packages built |
-| `pnpm typecheck` | 7/7 tasks ok |
-| `pnpm exec oxlint apps packages` | exit 0 |
-| `pnpm test` | money 15, config 4, api 4 → **23 passed** |
-| `pnpm --filter @1pos/database test:integration` | **14 passed** against Postgres 18 as `onepos_app` (RLS fail-closed, cross-tenant read/update/insert blocked, pool context not leaked after commit or rollback, audit log append-only by grant + trigger incl. owner/TRUNCATE, provisioning validation) |
-| `pnpm db:migrate` | dev DB `onepos` migrated |
-| `node dist/main.js` + `GET /v1/health/ready` | `{"status":"ok","checks":{"database":"up"}}`; 404 returns standard error envelope with correlation id |
+| `pnpm build` / `pnpm typecheck` / `pnpm exec oxlint apps packages` | all ok, lint exit 0 |
+| `pnpm test` | money 15, config 5, validation 5, api 15 → **40 passed** |
+| `pnpm test:integration` | database **14 passed**, api **20 passed** (Postgres 18, runtime role `onepos_app`) |
+
+API integration coverage (apps/api/test/integration/auth.test.ts): permission catalog = DB seed; atomic signup (dup email/slug → 409, no orphan user on rollback); login auto-select / generic errors / lockout after 5 failures; refresh rotation, reuse revokes the family + its access tokens, concurrent refresh → exactly one wins; logout immediate; forged/malformed tokens; cross-tenant switch/refresh/login denied; members/roles lists tenant-isolated; cashier lacks roles/members; branch-scoped grant ≠ tenant-wide; removed member loses access next request; TENANT_REQUIRED + switch-tenant; audit rows per tenant; signup rate limit.
 
 ## What exists
-- Monorepo: pnpm 10 + turbo; `packages/money`, `packages/config`, `packages/database`, `apps/api`.
-- DB: migrations `0000_platform_core` (tenants, audit_logs) + `0001_rls_platform` (RLS helpers, policies, append-only trigger, grants, `platform_create_tenant` SECURITY DEFINER owned by `onepos_platform`).
-- Docs: architecture, domain model, data model + ER, API conventions, threat model, testing strategy, ADR-0001..0007, backlog with MVP criteria, competitor analysis, PH compliance assumptions.
+- Packages: `money`, `config`, `validation` (zod contracts, permission catalog, role templates), `database` (Drizzle schema, migrations 0000–0003, `transaction()` / `withTenant()`).
+- API (`apps/api`): health, auth (`/v1/auth/signup|login|refresh|logout|switch-tenant`), `/v1/me`, `/v1/members`, `/v1/roles`; global RateLimitGuard (in-memory) + AuthGuard (JWT + DB re-validation via `auth_resolve_context` + grants under RLS); zod pipe; audit helper.
+- DB auth design: runtime role has **no** access to password hashes or sessions; everything goes through SECURITY DEFINER `auth_*` functions owned by `onepos_platform` (migration 0003).
 
-## Not done / known gaps
-- CI pipeline (no git remote yet — ask the user whether to create a GitHub repo).
-- `pnpm test:integration` at root only covers `@1pos/database` (API has no integration tests yet).
-- No auth, no admin-web, no POS app yet (Phase 1/2).
-- Compliance doc is web research, **not legal advice**; open questions listed there need a PH tax professional.
-- Rust not installed → Tauri (Phase 5) blocked.
+## Known gaps in Phase 1 so far
+- MFA (TOTP), password reset, invitations, role assignment/custom roles — not built.
+- Rate limiter is in-memory (per instance) — needs Redis before multi-replica deploys.
+- Lockout reveals account existence via 429 (accepted trade-off, documented in code).
+- Node's `crypto.argon2` is used (Node ≥ 24.7); still marked experimental by Node — revisit if it changes.
 
 ## Next task (start here)
-Phase 1, item 1–3 from `docs/BACKLOG.md`, as one vertical slice:
-1. Migration: `users`, `user_sessions`, `tenant_memberships`, `roles`, `permissions`, `role_permissions`, `membership_roles` (+ RLS, composite FKs, grants). Note: `users` is global (not tenant-owned) — design its access via SECURITY DEFINER lookups for login.
-2. `apps/api` auth module: register owner + provision tenant (calls `platform_create_tenant`), login (argon2id), JWT access (15 min), rotating refresh tokens with reuse detection, logout. Add `argon2` + `@nestjs/jwt` (or `jose`).
-3. Tenant context guard: resolve membership from token → `withTenant()`; permission guard.
-4. Tests: unit + API integration (`apps/api/test/integration`) including cross-tenant attempts.
-Then continue with legal entities/branches/registers, catalog, prices, admin-web.
-
-## Open decisions for the user (not blocking Phase 1)
-- Git remote / CI provider.
-- PH payment provider for Phase 2 (PayMongo / Maya / others).
-- Hosting region/provider.
+Phase 1 slice 2 — **organization**: `legal_entities` (TIN, registered name/address, VAT status, invoicing settings placeholder), `tax_profiles`, `branches` (BIR branch code, timezone), `registers`, `terminals` (registration + hashed credential + revoke). Migration with RLS/composite FKs/grants; validate `membership_roles.scope_id` against these tables (trigger); CRUD endpoints with `org.read`/`org.manage`/`terminals.manage`; audit; cross-tenant tests.
+Then slice 3: catalog (categories, products, variants, barcodes, UoM, tax categories), price lists; slice 4: invitations + role assignment; slice 5: plans/entitlements, idempotency + outbox; slice 6: admin-web.

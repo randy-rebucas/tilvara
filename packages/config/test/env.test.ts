@@ -31,6 +31,12 @@ describe('loadServerEnv', () => {
     expect(() => loadServerEnv({ ...base, NODE_ENV: 'production' })).toThrow(/placeholder/);
   });
 
+  it('refuses disabled rate limits in production', () => {
+    expect(() =>
+      loadServerEnv({ ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'x'.repeat(48), RATE_LIMITS_ENABLED: 'false' }),
+    ).toThrow(/RATE_LIMITS_ENABLED/);
+  });
+
   it('accepts a real secret in production', () => {
     const env = loadServerEnv({ ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'x'.repeat(48) });
     expect(env.NODE_ENV).toBe('production');

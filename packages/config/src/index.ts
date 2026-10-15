@@ -9,6 +9,14 @@ export const serverEnvSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4320),
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
+  /** Comma-separated origins allowed by CORS (admin web, POS browser mode). */
+  CORS_ORIGINS: z.string().default('http://127.0.0.1:3320,http://localhost:3320'),
+  /** Test-only escape hatch; refused in production. */
+  RATE_LIMITS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -32,6 +40,9 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
   if (isProd(env)) {
+    if (!parsed.data.RATE_LIMITS_ENABLED) {
+      throw new EnvValidationError(['RATE_LIMITS_ENABLED: cannot be disabled in production']);
+    }
     const secret = parsed.data.JWT_ACCESS_SECRET.toLowerCase();
     if (DEV_SECRET_MARKERS.some((m) => secret.includes(m))) {
       throw new EnvValidationError(['JWT_ACCESS_SECRET: development placeholder secret used in production']);

@@ -28,9 +28,9 @@ Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file
 - ⬜ CI pipeline (GitHub Actions: install, lint, typecheck, unit, integration with Postgres service) — needs a remote repo decision
 
 ## Phase 1 — Platform foundation
-1. ⬜ Identity: users, argon2id, login, JWT access, rotating refresh sessions, logout/revoke
-2. ⬜ Tenant provisioning (`platform_create_tenant` SECURITY DEFINER), owner membership, onboarding endpoint
-3. ⬜ Roles/permissions catalog, membership scopes (tenant/legal entity/branch/register), permission guard
+1. 🟡 Identity: ✅ users, argon2id (node:crypto), login with lockout, JWT access (15 min), rotating refresh with reuse detection, logout/revoke, switch-tenant, `/me`. ⬜ TOTP MFA for privileged roles, ⬜ password reset (needs email adapter), ⬜ Redis-backed rate limiter (in-memory now)
+2. ✅ Tenant provisioning via `POST /v1/auth/signup` (user + tenant + 6 system roles + owner membership, atomic)
+3. 🟡 Roles/permissions: ✅ catalog (35 codes), role templates, scoped grants (`hasPermission`), global AuthGuard + `@RequirePermissions`, `GET /v1/members`, `GET /v1/roles`. ⬜ invitations, role assignment/custom-role endpoints, scope-id validation once org tables exist
 4. ⬜ Legal entities + tax profiles (VAT status, TIN, registered name/address, rounding policy)
 5. ⬜ Branches, registers, terminals (registration + credential + revoke)
 6. ⬜ Catalog: categories, products, variants, barcodes, UoM, tax categories; archive-not-delete
