@@ -179,3 +179,19 @@ export const stockQuerySchema = z.object({
   variantId: z.uuid().optional(),
 });
 export type StockQuery = z.infer<typeof stockQuerySchema>;
+
+// ------------------------------------------------------------------ reports
+
+const localDate = z.iso.date();
+
+export const reportRangeSchema = z
+  .object({
+    branchId: z.uuid(),
+    /** Inclusive local dates in the branch's timezone. */
+    from: localDate,
+    to: localDate,
+    scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/).optional(),
+  })
+  .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
+  .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days per report', path: ['to'] });
+export type ReportRangeQuery = z.infer<typeof reportRangeSchema>;

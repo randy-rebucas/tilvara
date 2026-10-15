@@ -9,12 +9,13 @@ import { TeamModule } from './team/team.module.js';
 import { TaxModule } from './tax/tax.module.js';
 import { SalesModule } from './sales/sales.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
+import { ReportsModule } from './reports/reports.module.js';
 import { BillingController } from './billing/billing.controller.js';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { IdempotencyInterceptor } from './infrastructure/idempotency.js';
 
 @Module({
-  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, PaymentsModule],
+  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, PaymentsModule, ReportsModule],
   controllers: [BillingController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor }],
 })
