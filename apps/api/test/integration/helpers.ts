@@ -18,6 +18,8 @@ export async function createApp(envOverrides: Partial<ServerEnv> = {}): Promise<
   const app = moduleRef.createNestApplication();
   configureApp(app);
   await app.init();
+  // Adversarial tests fire many parallel requests at one server.
+  app.getHttpServer().setMaxListeners(50);
   return app;
 }
 

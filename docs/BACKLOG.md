@@ -33,8 +33,8 @@ Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file
 3. 🟡 Roles/permissions: ✅ catalog (35 codes), role templates, scoped grants (`hasPermission`), global AuthGuard + `@RequirePermissions`, `GET /v1/members`, `GET /v1/roles`. ⬜ invitations, role assignment/custom-role endpoints, scope-id validation once org tables exist
 4. 🟡 Legal entities ✅ (TIN, VAT status, registered name/address, RDO, price display, rounding, invoicing mode DISABLED/DEV_SERIES only). ⬜ effective-dated `tax_profiles` (moved to Phase 2 with the tax engine — VAT status changes after sales exist must be versioned)
 5. ✅ Branches (BIR branch code), registers, terminals (one-time credential, hash not readable by app role, final revocation), archive-not-delete with child checks, scope-aware permissions, role-scope validation trigger. ⬜ terminal authentication for API calls (Phase 2)
-6. ⬜ Catalog: categories, products, variants, barcodes, UoM, tax categories; archive-not-delete
-7. ⬜ Price lists + effective-dated prices
+6. ✅ Catalog: UoM, tax categories (classification), category tree (acyclic, depth ≤ 5), products (STANDARD/SERVICE, sold by UNIT/WEIGHT), variants (SKU unique per tenant among active, case-insensitive), multiple barcodes, search + cursor pagination, archive-not-delete (frees codes). ⬜ bundles/composites, product images (needs S3 adapter), batch/expiry & serial tracking (Phase 3), UoM conversions (Phase 3)
+7. ✅ Price lists (one default, branch assignment), append-only effective-dated prices (scheduled changes, no backdating), POS lookup by barcode/SKU returning the branch price in force (null when unpriced)
 8. ⬜ Plans, subscriptions, entitlements (server-enforced guard; grace/read-only behaviour)
 9. ⬜ Idempotency middleware + `idempotency_records`; `outbox_events` + worker skeleton
 10. ⬜ Audit logging service wired into all sensitive mutations

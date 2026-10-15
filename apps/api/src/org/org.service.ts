@@ -14,36 +14,29 @@ import type {
   CreateBranchInput,
   CreateLegalEntityInput,
   CreateRegisterInput,
-  PermissionCode,
   RegisterTerminalInput,
   UpdateBranchInput,
   UpdateLegalEntityInput,
   UpdateRegisterInput,
 } from '@1pos/validation';
 import { createHash, randomBytes } from 'node:crypto';
-import { recordAudit } from '../audit/audit.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { hasPermission, type ResourceScope } from '../auth/authorization.js';
+import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 
-const notFound = (what: string) => new AppError('NOT_FOUND', `${what} not found`, HttpStatus.NOT_FOUND);
-
-function pgCode(e: unknown): { code?: string; constraint?: string } {
-  const err = e as { cause?: { code?: string; constraint?: string }; code?: string; constraint?: string };
-  return err.cause ?? err;
-}
-
-const CONFLICTS: Record<string, [string, string]> = {
-  legal_entities_tenant_tin_unique: ['TIN_TAKEN', 'Another legal entity already uses this TIN'],
-  branches_tenant_code_unique: ['CODE_TAKEN', 'Another branch already uses this code'],
-  branches_entity_bir_code_unique: ['BIR_BRANCH_CODE_TAKEN', 'This BIR branch code is already used by this legal entity'],
-  registers_branch_code_unique: ['CODE_TAKEN', 'Another register in this branch already uses this code'],
-};
-
 @Injectable()
-export class OrgService {
-  constructor(@Inject(TenantDb) private readonly tenantDb: TenantDb) {}
+export class OrgService extends TenantService {
+  protected readonly conflicts: ConflictMap = {
+    legal_entities_tenant_tin_unique: ['TIN_TAKEN', 'Another legal entity already uses this TIN'],
+    branches_tenant_code_unique: ['CODE_TAKEN', 'Another branch already uses this code'],
+    branches_entity_bir_code_unique: ['BIR_BRANCH_CODE_TAKEN', 'This BIR branch code is already used by this legal entity'],
+    registers_branch_code_unique: ['CODE_TAKEN', 'Another register in this branch already uses this code'],
+  };
+
+  constructor(@Inject(TenantDb) tenantDb: TenantDb) {
+    super(tenantDb);
+  }
 
   // ---------------------------------------------------------------- legal entities
   listLegalEntities(auth: AuthContext) {
@@ -69,7 +62,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const current = await this.legalEntity(db, id);
       this.assertCan(auth, 'org.manage', { legalEntityId: id });
-      if (current.archivedAt) throw this.archived('Legal entity');
+      if (current.archivedAt) throw archived('Legal entity');
       const [row] = await db.update(legalEntities).set(input).where(eq(legalEntities.id, id)).returning();
       await this.audit(db, auth, 'legal_entity.updated', 'legal_entity', id, { fields: Object.keys(input) });
       return row!;
@@ -107,7 +100,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const entity = await this.legalEntity(db, input.legalEntityId);
       this.assertCan(auth, 'org.manage', { legalEntityId: entity.id });
-      if (entity.archivedAt) throw this.archived('Legal entity');
+      if (entity.archivedAt) throw archived('Legal entity');
       const [row] = await db
         .insert(branches)
         .values({ ...input, tenantId: tenantOf(auth).tenantId })
@@ -121,7 +114,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const current = await this.branch(db, id);
       this.assertCan(auth, 'org.manage', { legalEntityId: current.legalEntityId, branchId: id });
-      if (current.archivedAt) throw this.archived('Branch');
+      if (current.archivedAt) throw archived('Branch');
       const [row] = await db.update(branches).set(input).where(eq(branches.id, id)).returning();
       await this.audit(db, auth, 'branch.updated', 'branch', id, { fields: Object.keys(input) });
       return row!;
@@ -165,7 +158,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const branch = await this.branch(db, input.branchId);
       this.assertCan(auth, 'org.manage', { legalEntityId: branch.legalEntityId, branchId: branch.id });
-      if (branch.archivedAt) throw this.archived('Branch');
+      if (branch.archivedAt) throw archived('Branch');
       const [row] = await db
         .insert(registers)
         .values({ ...input, tenantId: tenantOf(auth).tenantId })
@@ -179,7 +172,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const { register, scope } = await this.registerWithScope(db, id);
       this.assertCan(auth, 'org.manage', scope);
-      if (register.archivedAt) throw this.archived('Register');
+      if (register.archivedAt) throw archived('Register');
       const [row] = await db.update(registers).set(input).where(eq(registers.id, id)).returning();
       await this.audit(db, auth, 'register.updated', 'register', id, { fields: Object.keys(input) });
       return row!;
@@ -241,7 +234,7 @@ export class OrgService {
     return this.mutate(auth, async (db) => {
       const { register, scope } = await this.registerWithScope(db, input.registerId);
       this.assertCan(auth, 'terminals.manage', scope);
-      if (register.archivedAt) throw this.archived('Register');
+      if (register.archivedAt) throw archived('Register');
       const secret = `tpk_${randomBytes(32).toString('base64url')}`;
       const [row] = await db
         .insert(terminals)
@@ -276,30 +269,6 @@ export class OrgService {
   }
 
   // ---------------------------------------------------------------- helpers
-  private can(auth: AuthContext, perm: PermissionCode, scope: ResourceScope = {}): boolean {
-    return hasPermission(tenantOf(auth).grants, perm, scope);
-  }
-
-  private assertCan(auth: AuthContext, perm: PermissionCode, scope: ResourceScope = {}): void {
-    if (!this.can(auth, perm, scope)) {
-      throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing: [perm] });
-    }
-  }
-
-  private async mutate<T>(auth: AuthContext, fn: (db: Database) => Promise<T>): Promise<T> {
-    if (tenantOf(auth).status === 'SUSPENDED') {
-      throw new AppError('TENANT_SUSPENDED', 'This business is suspended; records are read-only', HttpStatus.FORBIDDEN);
-    }
-    try {
-      return await this.tenantDb.run(auth, fn);
-    } catch (e) {
-      const pg = pgCode(e);
-      const conflict = pg.code === '23505' && pg.constraint ? CONFLICTS[pg.constraint] : undefined;
-      if (conflict) throw new AppError(conflict[0], conflict[1], HttpStatus.CONFLICT);
-      throw e;
-    }
-  }
-
   private async legalEntity(db: Database, id: string) {
     const [row] = await db.select().from(legalEntities).where(eq(legalEntities.id, id));
     if (!row) throw notFound('Legal entity');
@@ -323,21 +292,5 @@ export class OrgService {
       register: row.register,
       scope: { legalEntityId: row.legalEntityId, branchId: row.register.branchId, registerId: row.register.id },
     };
-  }
-
-  private archived(what: string): AppError {
-    return new AppError('ARCHIVED', `${what} is archived`, HttpStatus.CONFLICT);
-  }
-
-  private audit(db: Database, auth: AuthContext, action: string, resourceType: string, resourceId: string, metadata?: Record<string, unknown>) {
-    return recordAudit(db, {
-      tenantId: tenantOf(auth).tenantId,
-      actorUserId: auth.userId,
-      action,
-      resourceType,
-      resourceId,
-      correlationId: auth.correlationId ?? null,
-      ...(metadata ? { metadata } : {}),
-    });
   }
 }
