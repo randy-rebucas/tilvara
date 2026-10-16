@@ -4,6 +4,7 @@ import {
   cashierSessionListQuerySchema,
   cashMovementSchema,
   closeCashierSessionSchema,
+  createCheckSchema,
   createSaleReturnSchema,
   createSaleSchema,
   idParamSchema,
@@ -15,6 +16,7 @@ import {
   type CashierSessionListQuery,
   type CashMovementInput,
   type CloseCashierSessionInput,
+  type CreateCheckInput,
   type CreateSaleInput,
   type CreateSaleReturnInput,
   type OpenCashierSessionInput,
@@ -89,6 +91,13 @@ export class SalesController {
   @Post('sales')
   createSale(@Auth() auth: AuthContext, @Body(new ZodPipe(createSaleSchema)) body: CreateSaleInput) {
     return this.sales.create(auth, body);
+  }
+
+  /** A restaurant check: a sale paying shares of a bill (ADR-0014 §8). Idempotency-Key is mandatory. */
+  @Idempotent({ required: true })
+  @Post('restaurant/bills/:id/checks')
+  createCheck(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(createCheckSchema)) body: CreateCheckInput) {
+    return this.sales.createFromBill(auth, billId, body);
   }
 
   @Get('sales')

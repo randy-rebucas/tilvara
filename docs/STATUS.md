@@ -1,9 +1,42 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–3: recipes + consumption, menu foundation, orders + kitchen)_
+_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–4: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge)_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§7 and the §9 settings are built; §8–§11 are proposed, and the user hasn't confirmed the three open choices yet. Slices 1–3 done; next is slice 4, bills + checks (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§9 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–4 done; next is slice 5, restaurant reports (see "Next task").
+
+## Phase 4 slice 4 — bills, split checks, service charge (session 6)
+- **Schema**: migrations 0039/0040, all with forced RLS.
+  - New tables: `order_bills`, `order_bill_lines`, `order_bill_beneficiaries`, `order_bill_charges`, `order_bill_allocations`, `sale_charges`, `sale_return_charges`.
+  - New columns: `sales.order_bill_id` and `sale_lines.parent_line_id` (same-sale FK).
+  - Bill evidence is append-only. The bill state trigger allows ACTIVE → SETTLED/VOIDED, and voiding is refused once a check is paid.
+  - Allocation guard: each line's shares are summed as exact fractions under the bill row lock, never more than 1.
+  - The new system account `SERVICE_CHARGE_PAYABLE` (2200) is in `DEFAULT_CHART` and back-filled for every entity (dev: applied).
+- **Tax engine**: `serviceCharge()` charges base = items net of every discount, ex VAT, then taxes the charge as its own line (VAT seller: VAT on top; non-VAT: percentage-tax sales). Unit-tested, including the SC/PWD discounted base, the non-VAT seller and rounding.
+- **Accounting**: `salePosting` / `saleReturnPosting` credit or debit `SERVICE_CHARGE_PAYABLE` with the charge ex VAT; its VAT stays in output VAT (unit test).
+- **Bill** (`POST /v1/restaurant/orders/:id/bill`):
+  - priced by `TaxService.computeCart` over live items, with priced modifiers as child lines;
+  - SC/PWD per item, itemized or shared;
+  - order `discountRate` (sales.discount) spread over non-statutory lines;
+  - service charge from branch settings;
+  - `requiresProfessionalReview` when SC/PWD meets the service charge;
+  - order → BILLED (no adds or voids); reopen via `/void` only before any check.
+- **Checks** (`POST /v1/restaurant/bills/:id/checks` → `SalesService.createFromBill`):
+  - allocations by whole quantity or n/d share; omitted means "pay the rest"; modifiers follow their item;
+  - proration rounds the amount due first and gives one sales bucket the residual, so even splits look right; the final share takes the exact remainder;
+  - the charge follows the check's share of the items' amount due;
+  - the last check settles the bill and the order.
+  - `SalesService.create` was refactored so retail and checks share one `record()` path (tenders, numbering, lines with parents, charges, allocations, stock + consumption, books, audit, outbox). The 74 existing checkout/returns/drill/ledger/report tests passed on the new path before the new tests were written.
+- **Returns**: the charge goes back in proportion to the items returned; the return that empties the sale takes the rest; the liability is reversed.
+- **Receipts and reports**: the receipt prints "Service charge 10%" on its own line. By-product lists `charges` apart, so Σ products + Σ charges = summary.
+- **Defect found and fixed (slice 1 gap)**: by-product COGS ignored CONSUMPTION, so dishes showed full gross profit. Consumption is now attributed to the sold line's item.
+- **Tests**: `bills.test.ts` (5):
+  - the full SPEC service cycle: modifiers, kitchen, bill ₱473.00 = items ₱430 + charge 38.39 + 4.61 VAT, even split 236.50 + 236.50, settled, table freed, Σ checks = bill per bucket, stock once per dish, GL (Sales 383.93, charge payable 38.39, output VAT 50.68, COGS 136), audit clean, receipt, reports reconcile, shift closes balanced;
+  - splits by item/quantity, over-payment refused, 3 concurrent "pay the rest" → one;
+  - SC itemized (₱107.14, charge on the discounted base) + discount on non-statutory lines + reopen rules + beneficiary on the check;
+  - returns of a charged check (charge 9.00 with the tea, then the rest; liability nets to 0);
+  - DB guards (fraction guard refuses 1/3 + 3/4, append-only, no reopen after a check).
+- **Isolation**: +4 id routes, +2 smuggling cases, 3 list scans, all 7 tables in the sweep (the fixture bills with an SC diner, pays, returns part).
 
 ## Phase 4 slice 3 — orders and kitchen (session 6)
 - **Schema**: migrations 0037/0038 add `restaurant_orders`, `kitchen_tickets` and `order_items`, all with forced RLS. Composite FKs pin an order's table and a ticket's order and station to the same branch.
@@ -110,6 +143,10 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–3: 
 | slice 3: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` | ok |
 | slice 3: `pnpm test:integration` | **249 passed**: database 21, api **220** (+6 orders; isolation extended), workers 8 |
 | slice 3: `pnpm db:migrate` (dev) | 0037, 0038 applied |
+| slice 4: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` (tax **30**, accounting **14**, api 34, …) | ok |
+| slice 4: `pnpm test:integration` | **254 passed**: database 21, api **225** (+5 bills; isolation extended), workers 8 |
+| slice 4: `pnpm db:migrate` (dev) | 0039, 0040 applied (service charge account back-filled) |
+**Not run in slice 4: `pnpm test:e2e:pos` / `test:e2e:web`.** An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -315,15 +352,16 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - prices are fixed when the bill is printed;
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
-3. **Phase 4 slice 4 — bills + checks** (ADR-0014 §8, §9). This depends on the user's answers to choices 1–3 above; build with the ADR defaults if they're not answered.
-   - `order_bills` + `order_bill_lines` + `order_bill_charges` snapshot from `TaxService.computeCart` over the order's live items: modifier children as child lines, SC/PWD per item (itemized or headcount share), order-level discount spread over non-statutory lines, service charge as a charge line;
-   - order → BILLED, adding items and voids refused, reopen only while no check is settled;
-   - `POST /v1/sales` order mode: `orderBillId` + allocations (whole quantity or n/d share), with exact proration and the remainder to the last allocation; a within-bill DB guard; order row lock;
-   - `sale_lines.parent_line_id`, `sale_charges`, `SERVICE_CHARGE_PAYABLE` in the chart (seed + back-fill) and in `salePosting`;
-   - consumption prorated per check;
-   - order → SETTLED when fully allocated;
-   - existing reports reconcile with charges (summary net = Σ by-product + Σ charges);
-   - `ledger.test` / traceability / reconciliation extended.
-4. Then slices 5 (reports), 6 (UI), 7 (exit review).
-5. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
+3. Re-run `pnpm test:e2e:pos` and `pnpm test:e2e:web` against a freshly built API (checkout was refactored in slice 4; see the note above).
+4. **Phase 4 slice 5 — restaurant reports** (ADR-0014 §10):
+   - item performance (menu items + modifiers: qty, net, COGS incl. ingredients, margin);
+   - theoretical vs actual ingredient usage (CONSUMPTION vs count variance + waste);
+   - voids after firing (wasted or not, by reason and user);
+   - prep times per station (fired → ready);
+   - open orders / unsettled bills at close of day;
+   - service charge collected per period (DOLE distribution).
+   All reconcile to evidence rows in tests.
+5. Then slices 6 (POS table service + KDS screen + admin set-up UI) and 7 (exit review: service-cycle drills, dev audit, design review).
+6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
+7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -10,6 +10,7 @@ import {
   kitchenTickets,
   ne,
   or,
+  orderBills,
   orderItems,
   products,
   productVariants,
@@ -447,9 +448,14 @@ export class OrdersService extends TenantService {
     const ticketIds = [...new Set(items.flatMap((i) => (i.kitchenTicketId ? [i.kitchenTicketId] : [])))];
     const tickets = ticketIds.length ? await db.select().from(kitchenTickets).where(inArray(kitchenTickets.id, ticketIds)).orderBy(asc(kitchenTickets.ticketNumber)) : [];
     const item = (i: Item) => ({ ...i, quantity: toDec(i.quantity).toString() });
+    const bills = await db
+      .select({ id: orderBills.id, billNumber: orderBills.billNumber, status: orderBills.status, amountDue: orderBills.amountDue })
+      .from(orderBills).where(eq(orderBills.orderId, o.id)).orderBy(asc(orderBills.billNumber));
+    const current = bills.filter((b) => b.status !== 'VOIDED').at(-1);
     return {
       ...order!,
       table: table ?? null,
+      bill: current ? { ...current, amountDue: toDec(current.amountDue).toFixed(2) } : null,
       items: items.filter((i) => i.kind === 'ITEM').map((i) => ({ ...item(i), modifiers: items.filter((m) => m.parentItemId === i.id).map(item) })),
       tickets,
     };

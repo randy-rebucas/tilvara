@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { amountSchema } from './catalog.js';
+import { clientRefSchema, saleBeneficiarySchema, tendersSchema } from './sales.js';
 import { quantitySchema, rateSchema } from './tax.js';
 
 const name = z.string().trim().min(1).max(100);
@@ -227,6 +229,58 @@ export type MoveOrderItemsInput = z.infer<typeof moveOrderItemsSchema>;
 
 export const cancelOrderSchema = z.object({ reason });
 export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
+// ------------------------------------------------------------------ bills and checks (ADR-0014 §8)
+
+export const createBillSchema = z
+  .object({
+    /** Order-level discount on every line without a statutory discount, e.g. "0.10". Needs sales.discount. */
+    discountRate: rateSchema.refine((v) => Number(v) > 0, 'Discount must be above zero').optional(),
+    beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
+    /** SC/PWD diners' items: the whole item (itemized) or a share of a shared item (headcount, e.g. "0.25"). */
+    statutory: z
+      .array(z.object({ orderItemId: z.uuid(), beneficiary: clientRefSchema, share: rateSchema.or(z.literal('1')).optional() }))
+      .max(200)
+      .default([]),
+    /** The total shown before printing; if the server total differs, the bill is refused. */
+    expectedAmountDue: amountSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    const refs = new Set(v.beneficiaries.map((b) => b.ref));
+    if (refs.size !== v.beneficiaries.length) ctx.addIssue({ code: 'custom', path: ['beneficiaries'], message: 'Duplicate beneficiary ref' });
+    const items = new Set<string>();
+    v.statutory.forEach((s, i) => {
+      if (!refs.has(s.beneficiary)) ctx.addIssue({ code: 'custom', path: ['statutory', i, 'beneficiary'], message: 'Unknown beneficiary ref' });
+      if (items.has(s.orderItemId)) ctx.addIssue({ code: 'custom', path: ['statutory', i, 'orderItemId'], message: 'One statutory discount per item' });
+      items.add(s.orderItemId);
+    });
+    v.beneficiaries.forEach((b, i) => {
+      if (!v.statutory.some((s) => s.beneficiary === b.ref)) ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Beneficiary is not used by any item' });
+    });
+  });
+export type CreateBillInput = z.infer<typeof createBillSchema>;
+
+export const voidBillSchema = z.object({ reason });
+export type VoidBillInput = z.infer<typeof voidBillSchema>;
+
+/** A share of a bill line: whole units of it, or an even part (n of d, e.g. 1 of 3). */
+export const billAllocationSchema = z
+  .object({
+    billLineId: z.uuid(),
+    quantity: quantitySchema.optional(),
+    share: z.object({ num: z.number().int().min(1).max(999), den: z.number().int().min(1).max(999) }).refine((s) => s.num <= s.den, 'A share is at most the whole line').optional(),
+  })
+  .refine((a) => (a.quantity ? 1 : 0) + (a.share ? 1 : 0) <= 1, 'Give quantity or share, not both');
+
+export const createCheckSchema = z.object({
+  cashierSessionId: z.uuid(),
+  clientTransactionId: clientRefSchema,
+  /** Which bill lines (and how much of each) this check pays; omitted = everything still unpaid. */
+  allocations: z.array(billAllocationSchema).min(1).max(200).optional(),
+  tenders: tendersSchema,
+  expectedAmountDue: amountSchema.optional(),
+});
+export type CreateCheckInput = z.infer<typeof createCheckSchema>;
 
 // ------------------------------------------------------------------ kitchen (ADR-0014 §7)
 

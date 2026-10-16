@@ -2,6 +2,10 @@ import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Query } fr
 import {
   addOrderItemsSchema,
   cancelOrderSchema,
+  createBillSchema,
+  voidBillSchema,
+  type CreateBillInput,
+  type VoidBillInput,
   fireOrderSchema,
   idParamSchema,
   itemStatusSchema,
@@ -29,6 +33,7 @@ import {
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
+import { BillsService } from './bills.service.js';
 import { KitchenService } from './kitchen.service.js';
 import { OrdersService } from './orders.service.js';
 
@@ -41,7 +46,27 @@ export class OrdersController {
   constructor(
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(KitchenService) private readonly kitchen: KitchenService,
+    @Inject(BillsService) private readonly bills: BillsService,
   ) {}
+
+  /** Freeze the order's price (ADR-0014 §8). Idempotency-Key is mandatory (financial snapshot). */
+  @Idempotent({ required: true })
+  @Post('restaurant/orders/:id/bill')
+  bill(@Auth() auth: AuthContext, @Param('id', id) orderId: string, @Body(new ZodPipe(createBillSchema)) body: CreateBillInput) {
+    return this.bills.create(auth, orderId, body);
+  }
+
+  @Get('restaurant/bills/:id')
+  getBill(@Auth() auth: AuthContext, @Param('id', id) billId: string) {
+    return this.bills.get(auth, billId);
+  }
+
+  @Idempotent()
+  @HttpCode(200)
+  @Post('restaurant/bills/:id/void')
+  voidBill(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(voidBillSchema)) body: VoidBillInput) {
+    return this.bills.voidBill(auth, billId, body);
+  }
 
   @Idempotent()
   @Post('restaurant/orders')

@@ -330,3 +330,38 @@ export function calculateTax(ctx: TaxContext, inputs: readonly TaxLineInput[]): 
     requiresProfessionalReview: inputs.some((l) => l.statutory && l.statutory.scheme.reviewStatus !== 'APPROVED'),
   };
 }
+
+export interface ServiceChargeInput {
+  /** Decimal fraction, e.g. "0.10". */
+  rate: string;
+  /** VAT treatment of the charge itself (configuration; commonly VATable — tax adviser to confirm). */
+  vatTreatment: Extract<VatTreatment, 'VATABLE' | 'VAT_EXEMPT'>;
+}
+
+export interface ServiceChargeResult extends TaxLineResult {
+  /** Items net of all discounts, ex VAT: Σ (VATable + exempt + zero-rated + percentage-tax sales − statutory discount). */
+  base: string;
+  rate: string;
+}
+
+/**
+ * Service charge on computed item lines (RA 11360; ADR-0014 §9): `rate` × base, where the base is
+ * what the items sold for net of every discount and ex VAT — so a SC/PWD diner's share is charged
+ * on their discounted, VAT-exempt amount. The charge is then taxed as one extra line on its own
+ * VAT treatment (VAT added on top for a VAT seller; percentage-tax sales for a non-VAT seller).
+ * Never part of item prices. Base and VAT treatment are assumptions pending tax-adviser review.
+ * Returns null when there is nothing to charge.
+ */
+export function serviceCharge(ctx: TaxContext, items: readonly TaxLineResult[], input: ServiceChargeInput): ServiceChargeResult | null {
+  const scale = minorUnits(ctx.currency);
+  const rate = toDec(input.rate);
+  if (rate.isNegative() || rate.gte(1)) throw new TaxError('INVALID_LINE', 'Service charge rate must be in [0, 1)');
+  const base = items.reduce(
+    (acc, l) => acc.plus(l.vatableSales).plus(l.vatExemptSales).plus(l.zeroRatedSales).plus(l.percentageTaxSales).minus(l.statutoryDiscount),
+    ZERO,
+  );
+  const amount = roundTo(base.times(rate), scale, ctx.profile.roundingMode);
+  if (amount.lte(0)) return null;
+  const [line] = calculateTax(ctx, [{ id: 'SERVICE_CHARGE', unitPrice: amount.toFixed(scale), quantity: '1', priceIncludesTax: false, vatTreatment: input.vatTreatment }]).lines;
+  return { ...line!, base: base.toFixed(scale), rate: rate.toString() };
+}

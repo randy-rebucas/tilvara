@@ -6,7 +6,9 @@ import {
   inArray,
   productVariants,
   products,
+  saleCharges,
   saleLines,
+  saleReturnCharges,
   saleReturnLines,
   saleReturns,
   sales,
@@ -129,6 +131,31 @@ export class ReturnsService extends TenantService {
         return { req, line: found.line, trackInventory: found.trackInventory, quantity: q, amounts };
       });
 
+      // A charge (service charge) goes back in proportion to the items returned; the return that
+      // empties the sale takes the exact remainder, so returns never give back more than was paid.
+      const charges = await db.select().from(saleCharges).where(eq(saleCharges.saleId, saleId));
+      const chargeParts: { chargeId: string; amounts: Amounts }[] = [];
+      if (charges.length) {
+        const backBefore = await db.select().from(saleReturnCharges).where(inArray(saleReturnCharges.saleChargeId, charges.map((c) => c.id)));
+        const allBack = lines.every((l) => {
+          const q = planned.filter((p) => p.line.id === l.line.id).reduce((a, p) => a.plus(p.quantity), new Dec(0));
+          return toDec(l.line.quantity).minus(priorBy.get(l.line.id)?.quantity ?? 0).minus(q).isZero();
+        });
+        const itemsDue = lines.reduce((a, l) => a.plus(l.line.amountDue), new Dec(0));
+        const ratio = itemsDue.isZero() ? new Dec(0) : planned.reduce((a, p) => a.plus(p.amounts.amountDue), new Dec(0)).dividedBy(itemsDue);
+        for (const c of charges) {
+          const amounts = zero();
+          for (const k of BUCKETS) {
+            const before = backBefore.filter((b) => b.saleChargeId === c.id).reduce((a, b) => a.plus(b[k]), new Dec(0));
+            amounts[k] = allBack ? toDec(c[k]).minus(before) : r2(toDec(c[k]).times(ratio));
+          }
+          amounts.amountDue = amounts.vatableSales.plus(amounts.vatAmount).plus(amounts.vatExemptSales).plus(amounts.zeroRatedSales).plus(amounts.percentageTaxSales).minus(amounts.statutoryDiscount);
+          if (amounts.amountDue.isZero()) continue;
+          for (const k of [...BUCKETS, 'amountDue'] as const) totals[k] = totals[k].plus(amounts[k]);
+          chargeParts.push({ chargeId: c.id, amounts });
+        }
+      }
+
       const refund = totals.amountDue;
       if (input.expectedRefund !== undefined && !toDec(input.expectedRefund).equals(refund.toDecimalPlaces(2))) {
         throw new AppError('REFUND_CHANGED', 'The refund amount differs from what was shown', HttpStatus.CONFLICT, { refund: refund.toFixed(2) });
@@ -159,6 +186,10 @@ export class ReturnsService extends TenantService {
         .insert(saleReturnLines)
         .values(planned.map((p) => ({ tenantId, saleReturnId: doc!.id, saleLineId: p.line.id, quantity: p.quantity.toString(), disposition: p.req.disposition, ...out(p.amounts) })))
         .returning({ id: saleReturnLines.id, saleLineId: saleReturnLines.saleLineId });
+      if (chargeParts.length) {
+        await db.insert(saleReturnCharges).values(chargeParts.map((c) => ({ tenantId, saleReturnId: doc!.id, saleChargeId: c.chargeId, ...out(c.amounts) })));
+      }
+      const serviceCharge = chargeParts.reduce((a, c) => a.plus(c.amounts.vatableSales).plus(c.amounts.vatExemptSales).plus(c.amounts.zeroRatedSales).plus(c.amounts.percentageTaxSales), new Dec(0));
 
       // Sorted by variant (lock order, ADR-0012 §7); the ledger trigger costs them at the sale's cost.
       const restock = planned
@@ -189,7 +220,8 @@ export class ReturnsService extends TenantService {
         sourceId: doc!.id,
         memo: `${input.kind === 'VOID' ? 'Void' : 'Return'} #${returnNumber} of sale #${sale.saleNumber}`,
         lines: saleReturnPosting({
-          salesExVat: totals.vatableSales.plus(totals.vatExemptSales).plus(totals.zeroRatedSales).plus(totals.percentageTaxSales),
+          salesExVat: totals.vatableSales.plus(totals.vatExemptSales).plus(totals.zeroRatedSales).plus(totals.percentageTaxSales).minus(serviceCharge),
+          serviceCharge,
           vatAmount: totals.vatAmount,
           statutoryDiscount: totals.statutoryDiscount,
           refund,

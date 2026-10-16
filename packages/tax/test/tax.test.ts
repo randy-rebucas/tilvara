@@ -1,6 +1,6 @@
 import { Dec } from '@1pos/money';
 import { describe, expect, it } from 'vitest';
-import { calculateTax, TaxError, type DiscountScheme, type TaxContext, type TaxLineInput, type TaxResult } from '../src/index.js';
+import { calculateTax, serviceCharge, TaxError, type DiscountScheme, type TaxContext, type TaxLineInput, type TaxResult } from '../src/index.js';
 
 const VAT: TaxContext = {
   currency: 'PHP',
@@ -237,5 +237,32 @@ describe('invariants over generated carts', () => {
     const copy = structuredClone(inputs);
     expect(calculateTax(ctx, inputs)).toEqual(calculateTax(ctx, inputs));
     expect(inputs).toEqual(copy);
+  });
+});
+
+describe('service charge (ADR-0014 §9)', () => {
+  const items = (ctx: TaxContext, lines: TaxLineInput[]) => calculateTax(ctx, lines).lines;
+
+  it('VAT seller: 10 % of the items ex VAT, then VAT on the charge (₱1,120 → ₱100 + ₱12)', () => {
+    const sc = serviceCharge(VAT, items(VAT, [line()]), { rate: '0.10', vatTreatment: 'VATABLE' })!;
+    expect(sc).toMatchObject({ base: '1000.00', rate: '0.1', gross: '100.00', vatableSales: '100.00', vatAmount: '12.00', amountDue: '112.00' });
+  });
+
+  it("a SC diner's share is charged on the discounted, VAT-exempt amount (₱1,120 → base ₱800)", () => {
+    const sc = serviceCharge(VAT, items(VAT, [line({ statutory: { scheme: SC } })]), { rate: '0.10', vatTreatment: 'VATABLE' })!;
+    expect(sc).toMatchObject({ base: '800.00', vatableSales: '80.00', vatAmount: '9.60', amountDue: '89.60' });
+    const exempt = serviceCharge(VAT, items(VAT, [line({ statutory: { scheme: SC } })]), { rate: '0.10', vatTreatment: 'VAT_EXEMPT' })!;
+    expect(exempt).toMatchObject({ vatExemptSales: '80.00', vatAmount: '0.00', amountDue: '80.00' });
+  });
+
+  it('mixed table, non-VAT seller, rounding, and nothing to charge', () => {
+    const mixed = serviceCharge(VAT, items(VAT, [line(), line({ id: 'l2', statutory: { scheme: PWD } })]), { rate: '0.10', vatTreatment: 'VATABLE' })!;
+    expect(mixed).toMatchObject({ base: '1800.00', vatableSales: '180.00', vatAmount: '21.60', amountDue: '201.60' });
+    const nv = serviceCharge(NON_VAT, items(NON_VAT, [line()]), { rate: '0.10', vatTreatment: 'VATABLE' })!;
+    expect(nv).toMatchObject({ base: '1120.00', percentageTaxSales: '112.00', vatAmount: '0.00', amountDue: '112.00' });
+    const odd = serviceCharge(VAT, items(VAT, [line({ unitPrice: '333.33', priceIncludesTax: false })]), { rate: '0.10', vatTreatment: 'VATABLE' })!;
+    expect(odd).toMatchObject({ base: '333.33', gross: '33.33', vatAmount: '4.00' });
+    expect(serviceCharge(VAT, items(VAT, [line()]), { rate: '0', vatTreatment: 'VATABLE' })).toBeNull();
+    expect(caught(() => serviceCharge(VAT, [], { rate: '1.5', vatTreatment: 'VATABLE' })).code).toBe('INVALID_LINE');
   });
 });

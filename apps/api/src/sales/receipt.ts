@@ -49,7 +49,11 @@ export interface ReceiptInput {
   }[];
   tenders: { method: string; amount: string; tendered: string; change: string }[];
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
+  /** Charges that are not items (service charge, ADR-0014 §9); included in the sale totals. */
+  charges?: { kind: string; rate: string; gross: string }[];
 }
+
+const CHARGE_LABELS: Record<string, string> = { SERVICE_CHARGE: 'Service charge' };
 
 export const NOT_AN_INVOICE = 'THIS IS NOT AN OFFICIAL INVOICE';
 export const DEV_SERIES_NOTICE = 'TEST NUMBERING — NOT AN OFFICIAL INVOICE — NOT VALID FOR CLAIM OF INPUT TAX';
@@ -128,6 +132,8 @@ export function buildReceipt(r: ReceiptInput) {
       ...(positive(l.discount) && { discount: m(l.discount) }),
       flag: flag(l),
     })),
+    // Shown separately, never inside item prices (RA 11360).
+    charges: (r.charges ?? []).map((c) => ({ kind: c.kind, label: `${CHARGE_LABELS[c.kind] ?? c.kind} ${pct(c.rate)}`, amount: m(c.gross) })),
     totals: {
       currency: r.sale.currency,
       gross: r.sale.gross,

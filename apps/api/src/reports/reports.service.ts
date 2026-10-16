@@ -103,9 +103,11 @@ export class ReportsService extends TenantService {
             FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id JOIN sale_lines l ON l.id = rl.sale_line_id
            WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
            GROUP BY 1),
+        -- Ingredients consumed by a recipe item cost the item that was sold (ADR-0014 §4).
         cost AS (
-          SELECT variant_id, -sum(value) AS cogs FROM stock_movements
-           WHERE branch_id = ${w.branchId} AND type IN ('SALE', 'RETURN') AND created_at >= ${w.start} AND created_at < ${w.end}
+          SELECT coalesce(l.variant_id, m.variant_id) AS variant_id, -sum(m.value) AS cogs
+            FROM stock_movements m LEFT JOIN sale_lines l ON m.type = 'CONSUMPTION' AND l.id = m.sale_line_id
+           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND m.created_at < ${w.end}
            GROUP BY 1)
         SELECT v.id AS variant_id, v.sku, p.name,
                coalesce(sold.qty, 0)::text AS quantity_sold, coalesce(back.qty, 0)::text AS quantity_returned,
@@ -119,6 +121,23 @@ export class ReportsService extends TenantService {
           LEFT JOIN sold ON sold.variant_id = v.id LEFT JOIN back ON back.variant_id = v.id LEFT JOIN cost ON cost.variant_id = v.id
          WHERE sold.variant_id IS NOT NULL OR back.variant_id IS NOT NULL
          ORDER BY net_sales DESC, v.sku`);
+      // Charges (service charge) are not products: listed apart so Σ products + Σ charges = the summary.
+      const { rows: charges } = await db.execute<Row>(sql`
+        WITH sold AS (
+          SELECT c.kind, sum(c.amount_due) AS amount, sum(c.amount_due - c.vat_amount) AS ex_vat
+            FROM sale_charges c JOIN sales s ON s.id = c.sale_id
+           WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end}
+           GROUP BY 1),
+        back AS (
+          SELECT c.kind, sum(rc.amount_due) AS amount, sum(rc.amount_due - rc.vat_amount) AS ex_vat
+            FROM sale_return_charges rc JOIN sale_returns r ON r.id = rc.sale_return_id JOIN sale_charges c ON c.id = rc.sale_charge_id
+           WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
+           GROUP BY 1)
+        SELECT coalesce(sold.kind, back.kind) AS kind,
+               coalesce(sold.amount, 0)::text AS charged, coalesce(back.amount, 0)::text AS returned,
+               (coalesce(sold.amount, 0) - coalesce(back.amount, 0))::text AS net,
+               (coalesce(sold.ex_vat, 0) - coalesce(back.ex_vat, 0))::text AS net_ex_vat
+          FROM sold FULL JOIN back ON back.kind = sold.kind ORDER BY 1`);
       return {
         data: rows.map((r) => ({
           ...shape(r, ['sales', 'returns', 'net_sales', 'revenue_ex_vat', 'cogs', 'gross_profit']),
@@ -126,6 +145,7 @@ export class ReportsService extends TenantService {
           quantityReturned: qty(r.quantity_returned as string),
           netQuantity: qty(r.net_quantity as string),
         })),
+        charges: charges.map((c) => ({ kind: c.kind, ...shape(c, ['charged', 'returned', 'net', 'net_ex_vat']) })),
       };
     });
   }

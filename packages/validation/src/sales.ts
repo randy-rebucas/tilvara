@@ -4,6 +4,20 @@ import { rateSchema, taxQuoteLineSchema } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
+/** Client-generated reference (transaction ids, beneficiary refs). */
+export const clientRefSchema = ref;
+
+/** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
+export const tendersSchema = z
+  .array(
+    z.discriminatedUnion('method', [
+      z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+      z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
+    ]),
+  )
+  .min(1)
+  .max(10);
+export type TendersInput = z.infer<typeof tendersSchema>;
 
 // ------------------------------------------------------------------ cashier sessions
 
@@ -67,16 +81,7 @@ export const createSaleSchema = z
     clientTransactionId: ref,
     lines: z.array(saleLineSchema).min(1).max(200),
     beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
-    /** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
-    tenders: z
-      .array(
-        z.discriminatedUnion('method', [
-          z.object({ method: z.literal('CASH'), tendered: amountSchema }),
-          z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
-        ]),
-      )
-      .min(1)
-      .max(10),
+    tenders: tendersSchema,
     /** The total the cashier saw; if the server total differs (price changed), the sale is refused. */
     expectedAmountDue: amountSchema.optional(),
   })

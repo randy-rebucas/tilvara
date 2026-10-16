@@ -1,10 +1,25 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
-import { productVariants } from './catalog.js';
+import { bigint, boolean, char, check, foreignKey, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { productPrices, productVariants } from './catalog.js';
 import { stockAdjustments } from './inventory.js';
-import { branches } from './organization.js';
+import { branches, legalEntities } from './organization.js';
+import { taxProfiles } from './tax.js';
 
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
+const money = (name: string) => numeric(name, { precision: 20, scale: 4 });
+/** The tax engine's result buckets (same columns as sales and sale lines). */
+const buckets = () => ({
+  gross: money('gross').notNull(),
+  discount: money('discount').notNull(),
+  statutoryDiscount: money('statutory_discount').notNull(),
+  vatExemptionAmount: money('vat_exemption_amount').notNull(),
+  vatableSales: money('vatable_sales').notNull(),
+  vatAmount: money('vat_amount').notNull(),
+  vatExemptSales: money('vat_exempt_sales').notNull(),
+  zeroRatedSales: money('zero_rated_sales').notNull(),
+  percentageTaxSales: money('percentage_tax_sales').notNull(),
+  amountDue: money('amount_due').notNull(),
+});
 const STATION_CODE = `'^[A-Z][A-Z0-9_]{0,15}$'`;
 
 // ------------------------------------------------------------------ kitchen stations (ADR-0014 §5)
@@ -480,5 +495,135 @@ export const recipeIngredients = pgTable(
     foreignKey({ columns: [t.tenantId, t.recipeVersionId], foreignColumns: [recipeVersions.tenantId, recipeVersions.id] }),
     foreignKey({ columns: [t.tenantId, t.ingredientVariantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     check('recipe_ingredients_quantity_check', sql`${t.quantity} > 0`),
+  ],
+);
+
+// ------------------------------------------------------------------ bills (ADR-0014 §8)
+
+/**
+ * The frozen price of an order: computed once by the tax path (`TaxService.computeCart`) over the
+ * order's live items and stored verbatim. ACTIVE → SETTLED (every line fully paid in checks) or
+ * VOIDED (reopened before any check). Checks are sales whose lines are exact shares of these lines.
+ * Header buckets include the charges (service charge), so amount_due is what the table pays.
+ */
+export const orderBills = pgTable(
+  'order_bills',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    orderId: uuid('order_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    billNumber: bigint('bill_number', { mode: 'number' }).notNull(),
+    status: text('status').notNull().default('ACTIVE'),
+    currency: char('currency', { length: 3 }).notNull(),
+    taxProfileId: uuid('tax_profile_id').notNull(),
+    taxSnapshot: jsonb('tax_snapshot').notNull(),
+    /** Order-level discount spread over the non-statutory lines (e.g. "0.1"), if any. */
+    discountRate: numeric('discount_rate', { precision: 9, scale: 6 }),
+    requiresProfessionalReview: boolean('requires_professional_review').notNull(),
+    ...buckets(),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    voidedBy: uuid('voided_by'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidReason: text('void_reason'),
+    settledAt: timestamp('settled_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('order_bills_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('order_bills_number_unique').on(t.tenantId, t.branchId, t.billNumber),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.orderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.branchId, restaurantOrders.id] }),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.taxProfileId], foreignColumns: [taxProfiles.tenantId, taxProfiles.id] }),
+    uniqueIndex('order_bills_one_active').on(t.tenantId, t.orderId).where(sql`${t.status} = 'ACTIVE'`),
+    check('order_bills_status_check', sql`${t.status} IN ('ACTIVE','SETTLED','VOIDED')`),
+    check('order_bills_void_check', sql`(${t.status} = 'VOIDED') = (${t.voidedAt} IS NOT NULL) AND (${t.voidedAt} IS NULL OR length(trim(coalesce(${t.voidReason}, ''))) > 0)`),
+    check('order_bills_buckets_check', sql`${t.amountDue} = ${t.vatableSales} + ${t.vatAmount} + ${t.vatExemptSales} + ${t.zeroRatedSales} + ${t.percentageTaxSales} - ${t.statutoryDiscount}`),
+  ],
+);
+
+/** SC/PWD diners on a bill — minimised (name + ID number), copied to each check that uses them. */
+export const orderBillBeneficiaries = pgTable(
+  'order_bill_beneficiaries',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    orderBillId: uuid('order_bill_id').notNull(),
+    schemeCode: text('scheme_code').notNull(),
+    schemeVersion: integer('scheme_version').notNull(),
+    name: text('name').notNull(),
+    idNumber: text('id_number').notNull(),
+    tin: text('tin'),
+  },
+  (t) => [
+    unique('order_bill_beneficiaries_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
+    check('order_bill_beneficiaries_name_check', sql`length(trim(${t.name})) > 0 AND length(trim(${t.idNumber})) > 0`),
+  ],
+);
+
+/** A priced line of the bill: an order item or a priced modifier of one (child line). */
+export const orderBillLines = pgTable(
+  'order_bill_lines',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    orderBillId: uuid('order_bill_id').notNull(),
+    lineNo: integer('line_no').notNull(),
+    parentLineId: uuid('parent_line_id'),
+    orderItemId: uuid('order_item_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    sku: text('sku').notNull(),
+    name: text('name').notNull(),
+    taxCategoryCode: text('tax_category_code').notNull(),
+    vatTreatment: text('vat_treatment').notNull(),
+    quantity: qty('quantity').notNull(),
+    unitPrice: money('unit_price').notNull(),
+    priceIncludesTax: boolean('price_includes_tax').notNull(),
+    priceId: uuid('price_id').notNull(),
+    priceListId: uuid('price_list_id').notNull(),
+    trackInventory: boolean('track_inventory').notNull(),
+    ...buckets(),
+    beneficiaryId: uuid('beneficiary_id'),
+    schemeShare: numeric('scheme_share', { precision: 9, scale: 6 }),
+    taxSnapshot: jsonb('tax_snapshot').notNull(),
+  },
+  (t) => [
+    unique('order_bill_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('order_bill_lines_bill_id_unique').on(t.tenantId, t.orderBillId, t.id),
+    unique('order_bill_lines_number_unique').on(t.tenantId, t.orderBillId, t.lineNo),
+    foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
+    foreignKey({ columns: [t.tenantId, t.orderBillId, t.parentLineId], foreignColumns: [t.tenantId, t.orderBillId, t.id] }),
+    foreignKey({ columns: [t.tenantId, t.orderItemId], foreignColumns: [orderItems.tenantId, orderItems.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    foreignKey({ columns: [t.tenantId, t.priceId], foreignColumns: [productPrices.tenantId, productPrices.id] }),
+    foreignKey({ columns: [t.tenantId, t.beneficiaryId], foreignColumns: [orderBillBeneficiaries.tenantId, orderBillBeneficiaries.id] }),
+    check('order_bill_lines_quantity_check', sql`${t.quantity} > 0`),
+    check('order_bill_lines_beneficiary_share', sql`(${t.beneficiaryId} IS NULL) = (${t.schemeShare} IS NULL)`),
+  ],
+);
+
+/** A charge on the bill (service charge, RA 11360): never part of item prices; owed to staff. */
+export const orderBillCharges = pgTable(
+  'order_bill_charges',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    orderBillId: uuid('order_bill_id').notNull(),
+    kind: text('kind').notNull(),
+    /** Items net of discounts, ex VAT (tax adviser to confirm). */
+    base: money('base').notNull(),
+    rate: numeric('rate', { precision: 9, scale: 6 }).notNull(),
+    vatTreatment: text('vat_treatment').notNull(),
+    ...buckets(),
+    taxSnapshot: jsonb('tax_snapshot').notNull(),
+  },
+  (t) => [
+    unique('order_bill_charges_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('order_bill_charges_kind_unique').on(t.tenantId, t.orderBillId, t.kind),
+    foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
+    check('order_bill_charges_kind_check', sql`${t.kind} IN ('SERVICE_CHARGE')`),
+    check('order_bill_charges_amount_check', sql`${t.amountDue} > 0 AND ${t.rate} > 0`),
   ],
 );

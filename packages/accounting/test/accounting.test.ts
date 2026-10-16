@@ -35,6 +35,14 @@ describe('posting rules', () => {
     expect(() => salePosting({ salesExVat: '20.00', vatAmount: '2.40', statutoryDiscount: '0', cash: '22.39', electronic: '0', cogs: '0' })).toThrow(UnbalancedEntryError);
   });
 
+  it('restaurant check: the service charge ex VAT is owed to staff, not revenue; its VAT is output VAT', () => {
+    // Items ₱300 incl. VAT (267.86 + 32.14) + 10 % service charge on 267.86 = 26.79 + 3.21 VAT → ₱330.00.
+    const lines = salePosting({ salesExVat: '267.86', serviceCharge: '26.79', vatAmount: '35.35', statutoryDiscount: '0', cash: '330.00', electronic: '0', cogs: '0' });
+    expect(net(lines)).toEqual({ CASH_ON_HAND: '330.00', SALES: '-267.86', SERVICE_CHARGE_PAYABLE: '-26.79', OUTPUT_VAT: '-35.35' });
+    const back = saleReturnPosting({ salesExVat: '267.86', serviceCharge: '26.79', vatAmount: '35.35', statutoryDiscount: '0', refund: '330.00', restocked: '0' });
+    expect(net(back)).toEqual({ SALES_RETURNS: '267.86', SERVICE_CHARGE_PAYABLE: '26.79', OUTPUT_VAT: '35.35', CASH_ON_HAND: '-330.00' });
+  });
+
   it('return reverses revenue, tax and discount; only restocked goods go back to inventory', () => {
     const lines = saleReturnPosting({ salesExVat: '20.00', vatAmount: '2.40', statutoryDiscount: '0', refund: '22.40', restocked: '12.00' });
     expect(net(lines)).toEqual({ SALES_RETURNS: '20.00', OUTPUT_VAT: '2.40', CASH_ON_HAND: '-22.40', INVENTORY: '12.00', COGS: '-12.00' });

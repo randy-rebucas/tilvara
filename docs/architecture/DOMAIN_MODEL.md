@@ -47,7 +47,16 @@ As built (ADR-0014 §6, §7):
 - **Order item**: `PENDING → FIRED → IN_PREP → READY → SERVED` (forward, skipping allowed) or `→ VOIDED` from any fired state. PENDING items are edited or removed; fired items are frozen.
 - How far food got (sent, partly served) is derived from the items, not stored on the order.
 
-Settling creates **Sales** via the checkout engine (slice 4). Voiding after settlement requires a Return/Refund, never an edit of the sale.
+- **Bill**: `ACTIVE → SETTLED` (the last share paid) or `ACTIVE → VOIDED` (reopened before any check; trigger).
+
+Settling creates **Sales** (checks) via the checkout engine (`SalesService.createFromBill`). Voiding after settlement requires a Return/Refund, never an edit of the sale.
+
+**Restaurant invariants** (asserted by `bills.test.ts`, `orders.test.ts`, `recipes.test.ts`):
+1. **Bill = Σ checks**: per line, per bucket and for the service charge, centavo for centavo. A line is never paid beyond the whole (exact fractions, DB guard).
+2. **Sale header = Σ lines + Σ charges** (retail sales have no charges). Returns give charges back in proportion, the last return taking the rest.
+3. **Books**: Sales = items ex VAT; `SERVICE_CHARGE_PAYABLE` = Σ charges ex VAT − charges returned; output VAT includes the charge's VAT.
+4. **Stock**: each dish consumes its recipe exactly once across its checks; a wasted void is one WASTE document; the traceability audit stays clean.
+5. **Reports**: Σ by-product net + Σ charges net = sales summary net; a dish's COGS includes its ingredients.
 
 ### Purchase order
 `DRAFT → APPROVED → SENT → PARTIALLY_RECEIVED → RECEIVED → CLOSED | CANCELLED`.

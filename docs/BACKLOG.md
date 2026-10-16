@@ -99,12 +99,22 @@ Slice 3 — orders + kitchen (session 6): ✅ done.
 - voiding a modifier alone (today: void the item and re-add);
 - reprint/recall a ticket;
 - order notes per course.
-⬜ Slice 4 — bills + checks:
-- frozen bill snapshot with SC/PWD (itemized or headcount share), discounts and service charge;
-- order-mode checkout with exact allocations (whole quantity or n/d shares) and a within-bill DB guard;
-- `sale_lines.parent_line_id`, `sale_charges`, `SERVICE_CHARGE_PAYABLE`;
-- existing reports reconcile with charges;
-- consumption prorated across checks.
+Slice 4 — bills + checks + service charge (session 6): ✅ done.
+- ✅ Frozen bill (computeCart + SC/PWD per item + order discount + `serviceCharge()`), reopen before any check.
+- ✅ Checks via `SalesService.createFromBill` (exact fraction shares, residual-bucket proration, "pay the rest", last check settles).
+- ✅ Retail checkout refactored onto the shared `record()` path.
+- ✅ `sale_charges` in sale totals; `SERVICE_CHARGE_PAYABLE` (chart + back-fill + postings); returns give charges back proportionally.
+- ✅ Receipt charge line; by-product charges; recipe COGS fix in by-product.
+- ✅ `bills.test.ts` (5) incl. the SPEC service cycle and concurrent checks.
+
+⬜ Slice 4 leftovers:
+- re-run POS/web E2E after the checkout refactor (blocked this session by a stale API on :4320);
+- card/QR checks use the existing intent flow, but no POS UI yet;
+- tips;
+- a bill print/PDF;
+- per-seat split helper (today: allocate the seat's lines);
+- adding items after a partial payment (today: a new order once the bill settles);
+- returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns.
 
 ⬜ Slice 5 — reports: item performance, theoretical vs actual usage, voids after firing, prep times, open orders, service charge collected (DOLE).
 ⬜ Slice 6 — UI: POS table service (floor/order/fire/bill/split/pay), KDS screen, admin for menus/modifiers/recipes/tables/settings.

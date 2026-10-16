@@ -14,6 +14,7 @@ export const DEFAULT_CHART = [
   { key: 'INVENTORY_IN_TRANSIT', code: '1210', name: 'Inventory in transit', type: 'ASSET' },
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
+  { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },
   { key: 'SALES', code: '4000', name: 'Sales', type: 'REVENUE' },
   { key: 'SALES_RETURNS', code: '4010', name: 'Sales returns', type: 'REVENUE' },
@@ -73,8 +74,10 @@ export function balanced(lines: PostingLine[]): PostingLine[] {
 }
 
 export interface SaleAmounts {
-  /** VATable + VAT-exempt + zero-rated + percentage-tax sales (ex VAT, before the statutory discount). */
+  /** Items: VATable + VAT-exempt + zero-rated + percentage-tax sales (ex VAT, before the statutory discount). */
   salesExVat: Amount;
+  /** Service charge ex VAT (RA 11360: owed to employees, not revenue). Its VAT is in `vatAmount`. */
+  serviceCharge?: Amount;
   vatAmount: Amount;
   statutoryDiscount: Amount;
   /** Collected in cash (tendered − change). */
@@ -92,6 +95,7 @@ export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLi
     dr('PAYMENT_CLEARING', a.electronic, branchId),
     dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('SALES', a.salesExVat, branchId),
+    cr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     cr('OUTPUT_VAT', a.vatAmount, branchId),
     dr('COGS', a.cogs, branchId),
     cr('INVENTORY', a.cogs, branchId),
@@ -100,6 +104,8 @@ export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLi
 
 export interface SaleReturnAmounts {
   salesExVat: Amount;
+  /** Service charge given back, ex VAT. */
+  serviceCharge?: Amount;
   vatAmount: Amount;
   statutoryDiscount: Amount;
   /** Refunded in cash (ADR-0011). */
@@ -112,6 +118,7 @@ export interface SaleReturnAmounts {
 export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null): PostingLine[] {
   return balanced([
     dr('SALES_RETURNS', a.salesExVat, branchId),
+    dr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     dr('OUTPUT_VAT', a.vatAmount, branchId),
     cr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('CASH_ON_HAND', a.refund, branchId),

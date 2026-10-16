@@ -1,6 +1,6 @@
 # ADR-0014: Restaurant orders, kitchen, bills and recipe consumption
 
-- Status: Accepted for §2–§7 and the §9 settings (built in slices 1–3, 2026-10-16); §8–§11 proposed (Phase 4 plan). Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
+- Status: Accepted for §2–§9 (built in slices 1–4, 2026-10-16); §10 reports partly built (charges in by-product, recipe COGS), the rest is slice 5. The user proceeded without changing the defaults (prices fixed at bill time, order locked once a check is paid, service charge to a liability); the tax-adviser and accountant items below remain open. Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
 
 ## Context
 SPEC §6.4 / Phase 4: menus and versions, modifiers (required/optional, priced), areas and tables, dine-in and takeaway orders, table transfer, merge and split, kitchen tickets routed to stations, KDS with preparation statuses, courses, item voids, split bills and split payments, service charge and discounts, versioned recipes with ingredient consumption and waste, restaurant reports. Exit: *a restaurant completes a full service cycle and reconciles its stock, payments and financial records.*
@@ -65,14 +65,18 @@ A dish, a drink and a priced add-on are **product variants** (usually `track_inv
 - Courses: items carry a course number. Later courses can be held and fired on demand.
 
 ### 8. Bills: freeze, then settle in one or more checks
-- **Bill** (`POST /orders/:id/bill`, `restaurant.orders`). The server runs `TaxService.computeCart` over the order's live items: modifier children, SC/PWD assignments per item (itemized, or a headcount share via the engine's existing `share`), ordinary discounts (`sales.discount`; an order-level percentage is spread over the lines and skips statutory lines, which refuse stacking), and the service charge.
-- The result is stored as an immutable `order_bills` + `order_bill_lines` snapshot, and the order becomes `BILLED`; adding items is then refused. The bill can be **reopened** (voided, back to `OPEN`) only while no check is settled. This fixes prices and tax for the whole table even if a price changes mid-service, and is what the guest sees on the printed bill.
-- **Checks** settle the bill. `POST /v1/sales` gains an order mode: `{ cashierSessionId, clientTransactionId, orderBillId, allocations: [{ billLineId, portion }], tenders, expectedAmountDue }`. Portion is a whole quantity or an even share n/d.
-  - The sale's lines are the bill lines' buckets prorated exactly as returns are (ADR-0011): `round2(bucket × portion)` per bucket, and the allocation that completes a bill line takes the exact remainder. Σ of the checks therefore equals the bill, centavo for centavo.
-  - `order_bill_allocations` plus a DB within-bill guard (as `sale_return_lines` has) stop over-allocation under concurrency. The order row lock serialises checks.
+- **Bill** (`POST /v1/restaurant/orders/:id/bill`, `restaurant.orders` + `sales.create`, required Idempotency-Key). Every item must be fired or removed first. The server runs `TaxService.computeCart` over the order's live items, as priced lines with priced modifiers as child lines. It applies:
+  - SC/PWD per item (itemized, or a headcount `share`; the item's modifiers follow);
+  - an order-level `discountRate` (`sales.discount`), spread line by line on the price basis and skipping statutory lines, which refuse stacking (two passes through `computeCart`);
+  - the service charge (§9).
+- The result is stored as an immutable snapshot: `order_bills`, `order_bill_lines`, `order_bill_beneficiaries` and `order_bill_charges`. Header buckets include the charges. The order becomes `BILLED`, and adding items and voids are then refused. The bill can be **reopened** (`POST /v1/restaurant/bills/:id/void`, back to `OPEN`) only while no check is paid; a trigger enforces that too. This fixes prices and tax for the whole table even if a price changes mid-service, and is what the guest sees on the printed bill.
+- **Checks** pay the bill: `POST /v1/restaurant/bills/:id/checks` (`SalesService.createFromBill`, required Idempotency-Key) with `{ cashierSessionId, clientTransactionId, allocations?: [{ billLineId, quantity | share: {num, den} }], tenders, expectedAmountDue? }`. Omitting `allocations` pays everything still unpaid. Allocations name top-level lines only; modifiers follow their item's share.
+  - **Proration**: a sale line is the bill line × the share. The amount due is rounded first, and the line's first non-zero sales bucket takes the residual, so half of ₱40.00 is ₱20.00, not ₱20.01. The allocation that completes a bill line takes the exact remainder of every bucket and of the quantity. Σ of the checks therefore equals the bill, centavo for centavo.
+  - **Exactly once**: shares are exact fractions (`share_num/share_den`). The bill row lock serialises checks, and a DB guard sums each line's shares as exact fractions (under the same lock) and refuses anything beyond the whole.
   - Each check is an ordinary **Sale**: its own number, tenders (split payment), receipt, cash movement, consumption, journal entry, and returns. Everything else in ADR-0009 (Idempotency-Key, duplicate `clientTransactionId`, stale-total refusal, one transaction) is unchanged.
   - "Split evenly by N" is N checks of share 1/N on every line.
-  - The order becomes `SETTLED` when every bill line is fully allocated.
+  - The check that pays the last share settles the bill and the order (`SETTLED`), which frees the table.
+  - `sales.order_bill_id` links each check to its bill; `GET /v1/restaurant/bills/:id` shows each line's paid share and quantity, the checks, and the amount paid and remaining.
 - Recipe consumption is prorated with the portion: an ingredient's quantity follows the allocated fraction of the line, and the last allocation takes the remainder, so the full dish is consumed exactly once.
 - Settling needs `sales.create` and the settler's own open cashier session. Servers without a drawer can bill but not settle.
 
@@ -80,8 +84,14 @@ A dish, a drink and a priced add-on are **product variants** (usually `track_inv
 - Settings per branch (`restaurant_settings`): rate, applies to `DINE_IN` and/or `TAKEAWAY`, base, and VAT treatment.
   - Base default: items net of discounts, ex-VAT **(tax adviser)**.
   - VAT treatment default: VATABLE for VAT-registered sellers **(tax adviser)**.
-- Computed by the tax engine as a non-item **charge line**, never folded into item prices (RA 11360).
-- Stored on the bill and on each check's sale in an append-only `sale_charges` table (base, rate, amount ex VAT, VAT, amount due), prorated across checks like lines.
+- Computed by the tax engine (`serviceCharge()` in `@1pos/tax`, unit-tested) as a non-item **charge line**, never folded into item prices (RA 11360).
+  - Base = Σ items' (VATable + exempt + zero-rated + percentage-tax sales − statutory discount), i.e. net of every discount, ex VAT.
+  - Charge = round(base × rate). It is then taxed as one more line on its own VAT treatment: VAT added for a VAT seller, percentage-tax sales for a non-VAT seller.
+- Stored on the bill (`order_bill_charges`) and on each check's sale in an append-only `sale_charges` table (base, rate, VAT treatment, buckets).
+  - The sale's header buckets include the charges (Σ lines + Σ charges = header), so tax reports and drawer totals see them.
+  - A check's charge follows its share of the items' amount due (an even split pays exactly half); the check that settles the bill takes the rest.
+  - Returns give the charge back in proportion to the items returned (`sale_return_charges`); the return that empties the sale takes the rest.
+  - Receipts print the charge on its own line.
 - **Posted to a liability, not revenue**: new system account `SERVICE_CHARGE_PAYABLE` (2200), because RA 11360 requires 100 % distribution to covered employees **(accountant)**.
 - SC/PWD diners' share of the service charge: computed on their discounted base and kept VATable by default. The bill carries `requiresProfessionalReview` whenever service charge and a statutory discount meet **(tax adviser — compliance Q7/Q15)**.
 - Tips: not handled (separate later decision).

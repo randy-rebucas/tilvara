@@ -18,7 +18,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { productPrices, productVariants } from './catalog.js';
-import { recipeVersions } from './restaurant.js';
+import { orderBillCharges, orderBillLines, orderBills, recipeVersions } from './restaurant.js';
 import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
 import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers } from './organization.js';
@@ -185,10 +185,14 @@ export const sales = pgTable(
     requiresProfessionalReview: boolean('requires_professional_review').notNull(),
     /** Tax profile as used (ADR-0008 snapshot). */
     taxSnapshot: jsonb('tax_snapshot').notNull(),
+    /** A restaurant check: the bill this sale pays part or all of (ADR-0014 §8). */
+    orderBillId: uuid('order_bill_id'),
     completedAt: timestamp('completed_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('sales_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
+    index('sales_bill_idx').on(t.tenantId, t.orderBillId),
     unique('sales_register_number_unique').on(t.tenantId, t.registerId, t.saleNumber),
     unique('sales_register_client_tx_unique').on(t.tenantId, t.registerId, t.clientTransactionId),
     foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
@@ -252,9 +256,13 @@ export const saleLines = pgTable(
     schemeShare: numeric('scheme_share', { precision: 9, scale: 6 }),
     /** Engine line snapshot (profile + scheme versions). */
     taxSnapshot: jsonb('tax_snapshot').notNull(),
+    /** A priced modifier's line points to the line of the item it modifies (ADR-0014 §3). */
+    parentLineId: uuid('parent_line_id'),
   },
   (t) => [
     unique('sale_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('sale_lines_sale_id_unique').on(t.tenantId, t.saleId, t.id),
+    foreignKey({ columns: [t.tenantId, t.saleId, t.parentLineId], foreignColumns: [t.tenantId, t.saleId, t.id] }),
     unique('sale_lines_number_unique').on(t.tenantId, t.saleId, t.lineNo),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
@@ -428,6 +436,81 @@ export const saleReturnLines = pgTable(
     index('sale_return_lines_line_idx').on(t.tenantId, t.saleLineId),
     check('sale_return_lines_quantity_positive', sql`${t.quantity} > 0`),
     check('sale_return_lines_disposition_check', sql`${t.disposition} IN ('RESTOCK','DAMAGED')`),
+  ],
+);
+
+// ------------------------------------------------------------------ charges and restaurant checks (ADR-0014 §8, §9)
+
+/**
+ * A charge on a sale that is not an item (service charge). Its buckets are part of the sale's header
+ * buckets (Σ lines + Σ charges = header); its ex-VAT amount is a liability, not revenue (RA 11360).
+ */
+export const saleCharges = pgTable(
+  'sale_charges',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    saleId: uuid('sale_id').notNull(),
+    kind: text('kind').notNull(),
+    orderBillChargeId: uuid('order_bill_charge_id'),
+    base: money('base').notNull(),
+    rate: numeric('rate', { precision: 9, scale: 6 }).notNull(),
+    vatTreatment: text('vat_treatment').notNull(),
+    ...taxBuckets(),
+    taxSnapshot: jsonb('tax_snapshot').notNull(),
+  },
+  (t) => [
+    unique('sale_charges_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('sale_charges_kind_unique').on(t.tenantId, t.saleId, t.kind),
+    foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
+    foreignKey({ columns: [t.tenantId, t.orderBillChargeId], foreignColumns: [orderBillCharges.tenantId, orderBillCharges.id] }),
+    check('sale_charges_kind_check', sql`${t.kind} IN ('SERVICE_CHARGE')`),
+    check('sale_charges_due_check', sql`${t.amountDue} >= 0`),
+  ],
+);
+
+/** The part of a sale's charge given back by a return or void (prorated; the last return takes the rest). */
+export const saleReturnCharges = pgTable(
+  'sale_return_charges',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    saleReturnId: uuid('sale_return_id').notNull(),
+    saleChargeId: uuid('sale_charge_id').notNull(),
+    ...taxBuckets(),
+  },
+  (t) => [
+    unique('sale_return_charges_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('sale_return_charges_once').on(t.tenantId, t.saleReturnId, t.saleChargeId),
+    foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleChargeId], foreignColumns: [saleCharges.tenantId, saleCharges.id] }),
+  ],
+);
+
+/**
+ * Which share of a bill line a check's sale line paid: `share_num / share_den` of the line. A DB
+ * trigger keeps Σ shares per bill line ≤ 1 with exact fractions, so a line is never paid twice.
+ */
+export const orderBillAllocations = pgTable(
+  'order_bill_allocations',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    orderBillId: uuid('order_bill_id').notNull(),
+    billLineId: uuid('bill_line_id').notNull(),
+    saleId: uuid('sale_id').notNull(),
+    saleLineId: uuid('sale_line_id').notNull(),
+    shareNum: bigint('share_num', { mode: 'number' }).notNull(),
+    shareDen: bigint('share_den', { mode: 'number' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('order_bill_allocations_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('order_bill_allocations_sale_line_unique').on(t.tenantId, t.saleLineId),
+    foreignKey({ columns: [t.tenantId, t.orderBillId, t.billLineId], foreignColumns: [orderBillLines.tenantId, orderBillLines.orderBillId, orderBillLines.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleId, t.saleLineId], foreignColumns: [saleLines.tenantId, saleLines.saleId, saleLines.id] }),
+    index('order_bill_allocations_line_idx').on(t.tenantId, t.billLineId),
+    check('order_bill_allocations_share_check', sql`${t.shareNum} > 0 AND ${t.shareDen} > 0 AND ${t.shareNum} <= ${t.shareDen}`),
   ],
 );
 
