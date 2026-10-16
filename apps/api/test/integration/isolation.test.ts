@@ -70,6 +70,9 @@ interface World {
   checkSaleId: string;
   liveOrderId: string;
   liveItemId: string;
+  terminalHeaders: Record<string, string>;
+  snapshotId: string;
+  offlineTxnId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -85,7 +88,7 @@ async function world(prefix: string): Promise<World> {
   const entity = ok(await http().post('/v1/legal-entities').set(auth).set('Idempotency-Key', randomUUID()).send({ registeredName: `${prefix} Corp`, vatStatus: 'VAT' }));
   const branch = ok(await http().post('/v1/branches').set(auth).send({ legalEntityId: entity.id, code: 'B1', name: 'One' }));
   const register = ok(await http().post('/v1/registers').set(auth).send({ branchId: branch.id, code: 'R1', name: 'Counter' }));
-  const terminal = ok<{ terminal: { id: string } }>(await http().post('/v1/terminals').set(auth).send({ registerId: register.id, name: 'T1' }));
+  const terminal = ok<{ terminal: { id: string }; credential: string }>(await http().post('/v1/terminals').set(auth).send({ registerId: register.id, name: 'T1' }));
   const uoms = ok<{ data: { id: string; code: string }[] }>(await http().get('/v1/uoms').set(auth), 200).data;
   const taxes = ok<{ data: { id: string; code: string }[] }>(await http().get('/v1/tax-categories').set(auth), 200).data;
   const lists = ok<{ data: { id: string; isDefault: boolean }[] }>(await http().get('/v1/price-lists').set(auth), 200).data;
@@ -223,6 +226,16 @@ async function world(prefix: string): Promise<World> {
   const table2 = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T2' }));
   const liveOrder = ok<{ id: string }>(await http().post('/v1/restaurant/orders').set(auth).send({ branchId: branch.id, orderType: 'DINE_IN', tableId: table2.id }));
   const liveItems = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${liveOrder.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
+  // Phase 5: the terminal takes a snapshot and delivers two offline sales: one recorded, one quarantined (wrong total).
+  const terminalHeaders = { 'x-terminal-id': terminal.terminal.id, Authorization: `Terminal ${terminal.credential}` };
+  const snap = ok<{ snapshotId: string }>(await http().get('/v1/terminal/snapshot').set(terminalHeaders), 200);
+  const offline = (n: number, amountDue: string) => ({
+    terminalTxnId: randomUUID(), deviceSeq: n, snapshotId: snap.snapshotId, cashierSessionId: openSession.id, cashierUserId: t.userId,
+    occurredAt: new Date().toISOString(), localReference: `R1-T-${n}`, lines: [{ variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '50.00' }], amountDue,
+  });
+  const synced = ok<{ results: { status: string }[] }>(await http().post('/v1/sync/sales').set(terminalHeaders).send({ sales: [offline(1, '22.00'), offline(2, '1.00')] }), 200);
+  if (synced.results.map((r) => r.status).join() !== 'RECORDED,QUARANTINED') throw new Error(`fixture sync → ${JSON.stringify(synced.results)}`);
+  const quarantined = ok<{ data: { id: string }[] }>(await http().get('/v1/sync/transactions').query({ status: 'QUARANTINED' }).set(auth), 200).data[0]!;
   const openSessionCash = (await http().get(`/v1/cashier-sessions/${openSession.id}`).set(auth)).body.expectedCash as string;
   return {
     t,
@@ -275,6 +288,9 @@ async function world(prefix: string): Promise<World> {
     checkSaleId: checkSale.id,
     liveOrderId: liveOrder.id,
     liveItemId: liveItems.items[0]!.id,
+    terminalHeaders,
+    snapshotId: snap.snapshotId,
+    offlineTxnId: quarantined.id,
   };
 }
 
@@ -307,6 +323,9 @@ function attackMatrix(): Record<string, () => request.Test> {
     'PATCH /v1/registers/:id': () => http().patch(`/v1/registers/${a.registerId}`).set(auth).send({ name: 'pwned' }),
     'POST /v1/registers/:id/archive': () => http().post(`/v1/registers/${a.registerId}/archive`).set(auth),
     'POST /v1/terminals/:id/revoke': () => http().post(`/v1/terminals/${a.terminalId}/revoke`).set(auth).send({ reason: 'sabotage' }),
+    'GET /v1/sync/transactions/:id': () => http().get(`/v1/sync/transactions/${a.offlineTxnId}`).set(auth),
+    'POST /v1/sync/transactions/:id/retry': () => http().post(`/v1/sync/transactions/${a.offlineTxnId}/retry`).set(auth),
+    'POST /v1/sync/transactions/:id/dismiss': () => http().post(`/v1/sync/transactions/${a.offlineTxnId}/dismiss`).set(auth).send({ reason: 'sabotage' }),
     'PATCH /v1/categories/:id': () => http().patch(`/v1/categories/${a.categoryId}`).set(auth).send({ name: 'pwned' }),
     'POST /v1/categories/:id/archive': () => http().post(`/v1/categories/${a.categoryId}/archive`).set(auth),
     'GET /v1/products/:id': () => http().get(`/v1/products/${a.productId}`).set(auth),
@@ -563,8 +582,8 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect([closed.status, closed.reconciliation.approvedBy]).toEqual(['CLOSED', null]);
     const stock = (await http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
     // 10 opening − 1 sold − 1 used in the dish + 3 received − 1 returned to the supplier − 1 transferred to branch 2
-    // − 3 used by the restaurant check (two dishes and a priced "Extra" that is the dish again).
-    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['6']);
+    // − 3 used by the restaurant check (two dishes and a priced "Extra" that is the dish again) − 1 sold offline.
+    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['5']);
     const t = (await http().get(`/v1/stock/transfers/${a.transferId}`).set(a.auth).expect(200)).body;
     expect([t.status, t.lines[0].receivedQuantity]).toEqual(['RECEIVED', '1']);
     const po = (await http().get(`/v1/purchase-orders/${a.draftOrderId}`).set(a.auth).expect(200)).body;
@@ -583,12 +602,29 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect([bill.status, bill.checks.map((c: { id: string }) => c.id)]).toEqual(['SETTLED', [a.checkSaleId]]);
   });
 
+  it("a terminal cannot reach the other tenant: its snapshot is its own, and naming B's snapshot or shift records nothing in B", async () => {
+    const snapA = (await http().get('/v1/terminal/snapshot').set(a.terminalHeaders).expect(200)).body;
+    expect(JSON.stringify(snapA)).not.toContain(b.variantId);
+    expect(JSON.stringify(snapA)).not.toContain(b.openSessionId);
+    const before = await asOwnerInTenant(owner, b.t.tenantId, async (c) => (await c.query('SELECT count(*)::int AS n FROM sales')).rows[0].n);
+    const smuggled = (await http().post('/v1/sync/sales').set(a.terminalHeaders).send({ sales: [{
+      terminalTxnId: randomUUID(), deviceSeq: 99, snapshotId: b.snapshotId, cashierSessionId: b.openSessionId, cashierUserId: b.t.userId,
+      occurredAt: new Date().toISOString(), localReference: 'X', lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '22.00' }], amountDue: '22.00',
+    }] }).expect(200)).body.results[0];
+    expect([smuggled.status, smuggled.code]).toEqual(['QUARANTINED', 'UNKNOWN_SNAPSHOT']);
+    expect(await asOwnerInTenant(owner, b.t.tenantId, async (c) => (await c.query('SELECT count(*)::int AS n FROM sales')).rows[0].n)).toBe(before);
+    // The quarantine row is A's and names no B shift.
+    const [row] = await asOwnerInTenant(owner, a.t.tenantId, async (c) => (await c.query(`SELECT cashier_session_id FROM terminal_transactions WHERE device_seq = 99`)).rows);
+    expect(row).toEqual({ cashier_session_id: null });
+  });
+
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
     const paths = [
       '/v1/me', '/v1/members', '/v1/roles', '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, `/v1/variants/${b.dishId}/recipe`, '/v1/invitations',
+      '/v1/sync/transactions', `/v1/sync/transactions?terminalId=${b.terminalId}`,
       '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
       ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,

@@ -156,8 +156,35 @@ Slice 7 — exit review (session 7): ✅ done.
 ⬜ Out of scope for Phase 4 (later): delivery orders, unit conversions/purchase units for recipes, sub-recipes/prep production, rule-based modifier pricing, tips, reservations, KDS push (SSE) and kitchen printers (Phase 5 devices).
 ⬜ Open questions for the tax adviser and the accountant: service charge base and VAT; SC/PWD share of the service charge; service charge as a liability.
 
-## Phase 5 — Offline & integrations
-Rust/Tauri shell, SQLite local store, durable local outbox, sync protocol, offline cash sales, conflict flags, ESC/POS printer & drawer adapters, real payment provider, EIS/e-invoice adapter (per compliance outcome).
+## Phase 5 — Offline & integrations (plan: ADR-0015)
+Slice 1 — server (session 7): ✅ done.
+- ✅ Terminal authentication (`auth_terminal()` SECURITY DEFINER; `X-Terminal-Id` + `Authorization: Terminal …`; revoked → 401 `TERMINAL_REVOKED`).
+- ✅ Snapshot (`GET /v1/terminal/snapshot`): priced items, tax profile, open shift; recorded with `as_of` (DB clock).
+- ✅ Sync (`POST /v1/sync/sales`):
+  - one transaction per envelope; dedupe on terminal + txn id + payload hash;
+  - re-priced as of the snapshot, recorded through `record()` as the shift's cashier, on the device's day;
+  - flags `PRICE_CHANGED` / `SNAPSHOT_EXPIRED` / `CLOCK_ADJUSTED`.
+- ✅ Quarantine (`terminal_transactions`) with manager list / retry / dismiss (`cash.reconcile`); close refused while unresolved.
+- ✅ `@1pos/sync-protocol`; `@TerminalAuth()` in OpenAPI; `offline-sync.test.ts` (4); isolation +3 id routes, a terminal cross-tenant case, both tables in the sweep.
+
+Slice 2 — client engine (session 7): ✅ done.
+- ✅ `@1pos/pos-offline`: `LocalStore` over `SqlDriver` (`node:sqlite` driver), `OfflineEngine` (ring up = one local tx with the device number and envelope; sync in device order, batches of 50; backoff with jitter; 401 stops; restart resumes), `httpTransport`.
+- ✅ Unit tests (7); drills against the live API (`offline-engine.test.ts`, 4): outage + restart, lost answers + DB down (503) → replayed never doubled, 120 sales in batches, price rise flagged, shift closed elsewhere → quarantine, revoked till stops.
+
+⬜ Slice 3 — ESC/POS receipt encoder + printer port (pure TS); offline receipt layout.
+⬜ Slice 4 — UI: POS outage banner + sync status + offline selling path; admin "offline sales" review screen (list / retry / dismiss); terminal set-up on the device (enter id + credential).
+⬜ Slice 5 — Tauri shell (needs Rust): SQLite via the Tauri SQL plugin as `SqlDriver`, printer and drawer adapters, credential storage.
+⬜ Slice 6 — PayMongo adapter + webhooks (needs sandbox keys); invoice transmission (compliance gate).
+⬜ Slice 7 — exit review.
+
+⬜ Phase 5 leftovers so far:
+- recovering a revoked terminal's queue (admin tool);
+- device sequence restarts if the till's file is lost;
+- an integration test for `SNAPSHOT_EXPIRED`;
+- offline SC/PWD and discounts (refused offline today);
+- opening a shift offline;
+- snapshot paging for large catalogues;
+- push the snapshot when prices change (today: the till refreshes when online).
 
 ## Phase 6 — Pilot readiness
 Load tests, security hardening, backup/restore drill, monitoring/alerts, support workflows, UAT, compliance release review, pilot.

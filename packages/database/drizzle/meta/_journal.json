@@ -288,6 +288,20 @@
       "when": 1792146840013,
       "tag": "0040_bills_checks_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1792171824951,
+      "tag": "0041_offline_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792171851903,
+      "tag": "0042_offline_sync_rls",
+      "breakpoints": true
     }
   ]
 }

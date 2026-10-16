@@ -25,10 +25,13 @@ import {
   paymentIntents,
   sql,
   stockMovements,
+  terminalTransactions,
   type Database,
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
+import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
 import type { CreateCheckInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput } from '@1pos/validation';
+import { dbNow } from '../common/clock.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -36,7 +39,7 @@ import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
-import { TaxService, unprocessable } from '../tax/tax.service.js';
+import { TaxService, unprocessable, type CartComputation } from '../tax/tax.service.js';
 import { loadSession } from './cash.service.js';
 import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
@@ -46,6 +49,9 @@ import { planConsumption } from '../restaurant/consumption.js';
 import { addFraction, compareFraction, frac, fractionDec, ONE_FRACTION, ratioOf, subFraction, ZERO_FRACTION, type Fraction } from '../common/fraction.js';
 
 type SaleRow = typeof sales.$inferSelect;
+
+/** Device clock drift an offline sale may show without being flagged CLOCK_ADJUSTED (ADR-0015 §5). */
+const CLOCK_TOLERANCE_MS = 5 * 60_000;
 
 const fixed = (v: string) => toDec(v).toFixed(2);
 const MONEY_FIELDS = [
@@ -125,12 +131,68 @@ interface PricedSale {
   beneficiaries: { ref: string; schemeCode: string; schemeVersion: number; name: string; idNumber: string; tin: string | null }[];
   charges: RecordCharge[];
   orderBillId: string | null;
+  /** A sale rung up offline and recorded at sync (ADR-0015 §5). */
+  offline?: { terminalId: string; reference: string; flags: OfflineFlag[]; completedAt: Date };
+}
+
+/** What a terminal's offline sale needs besides the envelope: who sent it and what it had been told. */
+export interface OfflineContext {
+  terminalId: string;
+  registerId: string;
+  snapshotAsOf: Date;
+  windowHours: number;
+  /** The quarantined delivery being retried, if any (it becomes RECORDED with the sale). */
+  quarantinedId?: string;
+  payload: unknown;
+  payloadHash: string;
+}
+
+
+/** A retail cart from the tax path, ready to record (counter checkout and offline sales). */
+function pricedFromCart(cart: CartComputation, input: Pick<CreateSaleInput, 'lines' | 'beneficiaries'>): PricedSale {
+  return {
+    legalEntityId: cart.legalEntityId,
+    currency: cart.currency,
+    taxProfileId: cart.taxProfile.id,
+    taxSnapshot: cart.taxProfile,
+    requiresProfessionalReview: cart.requiresProfessionalReview,
+    totals: pick(cart.totals),
+    lines: cart.lines.map((l, i) => {
+      const statutory = input.lines[i]!.statutory;
+      return {
+        ...pick(l),
+        clientLineId: l.id,
+        variantId: l.variantId,
+        sku: l.sku,
+        name: l.name,
+        taxCategoryCode: l.taxCategoryCode,
+        vatTreatment: l.vatTreatment,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        priceIncludesTax: l.priceIncludesTax,
+        priceId: l.priceId,
+        priceListId: l.priceListId,
+        trackInventory: l.trackInventory,
+        beneficiaryRef: statutory?.beneficiary ?? null,
+        schemeShare: statutory ? (l.snapshot.scheme?.share ?? '1') : null,
+        snapshot: l.snapshot,
+        parentIndex: null,
+      };
+    }),
+    beneficiaries: input.beneficiaries.map((b) => {
+      const scheme = cart.lines.find((_, i) => input.lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
+      return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null };
+    }),
+    charges: [],
+    orderBillId: null,
+  };
 }
 
 @Injectable()
 export class SalesService extends TenantService {
   protected readonly conflicts: ConflictMap = {
     sales_register_client_tx_unique: ['DUPLICATE_TRANSACTION', 'This register already recorded a sale with this transaction id'],
+    terminal_transactions_txn_unique: ['DUPLICATE_TRANSACTION', 'This terminal already delivered this transaction'],
   };
 
   constructor(
@@ -157,42 +219,7 @@ export class SalesService extends TenantService {
           ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
         })),
       });
-      const priced: PricedSale = {
-        legalEntityId: cart.legalEntityId,
-        currency: cart.currency,
-        taxProfileId: cart.taxProfile.id,
-        taxSnapshot: cart.taxProfile,
-        requiresProfessionalReview: cart.requiresProfessionalReview,
-        totals: pick(cart.totals),
-        lines: cart.lines.map((l, i) => {
-          const statutory = input.lines[i]!.statutory;
-          return {
-            ...pick(l),
-            clientLineId: l.id,
-            variantId: l.variantId,
-            sku: l.sku,
-            name: l.name,
-            taxCategoryCode: l.taxCategoryCode,
-            vatTreatment: l.vatTreatment,
-            quantity: l.quantity,
-            unitPrice: l.unitPrice,
-            priceIncludesTax: l.priceIncludesTax,
-            priceId: l.priceId,
-            priceListId: l.priceListId,
-            trackInventory: l.trackInventory,
-            beneficiaryRef: statutory?.beneficiary ?? null,
-            schemeShare: statutory ? (l.snapshot.scheme?.share ?? '1') : null,
-            snapshot: l.snapshot,
-            parentIndex: null,
-          };
-        }),
-        beneficiaries: input.beneficiaries.map((b) => {
-          const scheme = cart.lines.find((_, i) => input.lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
-          return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null };
-        }),
-        charges: [],
-        orderBillId: null,
-      };
+      const priced = pricedFromCart(cart, input);
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
     });
@@ -263,6 +290,70 @@ export class SalesService extends TenantService {
         charges: recordCharges.map((c) => ({ kind: c.kind, amountDue: fixed(c.amountDue) })),
       };
     });
+  }
+
+  /**
+   * An offline cash sale delivered by its terminal (ADR-0015 §5), recorded as the shift's cashier
+   * (`auth`). Re-priced as of the terminal's snapshot, so the server reproduces the total the terminal
+   * charged or refuses (TOTAL_MISMATCH); flagged, never refused, when prices moved meanwhile, the
+   * snapshot had expired or the device clock was off. The delivery row (RECORDED) commits with the sale.
+   * Any refusal leaves nothing; the caller quarantines the envelope.
+   */
+  recordOffline(auth: AuthContext, env: OfflineSale, ctx: OfflineContext) {
+    return this.mutate(auth, async (db) => {
+      const session = await this.checkoutSession(db, auth, env.cashierSessionId, env.terminalTxnId);
+      if (session.registerId !== ctx.registerId) {
+        throw new AppError('WRONG_REGISTER', 'This shift is on another register than the terminal', HttpStatus.CONFLICT);
+      }
+      const input = { lines: env.lines, beneficiaries: [] };
+      const cartAt = (at: Date) => this.tax.computeCart(db, auth, { branchId: session.branchId, lines: env.lines }, at);
+      const cart = await cartAt(ctx.snapshotAsOf);
+
+      const flags: OfflineFlag[] = [];
+      const now = await dbNow(db);
+      const occurred = new Date(env.occurredAt);
+      const completedAt = new Date(Math.min(Math.max(occurred.getTime(), session.openedAt.getTime()), now.getTime()));
+      // Clamped always; flagged when the device clock was off by more than ordinary drift.
+      if (Math.abs(completedAt.getTime() - occurred.getTime()) > CLOCK_TOLERANCE_MS) flags.push('CLOCK_ADJUSTED');
+      // Prices or the tax profile that were in force when the sale happened, if the terminal could not know them.
+      const then = await cartAt(completedAt).catch(() => null);
+      const sameAsThen = then && then.taxProfile.id === cart.taxProfile.id && then.lines.every((l, i) => l.priceId === cart.lines[i]!.priceId);
+      if (!sameAsThen) flags.push('PRICE_CHANGED');
+      if (completedAt.getTime() > ctx.snapshotAsOf.getTime() + ctx.windowHours * 3_600_000) flags.push('SNAPSHOT_EXPIRED');
+
+      const priced = pricedFromCart(cart, input);
+      priced.offline = { terminalId: ctx.terminalId, reference: env.localReference, flags, completedAt };
+      let sale: SaleRow;
+      try {
+        sale = await this.record(db, auth, session, { clientTransactionId: env.terminalTxnId, tenders: env.tenders, expectedAmountDue: env.amountDue }, priced);
+      } catch (e) {
+        if (e instanceof AppError && e.code === 'TOTAL_CHANGED') {
+          throw new AppError('TOTAL_MISMATCH', 'The terminal charged a different total than its snapshot gives', HttpStatus.CONFLICT, {
+            charged: toDec(env.amountDue).toFixed(2), expected: toDec(priced.totals.amountDue).toFixed(2),
+          });
+        }
+        throw e;
+      }
+      if (ctx.quarantinedId) {
+        await db.update(terminalTransactions)
+          .set({ status: 'RECORDED', saleId: sale.id, errorCode: null, errorDetail: null, attempts: sql`${terminalTransactions.attempts} + 1`, resolvedAt: sql`now()`, resolvedBy: auth.userId })
+          .where(eq(terminalTransactions.id, ctx.quarantinedId));
+      } else {
+        await db.insert(terminalTransactions).values({
+          tenantId: tenantOf(auth).tenantId, terminalId: ctx.terminalId, terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq,
+          payload: ctx.payload, payloadHash: ctx.payloadHash, cashierSessionId: session.id, status: 'RECORDED', saleId: sale.id,
+        });
+      }
+      const [reg] = await db.select({ code: registers.code }).from(registers).where(eq(registers.id, session.registerId));
+      return { saleId: sale.id, saleNumber: sale.saleNumber, reference: `${reg!.code}-${String(sale.saleNumber).padStart(6, '0')}`, flags };
+    });
+  }
+
+  /** The calendar date of an instant in the branch's timezone (DB arithmetic). */
+  private async localDate(db: Database, branchId: string, at: Date) {
+    const { rows } = await db.execute<{ d: string }>(sql`
+      SELECT (${at.toISOString()}::timestamptz AT TIME ZONE b.timezone)::date::text AS d FROM branches b WHERE b.id = ${branchId}`);
+    return rows[0]!.d;
   }
 
   /** A check's lines and charges for these allocations (ADR-0014 §8); shared by the check and its preview. */
@@ -466,6 +557,13 @@ export class SalesService extends TenantService {
         requiresProfessionalReview: priced.requiresProfessionalReview,
         taxSnapshot: priced.taxSnapshot,
         orderBillId: priced.orderBillId,
+        ...(priced.offline && {
+          origin: 'OFFLINE',
+          terminalId: priced.offline.terminalId,
+          offlineReference: priced.offline.reference,
+          offlineFlags: priced.offline.flags,
+          completedAt: priced.offline.completedAt,
+        }),
       })
       .returning();
 
@@ -559,7 +657,9 @@ export class SalesService extends TenantService {
       branchId: session.branchId,
       sourceType: 'SALE',
       sourceId: sale!.id,
-      memo: `Sale #${saleNumber}`,
+      memo: priced.offline ? `Sale #${saleNumber} (offline ${priced.offline.reference})` : `Sale #${saleNumber}`,
+      // An offline sale is booked on the day it happened, in the branch's calendar.
+      ...(priced.offline && { entryDate: await this.localDate(db, session.branchId, priced.offline.completedAt) }),
       lines: salePosting({
         salesExVat: exVat(priced.totals).minus(serviceCharge),
         serviceCharge,
@@ -572,7 +672,11 @@ export class SalesService extends TenantService {
       createdBy: auth.userId,
     });
 
-    await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, { saleNumber, amountDue: due.toFixed(2), registerId: session.registerId, ...(priced.orderBillId && { orderBillId: priced.orderBillId }) });
+    await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, {
+      saleNumber, amountDue: due.toFixed(2), registerId: session.registerId,
+      ...(priced.orderBillId && { orderBillId: priced.orderBillId }),
+      ...(priced.offline && { origin: 'OFFLINE', terminalId: priced.offline.terminalId, offlineReference: priced.offline.reference, flags: priced.offline.flags }),
+    });
     await emitEvent(db, {
       tenantId,
       topic: 'sale.completed',

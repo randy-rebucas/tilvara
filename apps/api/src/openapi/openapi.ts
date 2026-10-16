@@ -3,7 +3,7 @@ import { RequestMethod } from '@nestjs/common';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum.js';
 import { z, type ZodType } from 'zod';
 import { AppModule } from '../app.module.js';
-import { IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from '../auth/auth-context.js';
+import { IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT, TERMINAL_AUTH } from '../auth/auth-context.js';
 import { IDEMPOTENT, type IdempotentOptions } from '../infrastructure/idempotency.js';
 import { RATE_LIMIT, type RateLimitRule } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
@@ -80,7 +80,8 @@ export function buildOpenApi(version = '0.1.0'): Json {
       const nestPath = joinPath(GLOBAL_PREFIX, base, sub);
       const path = nestPath.replace(/:(\w+)/g, '{$1}');
       const meta = <T>(key: string) => (Reflect.getMetadata(key, handler) ?? Reflect.getMetadata(key, ctrl)) as T | undefined;
-      const isPublic = meta<boolean>(IS_PUBLIC) === true;
+      const isTerminal = meta<boolean>(TERMINAL_AUTH) === true;
+      const isPublic = meta<boolean>(IS_PUBLIC) === true && !isTerminal;
       const perms = meta<string[]>(REQUIRED_PERMISSIONS);
       const needsTenant = meta<boolean>(REQUIRES_TENANT) === true || (perms?.length ?? 0) > 0;
       const idempotent = meta<IdempotentOptions>(IDEMPOTENT);
@@ -103,6 +104,9 @@ export function buildOpenApi(version = '0.1.0'): Json {
           parameters.push({ name: qName, in: 'query', required: qs.required?.includes(qName) ?? false, schema: qSchema });
         }
       }
+      if (isTerminal) {
+        parameters.push({ name: 'X-Terminal-Id', in: 'header', required: true, description: 'The registered terminal’s id.', schema: { type: 'string', format: 'uuid' } });
+      }
       if (idempotent) {
         parameters.push({
           name: 'Idempotency-Key',
@@ -124,12 +128,14 @@ export function buildOpenApi(version = '0.1.0'): Json {
       const errors: Record<string, Json> = {};
       const errorRef = (description: string) => ({ description, content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } });
       if (body || query || parameters.some((p) => p.in === 'path')) errors['400'] = errorRef('Validation failed');
-      if (!isPublic) {
+      if (isTerminal) {
+        errors['401'] = errorRef('Missing or wrong terminal credential, or the terminal was revoked (TERMINAL_REVOKED)');
+      } else if (!isPublic) {
         errors['401'] = errorRef('Missing, expired or revoked access token');
         errors['403'] = errorRef('Not permitted (or no active tenant)');
       }
       if (parameters.some((p) => p.in === 'path')) errors['404'] = errorRef("Not found in the caller's tenant (other tenants' ids also 404)");
-      if (verb !== 'get' && !isPublic) {
+      if (verb !== 'get' && !isPublic && !isTerminal) {
         errors['402'] = errorRef('Subscription is read-only (lapsed trial, past due after grace, or canceled)');
         errors['409'] = errorRef('Conflict (stable code in error.code)');
       }
@@ -140,7 +146,7 @@ export function buildOpenApi(version = '0.1.0'): Json {
         operationId: `${tag}.${name}`,
         tags: [tag],
         ...(descriptionLines.length ? { description: descriptionLines.join(' ') } : {}),
-        ...(isPublic ? { security: [] } : {}),
+        ...(isPublic ? { security: [] } : isTerminal ? { security: [{ terminal: [] }] } : {}),
         ...(parameters.length ? { parameters } : {}),
         ...(body ? { requestBody: { required: true, content: { 'application/json': { schema: jsonSchema(body) } } } } : {}),
         responses: { [String(status)]: { description: 'Success' }, ...errors },
@@ -163,7 +169,10 @@ export function buildOpenApi(version = '0.1.0'): Json {
     servers: [{ url: 'http://127.0.0.1:4320', description: 'Local development' }],
     security: [{ bearer: [] }],
     components: {
-      securitySchemes: { bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' } },
+      securitySchemes: {
+        bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        terminal: { type: 'apiKey', in: 'header', name: 'Authorization', description: '`Terminal <credential>` with the X-Terminal-Id header (offline sync, ADR-0015).' },
+      },
       schemas: { Error: errorEnvelope },
     },
     paths: sorted,

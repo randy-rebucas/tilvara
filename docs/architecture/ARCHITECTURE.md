@@ -69,7 +69,8 @@ packages/
   pricing/        price resolution, discounts, promotions (pure)                       [Phase 2]
   inventory/      (costing lives in the stock-ledger trigger, ADR-0012 — no package needed)
   accounting/     posting rules, balance validation, default chart (pure)              [Phase 3 — built]
-  sync-protocol/  offline envelope schemas shared by POS and API                         [Phase 5]
+  sync-protocol/  offline envelope, snapshot and result types shared by POS and API    [Phase 5 — built]
+  pos-offline/    the till's offline engine: SQLite store, durable queue, sync (no React) [Phase 5 — built]
   validation/     zod request/response contracts shared with clients                     [Phase 1]
   ui/             shared React components (shadcn-based)                                 [Phase 1]
   hardware-adapters/ printer/drawer/scanner/scale interfaces + dev impls                [Phase 5]
@@ -81,7 +82,7 @@ Dependency rules (enforced by review now, by lint rule later):
 1. Pure calculation packages (`money`, `tax`, `pricing`, `inventory`, `accounting`) never import `database`, Nest, or I/O.
 2. `apps/*` may depend on `packages/*`; packages never depend on apps.
 3. Inside `apps/api`, a module may call another module only through that module's exported service. Cross-module table access is forbidden.
-4. Clients (`admin-web`, `pos-desktop`) depend only on `validation`, `money`, `ui`, `sync-protocol` — never on `database`.
+4. Clients (`admin-web`, `pos-desktop`) depend only on `validation`, `money`, `tax`, `ui`, `sync-protocol`, `pos-offline` — never on `database`.
 
 ## 5. Core technical decisions (summary — see `docs/decisions/`)
 
@@ -100,6 +101,8 @@ Dependency rules (enforced by review now, by lint rule later):
 | 0011 | Voids/returns | Append-only return documents with exact proration; cash refunds only until the PayMongo adapter |
 | 0012 | Inventory costing | Weighted average per branch × item, computed by the ledger trigger under the balance lock; Σ movement value = balance value |
 | 0013 | Double-entry ledger | Books per legal entity; every operational document posts one balanced entry in its own transaction; periods, reversals, manual entries |
+| 0014 | Restaurant | Orders are operational; a frozen bill is paid by checks through the one checkout path; recipes consume at checkout |
+| 0015 | Offline sync | Terminal-authenticated snapshot + sync; offline cash sales re-priced as of the snapshot and recorded once; quarantine for managers |
 
 ## 6. Transaction engine (checkout) — as built (Phase 2)
 
@@ -131,13 +134,23 @@ Purchasing: suppliers → purchase orders (DRAFT → APPROVED → PARTIALLY_RECE
 
 Every operational document also posts one balanced journal entry in the same transaction (ADR-0013), so stock value, cash, VAT and revenue in the books always equal their evidence tables (`ledger.test.ts`).
 
-## 8. Offline-first POS (Phase 5 design target)
+## 8. Offline-first POS (Phase 5 — server and engine built; desktop shell pending Rust)
 
-- Terminal holds SQLite: catalog snapshot (versioned), price/tax config versions, local outbox of completed sales, device sequence counter.
-- A sale is written to SQLite (single local transaction) **before** sync is attempted.
-- Sync endpoint is idempotent on `(tenant, terminal_id, terminal_txn_id)`; server re-validates everything and returns the original result for duplicates.
-- Offline: cash only. Card/e-wallet unavailable (not simulated). Stale-price policy: sale is accepted at the price version the terminal used if that version was valid within the configured offline window; otherwise flagged.
-- Invoice numbering offline is **an open compliance question** (see `docs/compliance`): the planned approach is per-register pre-allocated serial blocks, pending BIR rule verification.
+```
+till (OfflineEngine, SQLite)                         API
+  refreshSnapshot ──GET /v1/terminal/snapshot──────► terminal credential → snapshot recorded (as_of = DB now)
+  ringUp: price with @1pos/tax from the snapshot,
+          one local tx: next deviceSeq + sale + envelope (nothing sent)
+  syncOnce ──POST /v1/sync/sales (≤ 50, seq order)──► per envelope, own tx: dedupe (terminal, txn id, payload hash)
+          ◄── RECORDED | QUARANTINED | DISMISSED |    → re-price as of the snapshot → record() as the shift's cashier
+              REJECTED per envelope                     (device time, flags) | quarantine for a manager
+  no answer / 5xx / 429 → back off, same envelopes;  401 → stop (revoked)
+```
+
+- Offline: cash retail sales only, on a shift opened online, by its cashier (ADR-0015 §1). Card/e-wallet are unavailable, never simulated.
+- Stale prices are flagged, never refused: `PRICE_CHANGED`, `SNAPSHOT_EXPIRED` (after `OFFLINE_WINDOW_HOURS`), `CLOCK_ADJUSTED`.
+- A different total than the snapshot gives, a closed or foreign shift, a cashier no longer active, or any checkout refusal → quarantined; a manager retries or dismisses; the shift cannot close until then.
+- Invoice numbering offline is **an open compliance question** (see `docs/compliance`): offline receipts carry a local reference and say they are not invoices; the register number is assigned at sync.
 
 ## 9. Integrations
 

@@ -84,6 +84,9 @@ importers:
       '@1pos/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@1pos/sync-protocol':
+        specifier: workspace:*
+        version: link:../../packages/sync-protocol
       '@1pos/tax':
         specifier: workspace:*
         version: link:../../packages/tax
@@ -118,6 +121,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@1pos/pos-offline':
+        specifier: workspace:*
+        version: link:../../packages/pos-offline
       '@nestjs/cli':
         specifier: ^12.0.0
         version: 12.0.8(@types/node@24.19.2)(prettier@3.9.10)
@@ -238,6 +244,27 @@ importers:
       pino:
         specifier: ^10.4.0
         version: 10.4.0
+
+  packages/pos-offline:
+    dependencies:
+      '@1pos/money':
+        specifier: workspace:*
+        version: link:../money
+      '@1pos/sync-protocol':
+        specifier: workspace:*
+        version: link:../sync-protocol
+      '@1pos/tax':
+        specifier: workspace:*
+        version: link:../tax
+
+  packages/sync-protocol:
+    dependencies:
+      '@1pos/validation':
+        specifier: workspace:*
+        version: link:../validation
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
 
   packages/tax:
     dependencies:

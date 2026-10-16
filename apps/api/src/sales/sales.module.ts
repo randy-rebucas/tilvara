@@ -10,5 +10,6 @@ import { ReturnsService } from './returns.service.js';
   imports: [TaxModule],
   controllers: [SalesController],
   providers: [CashService, SalesService, StockService, ReturnsService],
+  exports: [SalesService],
 })
 export class SalesModule {}

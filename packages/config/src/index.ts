@@ -24,6 +24,8 @@ export const serverEnvSchema = z.object({
   PAYMENT_PROVIDER: z.enum(['dev']).default('dev'),
   /** Provider call timeout; a timed-out authorization is reconciled, never retried blindly. */
   PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
+  /** How long a terminal snapshot may price offline sales before they are flagged SNAPSHOT_EXPIRED (ADR-0015). */
+  OFFLINE_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   /** Test-only escape hatch; refused in production. */
   RATE_LIMITS_ENABLED: z
     .enum(['true', 'false'])

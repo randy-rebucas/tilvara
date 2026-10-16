@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { withTenant } from '@1pos/database';
+import type { Pool } from 'pg';
 import { enrichLogContext } from '@1pos/observability';
 import { isPermissionCode, type PermissionCode } from '@1pos/validation';
 import { DatabasePool } from '../infrastructure/database.provider.js';
@@ -57,7 +58,7 @@ export class AuthGuard implements CanActivate {
       if (!ctx.membership_id || !ctx.tenant_status || !['ACTIVE', 'SUSPENDED'].includes(ctx.tenant_status)) {
         throw new AppError('TENANT_ACCESS_REVOKED', 'You no longer have access to this business', HttpStatus.FORBIDDEN);
       }
-      const grants = await this.loadGrants(claims.tid, ctx.membership_id, claims.sub);
+      const grants = await loadGrants(this.database.pool, claims.tid, ctx.membership_id, claims.sub);
       auth.tenant = { tenantId: claims.tid, membershipId: ctx.membership_id, status: ctx.tenant_status, grants };
     }
     req.auth = auth;
@@ -81,25 +82,26 @@ export class AuthGuard implements CanActivate {
     }
     return true;
   }
+}
 
-  private loadGrants(tenantId: string, membershipId: string, userId: string): Promise<Grant[]> {
-    return withTenant(
-      this.database.pool,
-      tenantId,
-      async (_db, client) => {
-        const { rows } = await client.query<{ permission_code: string; scope_type: Grant['scopeType']; scope_id: string | null }>(
-          `SELECT DISTINCT rp.permission_code, mr.scope_type, mr.scope_id
-             FROM membership_roles mr
-             JOIN roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id AND r.archived_at IS NULL
-             JOIN role_permissions rp ON rp.tenant_id = mr.tenant_id AND rp.role_id = mr.role_id
-            WHERE mr.membership_id = $1`,
-          [membershipId],
-        );
-        return rows
-          .filter((r) => isPermissionCode(r.permission_code))
-          .map((r) => ({ permission: r.permission_code as PermissionCode, scopeType: r.scope_type, scopeId: r.scope_id }));
-      },
-      { userId },
-    );
-  }
+/** A member's grants in a tenant, read under RLS (the guard, and the cashier behind an offline sale). */
+export function loadGrants(pool: Pool, tenantId: string, membershipId: string, userId: string): Promise<Grant[]> {
+  return withTenant(
+    pool,
+    tenantId,
+    async (_db, client) => {
+      const { rows } = await client.query<{ permission_code: string; scope_type: Grant['scopeType']; scope_id: string | null }>(
+        `SELECT DISTINCT rp.permission_code, mr.scope_type, mr.scope_id
+           FROM membership_roles mr
+           JOIN roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id AND r.archived_at IS NULL
+           JOIN role_permissions rp ON rp.tenant_id = mr.tenant_id AND rp.role_id = mr.role_id
+          WHERE mr.membership_id = $1`,
+        [membershipId],
+      );
+      return rows
+        .filter((r) => isPermissionCode(r.permission_code))
+        .map((r) => ({ permission: r.permission_code as PermissionCode, scopeType: r.scope_type, scopeId: r.scope_id }));
+    },
+    { userId },
+  );
 }

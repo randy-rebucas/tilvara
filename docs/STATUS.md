@@ -1,8 +1,54 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 7 — Phase 4 slice 7, the exit review)_
+_Last updated: 2026-10-17 (session 7 — Phase 4 exit review; Phase 5 plan (ADR-0015), slices 1–2: offline sync server + client engine)_
 
 ## Current phase
+**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1 (server) and 2 (client engine) done; Rust is still not installed, so the Tauri shell (slice 5) stays blocked. Next: slice 3 (ESC/POS) or 4 (UI) — see "Next task".
+
+## Phase 5 slices 1–2 — offline sync (session 7)
+- **Server** (migrations 0041/0042, both with forced RLS):
+  - `terminal_snapshots` (append-only) and `terminal_transactions` (moves only QUARANTINED → RECORDED/DISMISSED; dismiss needs a person and a reason; never deleted);
+  - offline columns on `sales`: origin, terminal, local reference, flags (a check ties them together);
+  - `auth_terminal()` is SECURITY DEFINER, owned by `onepos_platform`; the app role still cannot read credential hashes.
+- **Routes**:
+  - `GET /v1/terminal/snapshot`: priced items as of the DB clock, the tax profile, the register's open shift;
+  - `POST /v1/sync/sales`: up to 50 envelopes, each in its own transaction, in device order;
+  - `GET /v1/sync/transactions[/:id]`, `POST …/:id/retry`, `POST …/:id/dismiss` (`cash.reconcile` at the register's branch);
+  - shift close refused while offline sales are quarantined (`OFFLINE_SALES_UNRESOLVED`).
+- **Recording**: `SalesService.recordOffline` runs as the shift's cashier (grants loaded at sync):
+  - re-prices through `computeCart(…, asOf = snapshot)` and records through the shared `record()`;
+  - `completed_at` = device time clamped to [shift opened, now]; the journal entry is dated on the branch's day;
+  - the delivery row commits with the sale;
+  - flags: `PRICE_CHANGED`, `SNAPSHOT_EXPIRED` (`OFFLINE_WINDOW_HOURS`, default 24), `CLOCK_ADJUSTED` (only beyond 5 min of drift).
+- **Defects found by the first test run and fixed before commit**:
+  - the snapshot instant included the 5 s "in force" skew, so a price set seconds after the snapshot counted at re-pricing (→ `TOTAL_MISMATCH`); the snapshot now uses the plain DB clock;
+  - sub-second host/DB clock drift flagged every sale `CLOCK_ADJUSTED`; the clamp stays, the flag needs > 5 min.
+- **Client**: `@1pos/sync-protocol` (schemas, `canonicalJson`) and `@1pos/pos-offline`:
+  - `LocalStore` over a `SqlDriver` (`node:sqlite` now; the Tauri SQL plugin later; WAL + synchronous=FULL);
+  - `OfflineEngine`:
+    - `ringUp` prices with `@1pos/tax` from the snapshot and writes sale, envelope and device number in one local transaction;
+    - `syncOnce` / `drain` send in device order;
+    - no answer, 5xx or 429 → backoff 1 s → 5 min with jitter, same envelopes;
+    - 401 → stop selling and syncing;
+  - `httpTransport`.
+- **Tests**:
+  - `offline-sync.test.ts` (4): terminal auth + snapshot, sync order/dedupe/replay/reused id/wrong register, flags, quarantine → close blocked → retry recorded → dismiss → variance;
+  - `@1pos/pos-offline` unit (7);
+  - `offline-engine.test.ts` (4), drills of the real engine over HTTP:
+    - an outage with a restart → 3 sales recorded once, in order, at device times;
+    - lost answers, then a DB-down API (503), then normal → replayed, never doubled;
+    - 120 sales in batches 50/50/20;
+    - a price rise flagged; a shift closed elsewhere → quarantine; a revoked till stops.
+- **Isolation**: +3 id routes, a terminal cross-tenant case (B's snapshot/shift named by A's terminal → quarantined `UNKNOWN_SNAPSHOT`, nothing in B), both tables in the sweep.
+
+### Verified — Phase 5 slices 1–2 (commands actually run)
+| Command | Result |
+|---|---|
+| `pnpm build` (13/13) · `pnpm typecheck` (22/22) · `pnpm exec oxlint apps packages` (exit 0) · `pnpm --filter @1pos/api openapi` | ok |
+| `pnpm test` | **130 passed** (+ sync-protocol 2, pos-offline 7) |
+| `pnpm test:integration` | **281 passed**: database 21, api **252** (+ offline-sync 4, offline-engine 4, isolation 10), workers 8 |
+| `pnpm db:migrate` (dev) | 0041, 0042 applied |
+
 **Phase 4 — Restaurant: exit criterion met** (session 7). A restaurant completes a full service cycle and reconciles stock, payments and books, through the real screens and under concurrency. Plan and as-built notes: `docs/decisions/ADR-0014-restaurant-orders.md` ("Exit review"). Still open outside the code: the tax adviser's and accountant's answers on the service charge (base, VAT, SC/PWD share, liability). **Next: Phase 5** (see "Next task").
 
 ## Phase 4 exit review (session 7)
@@ -490,7 +536,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
 2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
-3. **Phase 5 — Offline & integrations** (SPEC §Phase 5). Blocked on installing Rust/rustup for the Tauri shell; start with an ADR for the local store + sync protocol (what is allowed offline: cash sales only, per the SPEC) and the parts that need no Rust (sync API, conflict flags, durable outbox on the server side).
+3. **Phase 5** (ADR-0015): slices 1–2 ✅. Next, without Rust: slice 3 (ESC/POS encoder + printer port) and slice 4 (admin offline-sales review screen; the POS outage banner, sync status and offline selling path, built against the engine but enabled only in the desktop shell, since browser mode has no durable SQLite and is never advertised as offline — ADR-0006). Slice 5 (Tauri shell) needs `rustup` + MSVC build tools + WebView2 — ask the user before installing. Slice 6 needs PayMongo sandbox keys.
 4. Decisions for the user:
    - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
    - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).

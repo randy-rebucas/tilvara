@@ -21,7 +21,7 @@ import { productPrices, productVariants } from './catalog.js';
 import { orderBillCharges, orderBillLines, orderBills, recipeVersions } from './restaurant.js';
 import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
 import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
-import { branches, legalEntities, registers } from './organization.js';
+import { branches, legalEntities, registers, terminals } from './organization.js';
 import { tenants } from './platform.js';
 import { taxProfiles } from './tax.js';
 
@@ -187,11 +187,20 @@ export const sales = pgTable(
     taxSnapshot: jsonb('tax_snapshot').notNull(),
     /** A restaurant check: the bill this sale pays part or all of (ADR-0014 §8). */
     orderBillId: uuid('order_bill_id'),
+    /** OFFLINE: rung up on a terminal without a connection and recorded when it synced (ADR-0015). */
+    origin: text('origin').notNull().default('ONLINE'),
+    terminalId: uuid('terminal_id'),
+    /** The reference the offline receipt printed, before the register number was assigned. */
+    offlineReference: text('offline_reference'),
+    /** Review flags from sync: PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED. */
+    offlineFlags: text('offline_flags').array().notNull().default(sql`'{}'::text[]`),
     completedAt: timestamp('completed_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('sales_tenant_id_id_unique').on(t.tenantId, t.id),
     foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
+    foreignKey({ columns: [t.tenantId, t.terminalId], foreignColumns: [terminals.tenantId, terminals.id] }),
+    check('sales_origin_check', sql`(${t.origin} = 'ONLINE' AND ${t.terminalId} IS NULL AND ${t.offlineReference} IS NULL) OR (${t.origin} = 'OFFLINE' AND ${t.terminalId} IS NOT NULL AND ${t.offlineReference} IS NOT NULL)`),
     index('sales_bill_idx').on(t.tenantId, t.orderBillId),
     unique('sales_register_number_unique').on(t.tenantId, t.registerId, t.saleNumber),
     unique('sales_register_client_tx_unique').on(t.tenantId, t.registerId, t.clientTransactionId),

@@ -1,4 +1,4 @@
-import { createParamDecorator, ExecutionContext, SetMetadata } from '@nestjs/common';
+import { applyDecorators, createParamDecorator, ExecutionContext, SetMetadata } from '@nestjs/common';
 import type { PermissionCode } from '@1pos/validation';
 import type { CorrelatedRequest } from '../infrastructure/correlation-id.middleware.js';
 import type { Grant } from './authorization.js';
@@ -21,6 +21,10 @@ export type AuthedRequest = CorrelatedRequest & { auth?: AuthContext };
 export const IS_PUBLIC = 'onepos:isPublic';
 /** Route needs no access token. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
+
+export const TERMINAL_AUTH = 'onepos:terminalAuth';
+/** Route authenticates a terminal by its credential (in the service), not a user token (ADR-0015 §2). */
+export const TerminalAuth = () => applyDecorators(Public(), SetMetadata(TERMINAL_AUTH, true));
 
 export const REQUIRED_PERMISSIONS = 'onepos:requiredPermissions';
 /**

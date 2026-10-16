@@ -9,3 +9,4 @@ export * from './purchasing.js';
 export * from './inventory.js';
 export * from './accounting.js';
 export * from './restaurant.js';
+export * from './sync.js';

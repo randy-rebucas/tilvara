@@ -13,6 +13,7 @@ import {
   paymentIntents,
   registers,
   sql,
+  terminalTransactions,
   type Database,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
@@ -194,6 +195,14 @@ export class CashService extends TenantService {
         throw new AppError('PAYMENTS_OUTSTANDING', 'Card/QR payments on this shift are not settled; complete the sale, check or cancel them first', HttpStatus.CONFLICT, {
           payments: outstanding.map((p) => ({ ...p, amount: money(p.amount) })),
         });
+      }
+      // Offline sales of this shift that could not be recorded wait for a manager (ADR-0015 §5).
+      const unresolved = await db
+        .select({ id: terminalTransactions.id, errorCode: terminalTransactions.errorCode })
+        .from(terminalTransactions)
+        .where(and(eq(terminalTransactions.cashierSessionId, id), eq(terminalTransactions.status, 'QUARANTINED')));
+      if (unresolved.length) {
+        throw new AppError('OFFLINE_SALES_UNRESOLVED', 'Offline sales of this shift could not be recorded; a manager must retry or dismiss them first', HttpStatus.CONFLICT, { offlineSales: unresolved });
       }
       const expected = await expectedCash(db, id);
       const variance = toDec(input.countedCash).minus(expected).toString();

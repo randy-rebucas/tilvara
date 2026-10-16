@@ -125,10 +125,12 @@ export class TaxService extends TenantService {
 
   /**
    * The single pricing + tax path (quote and checkout). Runs inside the caller's tenant
-   * transaction; `branch` may be pre-loaded (and locked) by the caller.
+   * transaction; `branch` may be pre-loaded (and locked) by the caller. `asOf` re-prices a cart as it
+   * stood at an earlier instant (an offline sale at its snapshot, ADR-0015 §5); prices and tax profiles
+   * are append-only and effective-dated, so the result is what was in force then.
    */
-  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput) {
-    const at = await effectiveNow(db);
+  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date) {
+    const at = asOf ?? (await effectiveNow(db));
     const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
     if (!branch) throw notFound('Branch');
     const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };

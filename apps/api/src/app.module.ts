@@ -14,12 +14,13 @@ import { PurchasingModule } from './purchasing/purchasing.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
 import { AccountingModule } from './accounting/accounting.module.js';
 import { RestaurantModule } from './restaurant/restaurant.module.js';
+import { SyncModule } from './sync/sync.module.js';
 import { BillingController } from './billing/billing.controller.js';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { IdempotencyInterceptor } from './infrastructure/idempotency.js';
 
 @Module({
-  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, RestaurantModule],
+  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, RestaurantModule, SyncModule],
   controllers: [BillingController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor }],
 })
