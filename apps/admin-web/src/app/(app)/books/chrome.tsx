@@ -23,6 +23,7 @@ export function sourceHref(e: { sourceType: string; sourceId: string | null; rev
     case 'TRANSFER_DISPATCH':
     case 'TRANSFER_RECEIPT': return `/inventory/transfers/${e.sourceId}`;
     case 'STOCK_COUNT': return `/inventory/counts/${e.sourceId}`;
+    case 'STOCK_ADJUSTMENT': return `/inventory/adjustments/${e.sourceId}`;
     default: return null;
   }
 }

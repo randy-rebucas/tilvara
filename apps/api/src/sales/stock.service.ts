@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, branches, eq, inArray, productVariants, sql, stockBalances, stockMovements, type Database } from '@1pos/database';
+import { and, branches, eq, inArray, productVariants, sql, stockAdjustments, stockBalances, stockMovements, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { stockChangePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
@@ -45,6 +45,8 @@ export class StockService extends TenantService {
         if (b && toDec(b.avgCost).gt(0)) return b.avgCost;
         return found.find((f) => f.id === variantId)!.referenceCost ?? '0';
       };
+      // The document: every movement and the journal entry point to it.
+      const [doc] = await db.insert(stockAdjustments).values({ tenantId, branchId: branch.id, kind: input.kind, reason: input.reason, createdBy: auth.userId }).returning();
       const rows = await db
         .insert(stockMovements)
         .values(
@@ -59,23 +61,53 @@ export class StockService extends TenantService {
               ...(toDec(i.quantity).gt(0) && { unitCost: inboundCost(i.variantId, i.unitCost) }),
               type: input.kind,
               reason: input.reason,
+              stockAdjustmentId: doc!.id,
               createdBy: auth.userId,
             })),
         )
         .returning({ id: stockMovements.id, value: stockMovements.value });
-      // Books: inventory against adjustments or waste (ADR-0013). The first movement identifies the document.
+      // Books: inventory against adjustments or waste (ADR-0013).
       await post(db, {
         tenantId,
         legalEntityId: branch.legalEntityId,
         branchId: branch.id,
         sourceType: 'STOCK_ADJUSTMENT',
-        sourceId: rows[0]!.id,
+        sourceId: doc!.id,
         memo: `${input.kind === 'WASTE' ? 'Waste' : 'Adjustment'}: ${input.reason}`,
         lines: stockChangePosting(input.kind, rows.reduce((a, r) => a.plus(r.value), new Dec(0)), branch.id),
         createdBy: auth.userId,
       });
       await this.audit(db, auth, input.kind === 'WASTE' ? 'stock.wasted' : 'stock.adjusted', 'branch', branch.id, { count: rows.length, reason: input.reason });
-      return { movements: rows.length, balances: await this.balanceRows(db, branch.id, ids) };
+      return { id: doc!.id, movements: rows.length, balances: await this.balanceRows(db, branch.id, ids) };
+    });
+  }
+
+  getAdjustment(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [doc] = await db.select().from(stockAdjustments).where(eq(stockAdjustments.id, id));
+      if (!doc) throw notFound('Stock adjustment');
+      const branch = await this.branch(db, doc.branchId);
+      this.assertCan(auth, 'inventory.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
+      const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; value: string }>(sql`
+        SELECT m.id, m.variant_id, v.sku, p.name, m.quantity::text, m.unit_cost::text, m.value::text
+          FROM stock_movements m
+          JOIN product_variants v ON v.tenant_id = m.tenant_id AND v.id = m.variant_id
+          JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
+         WHERE m.stock_adjustment_id = ${doc.id} ORDER BY v.sku`);
+      return {
+        ...doc,
+        value: rows.reduce((a, r) => a.plus(r.value), new Dec(0)).toFixed(2),
+        lines: rows.map((r) => ({ movementId: r.id, variantId: r.variant_id, sku: r.sku, name: r.name, quantity: toDec(r.quantity).toString(), unitCost: toDec(r.unit_cost).toFixed(4), value: toDec(r.value).toFixed(2) })),
+      };
+    });
+  }
+
+  listAdjustments(auth: AuthContext, q: StockQuery) {
+    return this.read(auth, async (db) => {
+      const branch = await this.branch(db, q.branchId);
+      this.assertCan(auth, 'inventory.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
+      const rows = await db.select().from(stockAdjustments).where(eq(stockAdjustments.branchId, branch.id)).orderBy(sql`${stockAdjustments.createdAt} DESC`).limit(200);
+      return { data: rows };
     });
   }
 

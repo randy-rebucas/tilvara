@@ -1,13 +1,16 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
 import { FormError, SelectField, TextField } from '@/components/fields';
 import { compact, LineItems, readLines, type VariantOption } from '@/components/line-items';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { AccountType } from '@/lib/api';
-import { todayManila } from '@/lib/format';
+import { peso, signOf, sumDecimal, todayManila } from '@/lib/format';
+
+const DECIMAL = /^\d{1,14}(\.\d{1,4})?$/;
 
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -46,8 +49,17 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
   }
   // A line-level refinement ("either a debit or a credit") is reported on `lines.<i>` itself.
   const lineIssue = (path: string) => fieldError(path) ?? (path.endsWith('.debit') ? fieldError(path.slice(0, -'.debit'.length)) : undefined);
+  // Running totals while typing (exact decimals), so an unbalanced entry is visible before posting.
+  const [totals, setTotals] = useState({ debit: '0', credit: '0' });
+  function onInput(e: React.FormEvent<HTMLFormElement>) {
+    const lines = readLines(new FormData(e.currentTarget), ['debit', 'credit']);
+    const valid = (v: string | undefined) => (v && DECIMAL.test(v) ? v : '0');
+    setTotals({ debit: sumDecimal(lines.map((l) => valid(l.debit))), credit: sumDecimal(lines.map((l) => valid(l.credit))) });
+  }
+  const difference = sumDecimal([totals.debit, `-${totals.credit}`.replace('--', '')]);
+  const balanced = signOf(difference) === 0 && signOf(totals.debit) > 0;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)]" noValidate>
+    <form onSubmit={onSubmit} onInput={onInput} className="grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)]" noValidate>
       <TextField label={t('common.date')} name="entryDate" type="date" defaultValue={todayManila()} error={fieldError('entryDate')} />
       <TextField label={t('books.memo')} name="memo" required error={fieldError('memo')} />
       <LineItems
@@ -63,7 +75,12 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
         addLabel={t('common.addLine')}
         removeLabel={t('common.removeLine')}
       />
-      <Actions pending={pending} general={general(error) ?? fieldError('lines')} submitLabel={t('books.post')} close={close} />
+      <p className="col-span-full flex flex-wrap gap-x-5 gap-y-1 text-[0.875rem] text-muted" aria-live="polite">
+        <span>{t('books.debit')} <b className="money text-ink">{peso(totals.debit)}</b></span>
+        <span>{t('books.credit')} <b className="money text-ink">{peso(totals.credit)}</b></span>
+        <span>{t('books.difference')} <b className={`money ${signOf(difference) === 0 ? 'text-ink' : 'text-red'}`}>{peso(difference)}</b></span>
+      </p>
+      <Actions pending={pending || !balanced} general={general(error) ?? fieldError('lines')} submitLabel={t('books.post')} close={close} />
     </form>
   );
 }

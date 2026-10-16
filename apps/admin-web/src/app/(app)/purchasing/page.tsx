@@ -58,7 +58,7 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
               rowKey={(o) => o.id}
               dimmed={(o) => o.status === 'CANCELLED' || o.status === 'CLOSED'}
               columns={[
-                { header: 'PO', cell: (o) => <Link href={`/purchasing/orders/${o.id}`} className="serial font-semibold text-gold underline">{docNo(o.poNumber)}</Link> },
+                { header: t('pur.poNo'), cell: (o) => <Link href={`/purchasing/orders/${o.id}`} className="serial font-semibold text-gold underline">{docNo(o.poNumber)}</Link> },
                 { header: t('pur.supplierOne'), cell: (o) => o.supplierName },
                 { header: t('common.branch'), cell: (o) => <Serial className="text-ink">{branchLabel(branches?.data, o.branchId)}</Serial> },
                 { header: t('common.status'), cell: (o) => <span className="tag">{t(`status.${o.status}` as MessageKey)}</span> },
@@ -67,7 +67,7 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
               ]}
               stacked={{
                 title: (o) => <Link href={`/purchasing/orders/${o.id}`} className="underline">{o.supplierName}</Link>,
-                meta: (o) => <Serial>PO {docNo(o.poNumber)} · {branchLabel(branches?.data, o.branchId)} · {t(`status.${o.status}` as MessageKey)}</Serial>,
+                meta: (o) => <Serial>{t('pur.poNo')} {docNo(o.poNumber)} · {branchLabel(branches?.data, o.branchId)} · {t(`status.${o.status}` as MessageKey)}</Serial>,
                 figure: (o) => <span className="money font-semibold">{peso(o.orderedValue)}</span>,
               }}
             />

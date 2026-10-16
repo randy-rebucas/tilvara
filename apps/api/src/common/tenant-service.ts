@@ -63,6 +63,8 @@ export abstract class TenantService {
       const pg = pgError(e);
       const conflict = pg.code === '23505' && pg.constraint ? this.conflicts[pg.constraint] : undefined;
       if (conflict) throw new AppError(conflict[0], conflict[1], HttpStatus.CONFLICT);
+      // A posting that waited on a month being closed (ADR-0013): same answer as the up-front check.
+      if (pg.constraint === 'journal_entries_period_closed') throw new AppError('PERIOD_CLOSED', 'The accounting period is closed', HttpStatus.CONFLICT);
       if (pg.code === '23514' && pg.message) throw new AppError('INVALID_STATE', pg.message, HttpStatus.UNPROCESSABLE_ENTITY);
       throw e;
     }

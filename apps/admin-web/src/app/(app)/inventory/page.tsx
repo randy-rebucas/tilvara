@@ -85,11 +85,12 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
               ]}
               stacked={{
                 title: (r) => r.name,
-                meta: (r) => <Serial>{r.sku} · {t('inv.reorderPoint')} {qty(r.reorderPoint)} · {t('inv.onOrder')} {qty(r.onOrder)}</Serial>,
+                meta: (r) => <Serial>{r.sku} · {t('inv.onHand')} {qty(r.quantity)} · {t('inv.reorderPoint')} {qty(r.reorderPoint)} · {t('inv.onOrder')} {qty(r.onOrder)}</Serial>,
+                // The number to act on: what to order.
                 figure: (r) => (
-                  <span className="text-[0.8125rem] text-muted">
-                    <b className="block text-[0.9375rem] text-ink">{qty(r.quantity)}</b>
-                    {t('inv.suggested')}: {qty(r.suggestedOrder)}
+                  <span className="block">
+                    <span className="block text-[0.75rem] text-muted">{t('inv.suggested')}</span>
+                    <b className="serial text-[0.9375rem] text-ink">{qty(r.suggestedOrder)}</b>
                   </span>
                 ),
               }}

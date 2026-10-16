@@ -80,6 +80,10 @@ function TransferFields({ close, from, destinations, variants }: { close: () => 
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+      {/* The source is the branch picked above the list; name it so stock never leaves the wrong branch. */}
+      <p className="serial col-span-full -mt-2 text-[0.8125rem] text-muted">
+        {t('inv.sendFrom')} <span className="font-semibold text-violet">{from.code}</span> · {from.name}
+      </p>
       <SelectField label={t('inv.toBranch')} name="toBranchId">
         {destinations.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>

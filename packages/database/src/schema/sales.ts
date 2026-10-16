@@ -18,7 +18,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { productPrices, productVariants } from './catalog.js';
-import { stockCountLines, stockTransferLines } from './inventory.js';
+import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
 import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers } from './organization.js';
 import { tenants } from './platform.js';
@@ -457,6 +457,7 @@ export const stockMovements = pgTable(
     supplierReturnLineId: uuid('supplier_return_line_id'),
     stockTransferLineId: uuid('stock_transfer_line_id'),
     stockCountLineId: uuid('stock_count_line_id'),
+    stockAdjustmentId: uuid('stock_adjustment_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -470,6 +471,8 @@ export const stockMovements = pgTable(
     foreignKey({ columns: [t.tenantId, t.stockCountLineId], foreignColumns: [stockCountLines.tenantId, stockCountLines.id] }),
     check('stock_movements_transfer_link', sql`(${t.type} IN ('TRANSFER_OUT','TRANSFER_IN')) = (${t.stockTransferLineId} IS NOT NULL)`),
     check('stock_movements_count_link', sql`(${t.type} = 'COUNT') = (${t.stockCountLineId} IS NOT NULL)`),
+    foreignKey({ columns: [t.tenantId, t.stockAdjustmentId], foreignColumns: [stockAdjustments.tenantId, stockAdjustments.id] }),
+    check('stock_movements_adjustment_link', sql`(${t.type} IN ('ADJUSTMENT','WASTE')) = (${t.stockAdjustmentId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),

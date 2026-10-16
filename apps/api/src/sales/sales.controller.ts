@@ -125,6 +125,16 @@ export class SalesController {
     return this.stock.adjust(auth, body);
   }
 
+  @Get('stock/adjustments')
+  listAdjustments(@Auth() auth: AuthContext, @Query(new ZodPipe(stockQuerySchema)) q: StockQuery) {
+    return this.stock.listAdjustments(auth, q);
+  }
+
+  @Get('stock/adjustments/:id')
+  getAdjustment(@Auth() auth: AuthContext, @Param('id', id) adjustmentId: string) {
+    return this.stock.getAdjustment(auth, adjustmentId);
+  }
+
   @Get('stock/balances')
   balances(@Auth() auth: AuthContext, @Query(new ZodPipe(stockQuerySchema)) q: StockQuery) {
     return this.stock.balances(auth, q);

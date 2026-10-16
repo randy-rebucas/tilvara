@@ -239,6 +239,14 @@ try {
   await go('/books/trial-balance');
   check('trial balance still balances after manual entry + reversal', await text('Debits equal credits.'));
 
+  // A multi-item adjustment is one document: its journal entry opens it, and it lists every item.
+  const adj = await bff('POST', '/api/v1/stock/adjustments', { branchId: br.body.id, kind: 'WASTE', reason: 'Flood damage', items: [{ variantId: coke, quantity: '-1' }, { variantId: canton, quantity: '-2' }] }, true);
+  await go(`/books?entity=${entityId}&source=${adj.body.id}`);
+  await clickText('Stock adjustment');
+  await waitFor(`location.pathname.startsWith('/inventory/adjustments/')`);
+  await waitFor(`document.body.innerText.includes('Flood damage')`);
+  check('adjustment entry → its document with every item (−₱38.00)', (await text('CK-290')) && (await text('LM-PC-CHILI')) && (await text('−₱38.00')));
+
   // 8. Filipino
   await bff('POST', '/api/auth/lang', { lang: 'fil' });
   await go('/');

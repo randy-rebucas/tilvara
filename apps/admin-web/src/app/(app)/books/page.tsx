@@ -60,8 +60,13 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
                 { header: t('books.amount'), num: true, cell: (e) => <span className="money font-semibold">{peso(e.total)}</span> },
               ]}
               stacked={{
-                title: (e) => <Link href={entryHref(e)} className="underline">{sourceLabel(e)}</Link>,
-                meta: (e) => <Serial>{docNo(e.entryNumber)} · {formatDate(e.entryDate, lang)}{e.memo ? ` · ${e.memo}` : ''}</Serial>,
+                title: (e) => <Link href={entryHref(e)} className="serial text-ink underline">{docNo(e.entryNumber)}</Link>,
+                meta: (e) => (
+                  <>
+                    <Serial>{formatDate(e.entryDate, lang)} · {sourceLabel(e)}</Serial>
+                    {e.memo && <span className="block">{e.memo}</span>}
+                  </>
+                ),
                 figure: (e) => <span className="money font-semibold">{peso(e.total)}</span>,
               }}
             />

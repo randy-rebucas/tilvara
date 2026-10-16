@@ -1,7 +1,7 @@
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable, type Column } from '@/components/record-table';
 import { ApiError, apiOrNull, type MovementSummary } from '@/lib/api';
-import { peso, qty, sumDecimal, todayManila } from '@/lib/format';
+import { peso, qty, signed, sumDecimal, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
@@ -36,7 +36,7 @@ export default async function MovementsPage({ searchParams }: { searchParams: Pr
     { header: t('prod.sku'), cell: (r) => <Serial className="text-ink">{r.sku}</Serial> },
     { header: t('common.item'), cell: (r) => r.name },
     { header: t('inv.opening'), num: true, cell: (r) => qty(r.opening.quantity) },
-    ...present.map((type) => ({ header: t(`mv.${type}` as MessageKey), num: true, cell: (r: Row) => (r.movements[type] ? qty(r.movements[type]!.quantity) : <span className="text-muted">·</span>) })),
+    ...present.map((type) => ({ header: t(`mv.${type}` as MessageKey), num: true, cell: (r: Row) => (r.movements[type] ? signed(r.movements[type]!.quantity) : <span className="text-muted">·</span>) })),
     { header: t('inv.closing'), num: true, cell: (r) => <b>{qty(r.closing.quantity)}</b> },
     { header: t('common.value'), num: true, cell: (r) => <span className="money font-semibold">{peso(r.closing.value)}</span> },
   ];
@@ -66,8 +66,8 @@ export default async function MovementsPage({ searchParams }: { searchParams: Pr
               title: (r) => r.name,
               meta: (r) => (
                 <Serial>
-                  {r.sku} · {qty(r.opening.quantity)}
-                  {present.filter((type) => r.movements[type]).map((type) => ` · ${t(`mv.${type}` as MessageKey)} ${qty(r.movements[type]!.quantity)}`)} → {qty(r.closing.quantity)}
+                  {r.sku} · {t('inv.opening')} {qty(r.opening.quantity)}
+                  {present.filter((type) => r.movements[type]).map((type) => ` · ${t(`mv.${type}` as MessageKey)} ${signed(r.movements[type]!.quantity)}`)} · {t('inv.closing')} {qty(r.closing.quantity)}
                 </Serial>
               ),
               figure: (r) => <span className="money font-semibold">{peso(r.closing.value)}</span>,

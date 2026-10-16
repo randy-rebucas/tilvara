@@ -5,7 +5,7 @@ import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
 import { api, apiOrNull, type Branch, type Me, type PurchaseOrder } from '@/lib/api';
-import { formatDate, formatDateTime, peso, qty } from '@/lib/format';
+import { formatDate, formatDateTime, peso, qty, signOf } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
@@ -55,14 +55,15 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
         <Figure label={t('pur.receivedValue')}>{peso(order.receivedValue)}</Figure>
       </Note>
 
-      {(canManage || (canReceive && receiving)) && (
+      {/* Receiving opens full width in its own row, so the other actions never wrap around the panel. */}
+      {canReceive && receiving && <div><ReceiveForm order={order} /></div>}
+      {canManage && (
         <div className="flex flex-wrap items-start gap-2">
-          {canManage && order.status === 'DRAFT' && <ActionButton url={`${base}/approve`} label={t('pur.approve')} primary />}
-          {canReceive && receiving && <ReceiveForm order={order} />}
-          {canManage && (order.status === 'DRAFT' || order.status === 'APPROVED') && (
+          {order.status === 'DRAFT' && <ActionButton url={`${base}/approve`} label={t('pur.approve')} primary />}
+          {(order.status === 'DRAFT' || order.status === 'APPROVED') && (
             <ReasonAction url={`${base}/cancel`} label={t('pur.cancelOrder')} reasonLabel={t('common.reason')} danger />
           )}
-          {canManage && (order.status === 'PARTIALLY_RECEIVED' || order.status === 'RECEIVED') && (
+          {(order.status === 'PARTIALLY_RECEIVED' || order.status === 'RECEIVED') && (
             <ReasonAction url={`${base}/close`} label={t('pur.closeOrder')} reasonLabel={t('common.reason')} hint={t('pur.closeHint')} />
           )}
         </div>
@@ -84,7 +85,12 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           ]}
           stacked={{
             title: (l) => l.name,
-            meta: (l) => <Serial>{l.sku} · {qty(l.receivedQuantity)}/{qty(l.quantity)} · {t('pur.remaining')} {qty(l.remainingQuantity)}</Serial>,
+            meta: (l) => (
+              <Serial>
+                {l.sku} · {t('pur.received')} {qty(l.receivedQuantity)}/{qty(l.quantity)}
+                {signOf(l.rejectedQuantity) > 0 && ` · ${t('pur.rejected')} ${qty(l.rejectedQuantity)}`} · {t('pur.remaining')} {qty(l.remainingQuantity)}
+              </Serial>
+            ),
             figure: (l) => <span className="money font-semibold">{peso(l.lineValue)}</span>,
           }}
           foot={{ cells: ['', t('common.total'), '', '', '', '', '', <span key="v" className="money">{peso(order.orderedValue)}</span>], title: t('common.total'), figure: <span className="money">{peso(order.orderedValue)}</span> }}

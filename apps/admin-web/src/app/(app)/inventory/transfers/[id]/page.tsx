@@ -34,7 +34,7 @@ export default async function TransferPage({ params, searchParams }: { params: P
         <Link href={`/inventory/transfers${back && isUuid(back) ? `?branch=${back}` : ''}`} className="text-[0.875rem] text-muted underline">{t('inv.transfers')}</Link>
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('inv.transferTitle', { n: docNo(transfer.transferNumber) })}</h1>
         <Serial className="mt-1 block">
-          <span className="font-semibold text-gold">{branchLabel(branches?.data, transfer.fromBranchId)} → {branchLabel(branches?.data, transfer.toBranchId)}</span> · {formatDateTime(transfer.createdAt, lang)}
+          <span className="font-semibold text-violet">{branchLabel(branches?.data, transfer.fromBranchId)}</span> → <span className="font-semibold text-violet">{branchLabel(branches?.data, transfer.toBranchId)}</span> · {formatDateTime(transfer.createdAt, lang)}
           {transfer.receivedAt && ` → ${formatDateTime(transfer.receivedAt, lang)}`}
         </Serial>
       </div>

@@ -1,7 +1,7 @@
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { ApiError, apiOrNull, type TrialBalance } from '@/lib/api';
-import { peso, todayManila } from '@/lib/format';
+import { peso, signOf, todayManila } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity } from '../chrome';
 
@@ -15,6 +15,8 @@ export default async function TrialBalancePage({ searchParams }: { searchParams:
   const { entities, entity } = await booksEntity(sp.entity);
   const to = sp.to && DATE.test(sp.to) ? sp.to : todayManila();
   const from = sp.from && DATE.test(sp.from) ? sp.from : `${to.slice(0, 7)}-01`;
+  // Balances read as accountants write them: the amount with Dr or Cr, not a bare minus.
+  const balance = (v: string) => (signOf(v) === 0 ? peso(v) : `${peso(signOf(v) < 0 ? v.slice(1) : v)} ${t(signOf(v) < 0 ? 'books.cr' : 'books.dr')}`);
   let tb: TrialBalance | null = null;
   let problem: string | null = null;
   if (entity) {
@@ -56,17 +58,17 @@ export default async function TrialBalancePage({ searchParams }: { searchParams:
               { header: t('books.opening'), num: true, cell: (r) => <span className="money">{peso(r.opening)}</span> },
               { header: t('books.debit'), num: true, cell: (r) => <span className="money">{peso(r.debit)}</span> },
               { header: t('books.credit'), num: true, cell: (r) => <span className="money">{peso(r.credit)}</span> },
-              { header: t('books.closing'), num: true, cell: (r) => <span className="money font-semibold">{peso(r.closing)}</span> },
+              { header: t('books.closing'), num: true, cell: (r) => <span className="money font-semibold">{balance(r.closing)}</span> },
             ]}
             stacked={{
               title: (r) => r.name,
-              meta: (r) => <Serial>{r.code} · Dr {peso(r.debit)} · Cr {peso(r.credit)}</Serial>,
-              figure: (r) => <span className="money font-semibold">{peso(r.closing)}</span>,
+              meta: (r) => <Serial>{r.code} · {t('books.opening')} {peso(r.opening)} · {t('books.dr')} {peso(r.debit)} · {t('books.cr')} {peso(r.credit)}</Serial>,
+              figure: (r) => <span className="money font-semibold">{balance(r.closing)}</span>,
             }}
             foot={{
               cells: ['', t('books.totals'), '', '', <span key="d" className="money">{peso(tb.totals.debit)}</span>, <span key="c" className="money">{peso(tb.totals.credit)}</span>, <span key="b" className="money">{peso(tb.totals.closing)}</span>],
               title: t('books.totals'),
-              figure: <span className="money">Dr {peso(tb.totals.debit)} · Cr {peso(tb.totals.credit)}</span>,
+              figure: <span className="money">{t('books.dr')} {peso(tb.totals.debit)} · {t('books.cr')} {peso(tb.totals.credit)}</span>,
             }}
           />
         ) : (

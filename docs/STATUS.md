@@ -1,10 +1,67 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 5 — Phase 3 slice 5, admin UI)_
+_Last updated: 2026-10-16 (session 5 — Phase 3 slice 5 admin UI, then the Phase 3 exit review)_
 
 ## Current phase
-**Phase 3 — Inventory, purchasing, accounting: IN PROGRESS — slices 1–5 done and verified.** Session 4's work committed as `aabbff4`. Remaining: the Phase 3 exit review ("stock and financial movements remain traceable and consistent").
+**Phase 3 — exit criterion met (2026-10-16, session 5): "stock and financial movements remain traceable and consistent".** Outside review still open: the accountant's answers on the default chart and posting rules (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Customers must not rely on the books until then; this does not block Phase 4.
+**Next: Phase 4 — Restaurant** (see "Next task").
 **Phase 2 — exit criterion met** (session 4, see below).
+
+## Phase 3 exit review (session 5)
+**1. Traceability audit.** `apps/api/test/integration/traceability-audit.ts` checks seven SQL invariants per tenant, in both directions:
+- movement → document → entry: every movement has a document, and every document that moved value has exactly one entry;
+- entry → document: every non-manual entry's document exists, in the same entity;
+- per document and branch, the entry's inventory amount = that document's movement values;
+- goods in transit clear on receipt.
+
+Where it runs:
+- `traceability.test.ts`: clean over a mixed day covering every document type, and mutation-tested (a forged entry is reported).
+- `inventory-drills.test.ts`: at the end of every drill.
+- **Over the dev database** (54 tenants, after migrating): no violations, except 39 sales, returns and cash variances that predate the ledger. All were created before the first journal entry anywhere; migration 0028 doesn't post history. Accepted and noted in ADR-0013.
+
+**Defects found and fixed:**
+- **Multi-item stock adjustments had no document.** The journal entry pointed at the first movement only, so the other items couldn't be traced to their entry. Fixed with the `stock_adjustments` document (migration 0031):
+  - movements link to it, enforced by a DB check;
+  - existing rows were back-filled, each document reusing the movement id its append-only entry already names;
+  - new routes `GET /v1/stock/adjustments[/:id]` (isolation matrix extended), and an admin page linked from the journal.
+- **A posting could land in a month being closed.** The closed-period trigger read the period without a lock. It now ensures the period row exists and holds it `FOR SHARE` (migration 0032). The trigger's refusal maps to `409 PERIOD_CLOSED`. Proved by a drill that fails on the old trigger and passes on the new one.
+
+**2. Drills** (`inventory-drills.test.ts`, 10), each ending with the audit:
+- connection killed mid-receipt → 503, nothing written, no number consumed; the same key then receives once;
+- DB unreachable for a receipt, a transfer and a count → 503, nothing written;
+- double-click on receive (same key ×5) → one receipt;
+- five people receiving one transfer → it arrives once, the others get `ALREADY_RECEIVED`;
+- four concurrent supplier returns of the last units → exactly one;
+- receipts, transfers, counts, waste and adjustments on the same two items in opposite orders, all at once → no deadlock; balances = ledger, GL inventory + transit = Σ movement values;
+- four concurrent reversals → one;
+- close vs posting in both orders;
+- inventory officers see only their own branches.
+
+**3. Permissions.** `GET /v1/branches` now also lists a branch to users with `inventory.read`/`adjust`/`transfer` or `purchasing.manage` there (only their branches; cashiers unchanged). The built-in inventory officer role can now use the admin's branch pickers.
+
+**4. Design finish review** of the new admin screens (impeccable-finish-reviewer, 8 material fixes, all applied):
+- branch codes violet, not gold;
+- phone rows label and sign every figure (PO received/rejected/remaining, movements with signed changes, low stock leads with "Suggested order");
+- trial balance shows balances with Dr/Cr (catalog keys) and opening on phones;
+- the journal's phone rows lead with the entry number, with the memo out of the serial line;
+- the manual entry shows running debit/credit/difference and can't be posted unbalanced;
+- the receive panel has its own row;
+- the send-stock form names its source branch;
+- ScopePicker is a `nav` with `aria-current` (not fake tabs), and SubNav fades at the edge and scrolls the active tab into view.
+
+**5. Accountant review request** with 10 questions: GRNI vs AP, input VAT, SC/PWD presentation, revaluation to COGS, clearing account, drawer funds, deductibility of losses, percentage tax, year-end close, numbering.
+
+## Verified in session 5 — exit review (commands actually run)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` (18/18) · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
+| `pnpm test` | **113 passed** |
+| `pnpm test:integration` | **231 passed**: database 21, api **202** (+ traceability 2, inventory drills 10), workers 8 |
+| `pnpm test:e2e:web` / `node apps/admin-web/e2e/review.mjs` | **42/42** (+ adjustment entry → document) / **35/35** |
+| `pnpm db:migrate` (dev) | 0031, 0032 applied; dev audit as above |
+| mutation check | old period trigger restored on the test DB → close-wait drill **fails**; new trigger → passes |
+
+Not re-run: `pnpm test:e2e:pos` (POS untouched).
 
 ## Phase 3 slice 5 — admin UI (session 5)
 Three new admin areas on the real API through the BFF (allow-list extended: suppliers, purchase-orders, goods-receipts, stock, accounts, journal-entries, accounting), EN/FIL, Salapi:
@@ -148,6 +205,14 @@ Note: the integration run preceded the final POS-only UI edits; API/database cod
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-1. Commit session 5 if not yet committed (`git status`).
-2. **Phase 3 exit review**: audit traceability both ways (document ↔ movement ↔ entry — the admin now links receipt/transfer/count ↔ journal; sales/returns/cash entries have no admin document page yet), drills for purchasing/transfers under failure and concurrency, a design finish review of the new admin screens (`impeccable-finish-reviewer` over `.impeccable/review/screens/`), accountant review request for ADR-0013's chart and policies; decide whether the inventory role gets `org.read` (or a branch list it may see) so its admin pickers work; then declare the criterion met or list gaps.
+1. Commit if not yet committed (`git status`).
+2. **Phase 4 — Restaurant** (SPEC Phase 4; BACKLOG): start with Inspect → Plan, then an ADR for the restaurant order model:
+   - menus and versions, modifiers;
+   - areas and tables; orders (dine-in and takeaway);
+   - tickets, stations and KDS; courses;
+   - transfer, merge and split; split bills by allocation; service charge (check PH rules in `docs/compliance/`);
+   - versioned recipes with consumption and waste. Consumption should post through the Phase 3 stock ledger and books, as documents with movements and one entry each, and keep the traceability audit clean.
+
+   Slice like Phases 2 and 3: schema + RLS + isolation → API + tests → POS/admin UI → exit review.
+3. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -11,6 +11,7 @@ import {
   type Database,
 } from '@1pos/database';
 import type {
+  PermissionCode,
   CreateBranchInput,
   CreateLegalEntityInput,
   CreateRegisterInput,
@@ -29,6 +30,9 @@ import { insertProfile, profilesInForce, scheduledProfiles, type TaxProfileView 
 import { seedChart } from '../accounting/ledger.js';
 
 type LegalEntityRow = typeof legalEntities.$inferSelect;
+
+/** Any of these at a branch lets the user see that branch in GET /v1/branches. */
+const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'inventory.adjust', 'inventory.transfer', 'purchasing.manage'];
 
 /** Legal entity plus the tax profile in force (and the next scheduled one), ADR-0008. */
 async function withTaxProfiles(db: Database, rows: LegalEntityRow[]) {
@@ -117,7 +121,9 @@ export class OrgService extends TenantService {
   listBranches(auth: AuthContext) {
     return this.tenantDb.run(auth, async (db) => {
       const rows = await db.select().from(branches).orderBy(asc(branches.code));
-      return rows.filter((r) => this.can(auth, 'org.read', { legalEntityId: r.legalEntityId, branchId: r.id }));
+      // Org readers see branches; so do people who work stock at a branch (they pick it in the
+      // admin's inventory and purchasing screens) — that branch only, never the others.
+      return rows.filter((r) => BRANCH_READERS.some((p) => this.can(auth, p, { legalEntityId: r.legalEntityId, branchId: r.id })));
     });
   }
 

@@ -37,3 +37,9 @@ SPEC §6.8 / Phase 3 exit: stock and financial movements remain traceable and co
 ## Consequences
 - Every peso on a sale/return is in the ledger the moment it is sold: GL Sales − returns − SC discounts = report net revenue ex VAT; GL inventory = Σ stock balance values (tests assert both).
 - Posting failures fail the business transaction — this is intended (no unposted sales), so the chart must always exist: it is seeded when a legal entity is created and back-filled for existing ones.
+
+## Amendments (Phase 3 exit review, 2026-10-16)
+- **Stock adjustments are documents** (`stock_adjustments`, migration 0031). A multi-item adjustment or waste used to name only its first movement as the entry's source, so the other movements could not be traced to their entry. Movements now carry `stock_adjustment_id` (DB check: ADJUSTMENT/WASTE ⇔ linked) and the entry's `source_id` is the document. Existing rows were grouped per request (tenant, branch, kind, reason, user, transaction time) and each document reuses the movement id its append-only entry already named. `GET /v1/stock/adjustments[/:id]`.
+- **Closing a month and posting into it take turns** (migration 0032): the closed-period trigger now ensures the month's period row and holds it `FOR SHARE`; a close waits for postings in flight, and a posting that waited for a close is refused (`409 PERIOD_CLOSED`). Before, an entry that passed the check could commit after a concurrent close (shown by a drill that fails on the old trigger).
+- **Ledger start**: documents created before migration 0028 have no entries (no historical back-posting). In dev these are 39 test documents, all older than the first entry; production starts with the ledger.
+- Chart and posting rules are out for review: `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`.

@@ -50,6 +50,12 @@ export function signOf(value: string): -1 | 0 | 1 {
   return u < 0n ? -1 : u > 0n ? 1 : 0;
 }
 
+/** A change shown with its sign spelled out: "+2", "−2", "0" (never colour alone). */
+export function signed(value: string, fmt: (s: string) => string = qty): string {
+  const s = signOf(value);
+  return s < 0 ? `−${fmt(value.trim().slice(1))}` : s > 0 ? `+${fmt(value)}` : fmt(value);
+}
+
 /** Quantities arrive as decimal strings ("12.000"): drop trailing zeros, group thousands. */
 export function qty(value: string | null | undefined): string {
   if (value == null) return '—';

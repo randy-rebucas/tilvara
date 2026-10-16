@@ -129,8 +129,9 @@ describe('weighted-average cost (ADR-0012)', () => {
     const c = await runtime.connect();
     const insert = (quantity: string, unitCost: string | null) =>
       c.query(
-        `INSERT INTO stock_movements (tenant_id, branch_id, variant_id, quantity, unit_cost, type, reason, created_by)
-         SELECT $1, $2, $3, $4, $5, 'ADJUSTMENT', 'direct', created_by FROM stock_movements LIMIT 1 RETURNING unit_cost::text, value::text`,
+        // Attached to an existing adjustment document: a movement without one is refused (stock_movements_adjustment_link).
+        `INSERT INTO stock_movements (tenant_id, branch_id, variant_id, quantity, unit_cost, type, reason, stock_adjustment_id, created_by)
+         SELECT $1, $2, $3, $4, $5, 'ADJUSTMENT', 'direct', stock_adjustment_id, created_by FROM stock_movements LIMIT 1 RETURNING unit_cost::text, value::text`,
         [s.tenantId, s.branchId, item, quantity, unitCost],
       );
     try {

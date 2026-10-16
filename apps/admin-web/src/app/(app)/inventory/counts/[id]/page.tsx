@@ -4,14 +4,12 @@ import { Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
 import { apiOrNull, type Branch, type Count } from '@/lib/api';
-import { formatDateTime, peso, qty, signOf } from '@/lib/format';
+import { formatDateTime, peso, qty, signed } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 
 export const metadata = { title: 'Count' };
 
-/** Signed figure: a gain shows "+", a loss "−" (never colour alone). */
-const signed = (v: string, fmt: (s: string) => string) => (signOf(v) < 0 ? `−${fmt(v.slice(1))}` : signOf(v) > 0 ? `+${fmt(v)}` : fmt(v));
 
 export default async function CountPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -27,7 +25,7 @@ export default async function CountPage({ params }: { params: Promise<{ id: stri
         <Link href={`/inventory/counts?branch=${count.branchId}`} className="text-[0.875rem] text-muted underline">{t('inv.counts')}</Link>
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('inv.countTitle', { n: docNo(count.countNumber) })}</h1>
         <Serial className="mt-1 block">
-          <span className="font-semibold text-gold">{branch?.code ?? '—'}</span> · {formatDateTime(count.createdAt, lang)}{count.notes ? ` · ${count.notes}` : ''}
+          <span className="font-semibold text-violet">{branch?.code ?? '—'}</span> · {formatDateTime(count.createdAt, lang)}{count.notes ? ` · ${count.notes}` : ''}
         </Serial>
       </div>
 

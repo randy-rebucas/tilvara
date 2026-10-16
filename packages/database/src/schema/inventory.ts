@@ -101,6 +101,32 @@ export const stockCountLines = pgTable(
   ],
 );
 
+// ------------------------------------------------------------------ stock adjustments
+
+/**
+ * One adjustment or waste document: its movements point here and its journal entry's source is
+ * this id, so every movement traces to its entry and back (Phase 3 exit review).
+ */
+export const stockAdjustments = pgTable(
+  'stock_adjustments',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    kind: text('kind').notNull(),
+    reason: text('reason').notNull(),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('stock_adjustments_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    check('stock_adjustments_kind_check', sql`${t.kind} IN ('ADJUSTMENT','WASTE')`),
+    check('stock_adjustments_reason_check', sql`length(trim(${t.reason})) > 0`),
+    index('stock_adjustments_branch_idx').on(t.tenantId, t.branchId, t.createdAt),
+  ],
+);
+
 // ------------------------------------------------------------------ reorder points
 
 /** Per branch and item: alert at or below `reorder_point`; suggest ordering `reorder_quantity`. */

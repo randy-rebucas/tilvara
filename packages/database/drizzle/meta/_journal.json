@@ -218,6 +218,20 @@
       "when": 1792118031168,
       "tag": "0030_ledger_balance_fix",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792121055057,
+      "tag": "0031_stock_adjustments",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792121313699,
+      "tag": "0032_period_lock",
+      "breakpoints": true
     }
   ]
 }

@@ -252,6 +252,15 @@ export interface Count extends CountRow {
   varianceValue: string;
   lines: { id: string; variantId: string; sku: string; name: string; countedQuantity: string; systemQuantity: string; varianceQuantity: string; varianceValue: string }[];
 }
+export interface Adjustment {
+  id: string;
+  branchId: string;
+  kind: 'ADJUSTMENT' | 'WASTE';
+  reason: string;
+  createdAt: string;
+  value: string;
+  lines: { movementId: string; variantId: string; sku: string; name: string; quantity: string; unitCost: string; value: string }[];
+}
 export interface LowStockRow {
   variantId: string;
   sku: string;
