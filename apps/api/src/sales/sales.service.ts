@@ -273,6 +273,8 @@ export class SalesService extends TenantService {
           discount: l.discount,
           statutoryDiscount: l.statutoryDiscount,
           vatTreatment: l.vatTreatment,
+          vatableSales: l.vatableSales,
+          vatExemptSales: l.vatExemptSales,
           beneficiaryId: l.beneficiaryId,
         })),
         tenders: tenders.map((t) => ({ method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),

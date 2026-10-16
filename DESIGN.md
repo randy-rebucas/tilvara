@@ -28,53 +28,53 @@ colors:
   warn-text: "#6b4a12"
 typography:
   display:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "2.25rem"
     fontWeight: 700
     lineHeight: 1.1
     letterSpacing: "-0.015em"
   headline:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "1.75rem"
     fontWeight: 700
     lineHeight: 1.25
     letterSpacing: "-0.01em"
   figure:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "1.75rem"
     fontWeight: 600
     lineHeight: 1
     fontFeature: "tnum"
   title:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "1.0625rem"
     fontWeight: 600
     lineHeight: 1.4
   body:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "15px"
     fontWeight: 400
     lineHeight: 1.5
   label:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "0.8125rem"
     fontWeight: 600
     lineHeight: 1.4
   section-title:
-    fontFamily: "Archivo, system-ui, sans-serif"
+    fontFamily: "Peso Sign, Archivo, system-ui, sans-serif"
     fontSize: "0.8125rem"
     fontWeight: 600
     lineHeight: 1.4
     letterSpacing: "0.12em"
   serial:
-    fontFamily: "Archivo Narrow, Archivo, sans-serif"
+    fontFamily: "Peso Sign, Archivo Narrow, Archivo, sans-serif"
     fontSize: "0.8125rem"
     fontWeight: 500
     lineHeight: 1.4
     letterSpacing: "0.08em"
     fontFeature: "tnum"
   money:
-    fontFamily: "Archivo Narrow, Archivo, sans-serif"
+    fontFamily: "Peso Sign, Archivo Narrow, Archivo, sans-serif"
     fontSize: "0.875rem"
     fontWeight: 600
     lineHeight: 1.4
@@ -229,6 +229,8 @@ Warm, papery neutrals, with four banknote denominations that act as a closed voc
 **Display Font:** Archivo (with system-ui, sans-serif)
 **Body Font:** Archivo
 **Label/Mono Font:** Archivo Narrow, weights 500/600 (falls back to Archivo)
+
+**Peso Sign glyph:** a `"Peso Sign"` `@font-face` with `unicode-range: U+20B1` maps only the ₱ character to a system face (Segoe UI, Roboto, SF Pro Text, Helvetica Neue, Noto Sans). Archivo's own ₱ has hairline bars that vanish at 13–15px and read as "P"; every other character stays Archivo. It is first in both font stacks (admin-web and pos-desktop).
 
 **Character:** Archivo is a sturdy grotesque. It's legible at 15px and firm in bold headings. Archivo Narrow in tracked caps with tabular numerals is the "serial printing" on the note: it carries codes, counts and money, and it stays in its own register apart from the prose.
 

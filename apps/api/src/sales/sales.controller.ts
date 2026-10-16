@@ -43,6 +43,11 @@ export class SalesController {
     @Inject(ReturnsService) private readonly returns: ReturnsService,
   ) {}
 
+  @Get('pos/workstations')
+  workstations(@Auth() auth: AuthContext) {
+    return this.cash.workstations(auth);
+  }
+
   // cashier sessions
   @Idempotent()
   @Post('cashier-sessions')

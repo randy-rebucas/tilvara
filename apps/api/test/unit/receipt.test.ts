@@ -26,8 +26,8 @@ const base: ReceiptInput = {
     vatRate: '0.12',
   },
   lines: [
-    { name: 'Lola meal', quantity: '1', unitPrice: '1120.0000', gross: '1120.00', discount: '0.00', statutoryDiscount: '200.00', vatTreatment: 'VATABLE', beneficiaryId: 'b1' },
-    { name: 'Cola', quantity: '1', unitPrice: '22.4000', gross: '22.40', discount: '0.00', statutoryDiscount: '0.00', vatTreatment: 'VATABLE', beneficiaryId: null },
+    { name: 'Lola meal', quantity: '1', unitPrice: '1120.0000', gross: '1120.00', discount: '0.00', statutoryDiscount: '200.00', vatTreatment: 'VATABLE', vatableSales: '0.00', vatExemptSales: '1000.00', beneficiaryId: 'b1' },
+    { name: 'Cola', quantity: '1', unitPrice: '22.4000', gross: '22.40', discount: '0.00', statutoryDiscount: '0.00', vatTreatment: 'VATABLE', vatableSales: '20.00', vatExemptSales: '0.00', beneficiaryId: null },
   ],
   tenders: [{ method: 'CASH', amount: '822.40', tendered: '1000.00', change: '177.60' }],
   beneficiaries: [{ id: 'b1', schemeCode: 'SC', name: 'Corazon Dela Cruz', idNumber: 'OSCA-0001', tin: null }],
@@ -52,7 +52,13 @@ describe('buildReceipt', () => {
     const r = buildReceipt(base);
     expect(r.totals).toMatchObject({ vatableSales: '20.00', vatLabel: 'VAT 12%', vatAmount: '2.40', vatExemptSales: '1000.00', vatExemption: '120.00', statutoryDiscount: '200.00', amountDue: '822.40', change: '177.60' });
     expect(r.statutory).toEqual([{ scheme: 'SC', label: 'Senior citizen', name: 'Corazon Dela Cruz', idNumber: 'OSCA-0001', tin: null, discount: '200.00', signatureLine: true }]);
-    expect(r.lines.map((l) => l.flag)).toEqual(['V', 'V']);
+    // The SC line is printed as what it was taxed as (exempt), not as its item's category.
+    expect(r.lines.map((l) => l.flag)).toEqual(['E', 'V']);
+    const shared = buildReceipt({
+      ...base,
+      lines: [{ ...base.lines[0]!, quantity: '2', vatableSales: '500.00', vatExemptSales: '500.00' }],
+    });
+    expect(shared.lines[0]!.flag).toBe('V/E');
   });
 
   it('non-VAT sellers get NON-VAT REG TIN and percentage-tax wording, no VAT lines', () => {

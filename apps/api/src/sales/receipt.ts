@@ -43,6 +43,8 @@ export interface ReceiptInput {
     discount: string;
     statutoryDiscount: string;
     vatTreatment: string;
+    vatableSales: string;
+    vatExemptSales: string;
     beneficiaryId: string | null;
   }[];
   tenders: { method: string; amount: string; tendered: string; change: string }[];
@@ -75,7 +77,15 @@ export function buildReceipt(r: ReceiptInput) {
     second: '2-digit',
     hour12: false,
   }).format(r.sale.completedAt);
-  const flag = (t: string) => (!isVat ? '' : t === 'VATABLE' ? 'V' : t === 'VAT_EXEMPT' ? 'E' : t === 'ZERO_RATED' ? 'Z' : '');
+  // What the line was actually taxed as: an SC/PWD share of a VATable item is a VAT-exempt sale.
+  const flag = (l: ReceiptInput['lines'][number]) => {
+    if (!isVat) return '';
+    if (l.vatTreatment === 'ZERO_RATED') return 'Z';
+    if (l.vatTreatment === 'VAT_EXEMPT') return 'E';
+    const vatable = positive(l.vatableSales);
+    const exempt = positive(l.vatExemptSales);
+    return vatable && exempt ? 'V/E' : exempt ? 'E' : 'V';
+  };
   const statutory = r.beneficiaries.map((b) => {
     const lines = r.lines.filter((l) => l.beneficiaryId === b.id);
     const discount = lines.reduce((a, l) => a.plus(l.statutoryDiscount), new Dec(0));
@@ -116,7 +126,7 @@ export function buildReceipt(r: ReceiptInput) {
       unitPrice: m(l.unitPrice),
       amount: toDec(l.gross).minus(l.discount).toFixed(2),
       ...(positive(l.discount) && { discount: m(l.discount) }),
-      flag: flag(l.vatTreatment),
+      flag: flag(l),
     })),
     totals: {
       currency: r.sale.currency,

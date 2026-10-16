@@ -24,6 +24,7 @@
 - `pnpm dev:api` → http://127.0.0.1:4320/v1/health/ready
 - Admin web: `pnpm dev:web` → http://127.0.0.1:3320 (needs API on 4320). BFF only: browser → `/api/auth/*` + `/api/v1/*` proxy (CSRF header `x-onepos-request: 1`); tokens live in httpOnly cookies, never in JS. All copy via `src/i18n/messages.ts` (EN + FIL). Follow DESIGN.md (Salapi world) for UI changes. Next.js 16: read `node_modules/next/dist/docs` before using unfamiliar APIs (middleware is `proxy.ts`).
 - E2E: start API (`RATE_LIMITS_ENABLED=false` locally) + `next start`, then `pnpm test:e2e:web` (headless Edge via CDP; screenshots → `.impeccable/review/`).
+- POS (browser mode, ADR-0006): `pnpm dev:pos` → http://127.0.0.1:3330 (Vite proxies `/v1` to the API; tokens in memory only). E2E: build it, `npx vite preview --port 3330` in `apps/pos-desktop`, API with `RATE_LIMITS_ENABLED=false`, then `pnpm test:e2e:pos` (screenshots → `.impeccable/review/pos/`).
 - Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
 - OpenAPI: `pnpm build` then `pnpm --filter @1pos/api openapi` → `docs/api/openapi.json` (a unit test fails if it drifts from the routes).
 - Design review captures: with API + web running, `node apps/admin-web/e2e/review.mjs` → `.impeccable/review/screens/` (both E2E scripts share `e2e/cdp.mjs`).

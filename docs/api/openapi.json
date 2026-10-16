@@ -4007,6 +4007,40 @@
         }
       }
     },
+    "/v1/pos/workstations": {
+      "get": {
+        "operationId": "sales.workstations",
+        "tags": [
+          "sales"
+        ],
+        "description": "Requires an active tenant on the access token. Fine-grained permission (incl. branch/register scope) is checked in the service.",
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing, expired or revoked access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted (or no active tenant)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/price-lists": {
       "get": {
         "operationId": "catalog.listPriceLists",

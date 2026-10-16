@@ -7,6 +7,7 @@ import {
   cashReconciliations,
   desc,
   eq,
+  isNull,
   registers,
   sql,
   type Database,
@@ -81,6 +82,35 @@ export class CashService extends TenantService {
       });
       await this.audit(db, auth, 'cashier_session.opened', 'cashier_session', session!.id, { registerId: register.id, openingFloat: input.openingFloat });
       return this.view(db, session!);
+    });
+  }
+
+  /**
+   * Registers this user may run a cash session on (POS register picker), with their branch and
+   * the user's own open session there, if any. Cashiers lack org.read, so /v1/registers is not usable.
+   */
+  workstations(auth: AuthContext) {
+    return this.read(auth, async (db) => {
+      const rows = await db
+        .select({ register: registers, branch: branches })
+        .from(registers)
+        .innerJoin(branches, eq(branches.id, registers.branchId))
+        .where(and(isNull(registers.archivedAt), isNull(branches.archivedAt)))
+        .orderBy(branches.name, registers.code);
+      const usable = rows.filter(({ register, branch }) =>
+        this.can(auth, 'cash.session', { legalEntityId: branch.legalEntityId, branchId: branch.id, registerId: register.id }),
+      );
+      const open = await db.select().from(cashierSessions).where(eq(cashierSessions.status, 'OPEN'));
+      return {
+        data: usable.map(({ register, branch }) => {
+          const session = open.find((s) => s.registerId === register.id);
+          return {
+            register: { id: register.id, code: register.code, name: register.name },
+            branch: { id: branch.id, code: branch.code, name: branch.name, timezone: branch.timezone },
+            openSession: session ? { id: session.id, openedBy: session.openedBy, mine: session.openedBy === auth.userId, openedAt: session.openedAt } : null,
+          };
+        }),
+      };
     });
   }
 

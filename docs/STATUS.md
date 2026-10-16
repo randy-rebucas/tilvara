@@ -3,7 +3,7 @@
 _Last updated: 2026-10-16 (session 3)_
 
 ## Current phase
-**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`), 3 (payments + receipts, `67486d7`), 4 (voids/returns, `5fb1071`) and 5 (reports) done and verified this session.
+**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`), 3 (payments + receipts, `67486d7`), 4 (voids/returns, `5fb1071`), 5 (reports, `b70936c`) and 6 (POS browser checkout) done and verified (session 3, resumed 2026-10-16 after an interruption; Docker Desktop had to be restarted).
 Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
 
 ### Phase 2 slice 1 — tax foundation (session 3)
@@ -35,12 +35,19 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 - `GET /v1/reports/{sales-summary,by-product,by-cashier,by-tender,tax-summary,statutory-book}?branchId&from&to[&scheme]` and `GET /v1/reports/cashier-sessions/:id`. Sales count on completion, returns on processing, in the branch's local days; net = sales − returns.
 - Tests (10): one realistic day (cash, SC, card, void, partial return) — every report matches hand-computed totals, cross-reconciles (Σ by-product = Σ by-tender = summary net = SQL over evidence tables; tax summary = summary buckets), SC book row with ID, session drawer = float + cash − refunds, local-date exclusion, access (cashier 403, other-branch manager 403, own session only), range validation. Defect fixed: document numbers were returned as strings (bigint) — now integers. Isolation: report endpoints in the attack/smuggle matrices and deep scan.
 
+### Phase 2 slice 6 — POS browser checkout (session 3)
+- `apps/pos-desktop` (React 19 + Vite 8 + Tailwind 4, @fontsource Archivo): full counter flow on the real API — sign-in, business, register picker, open shift, scan/search, server-priced cart, SC/PWD capture, cash/card/QR tenders, receipt, shift history with manager void/return, close with count. Browser-mode banner ("online only · no printer or drawer"); device ports per ADR-0006.
+- API: `GET /v1/pos/workstations` (registers the user may run, with branch and own open shift; cashiers lack org.read so `/v1/registers` was unusable) — tested, in the isolation deep scan.
+- E2E `pnpm test:e2e:pos`: **15/15** (₱78.40 cash sale with ₱21.60 change, receipt "THIS IS NOT AN OFFICIAL INVOICE" + VAT REG TIN + R1-000001; SC ₱16.50 → ₱11.78 by card with ID + signature block; ₱22.40 return refunded; drawer ₱1,056.00 balanced; no horizontal scroll at 1024/390; Filipino).
+- Defects found by running it and fixed: receipt printed SC lines as "V" (now flagged by actual taxation: E, or V/E for a partial share — unit-tested); reopening a shift landed on the close tab; band overflowed at 390px.
+
 ## Verified in session 3 (commands actually run, all green)
 | Command | Result |
 |---|---|
 | `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok |
 | `pnpm test` | **87 passed** (tax 27, api 22, money 15, config 6, validation 5, observability 5, workers 2) |
-| `pnpm test:integration` | **182 passed** — database 21, api **153** (sales+payments+returns 35, tax 18, reports 10, isolation 9, …), workers 8 |
+| `pnpm test:integration` | **183 passed** — database 21, api **154** (sales+payments+returns+workstations 36, tax 18, reports 10, isolation 9, …), workers 8 |
+| `pnpm test:e2e:pos` / `pnpm test:e2e:web` | **15/15** / **19/19** against live API |
 | `pnpm test:e2e:web` | **19/19** against live API + `next start` |
 | dev DB | migrated 0014/0015; backfill verified |
 
@@ -73,5 +80,5 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 slice 6 — POS browser checkout UI** (`apps/pos-desktop`, browser mode first; Tauri later per ADR-0006): sign in → pick register → open session (float) → scan/search (catalog lookup) → cart priced by `/v1/tax/quote` (server is authoritative; show VAT breakdown) → SC/PWD capture (name + ID) → cash (keypad, change) / card-QR via payment intents (UNKNOWN → reconcile UI) → `POST /v1/sales` with clientTransactionId + Idempotency-Key reused on retry → receipt view (marked not an invoice) → returns/void (manager) → close session with count. Follow DESIGN.md's Salapi world adapted for a fast counter UI (large targets, keyboard/scanner first), EN/FIL. E2E over CDP like the admin smoke. Then the **Phase 2 exit review**: "complete retail transactions reconcile under normal, retry, and failure conditions" — audit + gap list.
-Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds (needs sandbox keys); Z-reading/fiscal gate G2.
+**Phase 2 exit review** — criterion: "complete retail transactions reconcile under normal, retry, and failure conditions". (1) Audit the reconciliation evidence end to end (sale → tenders → drawer → stock → reports → session) and list any path without a test (e.g. returns of card-paid sales refunded in cash, multi-session days, cross-midnight local dates). (2) Failure drills: API restart mid-checkout (idempotent replay), DB unavailable during quote/sale (no partial rows), provider timeout during checkout, duplicate submits from the POS. (3) Review captures of all POS states (admin review.mjs equivalent) + design finish review. (4) Docs: architecture/domain model refresh for Phase 2, declare the exit criterion met or list gaps. Then Phase 3 (inventory, purchasing, accounting).
+Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds (needs sandbox keys); Z-reading/fiscal gate G2; CSP header for POS hosting.

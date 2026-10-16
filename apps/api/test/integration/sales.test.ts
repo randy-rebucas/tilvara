@@ -249,6 +249,25 @@ describe('failure leaves no trace', () => {
   });
 });
 
+describe('POS workstations', () => {
+  it('lists registers the user may run, with branch and their own open shift; scope limits the list', async () => {
+    const s = await store('ws');
+    const le = (await http().get('/v1/legal-entities').set(s.auth)).body.data[0].id;
+    const b2 = await http().post('/v1/branches').set(s.auth).send({ legalEntityId: le, code: 'B2', name: 'Two', birBranchCode: '00001' }).expect(201);
+    await http().post('/v1/registers').set(s.auth).send({ branchId: b2.body.id, code: 'R9', name: 'Other branch' }).expect(201);
+    const before = (await http().get('/v1/pos/workstations').set(s.cashier).expect(200)).body.data;
+    // Cashier is scoped to branch One: sees only its register, even without org.read.
+    expect(before).toMatchObject([{ register: { id: s.registerId, code: 'R1' }, branch: { id: s.branchId }, openSession: null }]);
+    const session = await openSession(s);
+    const mine = (await http().get('/v1/pos/workstations').set(s.cashier).expect(200)).body.data;
+    expect(mine[0].openSession).toMatchObject({ id: session.id, mine: true });
+    const managerView = (await http().get('/v1/pos/workstations').set(s.manager).expect(200)).body.data;
+    expect(managerView.find((w: { register: { id: string } }) => w.register.id === s.registerId).openSession).toMatchObject({ mine: false });
+    const ownerView = (await http().get('/v1/pos/workstations').set(s.auth).expect(200)).body.data;
+    expect(ownerView.map((w: { register: { code: string } }) => w.register.code).sort()).toEqual(['R1', 'R9']);
+  });
+});
+
 describe('cashier session rules', () => {
   it('one open session per register; sales only on your own open session', async () => {
     const s = await store('rules');
