@@ -175,6 +175,17 @@ export interface Bill extends Totals {
   amountRemaining: string;
 }
 
+export interface KitchenTicket {
+  id: string;
+  ticketNumber: number;
+  course: number;
+  firedAt: string;
+  station: { id: string; code: string; name: string };
+  /** Where the food goes now (the order may have moved tables since firing). */
+  order: { id: string; orderNumber: number; orderType: 'DINE_IN' | 'TAKEAWAY'; tableCode: string | null; customerName: string | null } | null;
+  items: { id: string; name: string; quantity: string; seat: number | null; note: string | null; status: ItemStatus; modifiers: { id: string; name: string }[] }[];
+}
+
 export interface CheckPreview {
   settles: boolean;
   amountDue: string;

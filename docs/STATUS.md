@@ -5,6 +5,23 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 ## Current phase
 **Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–5 done; next is slice 6, the UI (see "Next task").
 
+## Phase 4 slice 6b — kitchen display (session 6)
+- **POS kitchen mode** (`components/Kitchen.tsx`): users with `kitchen.operate` get "Open kitchen display" on the register picker (no register or drawer needed; kitchen-only users no longer see "no register access"). They pick a branch and a station, or all stations. The board polls open tickets every 4 s, oldest first, and keeps the last tickets on screen if the connection drops. Each ticket shows:
+  - table or takeaway name, order and ticket number, course, and station code (all-stations view);
+  - elapsed time, amber "Late" after 10 min;
+  - items with choices, seat and note, each with Start → Ready, and "All ready (bump)".
+  Every action is single-flight per item or ticket.
+- **API**: `GET /v1/branches` also lists a branch to holders of `kitchen.operate` there (their branches only), so kitchen crew can pick it. Test added to "who sees which branch".
+- **E2E** `pnpm test:e2e:kitchen` (new) **13/13**, three consecutive runs:
+  - the picker offers the KDS, with Grill and Bar stations;
+  - the grill ticket shows the burger with its choices and note, and never the bar's tea;
+  - Start → IN_PREP on the server; bump → READY, and the bump button goes;
+  - served by the floor → leaves the board;
+  - all stations shows the bar ticket marked BAR;
+  - no sideways scroll at 1024/390; Filipino.
+  The restaurant arrangement is shared with the tables E2E (`e2e/restaurant.mjs`).
+- One first-run failure was a race in the test, not the product: an item's own "Ready" button was matched before the bump landed. The test now waits for the bump.
+
 ## Phase 4 slice 6a — POS table service (session 6)
 - **E2E re-run after the slice-4 checkout refactor** (open item from slice 4): fresh API on :4321 (the stale API/web from 12:05 still hold :4320/:3320 and were left alone), admin on :3321, POS preview on :3330 → `test:e2e:pos` **19/19**, `test:e2e:web` **42/42**.
 - **API**: `POST /v1/restaurant/bills/:id/checks/preview` prices a check (same allocations) without recording it, so the till shows the exact amount before taking money and never prorates itself. Pricing moved into one private `priceCheck()` that `createFromBill` and the preview share. The real check still sends `expectedAmountDue`, so a check paid at another till in between is refused as `TOTAL_CHANGED`. Needs `restaurant.orders` or `sales.create` at the bill's branch. `bills.test.ts` +1 (a third = ₱157.66, preview = check, nothing recorded, stale preview refused); isolation attack matrix +1 route.
@@ -182,7 +199,8 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 | slice 6a: `test:e2e:pos` / `test:e2e:web` against a freshly built API (:4321) | **19/19** / **42/42** (re-run owed since slice 4: done) |
 | slice 6a: `pnpm exec vitest … bills.test.ts isolation.test.ts` · `pnpm test` · typecheck · oxlint · openapi | bills **6**, isolation 9, unit all green |
 | slice 6a: `pnpm test:e2e:tables` | **25/25** |
-No migrations in slices 5–6a. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
+| slice 6b: isolation + inventory-drills (19) · `test:e2e:kitchen` ×3 · `test:e2e:tables` · `test:e2e:pos` | all green: 13/13, 25/25, 19/19 |
+No migrations in slices 5–6b. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -389,7 +407,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
 3. ~~Re-run the POS/web E2E after the checkout refactor~~ — done (19/19, 42/42).
-4. **Phase 4 slice 6 — UI**: 6a POS table service ✅. Next 6b KDS screen (kitchen mode in the POS, per station, bump / item statuses), then 6c admin set-up (stations, areas/tables, modifiers, menus with draft/publish, recipes, branch settings, 86) and 6d restaurant report screens.
+4. **Phase 4 slice 6 — UI**: 6a POS table service ✅, 6b KDS ✅. Next 6c admin set-up (stations, areas/tables, modifiers, menus with draft/publish, recipes, branch settings, 86) and 6d restaurant report screens.
 5. Then slice 7 (exit review: service-cycle drills, dev audit, design review).
 6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
 7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.

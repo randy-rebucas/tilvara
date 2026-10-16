@@ -267,6 +267,9 @@ describe('who sees which branch', () => {
     };
     expect(await seen(officer.email)).toEqual([s.b2]);
     expect(await seen(cashier.email)).toEqual([]);
+    // Kitchen crew (a custom role with kitchen.operate) picks its branch on the KDS: that branch only.
+    await http().post('/v1/roles').set(s.auth).send({ key: 'kitchen', name: 'Kitchen crew', permissions: ['kitchen.operate'] }).expect(201);
+    expect(await seen((await addMember(owner, s.tenantId, 'kitchen', { type: 'BRANCH', id: s.b1 })).email)).toEqual([s.b1]);
     expect((await seen((await addMember(owner, s.tenantId, 'inventory_officer')).email)).sort()).toEqual([s.b1, s.b2].sort());
   });
 });

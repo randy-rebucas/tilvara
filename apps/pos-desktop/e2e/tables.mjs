@@ -2,53 +2,14 @@
 // kitchen → void → bill with service charge → split evenly → cash + card checks → table free.
 // Usage: node apps/pos-desktop/e2e/tables.mjs [posUrl] [screenshotDir] [apiUrl]
 // Requires the API (RATE_LIMITS_ENABLED=false) and the POS (vite preview) running.
-import { randomUUID } from 'node:crypto';
 import { checklist, openBrowser, sleep } from '../../admin-web/e2e/cdp.mjs';
+import { arrangeRestaurant, PASSWORD } from './restaurant.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';
 const API = process.argv[4] ?? 'http://127.0.0.1:4320';
-const PASSWORD = 'correct horse battery staple';
 
-async function call(method, path, token, body, headers = {}) {
-  const res = await fetch(API + path, {
-    method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(data)}`);
-  return data;
-}
-
-// --- arrange a restaurant through the API (the owner holds every permission)
-const slug = `tbl-${Date.now().toString(36)}`;
-const email = `${slug}@example.ph`;
-const owner = await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Lito Santos', businessName: 'Kainan ni Lito', tenantSlug: slug });
-const tk = owner.tokens.accessToken;
-const le = await call('POST', '/v1/legal-entities', tk, { registeredName: 'Lito Santos Foods', tradeName: 'Kainan ni Lito', tin: '234-567-891', vatStatus: 'VAT' });
-const br = await call('POST', '/v1/branches', tk, { legalEntityId: le.id, code: 'MKT-01', name: 'Makati' });
-await call('POST', '/v1/registers', tk, { branchId: br.id, code: 'R1', name: 'Front' });
-const vat = (await call('GET', '/v1/tax-categories', tk)).data.find((x) => x.code === 'VAT').id;
-const pc = (await call('GET', '/v1/uoms', tk)).data.find((u) => u.code === 'PC').id;
-const product = async (name, sku, price, trackInventory) =>
-  (await call('POST', '/v1/products', tk, { name, taxCategoryId: vat, uomId: pc, trackInventory, variants: [{ sku, price }] }, { 'idempotency-key': randomUUID() })).variants[0].id;
-const burger = await product('Burger', 'BRG-1', '150.00', false);
-const tea = await product('Iced tea', 'TEA-1', '45.00', false);
-const cheese = await product('Cheese slice', 'CHZ-1', '20.00', true);
-await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening', items: [{ variantId: cheese, quantity: '20', unitCost: '3.00' }] });
-await call('POST', '/v1/kitchen-stations', tk, { branchId: br.id, code: 'GRILL', name: 'Grill', isDefault: true });
-const area = await call('POST', '/v1/dining-areas', tk, { branchId: br.id, name: 'Hall' });
-for (const code of ['T1', 'T2']) await call('POST', '/v1/restaurant-tables', tk, { areaId: area.id, code, seats: 4 });
-const doneness = await call('POST', '/v1/modifier-groups', tk, { name: 'Doneness', minSelect: 1, maxSelect: 1, options: [{ name: 'Medium' }, { name: 'Well done' }] });
-const extras = await call('POST', '/v1/modifier-groups', tk, { name: 'Extras', maxSelect: 2, options: [{ name: 'Cheese', variantId: cheese }, { name: 'No onions' }] });
-const menu = await call('POST', '/v1/menus', tk, { name: 'All day' });
-await call('PUT', `/v1/menu-versions/${menu.draft.id}/content`, tk, { sections: [
-  { name: 'Mains', items: [{ variantId: burger, modifierGroupIds: [doneness.id, extras.id] }] },
-  { name: 'Drinks', items: [{ variantId: tea }] },
-] });
-await call('POST', `/v1/menu-versions/${menu.draft.id}/publish`, tk);
-await call('PUT', `/v1/branches/${br.id}/restaurant-settings`, tk, { dineInMenuId: menu.id, takeawayMenuId: menu.id, serviceChargeRate: '0.10', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' });
+const { call, email, tk } = await arrangeRestaurant(API, 'tbl');
 
 // --- drive the floor
 const { check, finish } = checklist();

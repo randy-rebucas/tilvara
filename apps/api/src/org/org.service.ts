@@ -32,7 +32,7 @@ import { seedChart } from '../accounting/ledger.js';
 type LegalEntityRow = typeof legalEntities.$inferSelect;
 
 /** Any of these at a branch lets the user see that branch in GET /v1/branches. */
-const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'inventory.adjust', 'inventory.transfer', 'purchasing.manage'];
+const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'inventory.adjust', 'inventory.transfer', 'purchasing.manage', 'kitchen.operate'];
 
 /** Legal entity plus the tax profile in force (and the next scheduled one), ADR-0008. */
 async function withTaxProfiles(db: Database, rows: LegalEntityRow[]) {

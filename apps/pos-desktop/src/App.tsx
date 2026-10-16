@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { BusinessPicker, SignIn } from './components/Auth';
 import { CloseShift } from './components/CloseShift';
 import { History } from './components/History';
+import { KitchenBoard, KitchenPicker, type KitchenPlace } from './components/Kitchen';
 import { RegisterPicker, type Shift } from './components/Registers';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
@@ -10,7 +11,13 @@ import { useT } from './i18n';
 import { api, session, signOut } from './lib/api';
 import type { Me } from './types';
 
-type Stage = { name: 'signin' } | { name: 'business'; me: Me } | { name: 'register'; me: Me } | { name: 'counter'; me: Me; shift: Shift };
+type Stage =
+  | { name: 'signin' }
+  | { name: 'business'; me: Me }
+  | { name: 'register'; me: Me }
+  | { name: 'counter'; me: Me; shift: Shift }
+  | { name: 'kitchen-pick'; me: Me }
+  | { name: 'kitchen'; me: Me; place: KitchenPlace };
 type Tab = 'sell' | 'tables' | 'history' | 'close';
 
 export function App() {
@@ -46,6 +53,7 @@ export function App() {
     );
   }
   if (stage.name === 'register') {
+    const kitchen = stage.me.activeTenant?.permissions.includes('kitchen.operate');
     return (
       <Shell onSignOut={leave}>
         <RegisterPicker
@@ -54,7 +62,35 @@ export function App() {
             setTab('sell');
             setStage({ name: 'counter', me: stage.me, shift });
           }}
+          onKitchen={kitchen ? () => setStage({ name: 'kitchen-pick', me: stage.me }) : undefined}
         />
+      </Shell>
+    );
+  }
+  if (stage.name === 'kitchen-pick') {
+    return (
+      <Shell onSignOut={leave}>
+        <KitchenPicker onReady={(place) => setStage({ name: 'kitchen', me: stage.me, place })} onBack={() => setStage({ name: 'register', me: stage.me })} />
+      </Shell>
+    );
+  }
+  if (stage.name === 'kitchen') {
+    const { place } = stage;
+    return (
+      <Shell
+        onSignOut={leave}
+        context={
+          <span className="serial text-[0.8125rem]">
+            {t('kds.entryTitle')} · {place.branch.name} · <span className="text-white">{place.station?.code ?? t('kds.allStations')}</span>
+          </span>
+        }
+        nav={
+          <button type="button" className="h-10 whitespace-nowrap rounded px-3 text-[0.9375rem] text-blue-ink hover:bg-white/10" onClick={() => setStage({ name: 'kitchen-pick', me: stage.me })}>
+            {t('kds.changeStation')}
+          </button>
+        }
+      >
+        <KitchenBoard key={`${place.branch.id}:${place.station?.id ?? 'all'}`} place={place} />
       </Shell>
     );
   }
