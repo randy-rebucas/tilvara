@@ -136,7 +136,9 @@ Slice 5 — restaurant reports (session 6): ✅ done.
 - ✅ 6a POS table service: floor, order with modifiers/courses, send/serve/void, server-priced subtotal, bill with SC/PWD + discount, checks (rest / even / by item) priced by the new check preview, shared payment panel; receipt prints the service charge; `test:e2e:tables` 25/25.
 - ✅ 6b KDS: kitchen mode in the POS (station picker, open tickets, start/ready/bump, late marker, survives a dropped connection); kitchen crew see their branch in `/v1/branches`; `test:e2e:kitchen` 13/13.
 - ⬜ 6b leftovers: sound/flash on a new ticket; recall bumped tickets (`status=ALL` exists); no built-in "kitchen crew" role template (custom role today; decide with the restaurant-manager template question); push (SSE) instead of polling.
-- ⬜ 6c admin set-up (stations, floor, modifiers, menus, recipes, settings, 86); ⬜ 6d restaurant report screens.
+- ✅ 6c admin set-up: `/restaurant` with floor & kitchen, choices, menus (draft editor → publish), recipes, branch settings and 86; `test:e2e:web:restaurant` 22/22.
+- ⬜ 6c leftovers: rename stations/areas/tables and edit seats (API PATCH exists); edit a choice group's name/bounds (PATCH exists); drag-and-drop ordering (buttons today); recipe units shown per ingredient (the API returns no unit); menu editor lists the first 200 products only; a plan view of the floor (positions/shapes are stored, tiles today).
+- ⬜ 6d restaurant report screens.
 - ⬜ 6a leftovers: merge / move items between orders in the UI (API done); per-seat split helper; reprint a bill; servers without a drawer (today the Tables tab lives inside a register shift); floor positions/shapes on a drawn plan (tiles today).
 ⬜ Slice 7 — exit review: full service cycle (SPEC restaurant scenarios 1–10), drills (concurrent checks on one bill, two tablets on one order, void vs settlement), dev audit, design review.
 

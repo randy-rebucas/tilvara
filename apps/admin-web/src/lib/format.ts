@@ -65,6 +65,28 @@ export function qty(value: string | null | undefined): string {
   return `${sign}${int!.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}${frac ? `.${frac}` : ''}`;
 }
 
+/**
+ * A rate ("0.1", "0.125") as a percentage ("10", "12.5"), and back, by moving the decimal point in
+ * the string itself — a service charge never goes through a float.
+ */
+export function percentFromRate(rate: string): string {
+  const m = /^(\d+)(?:\.(\d*))?$/.exec(rate.trim());
+  if (!m) return rate;
+  const digits = `${m[1]}${(m[2] ?? '').padEnd(2, '0')}`;
+  const int = digits.slice(0, m[1]!.length + 2).replace(/^0+(?=\d)/, '');
+  const frac = digits.slice(m[1]!.length + 2).replace(/0+$/, '');
+  return frac ? `${int}.${frac}` : int;
+}
+
+/** "12.5" → "0.125"; null when it is not a percentage between 0 and 100 with up to 4 decimals. */
+export function rateFromPercent(percent: string): string | null {
+  const m = /^(\d{1,3})(?:\.(\d{1,4}))?$/.exec(percent.trim());
+  if (!m || Number(m[1]) > 100 || (m[1] === '100' && /[1-9]/.test(m[2] ?? ''))) return null;
+  const whole = m[1]!.padStart(3, '0');
+  const rate = `${whole.slice(0, 1)}.${whole.slice(1)}${m[2] ?? ''}`.replace(/0+$/, '').replace(/\.$/, '');
+  return rate.replace(/^0(?=\d)/, '') || '0';
+}
+
 /** A plain YYYY-MM-DD (a local business date, no time zone) for display. */
 export function formatDate(date: string | null | undefined, lang: 'en' | 'fil'): string {
   if (!date) return '—';

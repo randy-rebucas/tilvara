@@ -5,6 +5,26 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 ## Current phase
 **Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–5 done; next is slice 6, the UI (see "Next task").
 
+## Phase 4 slice 6c — admin restaurant set-up (session 6)
+- **Admin `/restaurant`** (nav item for `restaurant.manage`; BFF allow-list + kitchen-stations, dining-areas, restaurant-tables, modifier-groups, modifier-options, menus, menu-versions), five tabs, EN/FIL:
+  - **Floor & kitchen** (per branch, violet): stations (add with code/default, make default, archive), areas with table tiles (add, seats, archive; empty areas archivable);
+  - **Choices** (blue): groups with their rule in words, options free or priced by an item, add group (option lines), add/archive option (refused below the minimum, so hidden then);
+  - **Menus** (blue): list (published version, draft, served by); menu page with the draft editor (sections and items in order, display name, kitchen station from the branches' codes, choices offered, move up/down, remove, save → publish with confirmation, refused while unsaved), the published version read-only, version history, start a new draft, archive when no branch serves it;
+  - **Recipes** (gold): dishes (items not tracking stock); per dish the versions (in force / scheduled / superseded with ingredients) and a new-version form (stocked ingredients per portion, optional future start, note);
+  - **Branch settings** (per branch): dine-in/takeaway menus (published only), service charge % (string-exact `rateFromPercent`/`percentFromRate`, unit-tested), dine-in/takeaway, VAT treatment with a seller-aware hint; sold-out list with "back on", marking only items this branch's menus offer.
+- **E2E** `pnpm test:e2e:web:restaurant` (new) **22/22**:
+  - station, area and tables;
+  - the Doneness group (required, pick 1);
+  - menu draft → save → publish (frozen, no draft left);
+  - recipe in force (1 bun + 0.15 kg beef);
+  - settings saved: server rate `0.1`, shown back as 10;
+  - burger sold out with a note;
+  - **the POS branch menu shows Mains → Burger with Doneness, GRILL, sold out**;
+  - back on, table archived, 4 pages without sideways scroll at 390px, Filipino.
+  The admin smoke still passes, **42/42**.
+- **Test-only races fixed** in the new script: typing into a panel while the previous submit was still in flight, and checks matching CSS-uppercased labels.
+- **Design fix after the screenshots**: table tiles carry a small labelled archive icon instead of a full red button.
+
 ## Phase 4 slice 6b — kitchen display (session 6)
 - **POS kitchen mode** (`components/Kitchen.tsx`): users with `kitchen.operate` get "Open kitchen display" on the register picker (no register or drawer needed; kitchen-only users no longer see "no register access"). They pick a branch and a station, or all stations. The board polls open tickets every 4 s, oldest first, and keeps the last tickets on screen if the connection drops. Each ticket shows:
   - table or takeaway name, order and ticket number, course, and station code (all-stations view);
@@ -200,7 +220,8 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 | slice 6a: `pnpm exec vitest … bills.test.ts isolation.test.ts` · `pnpm test` · typecheck · oxlint · openapi | bills **6**, isolation 9, unit all green |
 | slice 6a: `pnpm test:e2e:tables` | **25/25** |
 | slice 6b: isolation + inventory-drills (19) · `test:e2e:kitchen` ×3 · `test:e2e:tables` · `test:e2e:pos` | all green: 13/13, 25/25, 19/19 |
-No migrations in slices 5–6b. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
+| slice 6c: admin typecheck · oxlint · admin unit (8) · `test:e2e:web:restaurant` · `test:e2e:web` (fresh build on :3321) | 22/22 · 42/42 |
+No migrations in slices 5–6c. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -407,7 +428,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
 3. ~~Re-run the POS/web E2E after the checkout refactor~~ — done (19/19, 42/42).
-4. **Phase 4 slice 6 — UI**: 6a POS table service ✅, 6b KDS ✅. Next 6c admin set-up (stations, areas/tables, modifiers, menus with draft/publish, recipes, branch settings, 86) and 6d restaurant report screens.
+4. **Phase 4 slice 6 — UI**: 6a POS table service ✅, 6b KDS ✅, 6c admin set-up ✅. Next 6d: admin report screens for the six restaurant reports (slice 5 API).
 5. Then slice 7 (exit review: service-cycle drills, dev audit, design review).
 6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
 7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.

@@ -290,6 +290,99 @@ export interface MovementSummary {
   }[];
 }
 
+// ---- restaurant (Phase 4, ADR-0014) ----
+export interface KitchenStation {
+  id: string;
+  branchId: string;
+  code: string;
+  name: string;
+  isDefault: boolean;
+  archivedAt: string | null;
+}
+export interface RestaurantTable {
+  id: string;
+  areaId: string;
+  code: string;
+  seats: number;
+  archivedAt: string | null;
+}
+export interface DiningArea {
+  id: string;
+  branchId: string;
+  name: string;
+  sortOrder: number;
+  tables: RestaurantTable[];
+}
+export interface ModifierOption {
+  id: string;
+  modifierGroupId: string;
+  name: string;
+  /** A priced choice sells this item; null = free instruction. */
+  variantId: string | null;
+}
+export interface ModifierGroup {
+  id: string;
+  name: string;
+  minSelect: number;
+  maxSelect: number;
+  required: boolean;
+  options: ModifierOption[];
+}
+export interface MenuVersionRef {
+  id: string;
+  version: number;
+  status: 'DRAFT' | 'PUBLISHED' | 'RETIRED';
+  createdAt: string;
+  publishedAt: string | null;
+}
+export interface Menu {
+  id: string;
+  name: string;
+  archivedAt: string | null;
+  draft: MenuVersionRef | null;
+  published: MenuVersionRef | null;
+  versions: MenuVersionRef[];
+  servedBy: { branchId: string; orderTypes: ('DINE_IN' | 'TAKEAWAY')[] }[];
+}
+export interface MenuItemEntry {
+  id: string;
+  variantId: string;
+  displayName: string | null;
+  stationCode: string | null;
+  modifierGroupIds: string[];
+  sku: string | null;
+  name: string | null;
+}
+export interface MenuVersion extends MenuVersionRef {
+  menuId: string;
+  sections: { id: string; name: string; items: MenuItemEntry[] }[];
+}
+export interface RestaurantSettings {
+  branchId: string;
+  dineInMenuId: string | null;
+  takeawayMenuId: string | null;
+  serviceChargeRate: string;
+  serviceChargeDineIn: boolean;
+  serviceChargeTakeaway: boolean;
+  serviceChargeVatTreatment: 'VATABLE' | 'VAT_EXEMPT';
+  updatedAt: string | null;
+}
+export interface SoldOutRow {
+  variantId: string;
+  sku: string;
+  name: string | null;
+  note: string | null;
+  markedAt: string;
+}
+export interface RecipeVersion {
+  id: string;
+  version: number;
+  effectiveFrom: string;
+  note: string | null;
+  state: 'IN_FORCE' | 'SCHEDULED' | 'SUPERSEDED';
+  ingredients: { variantId: string; sku: string; name: string | null; quantity: string }[];
+}
+
 // ---- books (Phase 3) ----
 export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
 export interface Account {

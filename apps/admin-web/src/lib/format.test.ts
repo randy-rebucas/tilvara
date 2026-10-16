@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { peso, qty, signOf, sumDecimal } from './format';
+import { peso, percentFromRate, qty, rateFromPercent, signOf, sumDecimal } from './format';
+
+describe('percentFromRate / rateFromPercent', () => {
+  it('moves the decimal point in the string, both ways', () => {
+    expect(['0.1', '0.125', '0.05', '0', '0.100000', '1'].map(percentFromRate)).toEqual(['10', '12.5', '5', '0', '10', '100']);
+    expect(['10', '12.5', '5', '0', '0.5', '100'].map(rateFromPercent)).toEqual(['0.1', '0.125', '0.05', '0', '0.005', '1']);
+  });
+  it('refuses what is not a percentage', () => {
+    expect(['', '-1', '101', '100.5', '1e2', '12.34567', 'ten'].map(rateFromPercent)).toEqual([null, null, null, null, null, null, null]);
+  });
+});
 
 describe('peso', () => {
   it('rounds half-up on the digits and groups thousands', () => {
