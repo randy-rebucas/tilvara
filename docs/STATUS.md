@@ -1,9 +1,46 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014) and slice 1: recipes + consumption)_
+_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slice 1 recipes + consumption, slice 2 menu foundation)_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md` (§4 accepted and built; §1–3 and §5–11 proposed, not yet reviewed by the user). Slice 1 done; next is slice 2 (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§5 and the §9 settings are built; the other sections are proposed, and the user hasn't confirmed the three open choices yet. Slices 1–2 done; next is slice 3 (see "Next task").
+
+## Phase 4 slice 2 — menu foundation (session 6)
+- **Schema**: migrations 0035/0036 add 12 tables, all with forced RLS:
+  - floor: `kitchen_stations`, `dining_areas`, `restaurant_tables`;
+  - modifiers: `modifier_groups`, `modifier_options`;
+  - menus: `menus`, `menu_versions`, `menu_sections`, `menu_items`, `menu_item_modifier_groups`;
+  - per branch: `restaurant_settings`, `sold_out_items`.
+- **DB guarantees**:
+  - set-up rows are archived, never deleted;
+  - station codes are unique per branch, with one default station;
+  - a table's area is pinned to the same branch by composite FK, and an item's section to the same version;
+  - one draft and one published version per menu;
+  - versions only go DRAFT → PUBLISHED → RETIRED and are inserted as drafts;
+  - published and retired content is frozen (trigger);
+  - min/max choice bounds.
+- **API** (`apps/api/src/restaurant/floor.*`, `menus.*`):
+  - stations, areas and tables (CRUD + archive);
+  - modifier groups and options (archive refused if it leaves too few options);
+  - menus: create (draft v1), rename, archive (refused while a branch serves it), new draft copied from published, replace draft content, publish (locks the menu; retires the previous version);
+  - per-branch settings (menus per order type, service charge rate / order types / VAT treatment);
+  - 86 list/set;
+  - `GET /v1/branches/:id/menu`: the published menu with branch prices, option prices, sold-out and availability.
+- **Access**:
+  - set-up needs `restaurant.manage` at the branch (tenant-wide for menus/modifiers) plus the `restaurant` plan feature;
+  - floor staff and kitchen read their branch's set-up;
+  - 86 needs `kitchen.operate` or `restaurant.manage`;
+  - the POS menu needs `restaurant.orders`.
+  - Finding: the built-in branch manager has no `restaurant.manage`, so only owner/admin can set up a restaurant (BACKLOG: decide on a restaurant-manager template).
+- **Tests**: `menu.test.ts` (7):
+  - floor rules, including a cross-branch area move refused by API and FK;
+  - access, including the plan gate;
+  - modifier bounds;
+  - version lifecycle with DB-level freeze, no going back, and insert-as-published refused;
+  - 5 concurrent publishes → one;
+  - archived references block publishing;
+  - branch menu with prices, sold-out and unpriced items, menu in use.
+- **Isolation**: +22 id routes, +12 smuggling cases, 9 more list scans, all 12 tables in the DB sweep, and A's set-up checked untouched.
 **Phase 3 — exit criterion met** (session 5). Outside review still open: the accountant's answers (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Customers must not rely on the books until then.
 **Phase 2 — exit criterion met** (session 4, see below).
 
@@ -38,6 +75,9 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014) and slice 1: re
 | `pnpm test` | **113 passed** (unchanged) |
 | `pnpm test:integration` | **236 passed**: database 21, api **207** (+5 recipes; isolation extended), workers 8 |
 | `pnpm db:migrate` (dev) | 0033, 0034 applied |
+| slice 2: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` | ok |
+| slice 2: `pnpm test:integration` | **243 passed**: database 21, api **214** (+7 menu; isolation extended), workers 8 |
+| slice 2: `pnpm db:migrate` (dev) | 0035, 0036 applied |
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -243,13 +283,14 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - prices are fixed when the bill is printed;
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
-3. **Phase 4 slice 2 — menu foundation** (ADR-0014 §2, §3, §5, §9 settings):
-   - kitchen stations, dining areas and tables;
-   - menus with versions (draft → published → retired, immutable once published), sections and items with station routing;
-   - modifier groups and options (min/max, optional priced variant);
-   - per-branch availability (86);
-   - `restaurant_settings`.
-
-   Schema + RLS + isolation → API + tests. Then slices 3 (orders + kitchen), 4 (bills + checks + service charge), 5 (reports), 6 (UI), 7 (exit review).
-4. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
+3. **Phase 4 slice 3 — orders + kitchen** (ADR-0014 §6, §7):
+   - `restaurant_orders` (DINE_IN/TAKEAWAY, one open order per table, per-branch numbers), with the order row locked for every change;
+   - `order_items` with modifier selections validated against the published menu (min/max, sold-out, priced options as child items), snapshotting names and the menu version;
+   - fire by course → `kitchen_tickets` per station (by station code, else the default), and re-fire is a no-op;
+   - KDS list + item status machine (trigger) + bump;
+   - transfer table, merge, move items;
+   - voids: pending items removable; fired items need `sales.void` + reason, and a WASTE stock adjustment of the recipe quantities when prep had started;
+   - archiving a table refused while it has an open order.
+4. Then slices 4 (bills + checks + service charge), 5 (reports), 6 (UI), 7 (exit review).
+5. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

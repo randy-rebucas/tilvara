@@ -72,7 +72,18 @@ Slice 1 — recipes + consumption (session 6): ✅ done.
 - ✅ `GET/POST /v1/variants/:id/recipe`.
 - ✅ Traceability audit, isolation and `recipes.test.ts` (5).
 
-⬜ Slice 2 — menu foundation: stations, dining areas/tables, menus + versions + sections/items (station routing), modifier groups/options, per-branch availability (86), restaurant settings.
+Slice 2 — menu foundation (session 6): ✅ done.
+- ✅ Kitchen stations (code routing, one default per branch), dining areas and tables (same-branch FK, floor position/shape).
+- ✅ Modifier groups and options (min/max, priced via an item or free).
+- ✅ Menus with versions (draft → published → retired, frozen content, one draft and one published, copy-on-draft, publish under lock).
+- ✅ Per-branch settings (menus per order type, service charge config) and 86.
+- ✅ POS menu view with branch prices.
+- ✅ `menu.test.ts` (7); isolation +22 routes.
+
+⬜ Slice 2 leftovers:
+- the built-in `branch_manager` lacks `restaurant.manage` (only owner/admin set up restaurants): add a "restaurant manager" role template or grant it to branch managers;
+- the POS menu view prices item by item (N queries), so batch it if menus get large;
+- modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen).
 ⬜ Slice 3 — orders + kitchen: orders/items with modifiers (child lines), fire by course → tickets per station, KDS statuses + bump, transfer/merge/move items, voids after firing (`sales.void`) with a WASTE document when prep started.
 ⬜ Slice 4 — bills + checks:
 - frozen bill snapshot with SC/PWD (itemized or headcount share), discounts and service charge;

@@ -52,6 +52,13 @@ interface World {
   journalEntryId: string;
   cashAccountId: string;
   dishId: string;
+  stationId: string;
+  areaId: string;
+  tableId: string;
+  modifierGroupId: string;
+  modifierOptionId: string;
+  menuId: string;
+  draftVersionId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -170,6 +177,19 @@ async function world(prefix: string): Promise<World> {
   // Phase 3 slice 4: the books every document above posted to (chart seeded with the entity).
   const accounts = ok<{ data: { id: string; systemKey: string }[] }>(await http().get('/v1/accounts').query({ legalEntityId: entity.id }).set(auth), 200).data;
   const entries = ok<{ data: { id: string }[] }>(await http().get('/v1/journal-entries').query({ legalEntityId: entity.id, sourceType: 'SALE' }).set(auth), 200).data;
+  // Phase 4 slice 2: station, floor, modifiers, a published menu with a new draft, settings and an 86.
+  const station = ok(await http().post('/v1/kitchen-stations').set(auth).send({ branchId: branch.id, code: 'GRILL', name: 'Grill', isDefault: true }));
+  const area = ok(await http().post('/v1/dining-areas').set(auth).send({ branchId: branch.id, name: 'Hall' }));
+  const table = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T1' }));
+  const group = ok<{ id: string; options: { id: string }[] }>(
+    await http().post('/v1/modifier-groups').set(auth).send({ name: 'Extras', options: [{ name: 'Extra', variantId: dishId }, { name: 'Plain' }] }),
+  );
+  const menu = ok<{ id: string; draft: { id: string } }>(await http().post('/v1/menus').set(auth).send({ name: 'All day' }));
+  ok(await http().put(`/v1/menu-versions/${menu.draft.id}/content`).set(auth).send({ sections: [{ name: 'Mains', items: [{ variantId: dishId, stationCode: 'GRILL', modifierGroupIds: [group.id] }] }] }), 200);
+  ok(await http().post(`/v1/menu-versions/${menu.draft.id}/publish`).set(auth), 200);
+  const draftVersion = ok(await http().post(`/v1/menus/${menu.id}/drafts`).set(auth));
+  ok(await http().put(`/v1/branches/${branch.id}/restaurant-settings`).set(auth).send({ dineInMenuId: menu.id, takeawayMenuId: null, serviceChargeRate: '0.10', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' }), 200);
+  ok(await http().put(`/v1/branches/${branch.id}/sold-out`).set(auth).send({ variantId, soldOut: true }), 200);
   return {
     t,
     auth,
@@ -206,6 +226,13 @@ async function world(prefix: string): Promise<World> {
     journalEntryId: entries[0]!.id,
     cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
     dishId,
+    stationId: station.id,
+    areaId: area.id,
+    tableId: table.id,
+    modifierGroupId: group.id,
+    modifierOptionId: group.options[1]!.id,
+    menuId: menu.id,
+    draftVersionId: draftVersion.id,
   };
 }
 
@@ -294,6 +321,29 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
     'GET /v1/variants/:id/recipe': () => http().get(`/v1/variants/${a.dishId}/recipe`).set(auth),
     'POST /v1/variants/:id/recipe': () => http().post(`/v1/variants/${a.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: b.variantId, quantity: '1' }] }),
+    'PATCH /v1/kitchen-stations/:id': () => http().patch(`/v1/kitchen-stations/${a.stationId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/kitchen-stations/:id/archive': () => http().post(`/v1/kitchen-stations/${a.stationId}/archive`).set(auth),
+    'PATCH /v1/dining-areas/:id': () => http().patch(`/v1/dining-areas/${a.areaId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/dining-areas/:id/archive': () => http().post(`/v1/dining-areas/${a.areaId}/archive`).set(auth),
+    'PATCH /v1/restaurant-tables/:id': () => http().patch(`/v1/restaurant-tables/${a.tableId}`).set(auth).send({ seats: 99 }),
+    'POST /v1/restaurant-tables/:id/archive': () => http().post(`/v1/restaurant-tables/${a.tableId}/archive`).set(auth),
+    'GET /v1/branches/:id/restaurant-settings': () => http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(auth),
+    'PUT /v1/branches/:id/restaurant-settings': () =>
+      http().put(`/v1/branches/${a.branchId}/restaurant-settings`).set(auth).send({ dineInMenuId: null, takeawayMenuId: null, serviceChargeRate: '0', serviceChargeDineIn: false, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' }),
+    'GET /v1/branches/:id/sold-out': () => http().get(`/v1/branches/${a.branchId}/sold-out`).set(auth),
+    'PUT /v1/branches/:id/sold-out': () => http().put(`/v1/branches/${a.branchId}/sold-out`).set(auth).send({ variantId: b.variantId, soldOut: true }),
+    'GET /v1/branches/:id/menu': () => http().get(`/v1/branches/${a.branchId}/menu`).set(auth),
+    'PATCH /v1/modifier-groups/:id': () => http().patch(`/v1/modifier-groups/${a.modifierGroupId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/modifier-groups/:id/options': () => http().post(`/v1/modifier-groups/${a.modifierGroupId}/options`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/modifier-groups/:id/archive': () => http().post(`/v1/modifier-groups/${a.modifierGroupId}/archive`).set(auth),
+    'POST /v1/modifier-options/:id/archive': () => http().post(`/v1/modifier-options/${a.modifierOptionId}/archive`).set(auth),
+    'GET /v1/menus/:id': () => http().get(`/v1/menus/${a.menuId}`).set(auth),
+    'PATCH /v1/menus/:id': () => http().patch(`/v1/menus/${a.menuId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/menus/:id/archive': () => http().post(`/v1/menus/${a.menuId}/archive`).set(auth),
+    'POST /v1/menus/:id/drafts': () => http().post(`/v1/menus/${a.menuId}/drafts`).set(auth),
+    'GET /v1/menu-versions/:id': () => http().get(`/v1/menu-versions/${a.draftVersionId}`).set(auth),
+    'PUT /v1/menu-versions/:id/content': () => http().put(`/v1/menu-versions/${a.draftVersionId}/content`).set(auth).send({ sections: [] }),
+    'POST /v1/menu-versions/:id/publish': () => http().post(`/v1/menu-versions/${a.draftVersionId}/publish`).set(auth),
   };
 }
 
@@ -366,6 +416,18 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['close an A period', () => http().post('/v1/accounting/periods/close').set(auth).send({ legalEntityId: a.entityId, month: '2020-01' })],
     ['trial balance of the A entity', () => http().get('/v1/reports/trial-balance').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
     ['recipe with an A ingredient', () => http().post(`/v1/variants/${b.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: a.variantId, quantity: '1' }] })],
+    ['station at the A branch', () => http().post('/v1/kitchen-stations').set(auth).send({ branchId: a.branchId, code: 'HACK', name: 'x' })],
+    ['stations of the A branch', () => http().get('/v1/kitchen-stations').query({ branchId: a.branchId }).set(auth)],
+    ['area at the A branch', () => http().post('/v1/dining-areas').set(auth).send({ branchId: a.branchId, name: 'x' })],
+    ['floor of the A branch', () => http().get('/v1/dining-areas').query({ branchId: a.branchId }).set(auth)],
+    ['table in the A area', () => http().post('/v1/restaurant-tables').set(auth).send({ areaId: a.areaId, code: 'HACK' })],
+    ['move a B table into the A area', () => http().patch(`/v1/restaurant-tables/${b.tableId}`).set(auth).send({ areaId: a.areaId })],
+    ['modifier option priced by an A item', () => http().post('/v1/modifier-groups').set(auth).send({ name: 'x', options: [{ name: 'x', variantId: a.variantId }] })],
+    ['add an A-item option to a B group', () => http().post(`/v1/modifier-groups/${b.modifierGroupId}/options`).set(auth).send({ name: 'x', variantId: a.variantId })],
+    ['B menu offering an A item', () => http().put(`/v1/menu-versions/${b.draftVersionId}/content`).set(auth).send({ sections: [{ name: 'x', items: [{ variantId: a.variantId }] }] })],
+    ['B menu with an A modifier group', () => http().put(`/v1/menu-versions/${b.draftVersionId}/content`).set(auth).send({ sections: [{ name: 'x', items: [{ variantId: b.dishId, modifierGroupIds: [a.modifierGroupId] }] }] })],
+    ['B branch serving the A menu', () => http().put(`/v1/branches/${b.branchId}/restaurant-settings`).set(auth).send({ dineInMenuId: a.menuId, takeawayMenuId: null, serviceChargeRate: '0', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' })],
+    ['86 an A item at the B branch', () => http().put(`/v1/branches/${b.branchId}/sold-out`).set(auth).send({ variantId: a.variantId, soldOut: true })],
   ];
 }
 
@@ -380,7 +442,8 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId];
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
+   w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId];
 
 describe('Phase 1 cross-tenant sweep', () => {
   it('the attack matrix covers every id-addressed route in the router', () => {
@@ -425,6 +488,14 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect([t.status, t.lines[0].receivedQuantity]).toEqual(['RECEIVED', '1']);
     const po = (await http().get(`/v1/purchase-orders/${a.draftOrderId}`).set(a.auth).expect(200)).body;
     expect([po.status, po.notes]).toEqual(['DRAFT', null]);
+    const settings = (await http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(a.auth).expect(200)).body;
+    expect([settings.dineInMenuId, settings.serviceChargeRate]).toEqual([a.menuId, '0.1']);
+    const draft = (await http().get(`/v1/menu-versions/${a.draftVersionId}`).set(a.auth).expect(200)).body;
+    expect([draft.status, draft.sections.length]).toEqual(['DRAFT', 1]);
+    const stations = (await http().get('/v1/kitchen-stations').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
+    expect(stations.map((s: { name: string; isDefault: boolean }) => [s.name, s.isDefault])).toEqual([['Grill', true]]);
+    const soldOut = (await http().get(`/v1/branches/${a.branchId}/sold-out`).set(a.auth).expect(200)).body.data;
+    expect(soldOut.map((s: { variantId: string }) => s.variantId)).toEqual([a.variantId]);
   });
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
@@ -442,6 +513,8 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/stock/low?branchId=${b.branchId}`, `/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-entries/${b.journalEntryId}`,
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,
+      `/v1/kitchen-stations?branchId=${b.branchId}`, `/v1/dining-areas?branchId=${b.branchId}`, '/v1/modifier-groups', '/v1/menus', `/v1/menus/${b.menuId}`,
+      `/v1/menu-versions/${b.draftVersionId}`, `/v1/branches/${b.branchId}/restaurant-settings`, `/v1/branches/${b.branchId}/sold-out`, `/v1/branches/${b.branchId}/menu`,
     ];
     const foreign = new Set(idsOf(a));
     for (const path of paths) {

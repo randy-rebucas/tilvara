@@ -246,6 +246,20 @@
       "when": 1792124720341,
       "tag": "0034_recipes_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792141198479,
+      "tag": "0035_menu_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792141224091,
+      "tag": "0036_menu_foundation_rls",
+      "breakpoints": true
     }
   ]
 }

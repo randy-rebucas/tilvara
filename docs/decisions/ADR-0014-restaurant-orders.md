@@ -1,6 +1,6 @@
 # ADR-0014: Restaurant orders, kitchen, bills and recipe consumption
 
-- Status: Accepted for §4 (built in slice 1, 2026-10-16); the rest proposed (Phase 4 plan). Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
+- Status: Accepted for §2–§5 and the §9 settings (built in slices 1–2, 2026-10-16); the rest proposed (Phase 4 plan). Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
 
 ## Context
 SPEC §6.4 / Phase 4: menus and versions, modifiers (required/optional, priced), areas and tables, dine-in and takeaway orders, table transfer, merge and split, kitchen tickets routed to stations, KDS with preparation statuses, courses, item voids, split bills and split payments, service charge and discounts, versioned recipes with ingredient consumption and waste, restaurant reports. Exit: *a restaurant completes a full service cycle and reconciles its stock, payments and financial records.*
@@ -15,10 +15,14 @@ What exists: `restaurant.manage`, `restaurant.orders`, `kitchen.operate` permiss
 A dish, a drink and a priced add-on are **product variants** (usually `track_inventory = false`). Price, tax category and VAT treatment come from the existing price lists and tax path, so there is still one place a price lives and one tax engine. Menus decide *what is offered where and how it is routed*, never the price.
 
 ### 2. Menus and versions
-- `menus` (tenant), assigned to branches via `branch_menus` (one active menu per branch and order type).
+- `menus` (tenant), assigned per branch and order type in `restaurant_settings` (`dine_in_menu_id`, `takeaway_menu_id`).
 - `menu_versions`: `DRAFT → PUBLISHED → RETIRED`; a published version is immutable (trigger) and exactly one is published per menu. Editing = copy to a new draft, publish (retires the old one atomically).
-- `menu_sections` and `menu_items` belong to a version: variant, section, sort, **kitchen station** for routing, attached modifier groups.
-- **86 / sold out**: `menu_item_availability` per branch (mutable flag, audited), outside the version so it changes mid-service without republishing.
+- `menu_sections` and `menu_items` belong to a version: variant, section, sort, optional display name, a **station code** for routing, and attached modifier groups (`menu_item_modifier_groups`).
+  - Routing by code (e.g. `GRILL`) keeps one tenant-wide menu usable at every branch. Each branch's `kitchen_stations` carry codes, and items with no matching code go to the branch's default station.
+  - A draft's content is replaced whole (`PUT /v1/menu-versions/:id/content`). A trigger freezes the content of published and retired versions, and another allows only DRAFT → PUBLISHED → RETIRED.
+  - Publishing locks the menu row and retires the previous version (partial unique indexes: one draft, one published). A new draft copies the published content.
+- **86 / sold out**: `sold_out_items` per branch and item. A row exists while sold out and is deleted when the item is back; changes are audited. It sits outside the version, so it changes mid-service without republishing. `kitchen.operate` or `restaurant.manage` may set it.
+- **What a branch serves** (`GET /v1/branches/:id/menu?orderType=`, `restaurant.orders`): the assigned menu's published version with each item's **branch price** (null = not priced there, not available), sold-out flags, and modifier groups with option prices (free options are `0`).
 - Order items record the `menu_version_id` they were ordered from.
 
 ### 3. Modifiers
@@ -95,7 +99,7 @@ Invariants added to DOMAIN_MODEL and asserted by tests:
 - **The traceability audit stays clean**: `CONSUMPTION` maps to the SALE document; wasted voids are stock adjustments.
 
 ### 11. Access
-Every route requires the `restaurant` plan feature.
+Every write and the POS menu view require the `restaurant` plan feature. Reads of existing set-up do not, so data stays visible after a downgrade, and consumption at checkout never depends on the plan.
 - `restaurant.manage`: menus, modifiers, tables, stations, recipes, settings.
 - `restaurant.orders`: orders, fire, transfer, merge, move, bill.
 - `kitchen.operate`: KDS statuses.
