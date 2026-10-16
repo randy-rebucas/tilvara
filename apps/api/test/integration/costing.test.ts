@@ -103,7 +103,7 @@ describe('weighted-average cost (ADR-0012)', () => {
       values.push((await lastMove(s, item)).value);
     }
     expect(values).toEqual(['-10.33', '-10.33', '-10.33']); // 2-dp view of −10.3333, −10.3333, −10.3334
-    const exact = await asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query(`SELECT value::text FROM stock_movements WHERE type = 'SALE' ORDER BY created_at, id`)).rows.map((r) => r.value));
+    const exact = await asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query(`SELECT m.value::text FROM stock_movements m JOIN sales s ON s.id = m.sale_id WHERE m.type = 'SALE' ORDER BY s.sale_number`)).rows.map((r) => r.value));
     expect(exact).toEqual(['-10.3333', '-10.3333', '-10.3334']);
     expect(await balance(s, item)).toMatchObject({ quantity: '0', value: '0.00' });
   });

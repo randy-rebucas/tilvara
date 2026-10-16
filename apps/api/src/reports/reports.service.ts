@@ -19,13 +19,14 @@ const BUCKETS = [
   'vat_exempt_sales', 'zero_rated_sales', 'percentage_tax_sales', 'amount_due',
 ] as const;
 const camel = (s: string) => s.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
-const money = (v: string | null | undefined) => toDec(v ?? '0').toFixed(2);
-const qty = (v: string | null | undefined) => toDec(v ?? '0').toString();
+export const money = (v: string | null | undefined) => toDec(v ?? '0').toFixed(2);
+export const qty = (v: string | null | undefined) => toDec(v ?? '0').toString();
 
-type Row = Record<string, string | number | null>;
+export type Row = Record<string, string | number | null>;
+export type ReportWindow = { branchId: string; tz: string; start: string; end: string };
 
 /** Money columns to 2-dp strings, keys to camelCase. */
-function shape(r: Row, moneyCols: readonly string[] = BUCKETS) {
+export function shape(r: Row, moneyCols: readonly string[] = BUCKETS) {
   const o: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(r)) o[camel(k)] = moneyCols.includes(k) ? money(v as string) : v;
   return o;
@@ -308,7 +309,7 @@ export class ReportsService extends TenantService {
   }
 
   /** Resolve the branch (404 across tenants), check scope and turn local dates into an instant range. */
-  private run<T>(auth: AuthContext, range: ReportRange, fn: (db: Database, w: { branchId: string; tz: string; start: string; end: string }) => Promise<T>) {
+  protected run<T>(auth: AuthContext, range: ReportRange, fn: (db: Database, w: ReportWindow) => Promise<T>) {
     return this.read(auth, async (db) => {
       const [branch] = await db.select().from(branches).where(eq(branches.id, range.branchId));
       if (!branch) throw notFound('Branch');

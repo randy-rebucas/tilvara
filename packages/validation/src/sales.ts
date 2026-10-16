@@ -219,3 +219,7 @@ export const reportRangeSchema = z
   .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
   .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days per report', path: ['to'] });
 export type ReportRangeQuery = z.infer<typeof reportRangeSchema>;
+
+/** One local business day at a branch (e.g. open orders at its close). */
+export const reportDaySchema = z.object({ branchId: z.uuid(), day: localDate });
+export type ReportDayQuery = z.infer<typeof reportDaySchema>;

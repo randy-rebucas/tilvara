@@ -86,6 +86,18 @@ For any set of sales and returns (`sales.test.ts`, `reports.test.ts`, `reconcili
 5. **Traceability both ways** (Phase 3 exit review, `traceability-audit.ts`, run by `traceability.test.ts`, every drill in `inventory-drills.test.ts`, and once over the dev database): every stock movement belongs to exactly one document (sale, return, goods receipt, supplier return, transfer, count, or **stock adjustment** — a document since migration 0031); every document that moved value has exactly one entry (a zero-value document posts none); every non-manual entry names a document that exists, in the same legal entity; per document and branch, the entry's inventory lines = the value of that document's movements; goods in transit clear to zero when a transfer is received. The audit is mutation-tested (a forged entry is reported).
 6. **Periods**: a posting and a close of the same month take turns (period row held `FOR SHARE` by every journal insert, migration 0032); nothing lands in a month after it was closed.
 
+## Phase 4 invariants (restaurant, ADR-0014 §10, asserted by tests)
+
+1. **Bill = Σ checks**: per line, per bucket, and for the service charge, including its base (`bills.test.ts`). The check that settles a bill takes the exact remainder of everything.
+2. **Every fired item is accounted for exactly once**: it is paid in full by the checks of its settled order's bill, voided (with a WASTE document if thrown away; then it is on no bill), or still on a live order (`restaurant-reports.test.ts`).
+3. **Consumption reconciles**: per ingredient, Σ `CONSUMPTION` = Σ over sale lines of quantity × the recipe in force at the sale (`restaurant-reports.test.ts`).
+4. **Restaurant reports reconcile to evidence** (`restaurant-reports.test.ts`):
+   - item performance (items + nested modifiers) = by-product = Σ sale lines − Σ return lines;
+   - ingredient usage columns = stock movements by type (recipe = CONSUMPTION; prepared waste = WASTE documents linked from voided order items);
+   - the waste value of a void = its WASTE entry in the books;
+   - distributable service charge = Σ charges ex VAT − Σ returned = the credit to `SERVICE_CHARGE_PAYABLE`.
+5. **Traceability**: `CONSUMPTION` maps to its SALE; wasted voids are stock adjustments; the audit stays clean after every restaurant scenario.
+
 ### Purchase order (as built)
 `DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED`; `DRAFT | APPROVED (nothing received) → CANCELLED`; `PARTIALLY_RECEIVED → CLOSED` (close short with a reason). Trigger-enforced; lines editable only in DRAFT.
 

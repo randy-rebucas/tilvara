@@ -116,7 +116,22 @@ Slice 4 — bills + checks + service charge (session 6): ✅ done.
 - adding items after a partial payment (today: a new order once the bill settles);
 - returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns.
 
-⬜ Slice 5 — reports: item performance, theoretical vs actual usage, voids after firing, prep times, open orders, service charge collected (DOLE).
+Slice 5 — restaurant reports (session 6): ✅ done.
+- ✅ `item-performance` (modifiers nested under their item, COGS incl. recipe, margin; Σ = by-product).
+- ✅ `ingredient-usage` (expected = recipe + sold; actual adds prepared/other waste and count variance).
+- ✅ `kitchen-voids` (stage reached, wasted + WASTE value, by reason and user).
+- ✅ `prep-times` (per station: average/median/p90/max fired → ready, wait, pass).
+- ✅ `open-orders?day=` (open or billed at the close of a day, paid by then).
+- ✅ `service-charge` (per day, distributable ex VAT, cross-checked with the liability).
+- ✅ Defect fixed: a check's service-charge base was always prorated, so the bases of an even split added to ₱383.94 against a ₱383.93 bill. The settling check now takes the rest of the base too.
+- ✅ `restaurant-reports.test.ts` (8) incl. the ADR §10 invariants; isolation extended.
+
+⬜ Slice 5 leftovers:
+- report UI (admin) and CSV export (with slice 6 / the retail report UI);
+- prep times by hour or day part and per item;
+- open orders: items as they were at the cutoff (today: as attached now);
+- free modifiers ("no onions") counts in item performance (no sale line today);
+- the DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9).
 ⬜ Slice 6 — UI: POS table service (floor/order/fire/bill/split/pay), KDS screen, admin for menus/modifiers/recipes/tables/settings.
 ⬜ Slice 7 — exit review: full service cycle (SPEC restaurant scenarios 1–10), drills (concurrent checks on one bill, two tablets on one order, void vs settlement), dev audit, design review.
 

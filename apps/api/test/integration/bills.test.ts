@@ -139,8 +139,9 @@ describe('the restaurant service cycle (SPEC restaurant scenarios 1–10)', () =
     const sums = await sql<Record<string, string>>(r, `
       SELECT (SELECT sum(amount_due) FROM sales WHERE order_bill_id = $1)::text AS checks,
              (SELECT sum(l.vat_amount) FROM sale_lines l JOIN sales s ON s.id = l.sale_id WHERE s.order_bill_id = $1)::text AS line_vat,
-             (SELECT sum(c.amount_due) FROM sale_charges c JOIN sales s ON s.id = c.sale_id WHERE s.order_bill_id = $1)::text AS charges`, [bill.id]);
-    expect(sums).toEqual([{ checks: '473.0000', line_vat: '46.0700', charges: '43.0000' }]);
+             (SELECT sum(c.amount_due) FROM sale_charges c JOIN sales s ON s.id = c.sale_id WHERE s.order_bill_id = $1)::text AS charges,
+             (SELECT sum(c.base) FROM sale_charges c JOIN sales s ON s.id = c.sale_id WHERE s.order_bill_id = $1)::text AS bases`, [bill.id]);
+    expect(sums).toEqual([{ checks: '473.0000', line_vat: '46.0700', charges: '43.0000', bases: '383.9300' }]); // 191.97 + the rest, 191.96
 
     // Stock: each burger consumed its recipe once (half per check); the cheese slices left as themselves.
     const moved = await sql<{ variant_id: string; type: string; q: string }>(r, `SELECT variant_id, type, sum(quantity)::text AS q FROM stock_movements WHERE sale_id = ANY($1::uuid[]) GROUP BY 1, 2`, [[c1.id, c2.id]]);

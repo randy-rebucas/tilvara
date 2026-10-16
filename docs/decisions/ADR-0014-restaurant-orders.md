@@ -98,13 +98,20 @@ A dish, a drink and a priced add-on are **product variants** (usually `track_inv
 - Report: service charge collected per period and branch, to support DOLE distribution.
 
 ### 10. Reports and reconciliation
-New reports:
-- item performance (menu items with their modifiers: quantity, net, COGS, margin);
-- theoretical vs actual ingredient usage (consumption vs count variance and waste);
-- voids after firing (wasted or not, by reason and user);
-- kitchen prep times per station;
-- open orders at close of day;
-- service charge collected.
+New reports, as built in slice 5 (`GET /v1/reports/…`, `reports.read` at the branch, not plan-gated; `RestaurantReportsService`):
+- `item-performance`: menu items with their priced modifiers nested under them: quantity, net sales, revenue ex VAT, COGS (own stock or recipe), margin, and "with modifiers" totals. A modifier line counts under its item; the same variant sold alone is its own row. Free instructions have no sale line, so they are not shown.
+- `ingredient-usage`, theoretical vs actual, per recipe ingredient, in quantity and value:
+  - expected = recipe consumption + the ingredient sold as itself;
+  - actual = expected + prepared waste (wasted voids) + other waste − count variance;
+  - receipts, transfers and manual adjustments are stock coming in or corrections, so they are not use.
+- `kitchen-voids`: items voided after firing, in the days they were voided. Each shows the stage reached (from the kitchen timestamps), whether it was wasted and the value of its WASTE document, by reason and by user. "Cooking started" means the kitchen marked prep, ready or served. A kitchen that cooks without tapping "in prep" shows as FIRED.
+- `prep-times`: per station and overall, in seconds:
+  - fired → ready: average, median, p90 and longest;
+  - fired → prep started;
+  - ready → served.
+  Only items marked ready are timed.
+- `open-orders?day=`: orders open at the close of a local day (or now, for today), each OPEN or BILLED at that moment, with what checks had paid by then. Item counts are as attached now, because items can move.
+- `service-charge`: per local day, charged − returned (ex VAT, VAT, amount due) and the distributable amount (= net ex VAT, pending the accountant). `ledger` is the `SERVICE_CHARGE_PAYABLE` credit from the same documents.
 
 Invariants added to DOMAIN_MODEL and asserted by tests:
 - **Bill = Σ checks**: per line, per bucket and for the service charge.

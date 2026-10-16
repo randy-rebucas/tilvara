@@ -1,9 +1,28 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–4: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge)_
+_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge, restaurant reports)_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§9 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–4 done; next is slice 5, restaurant reports (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–5 done; next is slice 6, the UI (see "Next task").
+
+## Phase 4 slice 5 — restaurant reports (session 6)
+- **API**: six read-only reports in `apps/api/src/reports/restaurant-reports.service.ts`. Each needs `reports.read` at the branch, is not plan-gated, and uses the same local-day conventions as the retail reports. Details are in ADR-0014 §10.
+  - `GET /v1/reports/item-performance`: items with their priced modifiers nested under them; quantity, net sales, revenue ex VAT, COGS (incl. recipe), margin, and "with modifiers" totals.
+  - `GET /v1/reports/ingredient-usage`: per recipe ingredient, expected (recipe + sold as itself) vs actual (+ prepared waste + other waste − count variance), in quantity and value.
+  - `GET /v1/reports/kitchen-voids`: voids after firing with the stage reached, wasted or not, and WASTE value; by reason and by user.
+  - `GET /v1/reports/prep-times`: per station and overall: fired → ready (avg/median/p90/max), wait to prep, ready → served.
+  - `GET /v1/reports/open-orders?branchId&day`: open or billed at the close of the day (or now), with what had been paid by then.
+  - `GET /v1/reports/service-charge`: per day charged − returned, the distributable amount (ex VAT) and a ledger cross-check against `SERVICE_CHARGE_PAYABLE`.
+- **Defect found and fixed (slice 4)**: a check's service-charge `base` was always prorated, never the remainder. An even split of a ₱383.93 base recorded 191.97 + 191.97 = ₱383.94. The settling check now takes the rest, and `bills.test.ts` now asserts Σ bases = the bill's base. Amounts were never affected.
+- **Test fixed (flaky, pre-existing)**: `costing.test.ts` ordered the three sale movements by `created_at`, which the Docker clock can step backwards (see session 3). It now orders by sale number.
+- **Tests**: `restaurant-reports.test.ts` (8). One service day covers: a split table with a return, a wasted void while cooking, a void before cooking, a half-paid takeaway, a cancelled order, spoiled beef and a short count. Every report is checked against hand-computed figures and the evidence rows:
+  - item performance = by-product = sale lines − return lines;
+  - usage = movements by type;
+  - void waste = its journal entry;
+  - distributable = the liability credit.
+  It also asserts the ADR §10 invariants (consumption = sold × recipe in force; every fired item accounted for exactly once), checks access and validation, and ends with a clean traceability audit.
+- **Isolation**: the six reports are in the smuggle matrix and the deep scan. No new `:id` routes.
+- **Docs**: ADR-0014 §10 "as built", DOMAIN_MODEL "Phase 4 invariants", OpenAPI regenerated.
 
 ## Phase 4 slice 4 — bills, split checks, service charge (session 6)
 - **Schema**: migrations 0039/0040, all with forced RLS.
@@ -146,7 +165,9 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–4: 
 | slice 4: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` (tax **30**, accounting **14**, api 34, …) | ok |
 | slice 4: `pnpm test:integration` | **254 passed**: database 21, api **225** (+5 bills; isolation extended), workers 8 |
 | slice 4: `pnpm db:migrate` (dev) | 0039, 0040 applied (service charge account back-filled) |
-**Not run in slice 4: `pnpm test:e2e:pos` / `test:e2e:web`.** An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
+| slice 5: `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` (exit 0) · openapi · `pnpm test` (api 34, tax 30, accounting 14, …) | ok |
+| slice 5: `pnpm test:integration` | **262 passed**: database 21, api **233** (+8 restaurant reports; isolation extended), workers 8. The first run had 1 failure in `costing.test.ts` (clock-order flake, passed alone; fixed as above); the rerun was all green |
+**Not run in slices 4–5: `pnpm test:e2e:pos` / `test:e2e:web`.** No migrations in slice 5. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -353,15 +374,8 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
 3. Re-run `pnpm test:e2e:pos` and `pnpm test:e2e:web` against a freshly built API (checkout was refactored in slice 4; see the note above).
-4. **Phase 4 slice 5 — restaurant reports** (ADR-0014 §10):
-   - item performance (menu items + modifiers: qty, net, COGS incl. ingredients, margin);
-   - theoretical vs actual ingredient usage (CONSUMPTION vs count variance + waste);
-   - voids after firing (wasted or not, by reason and user);
-   - prep times per station (fired → ready);
-   - open orders / unsettled bills at close of day;
-   - service charge collected per period (DOLE distribution).
-   All reconcile to evidence rows in tests.
-5. Then slices 6 (POS table service + KDS screen + admin set-up UI) and 7 (exit review: service-cycle drills, dev audit, design review).
+4. **Phase 4 slice 6 — UI**: POS table service (floor, order, fire, bill, split, pay), KDS screen, admin set-up (menus, modifiers, recipes, tables, settings) and the restaurant report screens.
+5. Then slice 7 (exit review: service-cycle drills, dev audit, design review).
 6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
 7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

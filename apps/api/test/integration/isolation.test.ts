@@ -15,6 +15,9 @@ let app: INestApplication;
 let owner: pg.Pool;
 let runtime: pg.Pool;
 const http = () => request(app.getHttpServer());
+const RESTAURANT_REPORTS = ['item-performance', 'ingredient-usage', 'kitchen-voids', 'prep-times', 'service-charge'] as const;
+/** Today in Manila (the branches' timezone). */
+const today = () => new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
 
 interface World {
   t: SignedUp;
@@ -433,9 +436,10 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['tender A payment in a B sale', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'INTENT', paymentIntentId: a.paymentIntentId }] })],
     ['list A session payments', () => http().get('/v1/payment-intents').query({ cashierSessionId: a.openSessionId }).set(auth)],
     ['refund a B sale from the A drawer', () => http().post(`/v1/sales/${b.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, kind: 'VOID', reason: 'x' })],
-    ...(['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'] as const).map(
+    ...(['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book', ...RESTAURANT_REPORTS] as const).map(
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
+    ['open orders of the A branch', () => http().get('/v1/reports/open-orders').query({ branchId: a.branchId, day: today() }).set(auth)],
     ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
     ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
     ['read A stock balances', () => http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(auth)],
@@ -597,6 +601,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/menu-versions/${b.draftVersionId}`, `/v1/branches/${b.branchId}/restaurant-settings`, `/v1/branches/${b.branchId}/sold-out`, `/v1/branches/${b.branchId}/menu`,
       `/v1/restaurant/orders?branchId=${b.branchId}&status=ALL`, `/v1/restaurant/orders/${b.orderId}`, `/v1/kitchen/tickets?branchId=${b.branchId}&status=ALL`,
       `/v1/restaurant/bills/${b.billId}`, `/v1/sales/${b.checkSaleId}`, `/v1/sales/${b.checkSaleId}/receipt`,
+      ...RESTAURANT_REPORTS.map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/reports/open-orders?branchId=${b.branchId}&day=${today()}`,
     ];
     const foreign = new Set(idsOf(a));
     for (const path of paths) {

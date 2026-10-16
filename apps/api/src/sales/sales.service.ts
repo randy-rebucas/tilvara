@@ -300,7 +300,9 @@ export class SalesService extends TenantService {
         // A charge is priced ex VAT: its gross is its sales, whatever rounding gave the parts.
         amounts.gross = exVat(amounts).toString();
         if (toDec(amounts.amountDue).isZero()) continue;
-        recordCharges.push({ ...amounts, kind: c.kind, orderBillChargeId: c.id, base: r2(toDec(c.base).times(ratio)).toString(), rate: c.rate, vatTreatment: c.vatTreatment, snapshot: c.taxSnapshot });
+        // The base follows the same rule, so Σ checks' bases = the bill's base (DOLE report).
+        const base = settles ? before.reduce((a, b) => a.minus(b.base), toDec(c.base)) : r2(toDec(c.base).times(ratio));
+        recordCharges.push({ ...amounts, kind: c.kind, orderBillChargeId: c.id, base: base.toString(), rate: c.rate, vatTreatment: c.vatTreatment, snapshot: c.taxSnapshot });
       }
 
       const used = new Set(recordLines.flatMap((l) => (l.beneficiaryRef ? [l.beneficiaryRef] : [])));
