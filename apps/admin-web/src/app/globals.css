@@ -26,6 +26,9 @@
   --color-orange: #b85f12;    /* ₱20 — registers & terminals (darkened for text contrast) */
   --color-orange-soft: #e07b1f;
   --color-green: #1e5b3a;     /* ₱200-ish green — team */
+  --color-gold: #85600c;      /* ₱500 — goods: stock, suppliers, purchasing (darkened for text contrast) */
+  --color-gold-soft: #d4a227;
+  /* Books (journal, accounts) use ink: the serial-number ink printed on every note. */
   --color-red: #b8302e;       /* errors / destructive only */
   --color-amber-bg: #fbf0dc;
 

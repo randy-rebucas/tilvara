@@ -17,6 +17,8 @@ colors:
   orange: "#b85f12"
   orange-soft: "#e07b1f"
   green: "#1e5b3a"
+  gold: "#85600c"
+  gold-soft: "#d4a227"
   red: "#b8302e"
   amber-bg: "#fbf0dc"
   info-bg: "#e9eff8"
@@ -205,6 +207,8 @@ Warm, papery neutrals, with four banknote denominations that act as a closed voc
 ### Tertiary
 - **₱20 Orange** (`orange-soft` for stripes and meter fills, `orange` when the colour must carry text): registers and terminals. The soft orange appears only as a stripe or fill. Text in this kind uses the darker value so it keeps its contrast.
 - **₱200 Green** (`green`): team, meaning members, invitations, roles, and the seats meter.
+- **₱500 Gold** (`gold-soft` for stripes, `gold` when the colour must carry text): goods, meaning suppliers, purchase orders, goods receipts, stock on hand, transfers and counts. Like orange, the soft value is only a stripe; codes and document numbers in this kind use the darker `gold`.
+- **Serial Ink** (`ink` as a stripe): the books, meaning journal entries, the chart of accounts, the trial balance and periods. It is the ink every note's serial number is printed in: money records that are not goods get no banknote colour.
 - **Alarm Red** (`red`): destructive actions (Revoke, danger buttons), validation errors, error callouts, revoked and read-only states, and a meter that has hit its limit. Red never marks a kind of record.
 
 ### Neutral
@@ -218,7 +222,7 @@ Warm, papery neutrals, with four banknote denominations that act as a closed voc
 - **Callout tints** (`info-*`, `amber-bg` / `warn-*`, `error-*`): banners for info (planned or disabled features), warnings (read-only access), and errors.
 
 ### Named Rules
-**The Denomination Rule.** Each colour names exactly one kind of record: blue for catalog, prices and the primary action; violet for locations; orange for registers and terminals; green for team; red only for destructive actions and errors. A colour never means anything else. Picking a colour for decoration or for variety breaks the system.
+**The Denomination Rule.** Each colour names exactly one kind of record: blue for catalog, prices and the primary action; violet for locations; orange for registers and terminals; green for team; gold for goods (stock, suppliers, purchasing); an ink stripe for the books; red only for destructive actions and errors. A colour never means anything else. Picking a colour for decoration or for variety breaks the system.
 
 **The Blue Tick Rule.** Status marks (done ticks, "next" markers, selection) use blue, the action colour. They never use green. Green means team.
 
@@ -254,7 +258,9 @@ Warm, papery neutrals, with four banknote denominations that act as a closed voc
 
 A centred page up to 1440px wide, with a 28px gutter (16px on phones). The 64px blue band is sticky at the top. Below the `lg` breakpoint (1024px), the tabs drop to their own horizontally scrolling row under the logo line, and the right edge fades out so hidden tabs are still discoverable. Page content stacks with 20 to 24px gaps. Overview at `xl` (1280px) uses a main column plus a 340px right rail. Below `xl` the rail moves to the top, so the next action comes first. KPI notes sit in a 4-up grid at `lg` and 2-up below it, with a 14px gap. Paired sections (Registers and Terminals, Invitations and Roles) sit side by side on desktop. Auth pages use a 1040px grid, with the headline on the left and a 420px form note on the right.
 
-Tables have a minimum width of 640px and scroll horizontally inside their note. **The Stacked Row Rule:** below `md` (768px), a table whose key figure (a price) would scroll off-screen becomes a stacked list. Each row shows the identity on the left and the money on the right, so the figure is always visible.
+Tables have a minimum width of 640px and scroll horizontally inside their note. **The Stacked Row Rule:** below `md` (768px), a table whose key figure (a price) would scroll off-screen becomes a stacked list. Each row shows the identity on the left and the money on the right, so the figure is always visible. `RecordTable` (`src/components/record-table.tsx`) does this for every inventory, purchasing and books table, including a totals row.
+
+Sections with several pages (Inventory, Books) put **section tabs** under the page header: ink on paper with a 2px blue underline on the active tab (`SubNav`), never a second blue band. The branch or legal entity a page works on is chosen with a row of small notes (`ScopePicker`, the price-list picker pattern) and lives in the URL (`?branch=`, `?entity=`). Document pages (an order, a receipt, a transfer, a count, a journal entry) open with a muted back link, the document title with its serial number, a serial line, then a summary note of figures; each links to the journal entry it posted, and the entry links back to it.
 
 Forms are inline. A "+ Add …" secondary button expands in place into a white bordered panel holding the fields, and it collapses on save or cancel. The task stays in the context of the list it changes.
 
@@ -318,7 +324,8 @@ Page content reveals over 380ms (`cubic-bezier(0.16, 1, 0.3, 1)`), rising 4px fr
 ## Do's and Don'ts
 
 ### Do:
-- **Do** pick the stripe, chip and meter colour from the record's kind: blue for catalog and prices, violet for locations, orange for registers and terminals, green for team.
+- **Do** pick the stripe, chip and meter colour from the record's kind: blue for catalog and prices, violet for locations, orange for registers and terminals, green for team, gold for goods, an ink stripe for the books.
+- **Do** print negative money with a true minus sign (`−₱23.00`), and sign variances explicitly (`+2`, `−2`) rather than by colour alone.
 - **Do** put a serial line (code, SKU, TIN, count) directly **below** every record title, in Archivo Narrow tracked caps with tabular numerals.
 - **Do** set every peso amount with the money style, `₱` and centavos from the decimal string, right-aligned and nowrap.
 - **Do** keep panels pure white (`#ffffff`) on note paper (`#f4f1e8`), with the double hairline frame.

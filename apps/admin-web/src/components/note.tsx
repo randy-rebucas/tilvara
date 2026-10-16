@@ -1,13 +1,16 @@
 import type { ReactNode } from 'react';
+import { twMerge } from 'tailwind-merge';
 
 /** Denomination = the kind of record. Colours never mean anything else. */
-export type Denomination = 'blue' | 'violet' | 'orange' | 'green' | 'none';
+export type Denomination = 'blue' | 'violet' | 'orange' | 'green' | 'gold' | 'ink' | 'none';
 
 const stripe: Record<Denomination, string | undefined> = {
   blue: 'var(--color-blue)',
   violet: 'var(--color-violet)',
   orange: 'var(--color-orange-soft)',
   green: 'var(--color-green)',
+  gold: 'var(--color-gold-soft)',
+  ink: 'var(--color-ink)',
   none: undefined,
 };
 
@@ -30,9 +33,9 @@ export function Note({
   );
 }
 
-/** Tracked tabular "serial" line: codes, SKUs, TINs, counts. */
+/** Tracked tabular "serial" line: codes, SKUs, TINs, counts. A colour in `className` replaces the muted default. */
 export function Serial({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <span className={`serial text-[0.8125rem] text-muted ${className}`}>{children}</span>;
+  return <span className={twMerge('serial text-[0.8125rem] text-muted', className)}>{children}</span>;
 }
 
 export function PageHeader({ title, lede, actions }: { title: string; lede?: string; actions?: ReactNode }) {

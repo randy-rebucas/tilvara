@@ -1,10 +1,30 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 4 — Phase 2 exit review, then Phase 3 slices 1–4)_
+_Last updated: 2026-10-16 (session 5 — Phase 3 slice 5, admin UI)_
 
 ## Current phase
-**Phase 3 — Inventory, purchasing, accounting: IN PROGRESS — API slices 1–4 done and verified (session 4, uncommitted at time of writing).** Remaining: slice 5 admin UI, then the Phase 3 exit review ("stock and financial movements remain traceable and consistent").
+**Phase 3 — Inventory, purchasing, accounting: IN PROGRESS — slices 1–5 done and verified.** Session 4's work committed as `aabbff4`. Remaining: the Phase 3 exit review ("stock and financial movements remain traceable and consistent").
 **Phase 2 — exit criterion met** (session 4, see below).
+
+## Phase 3 slice 5 — admin UI (session 5)
+Three new admin areas on the real API through the BFF (allow-list extended: suppliers, purchase-orders, goods-receipts, stock, accounts, journal-entries, accounting), EN/FIL, Salapi:
+- **Purchasing** (`/purchasing`): suppliers (add), purchase orders with status filter and "new order" with editable lines; order page (`/purchasing/orders/:id`): approve, cancel/close with reason, **receive goods per line (accept / reject + reason, invoice and DR refs)**, lines with ordered/received/rejected/remaining, its receipts; receipt page (`/purchasing/receipts/:id`) → its journal entry.
+- **Inventory** (`/inventory`, section tabs + branch picker): stock & value (inventory-valuation report, total checked against the ledger value), low stock with "set reorder point"; transfers (send stock to a same-entity branch → transfer page with receive form: arrived per line + shortfall reason, value sent / in transit / lost); counts (post a count → variance qty/value, signed); movements report (opening + by type = closing, date range).
+- **Books** (`/books`, section tabs + entity picker; callout: chart and rules await an accountant): journal with **source links both ways** (document → `/books?source=`, entry → document; account → its entries), manual entry (≥2 lines, debit/credit), entry page with reversal (reason), trial balance (from/to, balance check), chart of accounts (add), periods (close a month / reopen with reason).
+- Shared: `RecordTable` (table on desktop, stacked rows below md with the key figure visible, totals row), `SubNav`, `ScopePicker`, `LineItems` (inputs named `lines.<i>.<field>` so API issue paths land on the row), `ReasonAction`/`ActionButton`. **Stock and books documents keep one Idempotency-Key per open form** (`useFormKey`), so a resubmit after no answer replays instead of posting twice. Exact decimal helpers (`sumDecimal`, `signOf`, `qty`) — no floats for money/quantities in the admin.
+- Design: two new denominations documented in DESIGN.md — **₱500 gold = goods** (stock, suppliers, purchasing), **ink stripe = books**; negatives print with a true minus.
+- Defects found by running it and fixed: `Serial` hard-coded `text-muted`, so coloured serials (supplier codes, and the existing "ink" SKUs on prices/locations) rendered muted → now merged with tailwind-merge; movements footer put a value under a quantity column; `peso()` printed a hyphen minus and could print "−₱0.00".
+- Known gaps (in BACKLOG): the admin's branch/entity pickers need `org.read` — the built-in *inventory* role lacks it, so an inventory clerk sees "no access" on Inventory/Purchasing pickers; supplier returns, PO draft editing, supplier edit/archive and journal filters by date/type have API support but no UI yet; item names on receipts come from the first 200 products.
+
+## Verified in session 5 (commands actually run, all green)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` (18/18) · `pnpm exec oxlint apps packages` | ok, no warnings |
+| `pnpm test` | **113 passed** (api 34, tax 27, money 15, accounting 13, config 6, admin-web **6 new** (format helpers), validation 5, observability 5, workers 2) |
+| `pnpm test:integration` | **219 passed** — database 21, api 190, workers 8 (API unchanged this session) |
+| `pnpm test:e2e:web` | **41/41** (+22): supplier → PO ₱912.00 → approve → receive 20+48 with 4 rejected (₱852.00, partly received) → receipt → its journal entry and back → stock value ₱852.00 = ledger → transfer 5, receive 4 with reason (₱15.00 lost; refused without reason) → count 46 vs 48 (−2, −₱23.00) → trial balance balances → close/reopen last month → manual entry + reversal → still balances; 390px: no sideways scroll on inventory/purchasing/books/trial balance |
+| `node apps/admin-web/e2e/review.mjs` | **35/35** (+16 new states × 1440/390 incl. FIL) → `.impeccable/review/screens/` |
+Not re-run this session: `pnpm test:e2e:pos` (POS untouched).
 
 ## Phase 3 (session 4)
 - **Slice 1 — costing (ADR-0012)**: migrations 0022/0023. Every stock movement carries `unit_cost`/`value`; balances carry `value`/`avg_cost`; a `BEFORE INSERT` trigger (owned by `onepos_platform`) costs each movement under the balance row lock — outbound at the average (emptying takes the exact remainder), customer returns at the sale's cost, inbound averages; a receipt after selling short restarts the average and shows the revaluation. Inserts sorted by variant (lock order). `costing.test.ts` (6): golden vectors, rounding remainder, defaults, app cannot choose an outbound cost or bring stock in without one, 12 concurrent opposite-order multi-item sales.
@@ -128,7 +148,6 @@ Note: the integration run preceded the final POS-only UI edits; API/database cod
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-1. Commit the session-4 work if not yet committed (`git status`): Phase 2 exit review and Phase 3 slices 1–4 are both uncommitted.
-2. **Phase 3 slice 5 — admin UI** (Salapi world, EN/FIL, BFF): suppliers; purchase orders with receiving (accept/reject per line); transfers (dispatch/receive); counts; low stock; inventory valuation + stock movements; books (chart, journal with source links, trial balance, period close). Extend `e2e/smoke.mjs` + `review.mjs`.
-3. **Phase 3 exit review**: audit traceability both ways (document ↔ movement ↔ entry), drills for purchasing/transfers under failure and concurrency, accountant review request for ADR-0013's chart and policies; then declare the criterion met or list gaps.
+1. Commit session 5 if not yet committed (`git status`).
+2. **Phase 3 exit review**: audit traceability both ways (document ↔ movement ↔ entry — the admin now links receipt/transfer/count ↔ journal; sales/returns/cash entries have no admin document page yet), drills for purchasing/transfers under failure and concurrency, a design finish review of the new admin screens (`impeccable-finish-reviewer` over `.impeccable/review/screens/`), accountant review request for ADR-0013's chart and policies; decide whether the inventory role gets `org.read` (or a branch list it may see) so its admin pickers work; then declare the criterion met or list gaps.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

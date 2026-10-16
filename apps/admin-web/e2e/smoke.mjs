@@ -94,21 +94,170 @@ try {
   check('subscription shows trial and limits', await evaluate(`document.body.innerText.includes('Growth trial') && document.body.innerText.includes('1 / 30')`));
   await shot('subscription.png');
 
-  // 7. Filipino
+  // 7. Phase 3 through the UI: purchasing → receiving → stock at cost → transfer → count → books
+  const text = (s) => evaluate(`document.body.innerText.includes(${JSON.stringify(s)})`);
+  const submitForm = () => evaluate(`document.querySelector('form button:not([type=button])').click()`);
+  const noAlert = async (label) => {
+    const alert = await evaluate(`[...document.querySelectorAll('[role=alert]')].map((x) => x.textContent).join(' | ')`);
+    if (alert) throw new Error(`${label}: ${alert}`);
+  };
+  check('nav shows Inventory, Purchasing and Books', await evaluate(`['Inventory', 'Purchasing', 'Books'].every((x) => [...document.querySelectorAll('nav a')].some((a) => a.textContent === x))`));
+  const bgc = await bff('POST', '/api/v1/branches', { legalEntityId: entityId, code: 'BGC-02', name: 'BGC Annex', birBranchCode: '00001' }, true);
+  if (bgc.status !== 201) console.log('second branch response:', JSON.stringify(bgc));
+  check('second branch of the same entity (201)', bgc.status === 201);
+  const variants = (await bff('GET', '/api/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
+  const coke = variants.find((v) => v.sku === 'CK-290').id;
+  const canton = variants.find((v) => v.sku === 'LM-PC-CHILI').id;
+
+  await go('/purchasing');
+  await clickText('Add supplier');
+  await waitFor(`document.querySelector('[name="code"]')`);
+  await fill('name', 'Coca-Cola Beverages Phils');
+  await fill('code', 'ccbpi');
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('CCBPI')`);
+  check('supplier added via UI (code upper-cased)', true);
+
+  await clickText('New purchase order');
+  await waitFor(`document.querySelector('[name="lines.0.variantId"]')`);
+  await fill('branchId', br.body.id);
+  await fill('lines.0.variantId', coke);
+  await fill('lines.0.quantity', '24');
+  await fill('lines.0.unitCost', '15.00');
+  await clickText('Add line');
+  await waitFor(`document.querySelector('[name="lines.1.variantId"]')`);
+  await fill('lines.1.variantId', canton);
+  await fill('lines.1.quantity', '48');
+  await fill('lines.1.unitCost', '11.50');
+  await submitForm();
+  await waitFor(`location.pathname.startsWith('/purchasing/orders/') || document.querySelector('[role=alert]')`);
+  await noAlert('create purchase order');
+  await waitFor(`document.body.innerText.includes('Purchase order 000001')`);
+  check('PO drafted via UI: ₱912.00, draft changes no stock', (await text('₱912.00')) && (await text('A draft does not change stock')));
+  await shot('po-draft.png');
+
+  await clickText('Approve order');
+  await waitFor(`document.body.innerText.includes('Receive goods')`);
+  await clickText('Receive goods');
+  await waitFor(`document.querySelector('[name="lines.1.quantity"]')`);
+  await fill('supplierInvoiceRef', 'SI-1001');
+  await fill('lines.0.quantity', '20');
+  await fill('lines.0.rejectedQuantity', '4');
+  await fill('lines.0.rejectionReason', 'Dented cans');
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('Goods receipt 000001') || document.querySelector('[role=alert]')`);
+  await noAlert('receive goods');
+  check('received 20 + 48 with 4 rejected → partly received, ₱852.00', (await text('Partly received')) && (await text('₱852.00')));
+  await shot('po-received.png');
+
+  await clickText('Goods receipt 000001');
+  await waitFor(`location.pathname.startsWith('/purchasing/receipts/')`);
+  await waitFor(`document.body.innerText.includes('Dented cans')`);
+  check('receipt shows invoice ref, rejection reason and value', (await text('SI-1001')) && (await text('₱852.00')));
+  await clickText('Journal entry');
+  await waitFor(`location.pathname === '/books' && document.body.innerText.includes('Showing the entries of one document')`);
+  check('receipt → its journal entry (one, ₱852.00)', (await evaluate(`document.querySelectorAll('tbody tr').length`)) === 1 && (await text('₱852.00')));
+  await clickText('Goods receipt');
+  await waitFor(`location.pathname.startsWith('/purchasing/receipts/')`);
+  check('journal entry → back to the receipt', true);
+
+  await go(`/inventory?branch=${br.body.id}`);
+  check('stock value at cost ₱852.00 equals the stock ledger', (await text('₱852.00')) && (await text('Equals the stock ledger')));
+  await shot('inventory.png');
+
+  await go(`/inventory/transfers?branch=${br.body.id}`);
+  await clickText('Send stock');
+  await waitFor(`document.querySelector('[name="lines.0.variantId"]')`);
+  await fill('lines.0.variantId', coke);
+  await fill('lines.0.quantity', '5');
+  await submitForm();
+  await waitFor(`location.pathname.startsWith('/inventory/transfers/') || document.querySelector('[role=alert]')`);
+  await noAlert('dispatch transfer');
+  await waitFor(`document.body.innerText.includes('Transfer 000001')`);
+  check('transfer dispatched via UI: in transit ₱75.00', (await text('In transit')) && (await text('₱75.00')));
+  await clickText('Receive transfer');
+  await waitFor(`document.querySelector('[name="lines.0.receivedQuantity"]')`);
+  await fill('lines.0.receivedQuantity', '4');
+  await submitForm();
+  await waitFor(`document.querySelector('[role=alert]')`);
+  check('short receipt without a reason is refused', await evaluate(`Boolean(document.querySelector('[role=alert]'))`));
+  await fill('lines.0.discrepancyReason', 'One can burst');
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('Lost in transit')`);
+  check('received 4 of 5: ₱15.00 lost in transit, reason shown', (await text('₱15.00')) && (await text('One can burst')));
+  await shot('transfer-received.png');
+
+  await go(`/inventory/counts?branch=${br.body.id}`);
+  await clickText('Post a count');
+  await waitFor(`document.querySelector('[name="lines.0.variantId"]')`);
+  await fill('lines.0.variantId', canton);
+  await fill('lines.0.countedQuantity', '46');
+  await submitForm();
+  await waitFor(`location.pathname.startsWith('/inventory/counts/') || document.querySelector('[role=alert]')`);
+  await noAlert('post count');
+  await waitFor(`document.body.innerText.includes('Count 000001')`);
+  check('count 46 vs 48 on hand → −2, −₱23.00', (await text('−2')) && (await text('−₱23.00')));
+
+  await go('/books/trial-balance');
+  check('trial balance: debits equal credits', await text('Debits equal credits.'));
+  await shot('trial-balance.png');
+
+  await go('/books/periods');
+  await clickText('Close month');
+  await waitFor(`document.querySelector('[name="month"]')`);
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('Reopen') || document.querySelector('[role=alert]')`);
+  await noAlert('close month');
+  check('last month closed via UI', await text('Closed'));
+  await clickText('Reopen');
+  await waitFor(`document.querySelector('[name="reason"]')`);
+  await fill('reason', 'Late supplier invoice');
+  await submitForm();
+  await waitFor(`!document.body.innerText.includes('Reopen')`);
+  check('closed month reopened with a reason', await text('Open'));
+
+  const accounts = (await bff('GET', `/api/v1/accounts?legalEntityId=${entityId}`)).body.data;
+  await go('/books');
+  await clickText('Manual entry');
+  await waitFor(`document.querySelector('[name="lines.1.accountId"]')`);
+  await fill('memo', 'Owner cash top-up');
+  await fill('lines.0.accountId', accounts.find((a) => a.type === 'ASSET').id);
+  await fill('lines.0.debit', '100.00');
+  await fill('lines.1.accountId', accounts.find((a) => a.type === 'EQUITY').id);
+  await fill('lines.1.credit', '100.00');
+  await submitForm();
+  await waitFor(`location.pathname.startsWith('/books/entries/') || document.querySelector('[role=alert]')`);
+  await noAlert('manual entry');
+  await waitFor(`document.body.innerText.includes('Owner cash top-up')`);
+  await clickText('Reverse entry');
+  await waitFor(`document.querySelector('[name="memo"]')`);
+  await fill('memo', 'Posted twice');
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('Reversed by a later entry') || document.querySelector('[role=alert]')`);
+  await noAlert('reverse entry');
+  check('manual entry posted and reversed via UI', await text('Reversed by a later entry'));
+  await go('/books/trial-balance');
+  check('trial balance still balances after manual entry + reversal', await text('Debits equal credits.'));
+
+  // 8. Filipino
   await bff('POST', '/api/auth/lang', { lang: 'fil' });
   await go('/');
   check('Filipino UI renders', await evaluate(`document.body.innerText.includes('Buod') && document.documentElement.lang === 'fil'`));
   await shot('overview-fil.png', false);
   await bff('POST', '/api/auth/lang', { lang: 'en' });
 
-  // 8. Mobile
+  // 9. Mobile
   await viewport(390, 844, true);
   await go('/');
   check('no horizontal page scroll at 390px', await evaluate(`document.documentElement.scrollWidth <= window.innerWidth + 1`));
   await shot('mobile.png');
+  for (const path of [`/inventory?branch=${br.body.id}`, '/purchasing', '/books', '/books/trial-balance']) {
+    await go(path);
+    check(`${path.split('?')[0]}: no horizontal scroll at 390px, figures visible`, await evaluate(`document.documentElement.scrollWidth <= window.innerWidth + 1 && document.body.innerText.includes('₱')`));
+  }
   await viewport(1440, 900);
 
-  // 9. Sign out revokes the session
+  // 10. Sign out revokes the session
   await bff('POST', '/api/auth/logout', {});
   await go('/');
   check('after sign-out, app redirects to sign-in', (await evaluate('location.pathname')) === '/sign-in');

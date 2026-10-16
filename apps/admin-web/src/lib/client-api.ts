@@ -12,17 +12,20 @@ export interface ApiFailure {
 export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiFailure };
 
 /**
- * Browser → same-origin BFF. Mutations carry the CSRF header and, when asked, a fresh
+ * Browser → same-origin BFF. Mutations carry the CSRF header and, when asked, an
  * Idempotency-Key so a double click or a retried request never creates two records.
+ * `idempotencyKey` pins the key: stock and books documents keep one key per form, so a
+ * resubmit after "no answer" replays the first outcome instead of posting a second document.
  */
 export async function send<T>(
   method: 'POST' | 'PATCH' | 'PUT',
   url: string,
   body?: unknown,
-  opts: { idempotent?: boolean } = {},
+  opts: { idempotent?: boolean; idempotencyKey?: string } = {},
 ): Promise<Result<T>> {
   const headers: Record<string, string> = { 'content-type': 'application/json', [CSRF_HEADER]: '1' };
-  if (opts.idempotent) headers['idempotency-key'] = crypto.randomUUID();
+  if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
+  else if (opts.idempotent) headers['idempotency-key'] = crypto.randomUUID();
   try {
     const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const json = res.status === 204 ? null : await res.json().catch(() => null);

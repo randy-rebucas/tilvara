@@ -7,7 +7,8 @@ import { rejectCrossSite } from '@/lib/csrf';
  * Same-origin proxy for client components: attaches the httpOnly bearer token server-side and
  * forwards to the API. Only an allow-listed set of resources is reachable through it.
  */
-const ALLOWED = /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me)(\/|$)/;
+const ALLOWED =
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me|suppliers|purchase-orders|goods-receipts|stock|accounts|journal-entries|accounting)(\/|$)/;
 
 async function forward(request: NextRequest, path: string[]) {
   const joined = path.join('/');

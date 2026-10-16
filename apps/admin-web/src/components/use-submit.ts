@@ -41,7 +41,7 @@ export function useSubmit() {
     method: 'POST' | 'PATCH' | 'PUT',
     url: string,
     body?: unknown,
-    opts: { idempotent?: boolean; refresh?: boolean } = {},
+    opts: { idempotent?: boolean; idempotencyKey?: string; refresh?: boolean } = {},
   ): Promise<Result<T>> {
     setPending(true);
     setError(null);
@@ -60,4 +60,13 @@ export function useSubmit() {
   }
 
   return { pending, error, setError, submit, fieldError };
+}
+
+/**
+ * One Idempotency-Key per open form (a remount gets a new one). Failed requests leave no
+ * idempotency record, so correcting the form and resubmitting with the same key is safe.
+ */
+export function useFormKey() {
+  const [key] = useState(() => crypto.randomUUID());
+  return key;
 }

@@ -114,6 +114,64 @@ try {
   await both('subscription', () => go('/subscription'));
   await both('not-found', () => go('/this-page-does-not-exist'));
 
+  // Phase 3: purchasing, inventory and books, with their panels open
+  const variants = (await bff('GET', '/api/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
+  const kape = variants.find((v) => v.sku === 'KB-250').id;
+  const pandesal = variants.find((v) => v.sku === 'PDS-10').id;
+  const supplier = await bff('POST', '/api/v1/suppliers', { code: 'NESTLE', name: 'Nestlé Philippines', paymentTermsDays: 30 }, true);
+  const po = await bff('POST', '/api/v1/purchase-orders', {
+    branchId: branch.body.id, supplierId: supplier.body.id, expectedOn: '2026-10-20', supplierRef: 'Q-2291',
+    lines: [{ variantId: kape, quantity: '12', unitCost: '120.00' }, { variantId: pandesal, quantity: '40', unitCost: '24.50' }],
+  }, true);
+  const approved = await bff('POST', `/api/v1/purchase-orders/${po.body.id}/approve`, {});
+  const annex = await bff('POST', '/api/v1/branches', { legalEntityId: entity.body.id, code: 'QC-02', name: 'Cubao Annex', birBranchCode: '00001' }, true);
+  check('review fixture: supplier, approved PO, second branch', [supplier, po, annex].every((r) => r.status === 201) && approved.status === 200);
+  await both('purchasing-panels', async () => {
+    await go('/purchasing');
+    await openPanels(['New purchase order', 'Add supplier']);
+  });
+  await both('po-receive', async () => {
+    await go(`/purchasing/orders/${po.body.id}`);
+    await openPanels(['Receive goods']);
+  });
+  const receipt = await bff('POST', '/api/v1/goods-receipts', {
+    branchId: branch.body.id, supplierId: supplier.body.id, purchaseOrderId: po.body.id, supplierInvoiceRef: 'SI-0042',
+    lines: [
+      { purchaseOrderLineId: po.body.lines[0].id, variantId: kape, quantity: '10', rejectedQuantity: '2', rejectionReason: 'Torn bags' },
+      { purchaseOrderLineId: po.body.lines[1].id, variantId: pandesal, quantity: '40' },
+    ],
+  }, true);
+  const reorder = await bff('PUT', '/api/v1/stock/reorder-points', { branchId: branch.body.id, items: [{ variantId: kape, reorderPoint: '15', reorderQuantity: '24' }] });
+  check('review fixture: goods received, reorder point set', receipt.status === 201 && reorder.status === 200);
+  await both('po-partly-received', () => go(`/purchasing/orders/${po.body.id}`));
+  await both('receipt', () => go(`/purchasing/receipts/${receipt.body.id}`));
+  await both('inventory-stock', async () => {
+    await go(`/inventory?branch=${branch.body.id}`);
+    await openPanels(['Set reorder point']);
+  });
+  await both('inventory-transfer-send', async () => {
+    await go(`/inventory/transfers?branch=${branch.body.id}`);
+    await openPanels(['Send stock']);
+  });
+  await both('inventory-count-new', async () => {
+    await go(`/inventory/counts?branch=${branch.body.id}`);
+    await openPanels(['Post a count']);
+  });
+  await both('inventory-movements', () => go(`/inventory/movements?branch=${branch.body.id}`));
+  await both('books-manual-entry', async () => {
+    await go('/books');
+    await openPanels(['Manual entry']);
+  });
+  await both('books-trial-balance', () => go('/books/trial-balance'));
+  await both('books-accounts', async () => {
+    await go('/books/accounts');
+    await openPanels(['Add account']);
+  });
+  await both('books-periods', async () => {
+    await go('/books/periods');
+    await openPanels(['Close month']);
+  });
+
   // Business picker: give this user a second business, then sign in again
   const other = await fetch(`${API}/v1/auth/signup`, {
     method: 'POST',
@@ -154,6 +212,9 @@ try {
     await go('/locations');
     await openPanels(['Magdagdag', 'Magdagdag', 'Magdagdag']);
   });
+  await both('po-fil', () => go(`/purchasing/orders/${po.body.id}`));
+  await both('inventory-fil', () => go(`/inventory?branch=${branch.body.id}`));
+  await both('books-trial-balance-fil', () => go('/books/trial-balance'));
   await bff('POST', '/api/auth/lang', { lang: 'en' });
 } catch (e) {
   check(`unexpected error: ${e.message}`, false);

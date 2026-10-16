@@ -158,3 +158,166 @@ export interface TaxCategory {
   name: string;
   vatTreatment: string;
 }
+
+// ---- purchasing (Phase 3) ----
+export interface Supplier {
+  id: string;
+  code: string;
+  name: string;
+  tin: string | null;
+  email: string | null;
+  phone: string | null;
+  paymentTermsDays: number;
+  archivedAt: string | null;
+}
+export type OrderStatus = 'DRAFT' | 'APPROVED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED' | 'CANCELLED';
+export interface PurchaseOrderRow {
+  id: string;
+  branchId: string;
+  supplierId: string;
+  supplierName: string;
+  poNumber: number;
+  status: OrderStatus;
+  expectedOn: string | null;
+  supplierRef: string | null;
+  createdAt: string;
+  orderedValue: string;
+}
+export interface PurchaseOrder extends Omit<PurchaseOrderRow, 'supplierName'> {
+  notes: string | null;
+  approvedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  supplier: { id: string; code: string; name: string };
+  receivedValue: string;
+  lines: {
+    id: string;
+    lineNo: number;
+    variantId: string;
+    sku: string;
+    name: string;
+    quantity: string;
+    unitCost: string;
+    lineValue: string;
+    receivedQuantity: string;
+    rejectedQuantity: string;
+    remainingQuantity: string;
+  }[];
+  receipts: { id: string; receiptNumber: number; supplierInvoiceRef: string | null; createdAt: string }[];
+}
+export interface GoodsReceiptRow {
+  id: string;
+  branchId: string;
+  supplierId: string;
+  supplierName: string;
+  purchaseOrderId: string | null;
+  receiptNumber: number;
+  supplierInvoiceRef: string | null;
+  supplierDeliveryRef: string | null;
+  createdAt: string;
+}
+export interface GoodsReceipt extends Omit<GoodsReceiptRow, 'supplierName'> {
+  notes: string | null;
+  receivedValue: string;
+  lines: { id: string; purchaseOrderLineId: string | null; variantId: string; quantity: string; rejectedQuantity: string; rejectionReason: string | null; unitCost: string; lineValue: string }[];
+}
+
+// ---- inventory (Phase 3) ----
+export interface TransferRow {
+  id: string;
+  fromBranchId: string;
+  toBranchId: string;
+  transferNumber: number;
+  status: 'DISPATCHED' | 'RECEIVED';
+  notes: string | null;
+  createdAt: string;
+  receivedAt: string | null;
+}
+export interface Transfer extends TransferRow {
+  receiveNotes: string | null;
+  sentValue: string;
+  receivedValue: string | null;
+  inTransitValue: string;
+  transitLossValue: string | null;
+  lines: { id: string; variantId: string; sku: string; name: string; quantity: string; receivedQuantity: string | null; shortQuantity: string | null; discrepancyReason: string | null; unitCost: string }[];
+}
+export interface CountRow {
+  id: string;
+  branchId: string;
+  countNumber: number;
+  notes: string | null;
+  createdAt: string;
+}
+export interface Count extends CountRow {
+  varianceValue: string;
+  lines: { id: string; variantId: string; sku: string; name: string; countedQuantity: string; systemQuantity: string; varianceQuantity: string; varianceValue: string }[];
+}
+export interface LowStockRow {
+  variantId: string;
+  sku: string;
+  name: string;
+  quantity: string;
+  reorderPoint: string;
+  reorderQuantity: string | null;
+  low: boolean;
+  onOrder: string;
+  suggestedOrder: string;
+  lastCost: string;
+}
+export interface Valuation {
+  branchId: string;
+  data: { variantId: string; sku: string; name: string; quantity: string; avgCost: string; value: string }[];
+  totalValue: string;
+  ledgerValue: string;
+}
+export interface MovementSummary {
+  data: {
+    variantId: string;
+    sku: string;
+    name: string;
+    opening: { quantity: string; value: string };
+    movements: Record<string, { quantity: string; value: string }>;
+    closing: { quantity: string; value: string };
+  }[];
+}
+
+// ---- books (Phase 3) ----
+export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
+export interface Account {
+  id: string;
+  legalEntityId: string;
+  code: string;
+  name: string;
+  type: AccountType;
+  systemKey: string | null;
+  archivedAt: string | null;
+}
+export interface JournalRow {
+  id: string;
+  entryNumber: number;
+  entryDate: string;
+  sourceType: string;
+  sourceId: string | null;
+  memo: string | null;
+  reversesEntryId: string | null;
+  total: string;
+}
+export interface JournalEntry extends Omit<JournalRow, 'total'> {
+  legalEntityId: string;
+  createdAt: string;
+  reversedBy: string | null;
+  total: string;
+  lines: { id: string; accountId: string; accountCode: string; accountName: string; branchId: string | null; debit: string; credit: string; memo: string | null }[];
+}
+export interface Period {
+  id: string;
+  month: string;
+  status: 'OPEN' | 'CLOSED';
+  closedAt: string | null;
+}
+export interface TrialBalance {
+  from: string;
+  to: string;
+  data: { accountId: string; code: string; name: string; type: AccountType; opening: string; debit: string; credit: string; closing: string }[];
+  totals: { debit: string; credit: string; closing: string };
+}
