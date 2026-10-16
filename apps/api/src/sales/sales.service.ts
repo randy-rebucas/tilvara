@@ -34,6 +34,7 @@ import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
+import { planConsumption } from '../restaurant/consumption.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -215,7 +216,8 @@ export class SalesService extends TenantService {
         await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'SALE', amount: cashApplied.toString(), saleId: sale!.id, createdBy: auth.userId });
       }
 
-      const stock = cart.lines.flatMap((l, i) =>
+      const lineId = (i: number) => lineRows.find((r) => r.lineNo === i + 1)!.id;
+      const stock: (typeof stockMovements.$inferInsert & { variantId: string })[] = cart.lines.flatMap((l, i) =>
         l.trackInventory
           ? [{
               tenantId,
@@ -224,11 +226,19 @@ export class SalesService extends TenantService {
               quantity: toDec(l.quantity).negated().toString(),
               type: 'SALE',
               saleId: sale!.id,
-              saleLineId: lineRows.find((r) => r.lineNo === i + 1)!.id,
+              saleLineId: lineId(i),
               createdBy: auth.userId,
             }]
           : [],
       );
+      // Items made from a recipe consume their ingredients with the sale (ADR-0014 §4).
+      const consumed = await planConsumption(
+        db,
+        cart.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineId(i), variantId: l.variantId, quantity: l.quantity }])),
+      );
+      for (const c of consumed) {
+        stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });
+      }
       // Sorted by variant: concurrent sales lock balance rows in the same order (ADR-0012 §7).
       const moved = stock.length
         ? await db.insert(stockMovements).values(stock.sort((a, b) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0))).returning({ value: stockMovements.value })

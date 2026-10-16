@@ -51,6 +51,7 @@ interface World {
   adjustmentId: string;
   journalEntryId: string;
   cashAccountId: string;
+  dishId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -119,6 +120,17 @@ async function world(prefix: string): Promise<World> {
       .set(auth)
       .set('Idempotency-Key', randomUUID())
       .send({ cashierSessionId: openSession.id, kind: 'RETURN', reason: 'Fixture return', lines: [{ saleLineId: soldLines[0]!.id, quantity: '1', disposition: 'DAMAGED' }] }),
+  );
+  // Phase 4: a dish made from Cola (recipe v1), sold once, so its consumption is in the ledger.
+  const dish = ok<{ variants: { id: string }[] }>(
+    await http().post('/v1/products').set(auth).send({ name: 'Float', taxCategoryId: taxId, uomId, trackInventory: false, variants: [{ sku: uniq('DISH'), price: '60.00' }] }),
+  );
+  const dishId = dish.variants[0]!.id;
+  ok(await http().post(`/v1/price-lists/${priceList.id}/prices`).set(auth).send({ items: [{ variantId: dishId, amount: '65.00' }] }));
+  ok(await http().post(`/v1/variants/${dishId}/recipe`).set(auth).send({ ingredients: [{ variantId, quantity: '1' }] }));
+  ok(
+    await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
+      .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), lines: [{ variantId: dishId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] }),
   );
   const openSessionCash = (await http().get(`/v1/cashier-sessions/${openSession.id}`).set(auth)).body.expectedCash as string;
   const payment = ok(
@@ -193,6 +205,7 @@ async function world(prefix: string): Promise<World> {
     adjustmentId: adjustment.id,
     journalEntryId: entries[0]!.id,
     cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
+    dishId,
   };
 }
 
@@ -279,6 +292,8 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/stock/adjustments/:id': () => http().get(`/v1/stock/adjustments/${a.adjustmentId}`).set(auth),
     'GET /v1/journal-entries/:id': () => http().get(`/v1/journal-entries/${a.journalEntryId}`).set(auth),
     'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
+    'GET /v1/variants/:id/recipe': () => http().get(`/v1/variants/${a.dishId}/recipe`).set(auth),
+    'POST /v1/variants/:id/recipe': () => http().post(`/v1/variants/${a.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: b.variantId, quantity: '1' }] }),
   };
 }
 
@@ -350,6 +365,7 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['periods of the A entity', () => http().get('/v1/accounting/periods').query({ legalEntityId: a.entityId }).set(auth)],
     ['close an A period', () => http().post('/v1/accounting/periods/close').set(auth).send({ legalEntityId: a.entityId, month: '2020-01' })],
     ['trial balance of the A entity', () => http().get('/v1/reports/trial-balance').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
+    ['recipe with an A ingredient', () => http().post(`/v1/variants/${b.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: a.variantId, quantity: '1' }] })],
   ];
 }
 
@@ -364,7 +380,7 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId];
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId];
 
 describe('Phase 1 cross-tenant sweep', () => {
   it('the attack matrix covers every id-addressed route in the router', () => {
@@ -403,8 +419,8 @@ describe('Phase 1 cross-tenant sweep', () => {
     const closed = (await http().get(`/v1/cashier-sessions/${a.closedSessionId}`).set(a.auth).expect(200)).body;
     expect([closed.status, closed.reconciliation.approvedBy]).toEqual(['CLOSED', null]);
     const stock = (await http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
-    // 10 opening − 1 sold + 3 received − 1 returned to the supplier − 1 transferred to branch 2.
-    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['10']);
+    // 10 opening − 1 sold − 1 used in the dish + 3 received − 1 returned to the supplier − 1 transferred to branch 2.
+    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['9']);
     const t = (await http().get(`/v1/stock/transfers/${a.transferId}`).set(a.auth).expect(200)).body;
     expect([t.status, t.lines[0].receivedQuantity]).toEqual(['RECEIVED', '1']);
     const po = (await http().get(`/v1/purchase-orders/${a.draftOrderId}`).set(a.auth).expect(200)).body;
@@ -416,7 +432,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       '/v1/me', '/v1/members', '/v1/roles', '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
-      `/v1/variants/${b.variantId}/price-history`, '/v1/invitations',
+      `/v1/variants/${b.variantId}/price-history`, `/v1/variants/${b.dishId}/recipe`, '/v1/invitations',
       '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
       ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,

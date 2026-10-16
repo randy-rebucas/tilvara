@@ -337,6 +337,7 @@ export const en = {
   'mv.COUNT': 'Count',
   'mv.ADJUSTMENT': 'Adjusted',
   'mv.WASTE': 'Waste',
+  'mv.CONSUMPTION': 'Used in recipes',
 
   'books.title': 'Books',
   'books.lede': 'Double-entry books per legal entity. Every sale, receipt, transfer and count posts one balanced entry. Entries are never edited; a correction is a reversal.',
@@ -746,6 +747,7 @@ export const fil: Record<MessageKey, string> = {
   'mv.COUNT': 'Bilang',
   'mv.ADJUSTMENT': 'Inayos',
   'mv.WASTE': 'Sira o tapon',
+  'mv.CONSUMPTION': 'Nagamit sa recipe',
 
   'books.title': 'Mga libro',
   'books.lede': 'Double-entry na libro bawat legal entity. Bawat benta, resibo, transfer at bilang ay nagpo-post ng isang balanseng entry. Hindi binabago ang entry; reversal ang pagwawasto.',

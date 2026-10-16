@@ -64,8 +64,29 @@ Exit review (session 5): ✅ traceability audit both ways (`traceability-audit.t
 ⬜ Slice 5 leftovers: supplier returns UI (API done); PO draft line editing (API `PATCH`); supplier edit/archive UI; journal filters by date range / source type; admin document pages for sales, returns and cash movements (their entries trace in the API, not yet in the admin UI); `POST /v1/stock/adjustments` accepts but does not require an Idempotency-Key (other stock documents require one) — decide and align; accountant review answers (ADR-0013 questions 1–10); item names on receipts beyond the first 200 products (needs a variants-by-id lookup); low-stock list shows only items at/below the point — no view of all configured reorder points (no GET).
 ⬜ Phase 3 leftovers: supplier invoices + accounts payable (GRNI → AP, input VAT); low-stock push alerts (outbox event when crossing the reorder point); blind counts (freeze + post later); UoM conversions and purchase units; batch/expiry and serial tracking; landed cost; financial exports (CSV/journal export); accountant review of the default chart and posting policies.
 
-## Phase 4 — Restaurant
-Menus/versions, modifiers, areas/tables, orders (dine-in/takeaway), tickets + stations + KDS, courses, transfer/merge/split, split bills via allocation, service charge, recipes (versioned) + consumption + waste, restaurant reports.
+## Phase 4 — Restaurant (plan: ADR-0014)
+Slice 1 — recipes + consumption (session 6): ✅ done.
+- ✅ `recipe_versions` / `recipe_ingredients` (append-only, effective-dated, no backdating, tracked-ingredient / untracked-item triggers).
+- ✅ `CONSUMPTION` movements at checkout (per line and ingredient, costed at average, in the sale's COGS and its one entry).
+- ✅ Recipe-made lines are not restockable on return or void.
+- ✅ `GET/POST /v1/variants/:id/recipe`.
+- ✅ Traceability audit, isolation and `recipes.test.ts` (5).
+
+⬜ Slice 2 — menu foundation: stations, dining areas/tables, menus + versions + sections/items (station routing), modifier groups/options, per-branch availability (86), restaurant settings.
+⬜ Slice 3 — orders + kitchen: orders/items with modifiers (child lines), fire by course → tickets per station, KDS statuses + bump, transfer/merge/move items, voids after firing (`sales.void`) with a WASTE document when prep started.
+⬜ Slice 4 — bills + checks:
+- frozen bill snapshot with SC/PWD (itemized or headcount share), discounts and service charge;
+- order-mode checkout with exact allocations (whole quantity or n/d shares) and a within-bill DB guard;
+- `sale_lines.parent_line_id`, `sale_charges`, `SERVICE_CHARGE_PAYABLE`;
+- existing reports reconcile with charges;
+- consumption prorated across checks.
+
+⬜ Slice 5 — reports: item performance, theoretical vs actual usage, voids after firing, prep times, open orders, service charge collected (DOLE).
+⬜ Slice 6 — UI: POS table service (floor/order/fire/bill/split/pay), KDS screen, admin for menus/modifiers/recipes/tables/settings.
+⬜ Slice 7 — exit review: full service cycle (SPEC restaurant scenarios 1–10), drills (concurrent checks on one bill, two tablets on one order, void vs settlement), dev audit, design review.
+
+⬜ Out of scope for Phase 4 (later): delivery orders, unit conversions/purchase units for recipes, sub-recipes/prep production, rule-based modifier pricing, tips, reservations, KDS push (SSE) and kitchen printers (Phase 5 devices).
+⬜ Open questions for the tax adviser and the accountant: service charge base and VAT; SC/PWD share of the service charge; service charge as a liability.
 
 ## Phase 5 — Offline & integrations
 Rust/Tauri shell, SQLite local store, durable local outbox, sync protocol, offline cash sales, conflict flags, ESC/POS printer & drawer adapters, real payment provider, EIS/e-invoice adapter (per compliance outcome).

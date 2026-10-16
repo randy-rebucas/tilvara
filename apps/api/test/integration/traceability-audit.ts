@@ -17,12 +17,13 @@ const DOCS = `
   WITH mv AS (
     SELECT m.id, m.branch_id, m.value,
            CASE m.type
-             WHEN 'SALE' THEN 'SALE' WHEN 'RETURN' THEN 'SALE_RETURN' WHEN 'RECEIPT' THEN 'GOODS_RECEIPT'
+             WHEN 'SALE' THEN 'SALE' WHEN 'CONSUMPTION' THEN 'SALE' WHEN 'RETURN' THEN 'SALE_RETURN' WHEN 'RECEIPT' THEN 'GOODS_RECEIPT'
              WHEN 'SUPPLIER_RETURN' THEN 'SUPPLIER_RETURN' WHEN 'TRANSFER_OUT' THEN 'TRANSFER_DISPATCH'
              WHEN 'TRANSFER_IN' THEN 'TRANSFER_RECEIPT' WHEN 'COUNT' THEN 'STOCK_COUNT'
              WHEN 'ADJUSTMENT' THEN 'STOCK_ADJUSTMENT' WHEN 'WASTE' THEN 'STOCK_ADJUSTMENT' END AS doc_type,
            CASE m.type
              WHEN 'SALE' THEN m.sale_id
+             WHEN 'CONSUMPTION' THEN m.sale_id
              WHEN 'RETURN' THEN (SELECT sale_return_id FROM sale_return_lines WHERE id = m.sale_return_line_id)
              WHEN 'RECEIPT' THEN (SELECT goods_receipt_id FROM goods_receipt_lines WHERE id = m.goods_receipt_line_id)
              WHEN 'SUPPLIER_RETURN' THEN (SELECT supplier_return_id FROM supplier_return_lines WHERE id = m.supplier_return_line_id)

@@ -1,11 +1,44 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 5 — Phase 3 slice 5 admin UI, then the Phase 3 exit review)_
+_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014) and slice 1: recipes + consumption)_
 
 ## Current phase
-**Phase 3 — exit criterion met (2026-10-16, session 5): "stock and financial movements remain traceable and consistent".** Outside review still open: the accountant's answers on the default chart and posting rules (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Customers must not rely on the books until then; this does not block Phase 4.
-**Next: Phase 4 — Restaurant** (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md` (§4 accepted and built; §1–3 and §5–11 proposed, not yet reviewed by the user). Slice 1 done; next is slice 2 (see "Next task").
+**Phase 3 — exit criterion met** (session 5). Outside review still open: the accountant's answers (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Customers must not rely on the books until then.
 **Phase 2 — exit criterion met** (session 4, see below).
+
+## Phase 4 slice 1 — recipes and consumption (session 6)
+- **Plan** (ADR-0014) has seven slices. Key decisions:
+  - menu items are catalog variants (one price and tax path);
+  - an order is operational only and becomes sales through a frozen **bill**;
+  - **split checks are exact prorations** of the bill (as returns are);
+  - service charge is a separate charge line posted to a liability (`SERVICE_CHARGE_PAYABLE`, RA 11360); the defaults are flagged for the tax adviser and the accountant;
+  - a void after cooking becomes a WASTE document.
+- **Schema**:
+  - Migrations 0033/0034: `recipe_versions` (numbered, effective-dated, append-only, never backdated) and `recipe_ingredients` (append-only).
+  - Triggers: the sold item must not track stock, and the ingredient must.
+  - New movement type `CONSUMPTION` (outbound, linked to sale + sale line + recipe version; type/direction/link checks updated). The costing trigger needed no change.
+- **Checkout**: `SalesService.create` adds one CONSUMPTION per line and ingredient for untracked lines with a recipe in force (DB clock). These are sorted by variant with the sale's movements, and their value is in the sale's COGS, so the sale still has one entry.
+- **Returns**: RESTOCK of a recipe-made line → `422 NOT_RESTOCKABLE`. A void records such lines as DAMAGED. Ingredients stay consumed.
+- **API**: `GET/POST /v1/variants/:id/recipe` (history with IN_FORCE/SCHEDULED/SUPERSEDED; create needs `restaurant.manage` and the `restaurant` plan feature). Consumption is not feature-gated.
+- The traceability audit maps CONSUMPTION → its SALE. Admin movement label added ("Used in recipes" / "Nagamit sa recipe").
+- **Tests**: `recipes.test.ts` (5):
+  - golden burger costs (bun/beef/cheese at average), sale entry COGS = ingredients + shelf item, movements report;
+  - versions (scheduled waits, new version applies, empty stops consumption, backdating refused in API and DB, append-only);
+  - rules and access, including a starter-plan downgrade where consumption continues;
+  - DAMAGED-only returns and the void restocking only shelf items;
+  - 10 concurrent dish + shelf sales sharing an ingredient in opposite orders (no deadlock, ledger = balances);
+  - the audit is clean in every case.
+- **Isolation**: +2 id routes, +1 smuggling case, both new tables in the DB sweep (the fixture sells a dish).
+
+## Verified in session 6 (commands actually run)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` (18/18) · `pnpm exec oxlint apps packages` (exit 0) · `pnpm --filter @1pos/api openapi` | ok |
+| `pnpm test` | **113 passed** (unchanged) |
+| `pnpm test:integration` | **236 passed**: database 21, api **207** (+5 recipes; isolation extended), workers 8 |
+| `pnpm db:migrate` (dev) | 0033, 0034 applied |
+Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
 **1. Traceability audit.** `apps/api/test/integration/traceability-audit.ts` checks seven SQL invariants per tenant, in both directions:
@@ -206,13 +239,17 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 4 — Restaurant** (SPEC Phase 4; BACKLOG): start with Inspect → Plan, then an ADR for the restaurant order model:
-   - menus and versions, modifiers;
-   - areas and tables; orders (dine-in and takeaway);
-   - tickets, stations and KDS; courses;
-   - transfer, merge and split; split bills by allocation; service charge (check PH rules in `docs/compliance/`);
-   - versioned recipes with consumption and waste. Consumption should post through the Phase 3 stock ledger and books, as documents with movements and one entry each, and keep the traceability audit clean.
+2. User review of ADR-0014's proposed parts. The choices that are theirs to confirm:
+   - prices are fixed when the bill is printed;
+   - an order is locked once a check is paid;
+   - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
+3. **Phase 4 slice 2 — menu foundation** (ADR-0014 §2, §3, §5, §9 settings):
+   - kitchen stations, dining areas and tables;
+   - menus with versions (draft → published → retired, immutable once published), sections and items with station routing;
+   - modifier groups and options (min/max, optional priced variant);
+   - per-branch availability (86);
+   - `restaurant_settings`.
 
-   Slice like Phases 2 and 3: schema + RLS + isolation → API + tests → POS/admin UI → exit review.
-3. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
+   Schema + RLS + isolation → API + tests. Then slices 3 (orders + kitchen), 4 (bills + checks + service charge), 5 (reports), 6 (UI), 7 (exit review).
+4. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

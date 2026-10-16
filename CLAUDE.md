@@ -14,6 +14,7 @@
 - Checkout: only via `SalesService.create` (ADR-0009): required Idempotency-Key + clientTransactionId, server recompute via `TaxService.computeCart`, everything in one transaction.
 - Financial/inventory/audit tables are append-only (trigger `app_forbid_mutation`); corrections are new rows.
 - Stock: insert `stock_movements` only (sorted by variant id); the costing trigger sets cost/value and balances (ADR-0012). Inbound types other than RETURN/TRANSFER_IN/COUNT must pass `unitCost`.
+- Recipes (ADR-0014 §4): an untracked item with a recipe in force consumes its ingredients at checkout as `CONSUMPTION` movements of the SALE (`planConsumption` in `apps/api/src/restaurant/consumption.ts`); never post consumption as a separate document, and recipe-made lines are never restocked.
 - Books: every new operational document posts one entry via `post()` (`apps/api/src/accounting/ledger.ts`) with rules from `@1pos/accounting`, in the same transaction (ADR-0013); `ledger.test.ts` compares GL to evidence.
 - Migrations that back-fill data run as the migrator under FORCE RLS: wrap the backfill in `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` / `FORCE` (see 0014, 0023, 0029), or it silently touches no rows. In plpgsql triggers shared by two tables, read table-specific `NEW` fields in separate IF branches.
 - NestJS: every constructor dependency uses explicit `@Inject(Token)` — Vitest does not emit decorator metadata (SWC native binding fails on this machine, so it was removed).

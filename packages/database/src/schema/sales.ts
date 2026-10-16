@@ -18,6 +18,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { productPrices, productVariants } from './catalog.js';
+import { recipeVersions } from './restaurant.js';
 import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
 import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers } from './organization.js';
@@ -458,6 +459,8 @@ export const stockMovements = pgTable(
     stockTransferLineId: uuid('stock_transfer_line_id'),
     stockCountLineId: uuid('stock_count_line_id'),
     stockAdjustmentId: uuid('stock_adjustment_id'),
+    /** CONSUMPTION: the recipe version the sale line consumed with (ADR-0014 §4). */
+    recipeVersionId: uuid('recipe_version_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -473,6 +476,8 @@ export const stockMovements = pgTable(
     check('stock_movements_count_link', sql`(${t.type} = 'COUNT') = (${t.stockCountLineId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.stockAdjustmentId], foreignColumns: [stockAdjustments.tenantId, stockAdjustments.id] }),
     check('stock_movements_adjustment_link', sql`(${t.type} IN ('ADJUSTMENT','WASTE')) = (${t.stockAdjustmentId} IS NOT NULL)`),
+    foreignKey({ columns: [t.tenantId, t.recipeVersionId], foreignColumns: [recipeVersions.tenantId, recipeVersions.id] }),
+    check('stock_movements_consumption_link', sql`(${t.type} = 'CONSUMPTION') = (${t.recipeVersionId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
@@ -481,14 +486,14 @@ export const stockMovements = pgTable(
     index('stock_movements_item_idx').on(t.tenantId, t.branchId, t.variantId, t.createdAt),
     check(
       'stock_movements_type_check',
-      sql`${t.type} IN ('SALE','ADJUSTMENT','RETURN','RECEIPT','SUPPLIER_RETURN','TRANSFER_OUT','TRANSFER_IN','WASTE','COUNT')`,
+      sql`${t.type} IN ('SALE','ADJUSTMENT','RETURN','RECEIPT','SUPPLIER_RETURN','TRANSFER_OUT','TRANSFER_IN','WASTE','COUNT','CONSUMPTION')`,
     ),
     check('stock_movements_nonzero', sql`${t.quantity} <> 0`),
-    check('stock_movements_sale_link', sql`(${t.type} IN ('SALE','RETURN')) = (${t.saleLineId} IS NOT NULL AND ${t.saleId} IS NOT NULL)`),
+    check('stock_movements_sale_link', sql`(${t.type} IN ('SALE','RETURN','CONSUMPTION')) = (${t.saleLineId} IS NOT NULL AND ${t.saleId} IS NOT NULL)`),
     check('stock_movements_return_link', sql`(${t.type} = 'RETURN') = (${t.saleReturnLineId} IS NOT NULL)`),
     check(
       'stock_movements_direction',
-      sql`(${t.type} IN ('SALE','SUPPLIER_RETURN','TRANSFER_OUT','WASTE') AND ${t.quantity} < 0) OR (${t.type} IN ('RETURN','RECEIPT','TRANSFER_IN') AND ${t.quantity} > 0) OR ${t.type} IN ('ADJUSTMENT','COUNT')`,
+      sql`(${t.type} IN ('SALE','SUPPLIER_RETURN','TRANSFER_OUT','WASTE','CONSUMPTION') AND ${t.quantity} < 0) OR (${t.type} IN ('RETURN','RECEIPT','TRANSFER_IN') AND ${t.quantity} > 0) OR ${t.type} IN ('ADJUSTMENT','COUNT')`,
     ),
     check('stock_movements_reason', sql`${t.type} NOT IN ('ADJUSTMENT','WASTE') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],

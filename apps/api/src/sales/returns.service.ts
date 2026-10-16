@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
+  and,
   cashMovements,
   eq,
   inArray,
@@ -81,15 +82,26 @@ export class ReturnsService extends TenantService {
         priorBy.set(p.saleLineId, acc);
       }
 
+      // Lines made from a recipe consumed their ingredients; cooked food never goes back on the shelf (ADR-0014 §4).
+      const consumedRows = await db
+        .selectDistinct({ saleLineId: stockMovements.saleLineId })
+        .from(stockMovements)
+        .where(and(eq(stockMovements.saleId, saleId), eq(stockMovements.type, 'CONSUMPTION')));
+      const consumed = new Set(consumedRows.map((r) => r.saleLineId));
+
       let requested: { saleLineId: string; quantity: string; disposition: 'RESTOCK' | 'DAMAGED' }[];
       if (input.kind === 'VOID') {
         if (prior.length) throw new AppError('ALREADY_RETURNED', 'Part of this sale was already returned; use a return instead', HttpStatus.CONFLICT);
         if (sale.cashierSessionId !== session.id) {
           throw unprocessable('VOID_OUTSIDE_SESSION', 'A sale can only be voided in the session that made it; use a return');
         }
-        requested = lines.map((l) => ({ saleLineId: l.line.id, quantity: l.line.quantity, disposition: 'RESTOCK' }));
+        requested = lines.map((l) => ({ saleLineId: l.line.id, quantity: l.line.quantity, disposition: consumed.has(l.line.id) ? 'DAMAGED' : 'RESTOCK' }));
       } else {
         requested = input.lines!;
+        const cooked = requested.find((r) => r.disposition === 'RESTOCK' && consumed.has(r.saleLineId));
+        if (cooked) {
+          throw unprocessable('NOT_RESTOCKABLE', 'This item was made from ingredients and cannot go back into stock; return it as damaged', { saleLineId: cooked.saleLineId });
+        }
       }
 
       const rounding = ((sale.taxSnapshot as { roundingMode?: RoundingMode }).roundingMode ?? 'HALF_UP') as RoundingMode;
