@@ -60,6 +60,8 @@ export interface PaymentIntent {
   amount: string;
   status: 'PROCESSING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' | 'CANCELED';
   failureCode: string | null;
+  clientTransactionId: string;
+  createdAt: string;
 }
 
 export interface SaleSummary {

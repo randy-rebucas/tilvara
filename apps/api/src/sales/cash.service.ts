@@ -7,12 +7,17 @@ import {
   cashReconciliations,
   desc,
   eq,
+  inArray,
   isNull,
+  or,
+  paymentIntents,
   registers,
   sql,
   type Database,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
+import { cashMovementPosting, cashVariancePosting } from '@1pos/accounting';
+import { post } from '../accounting/ledger.js';
 import type { ApproveVarianceInput, CashierSessionListQuery, CashMovementInput, CloseCashierSessionInput, OpenCashierSessionInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import type { ResourceScope } from '../auth/authorization.js';
@@ -153,6 +158,16 @@ export class CashService extends TenantService {
         .insert(cashMovements)
         .values({ tenantId: tenantOf(auth).tenantId, cashierSessionId: id, type: input.type, amount, reason: input.reason, createdBy: auth.userId })
         .returning();
+      await post(db, {
+        tenantId: tenantOf(auth).tenantId,
+        legalEntityId: scope.legalEntityId,
+        branchId: session.branchId,
+        sourceType: 'CASH_MOVEMENT',
+        sourceId: row!.id,
+        memo: `${input.type === 'PAY_OUT' ? 'Pay-out' : 'Pay-in'}: ${input.reason}`,
+        lines: cashMovementPosting(amount, session.branchId),
+        createdBy: auth.userId,
+      });
       await this.audit(db, auth, `cash.${input.type.toLowerCase()}`, 'cashier_session', id, { amount: input.amount, reason: input.reason });
       return { ...row!, amount: money(row!.amount) };
     });
@@ -164,6 +179,22 @@ export class CashService extends TenantService {
       const { session, scope } = await loadSession(db, id, true);
       this.assertCanOperate(auth, session, scope);
       if (session.status !== 'OPEN') throw notOpen();
+      // A charge that belongs to no sale must be settled first (ADR-0010 §6): finish the sale,
+      // reconcile, or cancel. New intents need this OPEN session (locked above), so none can appear later.
+      const outstanding = await db
+        .select({ id: paymentIntents.id, status: paymentIntents.status, method: paymentIntents.method, amount: paymentIntents.amount })
+        .from(paymentIntents)
+        .where(
+          and(
+            eq(paymentIntents.cashierSessionId, id),
+            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId))),
+          ),
+        );
+      if (outstanding.length) {
+        throw new AppError('PAYMENTS_OUTSTANDING', 'Card/QR payments on this shift are not settled; complete the sale, check or cancel them first', HttpStatus.CONFLICT, {
+          payments: outstanding.map((p) => ({ ...p, amount: money(p.amount) })),
+        });
+      }
       const expected = await expectedCash(db, id);
       const variance = toDec(input.countedCash).minus(expected).toString();
       await db.insert(cashReconciliations).values({
@@ -177,6 +208,17 @@ export class CashService extends TenantService {
       });
       await db.update(cashierSessions).set({ status: 'CLOSED', closedBy: auth.userId, closedAt: sql`now()` }).where(eq(cashierSessions.id, id));
       if (toDec(variance).isZero()) await db.update(cashierSessions).set({ status: 'RECONCILED' }).where(eq(cashierSessions.id, id));
+      // A drawer that is short or over moves the books when counted (approval is about who answers for it).
+      await post(db, {
+        tenantId: tenantOf(auth).tenantId,
+        legalEntityId: scope.legalEntityId,
+        branchId: session.branchId,
+        sourceType: 'CASH_VARIANCE',
+        sourceId: id,
+        memo: `Drawer count variance${input.note ? `: ${input.note}` : ''}`,
+        lines: cashVariancePosting(variance, session.branchId),
+        createdBy: auth.userId,
+      });
       await this.audit(db, auth, 'cashier_session.closed', 'cashier_session', id, { expected, counted: input.countedCash, variance });
       const [updated] = await db.select().from(cashierSessions).where(eq(cashierSessions.id, id));
       return this.view(db, updated!, true);

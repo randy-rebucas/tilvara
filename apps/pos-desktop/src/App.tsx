@@ -88,7 +88,10 @@ export function App() {
         </nav>
       }
     >
-      {tab === 'sell' && <Sell shift={shift} />}
+      {/* Kept mounted: a cart and its authorized card/QR payments survive a look at the shift history. */}
+      <div hidden={tab !== 'sell'}>
+        <Sell shift={shift} active={tab === 'sell'} />
+      </div>
       {tab === 'history' && <History shift={shift} permissions={me.activeTenant?.permissions ?? []} />}
       {tab === 'close' && <CloseShift shift={shift} onClosed={() => setStage({ name: 'register', me })} />}
     </Shell>

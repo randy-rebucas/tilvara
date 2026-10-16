@@ -23,6 +23,8 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { expectedCash, loadSession } from './cash.service.js';
+import { saleReturnPosting } from '@1pos/accounting';
+import { post } from '../accounting/ledger.js';
 
 const BUCKETS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
@@ -146,9 +148,13 @@ export class ReturnsService extends TenantService {
         .values(planned.map((p) => ({ tenantId, saleReturnId: doc!.id, saleLineId: p.line.id, quantity: p.quantity.toString(), disposition: p.req.disposition, ...out(p.amounts) })))
         .returning({ id: saleReturnLines.id, saleLineId: saleReturnLines.saleLineId });
 
-      const restock = planned.filter((p) => p.req.disposition === 'RESTOCK' && p.trackInventory);
+      // Sorted by variant (lock order, ADR-0012 §7); the ledger trigger costs them at the sale's cost.
+      const restock = planned
+        .filter((p) => p.req.disposition === 'RESTOCK' && p.trackInventory)
+        .sort((a, b) => (a.line.variantId < b.line.variantId ? -1 : a.line.variantId > b.line.variantId ? 1 : 0));
+      let restockedValue = new Dec(0);
       if (restock.length) {
-        await db.insert(stockMovements).values(
+        const moved = await db.insert(stockMovements).values(
           restock.map((p) => ({
             tenantId,
             branchId: sale.branchId,
@@ -160,8 +166,25 @@ export class ReturnsService extends TenantService {
             saleReturnLineId: inserted.find((i) => i.saleLineId === p.line.id)!.id,
             createdBy: auth.userId,
           })),
-        );
+        ).returning({ value: stockMovements.value });
+        restockedValue = moved.reduce((a, m) => a.plus(m.value), new Dec(0));
       }
+      await post(db, {
+        tenantId,
+        legalEntityId: sale.legalEntityId,
+        branchId: sale.branchId,
+        sourceType: 'SALE_RETURN',
+        sourceId: doc!.id,
+        memo: `${input.kind === 'VOID' ? 'Void' : 'Return'} #${returnNumber} of sale #${sale.saleNumber}`,
+        lines: saleReturnPosting({
+          salesExVat: totals.vatableSales.plus(totals.vatExemptSales).plus(totals.zeroRatedSales).plus(totals.percentageTaxSales),
+          vatAmount: totals.vatAmount,
+          statutoryDiscount: totals.statutoryDiscount,
+          refund,
+          restocked: restockedValue,
+        }, sale.branchId),
+        createdBy: auth.userId,
+      });
       if (refund.gt(0)) {
         await db.insert(cashMovements).values({
           tenantId,

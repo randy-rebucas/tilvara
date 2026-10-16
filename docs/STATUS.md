@@ -1,10 +1,58 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 3)_
+_Last updated: 2026-10-16 (session 4 — Phase 2 exit review, then Phase 3 slices 1–4)_
 
 ## Current phase
-**Phase 2 — Retail transaction engine: IN PROGRESS.** Slices 1 (tax foundation, `7ee1f3a`), 2 (sales core, `f0fd882`), 3 (payments + receipts, `67486d7`), 4 (voids/returns, `5fb1071`), 5 (reports, `b70936c`) and 6 (POS browser checkout) done and verified (session 3, resumed 2026-10-16 after an interruption; Docker Desktop had to be restarted).
-Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
+**Phase 3 — Inventory, purchasing, accounting: IN PROGRESS — API slices 1–4 done and verified (session 4, uncommitted at time of writing).** Remaining: slice 5 admin UI, then the Phase 3 exit review ("stock and financial movements remain traceable and consistent").
+**Phase 2 — exit criterion met** (session 4, see below).
+
+## Phase 3 (session 4)
+- **Slice 1 — costing (ADR-0012)**: migrations 0022/0023. Every stock movement carries `unit_cost`/`value`; balances carry `value`/`avg_cost`; a `BEFORE INSERT` trigger (owned by `onepos_platform`) costs each movement under the balance row lock — outbound at the average (emptying takes the exact remainder), customer returns at the sale's cost, inbound averages; a receipt after selling short restarts the average and shows the revaluation. Inserts sorted by variant (lock order). `costing.test.ts` (6): golden vectors, rounding remainder, defaults, app cannot choose an outbound cost or bring stock in without one, 12 concurrent opposite-order multi-item sales.
+- **Slice 2 — purchasing**: migrations 0024/0025, `apps/api/src/purchasing`. Suppliers; purchase orders (DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED / CANCELLED, trigger-enforced, draft-only edits); goods receipts (accepted vs rejected with reason, invoice/DR refs, order lock + DB over-receipt guard); supplier returns (average out, credit at receipt cost, DB guard). `purchasing.test.ts` (8).
+- **Slice 3 — inventory ops**: migrations 0026/0027, `apps/api/src/inventory`. Transfers (in transit → received once, shortfall reason, arrive at dispatch cost, same legal entity only); counts (variance = counted − on hand computed by the trigger at posting; equal → no movement); waste; reorder points + low stock net of open orders; reports `inventory-valuation`, `stock-movements`, by-product revenue ex VAT / COGS / gross profit. `inventory.test.ts` (6).
+- **Slice 4 — double-entry ledger (ADR-0013)**: migrations 0028–0030, new pure package `@1pos/accounting` (posting rules + default chart, 13 unit tests), `apps/api/src/accounting`. Chart per legal entity (seeded on create, back-filled), months as periods, append-only journal; every sale, return/void, goods receipt, supplier return, adjustment/waste, count, transfer dispatch/receipt, pay-in/out and drawer variance posts one balanced entry in its own transaction; manual entries, reversals (once), period close (not the month in progress) / reopen (reason), trial balance. `ledger.test.ts` (5): one entry per document, GL inventory/transit/cash/clearing/output VAT/revenue/COGS/GRNI/waste/adjustments = evidence, trial balance balances, DB refuses unbalanced entries at commit and entries in closed months.
+- Isolation suite now covers 15 more id routes, ~31 more smuggling cases and 16 more tables.
+- **Defects found and fixed this phase**: (1) migration 0023's legacy-cost backfill ran under FORCE RLS and updated nothing (only the throwaway test DB had run it) — fixed in place with `NO FORCE` around the backfill, same pattern as 0014; dev DB verified (balances = Σ movement values; all 29 entities got the 17-account chart). (2) The journal balance trigger referenced `NEW.journal_entry_id` in a CASE plpgsql resolves for both tables → every posting failed; fixed by 0030 (found by the full integration run).
+- Dev DB migrated to 0030.
+
+## Verified in session 4 — Phase 3 (commands actually run, all green)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` (18/18) · `pnpm exec oxlint apps packages` · `pnpm --filter @1pos/api openapi` | ok, no warnings |
+| `pnpm test` | **107 passed** (api 34, tax 27, money 15, accounting 13, config 6, validation 5, observability 5, workers 2) |
+| `pnpm test:integration` | **219 passed** — database 21, api **190** (+ costing 6, purchasing 8, inventory 6, ledger 5; isolation extended), workers 8 |
+| `pnpm test:e2e:pos` / `pnpm test:e2e:web` | **19/19** / **19/19** against the live API with posting enabled |
+| `pnpm db:migrate` (dev) | 0022–0030 applied; backfills verified by SQL |
+Slices 1 (`7ee1f3a`), 2 (`f0fd882`), 3 (`67486d7`), 4 (`5fb1071`), 5 (`b70936c`), 6 (`694d448`) done. Phase 1 done (`5878fc8`, `980eeda`). Phase 0 done (`159b94e`).
+
+## Phase 2 exit review (session 4)
+**1. Reconciliation audit** — chain sale → tenders → drawer → stock → reports → session traced through `SalesService`, `ReturnsService`, `CashService`, `ReportsService`. Untested paths found and now covered by `apps/api/test/integration/reconciliation.test.ts`:
+- a multi-register, multi-session day: two shifts on R1 + one on R2, card / QR+cash / SC sales, a **card-paid sale refunded in cash** from another cashier's drawer (ADR-0011: cash refunds only), a damaged return and a void in a later session. Asserted: summary/by-tender/by-product/by-cashier/tax-summary net all equal Σ sales − Σ returns from the evidence tables; each session report holds only its own drawer movements; Σ drawers − floats = cash collected − cash refunded; recorded `expected_cash` = ledger and nothing posted after close; every intent consumed once; stock balance = Σ ledger = opening − sold + restocked.
+- local business days at UTC+14 and UTC−11 (same instant → different days; ±1 day excluded). **Not tested:** one session physically spanning local midnight (needs clock control); covered by construction (session reports filter by session id, day reports by instant ranges — both tested).
+- Invariants written down in `docs/architecture/DOMAIN_MODEL.md` ("Reconciliation invariants").
+
+**2. Failure drills** — `apps/api/test/integration/failure-drills.test.ts` (8): API restart after commit (fresh instance replays the same key; new key + same transaction → `DUPLICATE_TRANSACTION` with `saleId`); **DB connection killed mid-checkout** (backend terminated while the sale waits on the session row lock → 503, nothing written, same key then sells once); **DB unreachable** (quote, payment, sale → 503, nothing written); **DB restart while idle** (dropped pool connections discarded); provider timeout (sale refused, close refused, reconcile → one charge); authorized card whose sale failed; never-received request; double-click/retry/new-key duplicates → one sale.
+Defects found by the drills and fixed:
+- **API process crash on a dropped DB connection** — pg emits `'error'` on a checked-out client whose server connection dies; unhandled, it exits Node. `transaction()` (`@1pos/database`) now listens while the client is checked out and destroys broken clients (`release(err)`); API and worker pools have `'error'` listeners for idle clients.
+- **DB failures answered 500** → now **503 `SERVICE_UNAVAILABLE` + `Retry-After`** (`isTransientDbError`: connection errors, SQLSTATE 08/57P01-03/53300/57014/40001/40P01; unit-tested).
+- **Orphan charges**: a shift could close with a card payment authorized but in no sale (or UNKNOWN) → close now `409 PAYMENTS_OUTSTANDING` (ADR-0010 §6).
+- **Resubmit dead end**: `DUPLICATE_TRANSACTION` now carries `saleId`/`saleNumber`; the POS shows that sale's receipt.
+POS (unknown-outcome handling): no answer **or 5xx** keeps the Idempotency-Key for sales, card/QR requests and returns (5xx used to mint a new key); a card/QR request with no answer is retried with the same key, and a different payment first re-reads the session's intents; double-click guarded; Card/QR disabled while a payment has no answer; PROCESSING gets "Check payment"; **Sell stays mounted behind other tabs** (switching to "This shift" used to drop the cart and any authorized payment); close screen lists unsettled payments with Check/Cancel. **POS business picker was broken** (expected `tokens` from `/auth/switch-tenant`, which returns `accessToken`) — fixed; found by the review pass.
+
+**3. POS review captures + design finish review** — new `apps/pos-desktop/e2e/review.mjs` (14 states × 1440/390 → `.impeccable/review/pos/screens/`, 30 checks). Finish review (impeccable-finish-reviewer) returned 11 material fixes; done: money inputs had no box (`Field` className overwritten), Card/QR enabled during "no answer", raw status enums/failure codes and "Paid by" on declined payments (now worded + coloured tags, EN/FIL), change due at figure size, all counter targets 48px, "Remove discount" as a button and trash spaced apart, close screen order/disabled submit/danger cancel, variance shown as Expected/Counted/Short-Over, receipt deductions with "−" and TOTAL DUE → tenders → tendered → change, sale time in shift history, reason shown when Complete is disabled. Deferred to BACKLOG: sticky total/pay bar on phones, tender + voided/returned tags in shift history, SC block duplicate discount line on receipt.
+
+**4. Docs** — ARCHITECTURE §5/§6 rewritten "as built" (ADR-0008..0011, one-transaction checkout, failure semantics), DOMAIN_MODEL state machines as built + reconciliation invariants, ADR-0010 §6, API CONVENTIONS (409 codes, 503), CLAUDE.md commands.
+
+## Verified in session 4 (commands actually run, all green)
+| Command | Result |
+|---|---|
+| `pnpm build` · `pnpm typecheck` (16/16) · `pnpm exec oxlint apps packages` | ok, no warnings |
+| `pnpm test` | **94 passed** (api 34 incl. 12 new transient-error cases, tax 27, money 15, config 6, validation 5, observability 5, workers 2) |
+| `pnpm test:integration` | **193 passed** — database 21, api **164** (+8 failure drills, +2 reconciliation), workers 8 |
+| `pnpm test:e2e:pos` | **19/19** (+4: cart survives tab switch, double-click → one sale R1-000003, close refused over an unsettled card payment, cancel → balanced) |
+| `node apps/pos-desktop/e2e/review.mjs` | **30/30** |
+| `pnpm test:e2e:web` | **19/19** (shared CDP harness now prefers visible elements) |
+Note: the integration run preceded the final POS-only UI edits; API/database code did not change after it.
 
 ### Phase 2 slice 1 — tax foundation (session 3)
 - ADR-0008 (`docs/decisions/ADR-0008-tax-engine.md`): seller = versioned `tax_profiles`, item = `tax_categories.vat_treatment`, buyer entitlement = platform `discount_schemes`; pure engine; per-line centavo rounding; snapshots; review gate.
@@ -80,5 +128,7 @@ Phase 1 done (exit review session 2: `5878fc8`, `980eeda`). Phase 0 done (`159b9
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-**Phase 2 exit review** — criterion: "complete retail transactions reconcile under normal, retry, and failure conditions". (1) Audit the reconciliation evidence end to end (sale → tenders → drawer → stock → reports → session) and list any path without a test (e.g. returns of card-paid sales refunded in cash, multi-session days, cross-midnight local dates). (2) Failure drills: API restart mid-checkout (idempotent replay), DB unavailable during quote/sale (no partial rows), provider timeout during checkout, duplicate submits from the POS. (3) Review captures of all POS states (admin review.mjs equivalent) + design finish review. (4) Docs: architecture/domain model refresh for Phase 2, declare the exit criterion met or list gaps. Then Phase 3 (inventory, purchasing, accounting).
-Carried: admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds (needs sandbox keys); Z-reading/fiscal gate G2; CSP header for POS hosting.
+1. Commit the session-4 work if not yet committed (`git status`): Phase 2 exit review and Phase 3 slices 1–4 are both uncommitted.
+2. **Phase 3 slice 5 — admin UI** (Salapi world, EN/FIL, BFF): suppliers; purchase orders with receiving (accept/reject per line); transfers (dispatch/receive); counts; low stock; inventory valuation + stock movements; books (chart, journal with source links, trial balance, period close). Extend `e2e/smoke.mjs` + `review.mjs`.
+3. **Phase 3 exit review**: audit traceability both ways (document ↔ movement ↔ entry), drills for purchasing/transfers under failure and concurrency, accountant review request for ADR-0013's chart and policies; then declare the criterion met or list gaps.
+Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -1,13 +1,13 @@
 import { CreditCard, Minus, Plus, QrCode, ScanLine, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { useT } from '../i18n';
+import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
 import { add, gte, isPositive, isZero, parseAmount, quickTenders, sub } from '../lib/money';
 import type { LookupItem, PaymentIntent, Quote, Receipt as ReceiptData } from '../types';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
-import { Callout, Field, Money, Note } from './ui';
+import { Callout, Field, methodLabel, Money, Note, PaymentTag } from './ui';
 
 interface CartLine {
   id: string;
@@ -30,14 +30,17 @@ interface ProductHit {
   variants: { id: string; sku: string; name: string | null }[];
 }
 
+/** No answer, or the server/database failed: the request may or may not have taken effect. */
+const unanswered = (err: unknown) => err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500);
+
 const errorText = (err: unknown, fallback: string, network: string) =>
-  err instanceof ApiFailure ? (err.error.status === 0 ? network : err.error.message) : fallback;
+  err instanceof ApiFailure ? (unanswered(err) ? network : err.error.message) : fallback;
 
 /**
  * The counter: scan → cart priced by the server (/v1/tax/quote) → tender → POST /v1/sales.
  * The client never computes prices or taxes; it only shows what the server returns.
  */
-export function Sell({ shift }: { shift: Shift }) {
+export function Sell({ shift, active = true }: { shift: Shift; active?: boolean }) {
   const { t } = useT();
   const scanRef = useRef<HTMLInputElement>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -54,8 +57,15 @@ export function Sell({ shift }: { shift: Shift }) {
   const [cash, setCash] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  // Synchronous guards: a double click lands before React re-renders the disabled button.
+  const busy = useRef(false);
+  // Card/QR request whose answer never arrived: retried with the same key, so it cannot charge twice.
+  const unansweredIntent = useRef<{ key: string; method: PaymentIntent['method']; amount: string } | null>(null);
 
   const focusScan = () => requestAnimationFrame(() => scanRef.current?.focus());
+  useEffect(() => {
+    if (active) focusScan();
+  }, [active]);
 
   // Server-authoritative pricing and tax for the current cart.
   useEffect(() => {
@@ -159,17 +169,43 @@ export function Sell({ shift }: { shift: Shift }) {
   const covered = isZero(remaining) || (cashAmount !== null && gte(cashAmount, remaining));
   const pendingIntent = intents.some((i) => i.status === 'UNKNOWN' || i.status === 'PROCESSING');
   const canComplete = cart.length > 0 && !!quote && !quoting && covered && !pendingIntent && !submitting;
+  // Why "Complete sale" is disabled, in words (only for things the cashier can act on).
+  const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : quote && !quoting && !covered ? 'pay.needCash' : null;
+
+  /** The server's record of this checkout's card/QR payments (finds one whose answer was lost). */
+  async function syncIntents() {
+    const { data } = await api<{ data: PaymentIntent[] }>('GET', `/v1/payment-intents?cashierSessionId=${shift.sessionId}`);
+    setIntents(data.filter((i) => i.clientTransactionId === txId).reverse());
+  }
 
   async function takeElectronic(method: PaymentIntent['method']) {
-    if (!isPositive(remaining)) return;
-    const key = uuid();
+    if (!isPositive(remaining) || busy.current) return;
+    busy.current = true;
     try {
+      const pending = unansweredIntent.current;
+      if (pending && (pending.method !== method || pending.amount !== remaining)) {
+        // A different payment after a lost answer: first learn whether the earlier one went through.
+        await syncIntents();
+        unansweredIntent.current = null;
+        setNotice({ kind: 'info', text: t('pay.synced') });
+        return;
+      }
+      const key = pending?.key ?? uuid();
+      unansweredIntent.current = { key, method, amount: remaining };
       const intent = await api<PaymentIntent>('POST', '/v1/payment-intents', { cashierSessionId: shift.sessionId, clientTransactionId: txId, method, amount: remaining }, { 'idempotency-key': key });
-      setIntents((xs) => [...xs, intent]);
-      if (intent.status === 'FAILED') setNotice({ kind: 'warn', text: t('pay.declined', { code: intent.failureCode ?? '' }) });
-      if (intent.status === 'UNKNOWN') setNotice({ kind: 'warn', text: t('pay.unknown') });
+      unansweredIntent.current = null;
+      setIntents((xs) => [...xs.filter((i) => i.id !== intent.id), intent]);
+      setNotice(null);
+      // An unanswered payment is explained next to it, in the payment panel.
+      if (intent.status === 'FAILED') setNotice({ kind: 'warn', text: t('pay.declined') });
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      if (unanswered(err)) setNotice({ kind: 'warn', text: t('pay.intentUnconfirmed') });
+      else {
+        unansweredIntent.current = null;
+        setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      }
+    } finally {
+      busy.current = false;
     }
   }
 
@@ -177,14 +213,15 @@ export function Sell({ shift }: { shift: Shift }) {
     try {
       const updated = await api<PaymentIntent>('POST', `/v1/payment-intents/${id}/${action}`);
       setIntents((xs) => xs.map((i) => (i.id === id ? updated : i)));
-      setNotice(updated.status === 'FAILED' ? { kind: 'warn', text: t('pay.declined', { code: updated.failureCode ?? '' }) } : null);
+      setNotice(updated.status === 'FAILED' ? { kind: 'warn', text: t('pay.declined') } : null);
     } catch (err) {
       setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
     }
   }
 
   async function complete() {
-    if (!quote) return;
+    if (!quote || busy.current) return;
+    busy.current = true;
     setSubmitting(true);
     const tenders = [
       ...intents.filter((i) => i.status === 'SUCCEEDED').map((i) => ({ method: 'INTENT', paymentIntentId: i.id })),
@@ -207,9 +244,18 @@ export function Sell({ shift }: { shift: Shift }) {
       setReceipt(await api<ReceiptData>('GET', `/v1/sales/${sale.id}/receipt`));
       setNotice(null);
     } catch (err) {
-      if (err instanceof ApiFailure && err.error.status === 0) {
+      const recorded = err instanceof ApiFailure && err.error.code === 'DUPLICATE_TRANSACTION' ? err.error.details?.saleId : undefined;
+      if (unanswered(err)) {
         // Unknown outcome: keep the same key so retrying cannot create a second sale.
-        setNotice({ kind: 'error', text: t('common.network') });
+        setNotice({ kind: 'warn', text: t('pay.unconfirmed') });
+      } else if (typeof recorded === 'string') {
+        // This checkout was already recorded (an earlier answer was lost): show that sale's receipt.
+        try {
+          setReceipt(await api<ReceiptData>('GET', `/v1/sales/${recorded}/receipt`));
+          setNotice(null);
+        } catch (e) {
+          setNotice({ kind: 'warn', text: errorText(e, t('common.error'), t('pay.unconfirmed')) });
+        }
       } else {
         setSaleKey(uuid());
         if (err instanceof ApiFailure && err.error.code === 'TOTAL_CHANGED') {
@@ -218,6 +264,7 @@ export function Sell({ shift }: { shift: Shift }) {
         } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
       }
     } finally {
+      busy.current = false;
       setSubmitting(false);
     }
   }
@@ -231,6 +278,7 @@ export function Sell({ shift }: { shift: Shift }) {
     setNotice(null);
     setTxId(uuid());
     setSaleKey(uuid());
+    unansweredIntent.current = null;
     focusScan();
   }
 
@@ -303,7 +351,7 @@ export function Sell({ shift }: { shift: Shift }) {
                             <span className="chip bg-blue">{b.scheme}</span>
                             <span>{b.name}</span>
                             <span className="serial text-muted">{b.idNumber}</span>
-                            <button className="text-blue underline" onClick={() => clearStatutory(l.id)}>{t('sell.removeDiscount')}</button>
+                            <button className="btn btn-sm btn-danger" onClick={() => clearStatutory(l.id)}>{t('sell.removeDiscount')}</button>
                           </p>
                         )}
                       </div>
@@ -332,7 +380,8 @@ export function Sell({ shift }: { shift: Shift }) {
                             {t('sell.sc')}
                           </button>
                         )}
-                        <button className="btn btn-sm btn-danger" aria-label={t('sell.remove')} onClick={() => remove(l.id)}>
+                        {/* Kept apart from the other row controls: one mis-tap must not drop a line. */}
+                        <button className="btn btn-sm btn-danger ml-3" aria-label={t('sell.remove')} onClick={() => remove(l.id)}>
                           <Trash2 className="size-4" aria-hidden />
                         </button>
                       </div>
@@ -386,16 +435,27 @@ export function Sell({ shift }: { shift: Shift }) {
         </Note>
 
         <Note className="grid gap-3 p-5">
-          {intents.map((i) => (
-            <div key={i.id} className="flex flex-wrap items-center justify-between gap-2 text-[0.9375rem]">
-              <span>
-                {t('pay.paidElectronic', { method: i.method })} <span className="tag">{i.status}</span>
-              </span>
-              <Money value={i.amount} />
-              {i.status === 'UNKNOWN' && <button className="btn btn-sm" onClick={() => settleIntent(i.id, 'reconcile')}>{t('pay.check')}</button>}
-              {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger" onClick={() => settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
-            </div>
-          ))}
+          {intents.map((i) => {
+            const charged = i.status !== 'FAILED' && i.status !== 'CANCELED';
+            const waiting = i.status === 'UNKNOWN' || i.status === 'PROCESSING';
+            return (
+              <div key={i.id} className="grid gap-2 text-[0.9375rem]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className={charged ? '' : 'text-muted'}>
+                    {t(waiting ? 'pay.notConfirmed' : charged ? 'pay.paidElectronic' : 'pay.notCharged', { method: t(methodLabel(i.method)) })} <PaymentTag status={i.status} />
+                  </span>
+                  <Money value={i.amount} className={charged ? '' : 'text-muted line-through'} />
+                </div>
+                {waiting && (
+                  <>
+                    <Callout kind="warn">{t('pay.unknown')}</Callout>
+                    <button className="btn w-full" onClick={() => settleIntent(i.id, 'reconcile')}>{t('pay.check')}</button>
+                  </>
+                )}
+                {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger justify-self-end" onClick={() => settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
+              </div>
+            );
+          })}
           {intents.length > 0 && (
             <p className="flex justify-between font-semibold">
               <span>{t('pay.remaining')}</span>
@@ -416,27 +476,33 @@ export function Sell({ shift }: { shift: Shift }) {
                 ))}
               </div>
               {cashAmount && (
-                <p className="flex justify-between text-[1.0625rem]" aria-live="polite">
+                // After the total, the change is the number the cashier acts on: figure size.
+                <p className="flex items-baseline justify-between gap-3" aria-live="polite">
                   {gte(cashAmount, remaining) ? (
                     <>
-                      <span>{t('pay.change')}</span>
-                      <Money value={sub(cashAmount, remaining)} className="font-semibold" />
+                      <span className="text-[1.0625rem]">{t('pay.change')}</span>
+                      <Money value={sub(cashAmount, remaining)} className="text-[1.875rem] font-semibold leading-tight" />
                     </>
                   ) : (
-                    <span className="text-red">{t('pay.short', { amount: sub(remaining, cashAmount) })}</span>
+                    <>
+                      <span className="text-[1.0625rem] text-red">{t('pay.shortLabel')}</span>
+                      <Money value={sub(remaining, cashAmount)} className="text-[1.875rem] font-semibold leading-tight text-red" />
+                    </>
                   )}
                 </p>
               )}
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" className="btn" disabled={!quote || quoting} onClick={() => takeElectronic('CARD')}>
+                {/* No second charge while an earlier one has no answer: check it first. */}
+                <button type="button" className="btn" disabled={!quote || quoting || pendingIntent} onClick={() => takeElectronic('CARD')}>
                   <CreditCard className="size-4" aria-hidden /> {t('pay.card')}
                 </button>
-                <button type="button" className="btn" disabled={!quote || quoting} onClick={() => takeElectronic('QR')}>
+                <button type="button" className="btn" disabled={!quote || quoting || pendingIntent} onClick={() => takeElectronic('QR')}>
                   <QrCode className="size-4" aria-hidden /> {t('pay.qr')}
                 </button>
               </div>
             </>
           )}
+          {cart.length > 0 && blocker && <p className="text-[0.875rem] text-muted">{t(blocker)}</p>}
           <button className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canComplete} onClick={complete}>
             {t('pay.complete')}
           </button>

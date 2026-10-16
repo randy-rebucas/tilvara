@@ -24,6 +24,22 @@ const DEFAULT_CODES: Record<number, string> = {
   429: 'RATE_LIMITED',
 };
 
+const TRANSIENT_NET = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN']);
+// SQLSTATE: connection exceptions (08…), shutdown/crash/cannot-connect (57P01-03), too many
+// connections, statement timeout, serialization failure, deadlock — the transaction did not
+// complete as asked, and the same request may be retried with the same Idempotency-Key.
+const TRANSIENT_SQL = /^(08...|57P0[123]|53300|57014|40001|40P01)$/;
+const TRANSIENT_MSG = /Connection terminated|timeout exceeded when trying to connect|connection error/i;
+
+/** True when the database was unreachable or dropped/aborted the work: answer 503, not 500. */
+export function isTransientDbError(e: unknown): boolean {
+  for (let err = e as { code?: unknown; message?: unknown; cause?: unknown } | undefined, depth = 0; err && depth < 4; err = err.cause as typeof err, depth++) {
+    if (typeof err.code === 'string' && (TRANSIENT_NET.has(err.code) || TRANSIENT_SQL.test(err.code))) return true;
+    if (typeof err.message === 'string' && TRANSIENT_MSG.test(err.message)) return true;
+  }
+  return false;
+}
+
 @Catch()
 export class HttpErrorFilter implements ExceptionFilter {
   private readonly logger = new Logger('HttpError');
@@ -53,6 +69,13 @@ export class HttpErrorFilter implements ExceptionFilter {
         pgCode: err?.cause?.code,
       },
     });
+    if (isTransientDbError(exception)) {
+      res
+        .status(HttpStatus.SERVICE_UNAVAILABLE)
+        .setHeader('Retry-After', '2')
+        .json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'The service is temporarily unavailable. Retry the same request.', correlationId } });
+      return;
+    }
     res
       .status(HttpStatus.INTERNAL_SERVER_ERROR)
       .json({ error: { code: 'INTERNAL', message: 'An unexpected error occurred.', correlationId } });

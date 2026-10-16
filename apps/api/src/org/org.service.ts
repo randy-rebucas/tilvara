@@ -26,6 +26,7 @@ import { archived, notFound, TenantService, type ConflictMap } from '../common/t
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { insertProfile, profilesInForce, scheduledProfiles, type TaxProfileView } from '../tax/tax-profiles.js';
+import { seedChart } from '../accounting/ledger.js';
 
 type LegalEntityRow = typeof legalEntities.$inferSelect;
 
@@ -75,6 +76,8 @@ export class OrgService extends TenantService {
       const [row] = await db.insert(legalEntities).values({ ...entity, tenantId }).returning();
       // The initial tax profile is created atomically with the entity.
       await insertProfile(db, { tenantId, legalEntityId: row!.id, vatStatus, roundingMode, createdBy: auth.userId, note: 'Initial profile' });
+      // Its books exist from the start: every sale and stock movement posts to them (ADR-0013).
+      await seedChart(db, tenantId, row!.id);
       await this.audit(db, auth, 'legal_entity.created', 'legal_entity', row!.id, { vatStatus });
       return (await withTaxProfiles(db, [row!]))[0]!;
     });

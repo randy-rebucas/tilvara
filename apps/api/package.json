@@ -13,6 +13,7 @@
     "openapi": "node dist/openapi/generate.js"
   },
   "dependencies": {
+    "@1pos/accounting": "workspace:*",
     "@1pos/config": "workspace:*",
     "@1pos/database": "workspace:*",
     "@1pos/money": "workspace:*",

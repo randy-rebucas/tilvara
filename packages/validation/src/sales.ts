@@ -167,11 +167,30 @@ const signedQuantity = z
   .regex(/^-?\d{1,14}(\.\d{1,4})?$/, 'Use a decimal string such as "12" or "-1.5"')
   .refine((v) => Number(v) !== 0, 'Quantity must not be zero');
 
-export const stockAdjustmentSchema = z.object({
-  branchId: z.uuid(),
-  reason: z.string().trim().min(1).max(200),
-  items: z.array(z.object({ variantId: z.uuid(), quantity: signedQuantity })).min(1).max(500),
-});
+export const stockAdjustmentSchema = z
+  .object({
+    branchId: z.uuid(),
+    /** WASTE = spoiled/expired/damaged stock written off (removals only); ADJUSTMENT = any correction. */
+    kind: z.enum(['ADJUSTMENT', 'WASTE']).default('ADJUSTMENT'),
+    reason: z.string().trim().min(1).max(200),
+    items: z
+      .array(
+        z.object({
+          variantId: z.uuid(),
+          quantity: signedQuantity,
+          /** Cost of stock coming in (ADR-0012); ignored for removals, which leave at the average. Default: the last average, else the reference cost. */
+          unitCost: amountSchema.optional(),
+        }),
+      )
+      .min(1)
+      .max(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind !== 'WASTE') return;
+    v.items.forEach((i, n) => {
+      if (!i.quantity.startsWith('-')) ctx.addIssue({ code: 'custom', path: ['items', n, 'quantity'], message: 'Waste removes stock: use a negative quantity' });
+    });
+  });
 export type StockAdjustmentInput = z.infer<typeof stockAdjustmentSchema>;
 
 export const stockQuerySchema = z.object({

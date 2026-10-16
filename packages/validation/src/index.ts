@@ -5,3 +5,6 @@ export * from './permissions.js';
 export * from './team.js';
 export * from './tax.js';
 export * from './sales.js';
+export * from './purchasing.js';
+export * from './inventory.js';
+export * from './accounting.js';

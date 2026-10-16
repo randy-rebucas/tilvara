@@ -106,10 +106,12 @@ export async function signIn(email: string, password: string, tenantId?: string)
   return { activeTenantId };
 }
 
+/** A new access token for the chosen business; the refresh token (same session) stays. */
 export async function switchTenant(tenantId: string) {
-  const data = await api<{ activeTenantId: string; tokens: Tokens }>('POST', '/v1/auth/switch-tenant', { tenantId });
-  tokens = { accessToken: data.tokens.accessToken, refreshToken: data.tokens.refreshToken };
-  activeTenantId = data.activeTenantId;
+  const data = await api<{ accessToken: string; accessTokenExpiresAt: string }>('POST', '/v1/auth/switch-tenant', { tenantId });
+  if (!tokens) throw new ApiFailure({ status: 401, code: 'UNAUTHENTICATED', message: 'Sign in again' });
+  tokens = { accessToken: data.accessToken, refreshToken: tokens.refreshToken };
+  activeTenantId = tenantId;
 }
 
 export async function signOut() {

@@ -32,6 +32,8 @@ import { TaxService, unprocessable } from '../tax/tax.service.js';
 import { loadSession } from './cash.service.js';
 import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
+import { salePosting } from '@1pos/accounting';
+import { post } from '../accounting/ledger.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -66,10 +68,23 @@ export class SalesService extends TenantService {
       const tenantId = tenantOf(auth).tenantId;
       const { session, scope } = await loadSession(db, input.cashierSessionId, true);
       this.assertCan(auth, 'sales.create', scope);
-      if (session.status !== 'OPEN') throw new AppError('SESSION_NOT_OPEN', 'This cashier session is not open', HttpStatus.CONFLICT);
       if (session.openedBy !== auth.userId) {
         throw new AppError('NOT_SESSION_OWNER', 'Sell on your own cashier session', HttpStatus.FORBIDDEN);
       }
+      // A resubmit under a new key (e.g. after an unanswered request) points at the recorded sale,
+      // so the counter can show its receipt instead of ringing it again. The unique index still
+      // catches a concurrent duplicate (conflict map above).
+      const [recorded] = await db
+        .select({ id: sales.id, saleNumber: sales.saleNumber })
+        .from(sales)
+        .where(and(eq(sales.registerId, session.registerId), eq(sales.clientTransactionId, input.clientTransactionId)));
+      if (recorded) {
+        throw new AppError('DUPLICATE_TRANSACTION', 'This register already recorded a sale with this transaction id', HttpStatus.CONFLICT, {
+          saleId: recorded.id,
+          saleNumber: recorded.saleNumber,
+        });
+      }
+      if (session.status !== 'OPEN') throw new AppError('SESSION_NOT_OPEN', 'This cashier session is not open', HttpStatus.CONFLICT);
 
       const cart = await this.tax.computeCart(db, auth, {
         branchId: session.branchId,
@@ -214,7 +229,30 @@ export class SalesService extends TenantService {
             }]
           : [],
       );
-      if (stock.length) await db.insert(stockMovements).values(stock);
+      // Sorted by variant: concurrent sales lock balance rows in the same order (ADR-0012 §7).
+      const moved = stock.length
+        ? await db.insert(stockMovements).values(stock.sort((a, b) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0))).returning({ value: stockMovements.value })
+        : [];
+
+      // Books (ADR-0013): money in, revenue and output VAT, COGS at the ledger's cost — same transaction.
+      const t = cart.totals;
+      await post(db, {
+        tenantId,
+        legalEntityId: cart.legalEntityId,
+        branchId: session.branchId,
+        sourceType: 'SALE',
+        sourceId: sale!.id,
+        memo: `Sale #${saleNumber}`,
+        lines: salePosting({
+          salesExVat: toDec(t.vatableSales).plus(t.vatExemptSales).plus(t.zeroRatedSales).plus(t.percentageTaxSales),
+          vatAmount: t.vatAmount,
+          statutoryDiscount: t.statutoryDiscount,
+          cash: cashApplied,
+          electronic: electronic,
+          cogs: moved.reduce((a, m) => a.minus(m.value), new Dec(0)),
+        }, session.branchId),
+        createdBy: auth.userId,
+      });
 
       await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, { saleNumber, amountDue: cart.totals.amountDue, registerId: session.registerId });
       await emitEvent(db, {

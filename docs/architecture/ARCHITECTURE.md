@@ -59,16 +59,16 @@ apps/
   api/            NestJS composition root: HTTP controllers, guards, module wiring
   workers/        outbox relay, reconciliation, report jobs (same modules, no HTTP)   [Phase 1+]
   admin-web/      Next.js App Router back office                                      [Phase 1]
-  pos-desktop/    React POS; Tauri shell + SQLite later                                [Phase 2/5]
+  pos-desktop/    React POS, browser mode built (Phase 2); Tauri shell + SQLite later  [Phase 2/5]
   mobile/         Expo, only when justified                                            [Phase 6+]
 packages/
   money/          exact decimal Money/Quantity, allocation, rounding  (pure, no deps but decimal.js)
   config/         env schema + validation (pure)
   database/       Drizzle schema, migrations, tenant-scoped transaction helper
-  tax/            versioned tax rules, PH VAT / SC-PWD computations (pure)             [Phase 2]
+  tax/            versioned tax rules, PH VAT / SC-PWD computations (pure)             [Phase 2 — built]
   pricing/        price resolution, discounts, promotions (pure)                       [Phase 2]
-  inventory/      ledger rules, costing (pure)                                         [Phase 2/3]
-  accounting/     posting rules, balance validation (pure)                              [Phase 3]
+  inventory/      (costing lives in the stock-ledger trigger, ADR-0012 — no package needed)
+  accounting/     posting rules, balance validation, default chart (pure)              [Phase 3 — built]
   sync-protocol/  offline envelope schemas shared by POS and API                         [Phase 5]
   validation/     zod request/response contracts shared with clients                     [Phase 1]
   ui/             shared React components (shadcn-based)                                 [Phase 1]
@@ -94,31 +94,42 @@ Dependency rules (enforced by review now, by lint rule later):
 | 0005 | Identifiers & money | UUIDv7 (`uuidv7()` in PG18); NUMERIC(20,4) money, NUMERIC(18,4) qty; decimal.js in TS; strings on the wire |
 | 0006 | POS client | React + Vite app first; Tauri + SQLite shell in Phase 5 once Rust toolchain installed |
 | 0007 | Auth | Own auth (argon2id, short JWT access + rotating opaque refresh tokens, TOTP MFA for privileged roles) |
+| 0008 | Tax engine | Pure `@1pos/tax`; seller = versioned `tax_profiles`, item = tax category, buyer = SC/PWD schemes; per-line centavo rounding; snapshots |
+| 0009 | Checkout, cash, stock | One transaction per sale (`POST /v1/sales`), required Idempotency-Key + client transaction id, append-only cash/stock ledgers |
+| 0010 | Non-cash payments | Payment intents: commit → provider call outside any tx → settle; timeouts become UNKNOWN and are reconciled, never re-charged |
+| 0011 | Voids/returns | Append-only return documents with exact proration; cash refunds only until the PayMongo adapter |
+| 0012 | Inventory costing | Weighted average per branch × item, computed by the ledger trigger under the balance lock; Σ movement value = balance value |
+| 0013 | Double-entry ledger | Books per legal entity; every operational document posts one balanced entry in its own transaction; periods, reversals, manual entries |
 
-## 6. Transaction engine (checkout) — design
+## 6. Transaction engine (checkout) — as built (Phase 2)
 
-Checkout is an explicit state machine persisted in `checkout_intents`:
+The early design sketched a persisted `checkout_intents` state machine. What was built is simpler and keeps the same guarantees (ADR-0009/0010/0011):
 
 ```
-RECEIVED → PRICED → (STOCK_CHECKED) → AWAITING_PAYMENT ─┬─► PAYMENT_CONFIRMED → COMMITTED
-                                                        ├─► PAYMENT_PENDING_RECONCILIATION
-                                                        └─► FAILED / CANCELLED
+cart ──POST /v1/tax/quote──► server price + tax (read only, repeatable)
+card/QR ──POST /v1/payment-intents──► tx#1 PROCESSING → provider call (no tx, timeout) → tx#2 SUCCEEDED | FAILED | UNKNOWN
+                                                              UNKNOWN ──reconcile──► SUCCEEDED | FAILED
+sale ──POST /v1/sales──► one tx: lock session → recompute (TaxService.computeCart) → lock + consume intents
+                         → number → sale, lines, tenders, cash + stock movements, audit, outbox, idempotency record
 ```
 
-1. Request carries `Idempotency-Key` + `terminal_txn_id` (UUIDv7 generated on the terminal).
-2. Guard resolves user → membership → branch/register → open cashier session (server-side, never from body).
-3. Pricing/tax recomputed from DB configuration versions; client totals are only compared, never trusted. A mismatch returns `409 PRICE_CHANGED` with the authoritative quote.
-4. **Short DB tx #1**: persist intent + quote snapshot + idempotency record.
-5. Electronic payment: call provider **outside** any DB transaction, keyed by the intent id (provider-side idempotency). Cash: no external call.
-6. **Short DB tx #2**: sale, sale lines (with name/SKU/price/tax snapshots), tenders, stock movements, balance updates (row locks in a deterministic order: sorted by `inventory_item_id`), journal entry (validated balanced), invoice number allocation, outbox events, idempotency result.
-7. Post-commit: worker relays outbox (receipt print job, EIS transmission, notifications).
-8. Unknown payment outcome (timeout) → intent stays `PAYMENT_PENDING_RECONCILIATION`; a reconciliation job queries the provider by intent id. Never re-charge blindly.
+1. The request carries a required `Idempotency-Key` and a `clientTransactionId` generated on the counter; the cashier session is locked and must be the caller's own and `OPEN`.
+2. Prices and taxes are recomputed from the versions in force (DB clock); the client's `expectedAmountDue` is only compared — a mismatch is `409 TOTAL_CHANGED` with the new amount.
+3. Non-cash tenders are SUCCEEDED, unconsumed intents of the same session and client transaction, applied first; cash covers the rest and gives change.
+4. Everything for the sale is written in that one transaction or not at all. The idempotency record is written in the same transaction, so a retry with the same key replays the original response; the same `clientTransactionId` under a new key is `409 DUPLICATE_TRANSACTION` with `details.saleId`, so the counter shows the recorded sale instead of ringing it again.
+5. A database that is unreachable, drops the connection, times out a statement or aborts for serialization/deadlock answers **503 `SERVICE_UNAVAILABLE`** with `Retry-After` (never a bare 500): the counter retries with the same key. Checked-out and idle pool connections that die are discarded, never crash the process.
+6. A shift cannot close while any of its card/QR payments is PROCESSING, UNKNOWN or SUCCEEDED-but-unconsumed (`409 PAYMENTS_OUTSTANDING`, ADR-0010 §6): no charge is left without a sale.
+7. Refunds, voids and returns are **new documents** linked to the original sale lines; nothing posted is updated in place. Journal entries and invoice numbering are Phase 3 / compliance-gated.
 
-Refunds, voids, exchanges are **new documents** linked to the original; nothing posted is updated in place.
+The failure behaviour is drilled in `apps/api/test/integration/failure-drills.test.ts` (API restart, connection killed mid-checkout, DB unreachable, idle connections dropped, provider timeout, duplicate submits) and the end-to-end evidence chain in `reconciliation.test.ts`.
 
-## 7. Inventory
+## 7. Inventory and books (as built, Phase 3)
 
-Authoritative history = `stock_movements` (append-only, enforced by trigger). `stock_balances` is a transactional projection updated in the same DB transaction as the movement and verifiable by a reconciliation query (`sum(movements) = balance`). Weighted-average cost stored on the balance row. Negative-stock policy is per tenant/branch/item: `BLOCK`, `ALLOW_WITH_FLAG`, `ALLOW`. Offline sales may drive stock negative when policy allows; every such case is flagged for review.
+Authoritative history = `stock_movements` (append-only). A `BEFORE INSERT` trigger owned by `onepos_platform` locks the item's `stock_balances` row, costs the movement (weighted average, ADR-0012) and updates quantity, value and average — the app role can read balances but never write them. Movement types and their source documents: `SALE`/`RETURN` (sale lines), `RECEIPT` (goods receipt lines), `SUPPLIER_RETURN`, `TRANSFER_OUT`/`TRANSFER_IN` (transfer lines), `COUNT` (count lines; quantity computed by the trigger), `ADJUSTMENT`, `WASTE`. Multi-item documents insert in variant order (no deadlocks). Negative stock is allowed and visible (`BLOCK` policy later).
+
+Purchasing: suppliers → purchase orders (DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED / CANCELLED; stock never moves on an order) → goods receipts (accepted vs rejected, never above what was ordered) → supplier returns.
+
+Every operational document also posts one balanced journal entry in the same transaction (ADR-0013), so stock value, cash, VAT and revenue in the books always equal their evidence tables (`ledger.test.ts`).
 
 ## 8. Offline-first POS (Phase 5 design target)
 
@@ -140,5 +151,5 @@ Structured JSON logs (pino) with `correlation_id`, `tenant_id`, `user_id` (no PI
 
 - BIR invoicing route (CAS/CRM-POS registration, EIS, offline numbering) — research in `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md`; production invoice issuance is **disabled** until reviewed. Key constraints from that research: BIR advisory (14 Sep 2026) says no e-invoicing provider is accredited — 1POS must never claim accreditation; RMO 24-2023 requires re-accreditation for "major enhancements", so invoicing (numbering, grand total, e-journal, X/Z readings, invoice rendering) must be a **separately versioned, change-controlled `invoicing` module** with its own release cadence, isolated from fast-moving features.
 - Competitor positioning: `docs/research/COMPETITOR_ANALYSIS.md` (StoreHub is the main PH rival; Square/Toast unavailable in PH).
-- Payment provider selection for PH (e.g. PayMongo, Maya, GCash via aggregator) — undecided; Phase 2 ships `DevPaymentProvider` only.
+- Payment provider: **PayMongo** (decided 2026-10-15); Phase 2 ships `DevPaymentProvider` only until sandbox keys exist. Card/QR refunds wait for that adapter (cash refunds only today).
 - Hosting target (AWS ap-southeast-1 vs GCP asia-southeast1 vs local DC for data residency) — undecided; docker images keep this open.

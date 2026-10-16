@@ -14,7 +14,7 @@ async function call(method, path, token, body, headers = {}) {
   const res = await fetch(API + path, {
     method,
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(data)}`);
@@ -47,6 +47,9 @@ const scan = async (code) => {
 };
 const setInput = (id, value) =>
   evaluate(`(() => { const el = document.getElementById(${JSON.stringify(id)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+// The Sell view stays mounted (hidden) behind other tabs: act on the visible form only.
+const submitVisible = () => evaluate(`[...document.querySelectorAll('form .btn-primary')].find((e) => e.getClientRects().length).click()`);
+const shown = (s) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`).then(() => true, () => false);
 const totalShows = (amount) => waitFor(`document.querySelector('[aria-label="Total due"] .money')?.textContent.includes(${JSON.stringify(amount)})`, 8000).then(() => true, () => false);
 
 try {
@@ -92,7 +95,7 @@ try {
   check('pending-review notice shown for SC/PWD', (await text()).includes('tax-professional sign-off'));
   await shot('sell-sc.png', false);
   await clickText('Card');
-  await waitFor(`document.body.innerText.includes('SUCCEEDED')`);
+  await waitFor(`document.body.innerText.includes('Approved')`);
   await clickText('Complete sale');
   await waitFor(`document.body.innerText.includes('Signature')`);
   const r2 = await text();
@@ -110,7 +113,7 @@ try {
   const qtyId = await evaluate(`document.querySelector('[id^="qty-"]').id`);
   await setInput(qtyId, '1');
   await setInput('reason', 'Dented can');
-  await evaluate(`document.querySelector('form .btn-primary').click()`);
+  await submitVisible();
   check('cash refund for the returned item (₱22.40)', await waitFor(`document.body.innerText.includes('Refund ₱22.40')`).then(() => true, () => false));
   await shot('history-return.png');
 
@@ -118,17 +121,51 @@ try {
   await clickText('Close shift');
   check('expected drawer ₱1,056.00', await waitFor(`document.body.innerText.includes('₱1,056.00')`).then(() => true, () => false));
   await fill('counted', '1056.00');
-  await evaluate(`document.querySelector('form .btn-primary').click()`);
+  await submitVisible();
   check('drawer balanced on close', await waitFor(`document.body.innerText.includes('Drawer balanced')`).then(() => true, () => false));
   await shot('close-balanced.png', false);
 
+  const openShift = async () => {
+    await clickText('Back');
+    await waitFor(`document.body.innerText.includes('Counter 1')`);
+    await clickText('Open shift');
+    await fill('float', '0');
+    await submitVisible();
+    await waitFor(`document.getElementById('scan')`);
+  };
+
+  // Phase 2 exit drills at the counter: the cart survives a look at the shift, a double-clicked
+  // Complete records one sale, and a card payment with no sale blocks the close until settled.
+  await openShift();
+  await scan('4801981116072');
+  await clickText('This shift');
+  await sleep(300);
+  await clickText('Sell');
+  check('cart survives switching to the shift history and back', await totalShows('₱22.40'));
+  await clickText('₱50.00');
+  await sleep(200);
+  await evaluate(`(() => { const b = [...document.querySelectorAll('button')].find((x) => x.getClientRects().length && x.textContent.includes('Complete sale')); b.click(); b.click(); })()`);
+  await waitFor(`document.body.innerText.includes('NOT AN OFFICIAL INVOICE')`);
+  const ws = (await call('GET', '/v1/pos/workstations', tk)).data.find((w) => w.openSession?.mine);
+  const shiftSales = (await call('GET', `/v1/sales?cashierSessionId=${ws.openSession.id}`, tk)).data;
+  check('double-clicked Complete sale records exactly one sale (R1-000003)', shiftSales.length === 1 && (await text()).includes('R1-000003'));
+  await clickText('New sale');
+  await scan('4801981116072');
+  await clickText('Card');
+  await waitFor(`document.body.innerText.includes('Approved')`);
+  await clickText('Close shift');
+  await waitFor(`document.getElementById('counted')`);
+  await fill('counted', '22.40');
+  await submitVisible();
+  check('close refused while a card payment belongs to no sale', await shown('not part of a sale') && (await text()).includes('Cancel payment'));
+  await shot('close-blocked.png', false);
+  await clickText('Cancel payment');
+  await waitFor(`!document.body.innerText.includes('Cancel payment')`);
+  await submitVisible();
+  check('after cancelling the card payment the drawer closes balanced (₱22.40)', await shown('Drawer balanced'));
+
   // Layout at a tablet counter and a phone width
-  await clickText('Back');
-  await waitFor(`document.body.innerText.includes('Counter 1')`);
-  await clickText('Open shift');
-  await fill('float', '0');
-  await evaluate(`document.querySelector('form button.btn-primary').click()`);
-  await waitFor(`document.getElementById('scan')`);
+  await openShift();
   await scan('4801981116072');
   for (const [w, h] of [[1024, 768], [390, 844]]) {
     await viewport(w, h, w < 500);

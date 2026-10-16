@@ -1,5 +1,5 @@
 import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
-import { idParamSchema, reportRangeSchema, type ReportRangeQuery } from '@1pos/validation';
+import { branchQuerySchema, idParamSchema, reportRangeSchema, type BranchQuery, type ReportRangeQuery } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { ReportsService } from './reports.service.js';
@@ -41,6 +41,16 @@ export class ReportsController {
   @Get('statutory-book')
   statutoryBook(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
     return this.reports.statutoryBook(auth, q);
+  }
+
+  @Get('inventory-valuation')
+  inventoryValuation(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) q: BranchQuery) {
+    return this.reports.inventoryValuation(auth, q.branchId);
+  }
+
+  @Get('stock-movements')
+  stockMovements(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.reports.stockMovements(auth, q);
   }
 
   @Get('cashier-sessions/:id')

@@ -76,7 +76,8 @@
   .btn-primary:hover { background: var(--color-blue-deep); border-color: var(--color-blue-deep); }
   .btn-danger { color: var(--color-red); }
   .btn-danger:hover { border-color: var(--color-red); background: #fff6f5; }
-  .btn-sm { min-height: 2.25rem; padding: 0 0.75rem; font-size: 0.875rem; }
+  /* Compact in width only: every counter target stays 48px tall (DESIGN.md, POS adaptation). */
+  .btn-sm { min-height: 3rem; min-width: 3rem; padding: 0 0.75rem; font-size: 0.875rem; }
   .btn[aria-pressed="true"] { border-color: var(--color-blue); color: var(--color-blue); box-shadow: inset 0 0 0 1px var(--color-blue); }
 
   .field label { display: block; font-size: 0.8125rem; font-weight: 600; margin-bottom: 0.3rem; }
@@ -95,6 +96,8 @@
     display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px;
     font-size: 0.75rem; font-weight: 600; border: 1px solid var(--color-hair); color: var(--color-muted); background: #fff; white-space: nowrap;
   }
+  .tag-warn { border-color: #e7c27a; color: #7a4b00; background: var(--color-amber-bg); }
+  .tag-bad { border-color: #e9b4ae; color: var(--color-red); background: #fff6f5; }
   .chip { display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; color: #fff; white-space: nowrap; }
   .section-title { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); }
   .callout { border-radius: 5px; padding: 0.75rem 1rem; font-size: 0.9375rem; border: 1px solid; }

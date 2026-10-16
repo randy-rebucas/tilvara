@@ -40,6 +40,16 @@ interface World {
   saleId: string;
   paymentIntentId: string;
   openSessionCash: string;
+  supplierId: string;
+  purchaseOrderId: string;
+  draftOrderId: string;
+  goodsReceiptId: string;
+  supplierReturnId: string;
+  branch2Id: string;
+  transferId: string;
+  countId: string;
+  journalEntryId: string;
+  cashAccountId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -117,6 +127,36 @@ async function world(prefix: string): Promise<World> {
       .set('Idempotency-Key', randomUUID())
       .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), method: 'CARD', amount: '5.00' }),
   );
+  // Phase 3: a supplier, an approved order received in part, a supplier return, and a draft order.
+  const supplier = ok(await http().post('/v1/suppliers').set(auth).send({ code: 'SUP1', name: `${prefix} Supplier` }));
+  const po = ok<{ id: string; lines: { id: string }[] }>(
+    await http().post('/v1/purchase-orders').set(auth).send({ branchId: branch.id, supplierId: supplier.id, lines: [{ variantId, quantity: '5', unitCost: '12.00' }] }),
+  );
+  ok(await http().post(`/v1/purchase-orders/${po.id}/approve`).set(auth), 200);
+  const receipt = ok<{ id: string; lines: { id: string }[] }>(
+    await http()
+      .post('/v1/goods-receipts')
+      .set(auth)
+      .set('Idempotency-Key', randomUUID())
+      .send({ branchId: branch.id, supplierId: supplier.id, purchaseOrderId: po.id, lines: [{ purchaseOrderLineId: po.lines[0]!.id, variantId, quantity: '3' }] }),
+  );
+  const supplierReturn = ok(
+    await http()
+      .post('/v1/supplier-returns')
+      .set(auth)
+      .set('Idempotency-Key', randomUUID())
+      .send({ branchId: branch.id, supplierId: supplier.id, goodsReceiptId: receipt.id, reason: 'Fixture', lines: [{ goodsReceiptLineId: receipt.lines[0]!.id, variantId, quantity: '1' }] }),
+  );
+  const draft = ok(await http().post('/v1/purchase-orders').set(auth).send({ branchId: branch.id, supplierId: supplier.id, lines: [{ variantId, quantity: '1', unitCost: '1.00' }] }));
+  // Phase 3 slice 3: a received transfer to a second branch, a count, and a reorder point.
+  const branch2 = ok(await http().post('/v1/branches').set(auth).send({ legalEntityId: entity.id, code: 'B2', name: 'Two', birBranchCode: '00001' }));
+  const transfer = ok(await http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: branch.id, toBranchId: branch2.id, lines: [{ variantId, quantity: '1' }] }));
+  ok(await http().post(`/v1/stock/transfers/${transfer.id}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}), 200);
+  const count = ok(await http().post('/v1/stock/counts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch2.id, lines: [{ variantId, countedQuantity: '2' }] }));
+  ok(await http().put('/v1/stock/reorder-points').set(auth).send({ branchId: branch.id, items: [{ variantId, reorderPoint: '20' }] }), 200);
+  // Phase 3 slice 4: the books every document above posted to (chart seeded with the entity).
+  const accounts = ok<{ data: { id: string; systemKey: string }[] }>(await http().get('/v1/accounts').query({ legalEntityId: entity.id }).set(auth), 200).data;
+  const entries = ok<{ data: { id: string }[] }>(await http().get('/v1/journal-entries').query({ legalEntityId: entity.id, sourceType: 'SALE' }).set(auth), 200).data;
   return {
     t,
     auth,
@@ -141,6 +181,16 @@ async function world(prefix: string): Promise<World> {
     saleId: sold.id,
     paymentIntentId: payment.id,
     openSessionCash,
+    supplierId: supplier.id,
+    purchaseOrderId: po.id,
+    draftOrderId: draft.id,
+    goodsReceiptId: receipt.id,
+    supplierReturnId: supplierReturn.id,
+    branch2Id: branch2.id,
+    transferId: transfer.id,
+    countId: count.id,
+    journalEntryId: entries[0]!.id,
+    cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
   };
 }
 
@@ -211,6 +261,21 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/payment-intents/:id': () => http().get(`/v1/payment-intents/${a.paymentIntentId}`).set(auth),
     'POST /v1/payment-intents/:id/reconcile': () => http().post(`/v1/payment-intents/${a.paymentIntentId}/reconcile`).set(auth),
     'POST /v1/payment-intents/:id/cancel': () => http().post(`/v1/payment-intents/${a.paymentIntentId}/cancel`).set(auth),
+    'GET /v1/suppliers/:id': () => http().get(`/v1/suppliers/${a.supplierId}`).set(auth),
+    'PATCH /v1/suppliers/:id': () => http().patch(`/v1/suppliers/${a.supplierId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/suppliers/:id/archive': () => http().post(`/v1/suppliers/${a.supplierId}/archive`).set(auth),
+    'GET /v1/purchase-orders/:id': () => http().get(`/v1/purchase-orders/${a.purchaseOrderId}`).set(auth),
+    'PATCH /v1/purchase-orders/:id': () => http().patch(`/v1/purchase-orders/${a.draftOrderId}`).set(auth).send({ notes: 'pwned' }),
+    'POST /v1/purchase-orders/:id/approve': () => http().post(`/v1/purchase-orders/${a.draftOrderId}/approve`).set(auth),
+    'POST /v1/purchase-orders/:id/cancel': () => http().post(`/v1/purchase-orders/${a.draftOrderId}/cancel`).set(auth).send({ reason: 'sabotage' }),
+    'POST /v1/purchase-orders/:id/close': () => http().post(`/v1/purchase-orders/${a.purchaseOrderId}/close`).set(auth).send({ reason: 'sabotage' }),
+    'GET /v1/goods-receipts/:id': () => http().get(`/v1/goods-receipts/${a.goodsReceiptId}`).set(auth),
+    'GET /v1/supplier-returns/:id': () => http().get(`/v1/supplier-returns/${a.supplierReturnId}`).set(auth),
+    'GET /v1/stock/transfers/:id': () => http().get(`/v1/stock/transfers/${a.transferId}`).set(auth),
+    'POST /v1/stock/transfers/:id/receive': () => http().post(`/v1/stock/transfers/${a.transferId}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
+    'GET /v1/stock/counts/:id': () => http().get(`/v1/stock/counts/${a.countId}`).set(auth),
+    'GET /v1/journal-entries/:id': () => http().get(`/v1/journal-entries/${a.journalEntryId}`).set(auth),
+    'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
   };
 }
 
@@ -250,6 +315,37 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['read A stock balances', () => http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(auth)],
     ['read A stock movements', () => http().get('/v1/stock/movements').query({ branchId: a.branchId }).set(auth)],
     ['switch into A', () => http().post('/v1/auth/switch-tenant').set(auth).send({ tenantId: a.t.tenantId })],
+    ['order from the A supplier', () => http().post('/v1/purchase-orders').set(auth).send({ branchId: b.branchId, supplierId: a.supplierId, lines: [{ variantId: b.variantId, quantity: '1', unitCost: '1' }] })],
+    ['order for the A branch', () => http().post('/v1/purchase-orders').set(auth).send({ branchId: a.branchId, supplierId: b.supplierId, lines: [{ variantId: b.variantId, quantity: '1', unitCost: '1' }] })],
+    ['order an A variant', () => http().post('/v1/purchase-orders').set(auth).send({ branchId: b.branchId, supplierId: b.supplierId, lines: [{ variantId: a.variantId, quantity: '1', unitCost: '1' }] })],
+    ['move a B draft to the A supplier', () => http().patch(`/v1/purchase-orders/${b.draftOrderId}`).set(auth).send({ supplierId: a.supplierId })],
+    ['receive against the A order', () => http().post('/v1/goods-receipts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, supplierId: b.supplierId, purchaseOrderId: a.purchaseOrderId, lines: [{ variantId: b.variantId, quantity: '1', unitCost: '1' }] })],
+    ['receive at the A branch', () => http().post('/v1/goods-receipts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, supplierId: b.supplierId, lines: [{ variantId: b.variantId, quantity: '1', unitCost: '1' }] })],
+    ['receive from the A supplier', () => http().post('/v1/goods-receipts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, supplierId: a.supplierId, lines: [{ variantId: b.variantId, quantity: '1', unitCost: '1' }] })],
+    ['return against the A receipt', () => http().post('/v1/supplier-returns').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, supplierId: b.supplierId, goodsReceiptId: a.goodsReceiptId, reason: 'x', lines: [{ variantId: b.variantId, quantity: '1' }] })],
+    ['list receipts at the A branch', () => http().get('/v1/goods-receipts').query({ branchId: a.branchId }).set(auth)],
+    ['list supplier returns at the A branch', () => http().get('/v1/supplier-returns').query({ branchId: a.branchId }).set(auth)],
+    ['transfer from the A branch', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: a.branchId, toBranchId: b.branchId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
+    ['transfer to the A branch', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: b.branchId, toBranchId: a.branchId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
+    ['transfer an A variant', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: b.branchId, toBranchId: b.branch2Id, lines: [{ variantId: a.variantId, quantity: '1' }] })],
+    ['count at the A branch', () => http().post('/v1/stock/counts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, lines: [{ variantId: b.variantId, countedQuantity: '0' }] })],
+    ['count an A variant', () => http().post('/v1/stock/counts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, lines: [{ variantId: a.variantId, countedQuantity: '0' }] })],
+    ['reorder points at the A branch', () => http().put('/v1/stock/reorder-points').set(auth).send({ branchId: a.branchId, items: [{ variantId: b.variantId, reorderPoint: '1' }] })],
+    ['reorder point for an A variant', () => http().put('/v1/stock/reorder-points').set(auth).send({ branchId: b.branchId, items: [{ variantId: a.variantId, reorderPoint: '1' }] })],
+    ['low stock at the A branch', () => http().get('/v1/stock/low').query({ branchId: a.branchId }).set(auth)],
+    ['transfers at the A branch', () => http().get('/v1/stock/transfers').query({ branchId: a.branchId }).set(auth)],
+    ['counts at the A branch', () => http().get('/v1/stock/counts').query({ branchId: a.branchId }).set(auth)],
+    ['valuation of the A branch', () => http().get('/v1/reports/inventory-valuation').query({ branchId: a.branchId }).set(auth)],
+    ['stock movements report of the A branch', () => http().get('/v1/reports/stock-movements').query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
+    ['chart of the A entity', () => http().get('/v1/accounts').query({ legalEntityId: a.entityId }).set(auth)],
+    ['account in the A entity', () => http().post('/v1/accounts').set(auth).send({ legalEntityId: a.entityId, code: '9999', name: 'x', type: 'EXPENSE' })],
+    ['journal of the A entity', () => http().get('/v1/journal-entries').query({ legalEntityId: a.entityId }).set(auth)],
+    ['manual entry in the A entity', () => http().post('/v1/journal-entries').set(auth).set('Idempotency-Key', randomUUID()).send({ legalEntityId: a.entityId, entryDate: '2026-10-01', memo: 'x', lines: [{ accountId: a.cashAccountId, debit: '1' }, { accountId: a.cashAccountId, credit: '1' }] })],
+    ['manual entry on an A account', () => http().post('/v1/journal-entries').set(auth).set('Idempotency-Key', randomUUID()).send({ legalEntityId: b.entityId, entryDate: '2026-10-01', memo: 'x', lines: [{ accountId: a.cashAccountId, debit: '1' }, { accountId: b.cashAccountId, credit: '1' }] })],
+    ['manual entry for an A branch', () => http().post('/v1/journal-entries').set(auth).set('Idempotency-Key', randomUUID()).send({ legalEntityId: b.entityId, entryDate: '2026-10-01', memo: 'x', lines: [{ accountId: b.cashAccountId, debit: '1', branchId: a.branchId }, { accountId: b.cashAccountId, credit: '1' }] })],
+    ['periods of the A entity', () => http().get('/v1/accounting/periods').query({ legalEntityId: a.entityId }).set(auth)],
+    ['close an A period', () => http().post('/v1/accounting/periods/close').set(auth).send({ legalEntityId: a.entityId, month: '2020-01' })],
+    ['trial balance of the A entity', () => http().get('/v1/reports/trial-balance').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
   ];
 }
 
@@ -263,7 +359,8 @@ function strings(v: unknown, out: string[] = []): string[] {
 
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
-   w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId];
+   w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.journalEntryId, w.cashAccountId];
 
 describe('Phase 1 cross-tenant sweep', () => {
   it('the attack matrix covers every id-addressed route in the router', () => {
@@ -302,7 +399,12 @@ describe('Phase 1 cross-tenant sweep', () => {
     const closed = (await http().get(`/v1/cashier-sessions/${a.closedSessionId}`).set(a.auth).expect(200)).body;
     expect([closed.status, closed.reconciliation.approvedBy]).toEqual(['CLOSED', null]);
     const stock = (await http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
-    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['9']);
+    // 10 opening − 1 sold + 3 received − 1 returned to the supplier − 1 transferred to branch 2.
+    expect(stock.map((x: { quantity: string }) => x.quantity)).toEqual(['10']);
+    const t = (await http().get(`/v1/stock/transfers/${a.transferId}`).set(a.auth).expect(200)).body;
+    expect([t.status, t.lines[0].receivedQuantity]).toEqual(['RECEIVED', '1']);
+    const po = (await http().get(`/v1/purchase-orders/${a.draftOrderId}`).set(a.auth).expect(200)).body;
+    expect([po.status, po.notes]).toEqual(['DRAFT', null]);
   });
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
@@ -314,6 +416,12 @@ describe('Phase 1 cross-tenant sweep', () => {
       '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
       ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
+      '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
+      `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
+      `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`,
+      `/v1/stock/low?branchId=${b.branchId}`, `/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
+      `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-entries/${b.journalEntryId}`,
+      `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,
     ];
     const foreign = new Set(idsOf(a));
     for (const path of paths) {

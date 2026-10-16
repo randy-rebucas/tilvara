@@ -46,6 +46,14 @@ function assertUuid(id: string): void {
 export async function transaction<T>(pool: Pool, fn: (tx: Tx) => Promise<T>, options: TxOptions = {}): Promise<T> {
   if (options.userId) assertUuid(options.userId);
   const client = await pool.connect();
+  // pg-pool only watches idle clients. While checked out, a dropped connection (DB restart,
+  // admin kill) is emitted as 'error' on the client — unhandled, that exits the process. The
+  // running query rejects on its own; here we just mark the client so it is destroyed, not reused.
+  let broken: Error | undefined;
+  const onError = (e: Error) => {
+    broken = e;
+  };
+  client.on('error', onError);
   try {
     await client.query(`BEGIN ISOLATION LEVEL ${options.isolation ?? 'READ COMMITTED'}`);
     await client.query(
@@ -68,10 +76,13 @@ export async function transaction<T>(pool: Pool, fn: (tx: Tx) => Promise<T>, opt
     await client.query('COMMIT');
     return result;
   } catch (err) {
-    await client.query('ROLLBACK').catch(() => undefined);
+    await client.query('ROLLBACK').catch((e: Error) => {
+      broken = e;
+    });
     throw err;
   } finally {
-    client.release();
+    client.removeListener('error', onError);
+    client.release(broken);
   }
 }
 

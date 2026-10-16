@@ -29,10 +29,13 @@
 | 401 `UNAUTHENTICATED` | missing/expired token |
 | 403 `FORBIDDEN` / `ENTITLEMENT_REQUIRED` | permission or plan missing |
 | 404 `NOT_FOUND` | also returned for other tenants' resources (never 403 — no existence oracle) |
-| 409 business conflicts | `PRICE_CHANGED`, `INSUFFICIENT_STOCK`, `SESSION_NOT_OPEN`, `INVALID_STATE_TRANSITION` |
+| 409 business conflicts | `TOTAL_CHANGED` (details.amountDue), `DUPLICATE_TRANSACTION` (details.saleId, saleNumber — this client transaction was already sold), `SESSION_NOT_OPEN`, `PAYMENTS_OUTSTANDING` (details.payments), `PAYMENT_NOT_SUCCEEDED`, `ALREADY_RETURNED`, … |
 | 422 `IDEMPOTENCY_KEY_REUSED` | |
 | 429 `RATE_LIMITED` | with `Retry-After` |
 | 500 `INTERNAL` | no internals leaked; correlation id included |
+| 503 `SERVICE_UNAVAILABLE` | database unreachable / connection lost / statement timeout / serialization failure or deadlock; `Retry-After: 2`. The outcome of a write that was cut off is unknown to the client: **retry with the same Idempotency-Key** (never a new one). |
+
+Clients treat "no response" and any 5xx on a write as *unknown outcome*: keep the Idempotency-Key and retry; for a sale, a later `DUPLICATE_TRANSACTION` points at the recorded sale.
 
 ## Webhooks (outbound, Phase 5+)
 Signed with HMAC-SHA256 over `timestamp.body`, headers `X-1POS-Signature`, `X-1POS-Timestamp`, `X-1POS-Event-Id`; at-least-once delivery; receivers dedupe on event id.

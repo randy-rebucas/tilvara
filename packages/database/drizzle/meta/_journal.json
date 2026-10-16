@@ -155,6 +155,69 @@
       "when": 1792086855314,
       "tag": "0021_returns_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792115084256,
+      "tag": "0022_costing",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792115126938,
+      "tag": "0023_costing_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792115513884,
+      "tag": "0024_purchasing",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792115542494,
+      "tag": "0025_purchasing_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792116189495,
+      "tag": "0026_inventory_ops",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792116204968,
+      "tag": "0027_inventory_ops_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792117044270,
+      "tag": "0028_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792117057304,
+      "tag": "0029_ledger_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792118031168,
+      "tag": "0030_ledger_balance_fix",
+      "breakpoints": true
     }
   ]
 }

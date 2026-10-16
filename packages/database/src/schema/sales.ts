@@ -18,6 +18,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { productPrices, productVariants } from './catalog.js';
+import { stockCountLines, stockTransferLines } from './inventory.js';
+import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers } from './organization.js';
 import { tenants } from './platform.js';
 import { taxProfiles } from './tax.js';
@@ -441,28 +443,51 @@ export const stockMovements = pgTable(
     branchId: uuid('branch_id').notNull(),
     variantId: uuid('variant_id').notNull(),
     quantity: qty('quantity').notNull(),
+    // ADR-0012: set by the costing trigger for outbound and customer returns; supplied by the
+    // service for other inbound movements (the DB default is dropped, so a missing cost is refused).
+    unitCost: money('unit_cost').notNull().default('0'),
+    /** Signed inventory value moved; Σ value = balance value. */
+    value: money('value').notNull().default('0'),
     type: text('type').notNull(),
     reason: text('reason'),
     saleId: uuid('sale_id'),
     saleLineId: uuid('sale_line_id'),
     saleReturnLineId: uuid('sale_return_line_id'),
+    goodsReceiptLineId: uuid('goods_receipt_line_id'),
+    supplierReturnLineId: uuid('supplier_return_line_id'),
+    stockTransferLineId: uuid('stock_transfer_line_id'),
+    stockCountLineId: uuid('stock_count_line_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('stock_movements_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.goodsReceiptLineId], foreignColumns: [goodsReceiptLines.tenantId, goodsReceiptLines.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierReturnLineId], foreignColumns: [supplierReturnLines.tenantId, supplierReturnLines.id] }),
+    check('stock_movements_receipt_link', sql`(${t.type} = 'RECEIPT') = (${t.goodsReceiptLineId} IS NOT NULL)`),
+    check('stock_movements_supplier_return_link', sql`(${t.type} = 'SUPPLIER_RETURN') = (${t.supplierReturnLineId} IS NOT NULL)`),
+    foreignKey({ columns: [t.tenantId, t.stockTransferLineId], foreignColumns: [stockTransferLines.tenantId, stockTransferLines.id] }),
+    foreignKey({ columns: [t.tenantId, t.stockCountLineId], foreignColumns: [stockCountLines.tenantId, stockCountLines.id] }),
+    check('stock_movements_transfer_link', sql`(${t.type} IN ('TRANSFER_OUT','TRANSFER_IN')) = (${t.stockTransferLineId} IS NOT NULL)`),
+    check('stock_movements_count_link', sql`(${t.type} = 'COUNT') = (${t.stockCountLineId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     foreignKey({ columns: [t.tenantId, t.saleLineId], foreignColumns: [saleLines.tenantId, saleLines.id] }),
     foreignKey({ columns: [t.tenantId, t.saleReturnLineId], foreignColumns: [saleReturnLines.tenantId, saleReturnLines.id] }),
     index('stock_movements_item_idx').on(t.tenantId, t.branchId, t.variantId, t.createdAt),
-    check('stock_movements_type_check', sql`${t.type} IN ('SALE','ADJUSTMENT','RETURN')`),
+    check(
+      'stock_movements_type_check',
+      sql`${t.type} IN ('SALE','ADJUSTMENT','RETURN','RECEIPT','SUPPLIER_RETURN','TRANSFER_OUT','TRANSFER_IN','WASTE','COUNT')`,
+    ),
     check('stock_movements_nonzero', sql`${t.quantity} <> 0`),
     check('stock_movements_sale_link', sql`(${t.type} IN ('SALE','RETURN')) = (${t.saleLineId} IS NOT NULL AND ${t.saleId} IS NOT NULL)`),
     check('stock_movements_return_link', sql`(${t.type} = 'RETURN') = (${t.saleReturnLineId} IS NOT NULL)`),
-    check('stock_movements_direction', sql`(${t.type} = 'SALE' AND ${t.quantity} < 0) OR (${t.type} = 'RETURN' AND ${t.quantity} > 0) OR ${t.type} = 'ADJUSTMENT'`),
-    check('stock_movements_reason', sql`${t.type} <> 'ADJUSTMENT' OR length(trim(coalesce(${t.reason}, ''))) > 0`),
+    check(
+      'stock_movements_direction',
+      sql`(${t.type} IN ('SALE','SUPPLIER_RETURN','TRANSFER_OUT','WASTE') AND ${t.quantity} < 0) OR (${t.type} IN ('RETURN','RECEIPT','TRANSFER_IN') AND ${t.quantity} > 0) OR ${t.type} IN ('ADJUSTMENT','COUNT')`,
+    ),
+    check('stock_movements_reason', sql`${t.type} NOT IN ('ADJUSTMENT','WASTE') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],
 );
 
@@ -474,6 +499,10 @@ export const stockBalances = pgTable(
     branchId: uuid('branch_id').notNull(),
     variantId: uuid('variant_id').notNull(),
     quantity: qty('quantity').notNull(),
+    /** Σ stock_movements.value (ADR-0012). */
+    value: money('value').notNull().default('0'),
+    /** Weighted-average unit cost; kept from the last stock on hand while quantity ≤ 0. */
+    avgCost: money('avg_cost').notNull().default('0'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -1,0 +1,39 @@
+# ADR-0013: Initial double-entry ledger, posted with the source document
+
+- Status: Accepted (2026-10-16, Phase 3 slice 4). **Account mapping and posting policies are a starting point and must be reviewed by the business's accountant** (SPEC §6.8); nothing here is tax or accounting advice.
+
+## Context
+SPEC §6.8 / Phase 3 exit: stock and financial movements remain traceable and consistent; every posted entry balances; no silent edits — reversals and corrections only; periods and closing; manual adjustments under permission.
+
+## Decision
+1. **Books per legal entity** (the taxpayer). `accounts` (chart of accounts, typed ASSET/LIABILITY/EQUITY/REVENUE/EXPENSE, optional `system_key`), `accounting_periods` (calendar months, OPEN/CLOSED), append-only `journal_entries` + `journal_lines` (debit or credit, never both, branch as a dimension).
+2. **Balanced by construction and by the database.** Posting rules live in the pure `@1pos/accounting` package and refuse to produce an unbalanced entry; a deferred constraint trigger re-checks Σ debit = Σ credit (and ≥ 2 lines) at commit, whoever inserts.
+3. **Posted in the same transaction as its source** (sale, return, goods receipt, supplier return, stock adjustment/waste/count, transfer dispatch/receipt, cash pay-in/out, cash count variance). A source document and its entry commit or fail together; `UNIQUE (source_type, source_id)` makes postings exactly-once. Amounts come from the evidence rows (tax buckets, tenders, stock movement values — ADR-0012), never recomputed.
+4. **Periods.** Entries are dated with the source's local business date (branch timezone) and land in that month's period (created OPEN on first use). Posting into a CLOSED period is refused by a trigger. A source document whose date falls in a closed period cannot be created — in practice only possible for back-dated manual entries; operational documents are always "today". Closing needs `accounting.post`; reopening is a separate audited action.
+5. **Corrections**: a manual entry (`accounting.post`, balanced, at least two lines, memo required) or a **reversal** that mirrors an entry's lines; an entry can be reversed once; posted rows are never updated or deleted.
+6. **Default chart** (seeded per legal entity; codes editable later, system keys fixed):
+   | key | account | posting |
+   |---|---|---|
+   | CASH_ON_HAND | 1010 Cash on hand | cash tenders, refunds, pay-ins/outs, count variances |
+   | PAYMENT_CLEARING | 1020 Card/QR clearing | electronic tenders (until provider settlement, later) |
+   | INVENTORY | 1200 Inventory | Σ stock movement values |
+   | INVENTORY_IN_TRANSIT | 1210 Inventory in transit | transfers between dispatch and receipt |
+   | GRNI | 2010 Goods received not invoiced | receipts at line cost; supplier returns at credit cost |
+   | OUTPUT_VAT | 2100 Output VAT payable | VAT on sales, reversed on returns |
+   | CASH_TRANSFERS | 3900 Cash fund transfers | drawer pay-ins/outs (owner/safe) |
+   | SALES | 4000 Sales | VATable + exempt + zero-rated + percentage-tax sales (ex VAT) |
+   | SALES_RETURNS | 4010 Sales returns | the same buckets on returns/voids |
+   | STATUTORY_DISCOUNTS | 4020 SC/PWD discounts | statutory discount (contra-revenue) |
+   | COGS | 5000 Cost of goods sold | −value of SALE movements, +value of RETURN movements, revaluations |
+   | PURCHASES_NON_STOCK | 5050 Purchases – non-stock items | received services/non-tracked items |
+   | PURCHASE_PRICE_VARIANCE | 5060 Purchase price variance | supplier credit ≠ value leaving stock |
+   | INVENTORY_ADJUSTMENTS | 5100 Inventory adjustments | adjustments and count variances |
+   | INVENTORY_WASTE | 5110 Spoilage and waste | WASTE movements |
+   | TRANSIT_LOSS | 5120 Transit losses | transfer shortfalls |
+   | CASH_OVER_SHORT | 5200 Cash over/short | drawer count variances |
+   Opening floats are internal moves between cash and the drawer and are not posted. Ordinary discounts are already netted in the sale buckets. Purchase costs are assumed VAT-exclusive; input VAT and supplier invoices (GRNI → payables) come with accounts payable later. Provider fees and settlements come with the PayMongo adapter.
+7. **Reports**: trial balance per entity and date range (opening, period movement, closing per account; totals equal); journal listing; source → entry traceability both ways (`source_type/source_id` on the entry).
+
+## Consequences
+- Every peso on a sale/return is in the ledger the moment it is sold: GL Sales − returns − SC discounts = report net revenue ex VAT; GL inventory = Σ stock balance values (tests assert both).
+- Posting failures fail the business transaction — this is intended (no unposted sales), so the chart must always exist: it is seeded when a legal entity is created and back-filled for existing ones.

@@ -64,16 +64,19 @@ export async function openBrowser({ base, out, port = 9333 }) {
     await waitFor(`document.readyState === 'complete'`);
     await sleep(400);
   }
-  /** Fill a React-controlled input by name. */
+  /** Fill a React-controlled input by name (the visible one, if a hidden view has the same name). */
   const fill = (name, value) => evaluate(`(() => {
-    const el = document.querySelector('[name="${name}"]');
+    const all = [...document.querySelectorAll('[name="${name}"]')];
+    const el = all.find((x) => x.getClientRects().length) ?? all[0];
     const proto = el.tagName === 'SELECT' ? HTMLSelectElement.prototype : el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)});
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
   const clickText = (text) => evaluate(`(() => {
-    const b = [...document.querySelectorAll('button, a, summary')].find((x) => x.textContent.trim().includes(${JSON.stringify(text)}));
+    // Prefer a visible match: the POS keeps the Sell view mounted (hidden) behind other tabs.
+    const all = [...document.querySelectorAll('button, a, summary')].filter((x) => x.textContent.trim().includes(${JSON.stringify(text)}));
+    const b = all.find((x) => x.getClientRects().length) ?? all[0];
     if (!b) throw new Error('no button: ${text}');
     b.click();
   })()`);

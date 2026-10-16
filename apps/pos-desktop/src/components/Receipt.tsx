@@ -26,10 +26,18 @@ const TOTAL_LABELS: Record<string, string> = {
  * The server's receipt document, rendered as-is. Its notice (e.g. "THIS IS NOT AN OFFICIAL
  * INVOICE") is always printed; the counter never adds or removes compliance wording.
  */
+/** Amounts taken off the price print with a minus, as on the counter screen. */
+const DEDUCTIONS = new Set(['discount', 'vatExemption', 'statutoryDiscount']);
+/** Printed after the tenders, so the slip reads TOTAL DUE → how it was paid → tendered → change. */
+const SETTLEMENT = ['tendered', 'change'];
+
 export function Receipt({ data }: { data: ReceiptData }) {
   const { t } = useT();
   const ref = useRef<HTMLDivElement>(null);
-  const totals = Object.entries(data.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
+  const entries = Object.entries(data.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
+  const totals = entries.filter(([k]) => !SETTLEMENT.includes(k));
+  const settlement = SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k));
+  const amount = (k: string, v: string) => (DEDUCTIONS.has(k) && Number(v) !== 0 ? `-${v}` : v);
   return (
     <div className="grid content-start gap-3">
       <div ref={ref} className="printable note mx-auto w-full max-w-[420px] p-6 font-[family-name:var(--font-serial)] text-[0.875rem]">
@@ -61,16 +69,24 @@ export function Receipt({ data }: { data: ReceiptData }) {
           {totals.map(([k, v]) => (
             <div key={k} className={`flex justify-between ${k === 'amountDue' ? 'text-[1rem] font-semibold' : ''}`}>
               <dt>{k === 'vatAmount' ? data.totals.vatLabel : (TOTAL_LABELS[k] ?? k)}</dt>
-              <dd><Money value={v} /></dd>
+              <dd><Money value={amount(k, v)} /></dd>
             </div>
           ))}
         </dl>
-        {data.tenders.map((tn, i) => (
-          <p key={i} className="flex justify-between">
-            <span>{tn.method}</span>
-            <Money value={tn.amount} />
-          </p>
-        ))}
+        <div className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
+          {data.tenders.map((tn, i) => (
+            <p key={i} className="flex justify-between">
+              <span>{tn.method}</span>
+              <Money value={tn.amount} />
+            </p>
+          ))}
+          {settlement.map(([k, v]) => (
+            <p key={k} className={`flex justify-between ${k === 'change' ? 'font-semibold' : ''}`}>
+              <span>{TOTAL_LABELS[k]}</span>
+              <Money value={v} />
+            </p>
+          ))}
+        </div>
         {data.statutory.map((s, i) => (
           <div key={i} className="mt-3 border-t border-dashed border-hair pt-2">
             <p>{s.label}: {s.name}</p>

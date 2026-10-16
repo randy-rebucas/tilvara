@@ -13,6 +13,9 @@
 - Tax: compute only via `@1pos/tax` (ADR-0008) fed by the quote path (`TaxService.quote`); VAT status/rounding live in versioned `tax_profiles`. Effective dating uses the DB clock with a 5 s skew allowance (`effectiveNowSql` / `effectiveNow()` in `apps/api/src/common/clock.ts`), never `new Date()` or bare `now()` for "in force" checks.
 - Checkout: only via `SalesService.create` (ADR-0009): required Idempotency-Key + clientTransactionId, server recompute via `TaxService.computeCart`, everything in one transaction.
 - Financial/inventory/audit tables are append-only (trigger `app_forbid_mutation`); corrections are new rows.
+- Stock: insert `stock_movements` only (sorted by variant id); the costing trigger sets cost/value and balances (ADR-0012). Inbound types other than RETURN/TRANSFER_IN/COUNT must pass `unitCost`.
+- Books: every new operational document posts one entry via `post()` (`apps/api/src/accounting/ledger.ts`) with rules from `@1pos/accounting`, in the same transaction (ADR-0013); `ledger.test.ts` compares GL to evidence.
+- Migrations that back-fill data run as the migrator under FORCE RLS: wrap the backfill in `ALTER TABLE … NO FORCE ROW LEVEL SECURITY` / `FORCE` (see 0014, 0023, 0029), or it silently touches no rows. In plpgsql triggers shared by two tables, read table-specific `NEW` fields in separate IF branches.
 - NestJS: every constructor dependency uses explicit `@Inject(Token)` — Vitest does not emit decorator metadata (SWC native binding fails on this machine, so it was removed).
 - Drizzle wraps pg errors (`Failed query: …`); the Postgres error is on `err.cause`.
 - Update `docs/STATUS.md` + `docs/BACKLOG.md` at the end of each session.
@@ -27,7 +30,8 @@
 - POS (browser mode, ADR-0006): `pnpm dev:pos` → http://127.0.0.1:3330 (Vite proxies `/v1` to the API; tokens in memory only). E2E: build it, `npx vite preview --port 3330` in `apps/pos-desktop`, API with `RATE_LIMITS_ENABLED=false`, then `pnpm test:e2e:pos` (screenshots → `.impeccable/review/pos/`).
 - Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
 - OpenAPI: `pnpm build` then `pnpm --filter @1pos/api openapi` → `docs/api/openapi.json` (a unit test fails if it drifts from the routes).
-- Design review captures: with API + web running, `node apps/admin-web/e2e/review.mjs` → `.impeccable/review/screens/` (both E2E scripts share `e2e/cdp.mjs`).
+- Design review captures: with API + web running, `node apps/admin-web/e2e/review.mjs` → `.impeccable/review/screens/` (all E2E scripts share `apps/admin-web/e2e/cdp.mjs`). POS: API with `RATE_LIMITS_ENABLED=false PAYMENT_TIMEOUT_MS=2000` + POS preview, then `node apps/pos-desktop/e2e/review.mjs` → `.impeccable/review/pos/screens/`. The POS keeps the Sell view mounted (hidden) behind other tabs — select visible elements in E2E scripts.
+- Failure semantics: DB unreachable/connection lost/timeouts → 503 `SERVICE_UNAVAILABLE` (retry with the same Idempotency-Key); clients treat no-answer and 5xx on writes as unknown outcome and keep the key. Drills: `apps/api/test/integration/failure-drills.test.ts`.
 - Logging: `@1pos/observability` (`createLogger`, `withLogContext`, `enrichLogContext`); `LOG_LEVEL` env. Never log bodies, query strings, headers or tokens.
 - New tenant-data writes go through `TenantService.mutate()` (subscription write check + idempotency + 409 mapping); emit side effects with `emitEvent()` in the same tx, never call external services inside a DB transaction.
 - Drizzle `db.execute()` returns timestamps as strings (raw `client.query` returns Dates).

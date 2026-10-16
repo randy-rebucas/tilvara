@@ -7,6 +7,8 @@ import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { Callout, Field, Money, Note } from './ui';
 
+const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+
 /** Sales of this shift; managers can void (same shift) or return items with a cash refund. */
 export function History({ shift, permissions }: { shift: Shift; permissions: string[] }) {
   const { t } = useT();
@@ -56,8 +58,13 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
       setMessage({ kind: 'info', text: t('history.refund', { amount: peso(r.amountDue) }) });
       void load();
     } catch (err) {
-      if (!(err instanceof ApiFailure && err.error.status === 0)) setKey(uuid());
-      setMessage({ kind: 'error', text: err instanceof ApiFailure ? (err.error.status ? err.error.message : t('common.network')) : t('common.error') });
+      // No answer or a server failure: the refund may have been recorded. Keep the key so
+      // submitting again replays it instead of refunding twice.
+      if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) {
+        return setMessage({ kind: 'error', text: t('history.unconfirmed') });
+      }
+      setKey(uuid());
+      setMessage({ kind: 'error', text: err instanceof ApiFailure ? err.error.message : t('common.error') });
     }
   }
 
@@ -68,8 +75,12 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
         <ul>
           {sales?.map((s) => (
             <li key={s.id} className="row-rule">
-              <button className={`flex w-full justify-between px-3 py-3 text-left hover:bg-paper ${selected?.detail.id === s.id ? 'bg-paper' : ''}`} onClick={() => open(s.id)}>
-                <span className="serial">#{String(s.saleNumber).padStart(6, '0')}</span>
+              <button className={`flex w-full items-center justify-between px-3 py-3 text-left hover:bg-paper ${selected?.detail.id === s.id ? 'bg-paper' : ''}`} onClick={() => open(s.id)}>
+                <span>
+                  <span className="serial block">#{String(s.saleNumber).padStart(6, '0')}</span>
+                  {/* Time tells two similar amounts apart before a void. */}
+                  <span className="serial block text-[0.75rem] text-muted">{timeAt(s.completedAt, shift.branch.timezone)}</span>
+                </span>
                 <Money value={s.amountDue} />
               </button>
             </li>

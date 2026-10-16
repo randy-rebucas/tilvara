@@ -90,29 +90,38 @@ export class ReportsService extends TenantService {
 
   byProduct(auth: AuthContext, range: ReportRange) {
     return this.run(auth, range, async (db, w) => {
+      // Revenue excludes VAT (output tax is owed, not earned); COGS = value that left stock on sales,
+      // less what returns brought back (ADR-0012), from the ledger movements written with them.
       const { rows } = await db.execute<Row>(sql`
         WITH sold AS (
-          SELECT l.variant_id, sum(l.quantity) AS qty, sum(l.amount_due) AS amount
+          SELECT l.variant_id, sum(l.quantity) AS qty, sum(l.amount_due) AS amount, sum(l.amount_due - l.vat_amount) AS revenue
             FROM sale_lines l JOIN sales s ON s.id = l.sale_id
            WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end}
            GROUP BY 1),
         back AS (
-          SELECT l.variant_id, sum(rl.quantity) AS qty, sum(rl.amount_due) AS amount
+          SELECT l.variant_id, sum(rl.quantity) AS qty, sum(rl.amount_due) AS amount, sum(rl.amount_due - rl.vat_amount) AS revenue
             FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id JOIN sale_lines l ON l.id = rl.sale_line_id
            WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
+           GROUP BY 1),
+        cost AS (
+          SELECT variant_id, -sum(value) AS cogs FROM stock_movements
+           WHERE branch_id = ${w.branchId} AND type IN ('SALE', 'RETURN') AND created_at >= ${w.start} AND created_at < ${w.end}
            GROUP BY 1)
         SELECT v.id AS variant_id, v.sku, p.name,
                coalesce(sold.qty, 0)::text AS quantity_sold, coalesce(back.qty, 0)::text AS quantity_returned,
                (coalesce(sold.qty, 0) - coalesce(back.qty, 0))::text AS net_quantity,
                coalesce(sold.amount, 0)::text AS sales, coalesce(back.amount, 0)::text AS returns,
-               (coalesce(sold.amount, 0) - coalesce(back.amount, 0))::text AS net_sales
+               (coalesce(sold.amount, 0) - coalesce(back.amount, 0))::text AS net_sales,
+               (coalesce(sold.revenue, 0) - coalesce(back.revenue, 0))::text AS revenue_ex_vat,
+               coalesce(cost.cogs, 0)::text AS cogs,
+               (coalesce(sold.revenue, 0) - coalesce(back.revenue, 0) - coalesce(cost.cogs, 0))::text AS gross_profit
           FROM product_variants v JOIN products p ON p.id = v.product_id
-          LEFT JOIN sold ON sold.variant_id = v.id LEFT JOIN back ON back.variant_id = v.id
+          LEFT JOIN sold ON sold.variant_id = v.id LEFT JOIN back ON back.variant_id = v.id LEFT JOIN cost ON cost.variant_id = v.id
          WHERE sold.variant_id IS NOT NULL OR back.variant_id IS NOT NULL
          ORDER BY net_sales DESC, v.sku`);
       return {
         data: rows.map((r) => ({
-          ...shape(r, ['sales', 'returns', 'net_sales']),
+          ...shape(r, ['sales', 'returns', 'net_sales', 'revenue_ex_vat', 'cogs', 'gross_profit']),
           quantitySold: qty(r.quantity_sold as string),
           quantityReturned: qty(r.quantity_returned as string),
           netQuantity: qty(r.net_quantity as string),
@@ -194,6 +203,58 @@ export class ReportsService extends TenantService {
          GROUP BY r.id, r.created_at, r.return_number, reg.code, b.id
          ORDER BY 2, 1`);
       return { data: rows.map(({ completed_at: _t, ...r }) => shape(r as Row, ['sales', 'discount', 'net'])) };
+    });
+  }
+
+  /** Stock on hand at cost now, per item, with the ledger total as a check (Σ movement value = Σ balance value). */
+  inventoryValuation(auth: AuthContext, branchId: string) {
+    return this.read(auth, async (db) => {
+      const [branch] = await db.select().from(branches).where(eq(branches.id, branchId));
+      if (!branch) throw notFound('Branch');
+      this.assertCan(auth, 'reports.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
+      const { rows } = await db.execute<Row>(sql`
+        SELECT b.variant_id, v.sku, p.name, b.quantity::text AS quantity, b.avg_cost::text AS avg_cost, b.value::text AS value
+          FROM stock_balances b JOIN product_variants v ON v.id = b.variant_id JOIN products p ON p.id = v.product_id
+         WHERE b.branch_id = ${branch.id} AND (b.quantity <> 0 OR b.value <> 0)
+         ORDER BY b.value DESC, v.sku`);
+      const { rows: [ledger] } = await db.execute<Row>(sql`SELECT coalesce(sum(value), 0)::text AS value FROM stock_movements WHERE branch_id = ${branch.id}`);
+      const total = rows.reduce((a, r) => a.plus(r.value as string), toDec('0'));
+      return {
+        branchId: branch.id,
+        data: rows.map((r) => ({ variantId: r.variant_id, sku: r.sku, name: r.name, quantity: qty(r.quantity as string), avgCost: toDec(r.avg_cost as string).toFixed(4), value: money(r.value as string) })),
+        totalValue: total.toFixed(2),
+        ledgerValue: money(ledger!.value as string),
+      };
+    });
+  }
+
+  /** Per item: opening + movements by type in the range = closing, in quantity and value. */
+  stockMovements(auth: AuthContext, range: ReportRange) {
+    return this.run(auth, range, async (db, w) => {
+      const { rows } = await db.execute<Row>(sql`
+        SELECT m.variant_id, v.sku, p.name,
+               coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_qty,
+               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_value,
+               coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_qty,
+               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_value
+          FROM stock_movements m JOIN product_variants v ON v.id = m.variant_id JOIN products p ON p.id = v.product_id
+         WHERE m.branch_id = ${w.branchId} AND m.created_at < ${w.end}
+         GROUP BY 1, 2, 3 ORDER BY v.sku`);
+      const { rows: byType } = await db.execute<Row>(sql`
+        SELECT variant_id, type, sum(quantity)::text AS qty, sum(value)::text AS value FROM stock_movements
+         WHERE branch_id = ${w.branchId} AND created_at >= ${w.start} AND created_at < ${w.end} GROUP BY 1, 2`);
+      return {
+        data: rows.map((r) => ({
+          variantId: r.variant_id,
+          sku: r.sku,
+          name: r.name,
+          opening: { quantity: qty(r.opening_qty as string), value: money(r.opening_value as string) },
+          movements: Object.fromEntries(
+            byType.filter((t) => t.variant_id === r.variant_id).map((t) => [t.type as string, { quantity: qty(t.qty as string), value: money(t.value as string) }]),
+          ),
+          closing: { quantity: qty(r.closing_qty as string), value: money(r.closing_value as string) },
+        })),
+      };
     });
   }
 
