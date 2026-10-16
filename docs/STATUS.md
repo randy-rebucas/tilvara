@@ -1,9 +1,27 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge, restaurant reports)_
+_Last updated: 2026-10-17 (session 6 — Phase 4 plan (ADR-0014), slices 1–6: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge, restaurant reports, UI (POS table service, KDS, admin set-up, report screens))_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–5 done; next is slice 6, the UI (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built, with UI. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–6 done; next is slice 7, the exit review (see "Next task").
+
+## Phase 4 slice 6d — report screens (session 6)
+- **Admin `/reports`** (nav item for `reports.read`, so branch managers see it): branch picker plus a plain GET date form (`?branch&from&to`, or `?day` for open orders), so a report can be bookmarked. Six tabs over the slice-5 API, all server-rendered, EN/FIL, stacked rows on phones:
+  - **item performance** (blue): each dish with its priced choices indented under it, a "with choices" subtotal, quantity / net sales / revenue ex VAT / cost / gross profit / margin, totals;
+  - **ingredient usage** (gold): cost figures plus per ingredient expected / thrown away / count variance / actual (with units) and the over-use signed and in %;
+  - **kitchen voids**: figures, each void with the stage reached, reason and person, and its waste value linked to the stock document; by reason and by person;
+  - **prep times**: per station, timed/items, average/median/"9 in 10 within"/longest, wait and pass (`duration()` m:ss, unit-tested), all-stations foot;
+  - **open orders**: as of the close of a day; open vs billed, not served, left to collect;
+  - **service charge** (ink): per day, base / charged / given back / VAT / net ex VAT; "to distribute"; the ledger cross-check (an error callout if it ever differs); the RA 11360 caveat that before or after VAT awaits the accountant.
+- A range the API refuses shows the rule from the API's issues (e.g. `"from" must not be after "to"`), not a crash.
+- **E2E** `pnpm test:e2e:web:reports` (new) **19/19**, first run. The service day is arranged through the API with the shared restaurant fixture, then each report is read in the admin:
+  - burger ₱300.00, its cheese ₱40.00 under it, "with choices" ₱340.00, tea, total ₱430.00, burger cost ₱6.00;
+  - cheese expected 4, thrown away 1, actual 5, +1 (25.0%), +₱3.00;
+  - the dropped burger (cooking, ₱3.00, linked);
+  - Grill 1/2 timed, Bar 1/1, all 2/3;
+  - T2 open, T1 not listed;
+  - ₱43.00 charged, ₱38.39 to distribute, equal to the books, caveat shown;
+  - reversed range refused; 6 pages without sideways scroll at 390px; Filipino.
 
 ## Phase 4 slice 6c — admin restaurant set-up (session 6)
 - **Admin `/restaurant`** (nav item for `restaurant.manage`; BFF allow-list + kitchen-stations, dining-areas, restaurant-tables, modifier-groups, modifier-options, menus, menu-versions), five tabs, EN/FIL:
@@ -221,7 +239,9 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 | slice 6a: `pnpm test:e2e:tables` | **25/25** |
 | slice 6b: isolation + inventory-drills (19) · `test:e2e:kitchen` ×3 · `test:e2e:tables` · `test:e2e:pos` | all green: 13/13, 25/25, 19/19 |
 | slice 6c: admin typecheck · oxlint · admin unit (8) · `test:e2e:web:restaurant` · `test:e2e:web` (fresh build on :3321) | 22/22 · 42/42 |
-No migrations in slices 5–6c. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
+| slice 6d: `pnpm test:integration` | **263 passed**: database 21, api **234**, workers 8 |
+| slice 6 close: all six E2E suites against freshly restarted API (:4321), POS preview (:3330) and admin (:3321) | `test:e2e:pos` 19/19 · `tables` 25/25 · `kitchen` 13/13 · `web` 42/42 · `web:restaurant` 22/22 · `web:reports` 19/19 (140 checks) |
+No migrations in slices 5–6. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -428,8 +448,13 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
 3. ~~Re-run the POS/web E2E after the checkout refactor~~ — done (19/19, 42/42).
-4. **Phase 4 slice 6 — UI**: 6a POS table service ✅, 6b KDS ✅, 6c admin set-up ✅. Next 6d: admin report screens for the six restaurant reports (slice 5 API).
-5. Then slice 7 (exit review: service-cycle drills, dev audit, design review).
+4. ~~Phase 4 slice 6 — UI~~ ✅ (6a POS table service, 6b KDS, 6c admin set-up, 6d report screens).
+5. **Phase 4 slice 7 — exit review**:
+   - the SPEC restaurant scenarios 1–10 end to end;
+   - drills: concurrent checks on one bill, two tablets on one order, a void racing settlement, connection loss mid-check;
+   - the traceability audit over the dev DB after migrating;
+   - a design finish review of the new POS/KDS/admin screens (impeccable-finish-reviewer);
+   - docs "as built".
 6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
 7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

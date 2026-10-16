@@ -87,6 +87,16 @@ export function rateFromPercent(percent: string): string | null {
   return rate.replace(/^0(?=\d)/, '') || '0';
 }
 
+/** Whole seconds as m:ss (or h:mm:ss from an hour), for kitchen times; "—" when not measured. */
+export function duration(seconds: number | null | undefined): string {
+  if (seconds == null) return '—';
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 /** A plain YYYY-MM-DD (a local business date, no time zone) for display. */
 export function formatDate(date: string | null | undefined, lang: 'en' | 'fil'): string {
   if (!date) return '—';

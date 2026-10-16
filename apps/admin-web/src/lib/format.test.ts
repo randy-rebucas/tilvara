@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { peso, percentFromRate, qty, rateFromPercent, signOf, sumDecimal } from './format';
+import { duration, peso, percentFromRate, qty, rateFromPercent, signOf, sumDecimal } from './format';
+
+describe('duration', () => {
+  it('prints m:ss, h:mm:ss from an hour, and a dash when not measured', () => {
+    expect([0, 59, 90, 600, 3599, 3600, 3725, null].map(duration)).toEqual(['0:00', '0:59', '1:30', '10:00', '59:59', '1:00:00', '1:02:05', '—']);
+  });
+});
 
 describe('percentFromRate / rateFromPercent', () => {
   it('moves the decimal point in the string, both ways', () => {

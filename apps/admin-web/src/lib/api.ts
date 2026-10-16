@@ -383,6 +383,95 @@ export interface RecipeVersion {
   ingredients: { variantId: string; sku: string; name: string | null; quantity: string }[];
 }
 
+// ---- restaurant reports (ADR-0014 §10) ----
+export interface ReportFigures {
+  quantitySold: string;
+  quantityReturned: string;
+  netQuantity: string;
+  netSales: string;
+  revenueExVat: string;
+  cogs: string;
+  grossProfit: string;
+  marginPct: string | null;
+}
+export interface ItemPerformance {
+  data: (ReportFigures & {
+    variantId: string;
+    sku: string;
+    name: string;
+    checks: number;
+    modifiers: (ReportFigures & { variantId: string; sku: string; name: string; checks: number })[];
+    withModifiers: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
+  })[];
+  totals: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
+}
+type UsageSide = Record<'recipe' | 'sold' | 'expected' | 'preparedWaste' | 'otherWaste' | 'countVariance' | 'actual' | 'variance', string>;
+export interface IngredientUsage {
+  data: { variantId: string; sku: string; name: string; unit: string; quantity: UsageSide; value: UsageSide; variancePct: string | null }[];
+  totals: { expectedValue: string; wasteValue: string; countVarianceValue: string; actualValue: string; varianceValue: string };
+}
+export interface KitchenVoids {
+  data: {
+    orderItemId: string;
+    voidedAt: string;
+    order: { id: string; orderNumber: number; orderType: string; tableCode: string | null };
+    stationCode: string | null;
+    name: string;
+    quantity: string;
+    modifiers: string[];
+    reason: string;
+    voidedBy: { userId: string; displayName: string | null };
+    stage: 'FIRED' | 'IN_PREP' | 'READY' | 'SERVED';
+    cookingStarted: boolean;
+    wasted: boolean;
+    wasteAdjustmentId: string | null;
+    wasteValue: string;
+  }[];
+  byReason: { reason: string; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
+  byUser: { userId: string; displayName: string | null; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
+  totals: { voids: number; cookingStarted: number; wasted: number; wasteValue: string };
+}
+export interface PrepFigures {
+  tickets: number;
+  items: number;
+  voided: number;
+  timed: number;
+  prepSeconds: { average: number | null; median: number | null; p90: number | null; max: number | null };
+  waitSeconds: number | null;
+  passSeconds: number | null;
+}
+export interface PrepTimes {
+  stations: (PrepFigures & { stationId: string; code: string; name: string })[];
+  overall: PrepFigures | null;
+}
+export interface OpenOrders {
+  day: string;
+  asOf: string;
+  data: {
+    orderId: string;
+    orderNumber: number;
+    orderType: 'DINE_IN' | 'TAKEAWAY';
+    tableCode: string | null;
+    customerName: string | null;
+    guestCount: number | null;
+    openedAt: string;
+    openedBy: { userId: string; displayName: string | null };
+    status: 'OPEN' | 'BILLED';
+    statusNow: string;
+    bill: { id: string; billNumber: number; amountDue: string; paid: string; remaining: string } | null;
+    items: number;
+    notServed: number;
+  }[];
+  totals: { orders: number; unbilled: number; billed: number; unpaid: string };
+}
+type ChargeParts = { exVat: string; vat: string; amountDue: string };
+export interface ServiceChargeReport {
+  days: { day: string; checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts }[];
+  totals: { checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts };
+  distributable: string;
+  ledger: string;
+}
+
 // ---- books (Phase 3) ----
 export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
 export interface Account {
