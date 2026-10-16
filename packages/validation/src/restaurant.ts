@@ -282,6 +282,10 @@ export const createCheckSchema = z.object({
 });
 export type CreateCheckInput = z.infer<typeof createCheckSchema>;
 
+/** What a check would pay (same allocations, nothing recorded): the till shows it before taking money. */
+export const previewCheckSchema = z.object({ allocations: createCheckSchema.shape.allocations });
+export type PreviewCheckInput = z.infer<typeof previewCheckSchema>;
+
 // ------------------------------------------------------------------ kitchen (ADR-0014 §7)
 
 export const itemStatusSchema = z.object({ status: z.enum(['IN_PREP', 'READY', 'SERVED']) });

@@ -5,6 +5,18 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 ## Current phase
 **Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–5 done; next is slice 6, the UI (see "Next task").
 
+## Phase 4 slice 6a — POS table service (session 6)
+- **E2E re-run after the slice-4 checkout refactor** (open item from slice 4): fresh API on :4321 (the stale API/web from 12:05 still hold :4320/:3320 and were left alone), admin on :3321, POS preview on :3330 → `test:e2e:pos` **19/19**, `test:e2e:web` **42/42**.
+- **API**: `POST /v1/restaurant/bills/:id/checks/preview` prices a check (same allocations) without recording it, so the till shows the exact amount before taking money and never prorates itself. Pricing moved into one private `priceCheck()` that `createFromBill` and the preview share. The real check still sends `expectedAmountDue`, so a check paid at another till in between is refused as `TOTAL_CHANGED`. Needs `restaurant.orders` or `sales.create` at the bill's branch. `bills.test.ts` +1 (a third = ₱157.66, preview = check, nothing recorded, stale preview refused); isolation attack matrix +1 route.
+- **POS** (`apps/pos-desktop`), new **Tables** tab (shown with `restaurant.orders`; kept mounted like Sell so a check's card payment survives a tab switch):
+  - floor: areas, table notes (violet; free / open / billed, to send, ready), takeaway orders, open a table with guests or a takeaway with a name; polls every 8 s;
+  - order: published menu by section, modifier composer (required/max choices, quantity, course, kitchen note), ticket with status tags, send all / by course, served, void after firing (manager, reason, written off or not), remove pending, move table, cancel; server-priced subtotal via `/v1/tax/quote`; polls every 5 s;
+  - bill: SC/PWD diners per item and an order discount before printing; lines with paid shares, service charge line, reopen (no checks yet); checks by "everything left", "split evenly" (exact shares of what is left) or by item, each previewed by the server.
+  - Payment is now one `usePayment` hook + `PaymentPanel` shared by the counter and checks: intents, unknown outcomes, kept keys, duplicate → recorded sale. Counter E2E unchanged after the move (19/19).
+- **Defect found and fixed**: the POS receipt never rendered `charges`, so a check's slip omitted the service charge line (ADR-0014 §9). It now prints on its own line.
+- **E2E** `pnpm test:e2e:tables` (new, `apps/pos-desktop/e2e/tables.mjs`) **25/25**: required choice blocks adding, burger ×2 with Medium + Cheese, subtotal ₱340 → ₱430, send to kitchen, extra tea voided, bill ₱473.00 with the charge line, split evenly ₱236.50 cash (change ₱13.50, receipt with charge) + ₱236.50 card → settled, T1 free, takeaway bill ₱45.00 without a charge, drawer ₱1,236.50, no sideways scroll at 1024/390, Filipino.
+- DESIGN.md: restaurant records map to existing denominations (places violet, menu blue, recipes gold, orders/bills/tickets unstriped with worded states).
+
 ## Phase 4 slice 5 — restaurant reports (session 6)
 - **API**: six read-only reports in `apps/api/src/reports/restaurant-reports.service.ts`. Each needs `reports.read` at the branch, is not plan-gated, and uses the same local-day conventions as the retail reports. Details are in ADR-0014 §10.
   - `GET /v1/reports/item-performance`: items with their priced modifiers nested under them; quantity, net sales, revenue ex VAT, COGS (incl. recipe), margin, and "with modifiers" totals.
@@ -167,7 +179,10 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–5: 
 | slice 4: `pnpm db:migrate` (dev) | 0039, 0040 applied (service charge account back-filled) |
 | slice 5: `pnpm build` · `pnpm typecheck` · `pnpm exec oxlint apps packages` (exit 0) · openapi · `pnpm test` (api 34, tax 30, accounting 14, …) | ok |
 | slice 5: `pnpm test:integration` | **262 passed**: database 21, api **233** (+8 restaurant reports; isolation extended), workers 8. The first run had 1 failure in `costing.test.ts` (clock-order flake, passed alone; fixed as above); the rerun was all green |
-**Not run in slices 4–5: `pnpm test:e2e:pos` / `test:e2e:web`.** No migrations in slice 5. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
+| slice 6a: `test:e2e:pos` / `test:e2e:web` against a freshly built API (:4321) | **19/19** / **42/42** (re-run owed since slice 4: done) |
+| slice 6a: `pnpm exec vitest … bills.test.ts isolation.test.ts` · `pnpm test` · typecheck · oxlint · openapi | bills **6**, isolation 9, unit all green |
+| slice 6a: `pnpm test:e2e:tables` | **25/25** |
+No migrations in slices 5–6a. An API process from before this slice (PID 18856, started 12:05, not started by this session) was holding port 4320, so a fresh API could not start; it was left running. Re-run both E2E suites against a rebuilt API before the exit review, because checkout was refactored.
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -373,8 +388,8 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - prices are fixed when the bill is printed;
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
-3. Re-run `pnpm test:e2e:pos` and `pnpm test:e2e:web` against a freshly built API (checkout was refactored in slice 4; see the note above).
-4. **Phase 4 slice 6 — UI**: POS table service (floor, order, fire, bill, split, pay), KDS screen, admin set-up (menus, modifiers, recipes, tables, settings) and the restaurant report screens.
+3. ~~Re-run the POS/web E2E after the checkout refactor~~ — done (19/19, 42/42).
+4. **Phase 4 slice 6 — UI**: 6a POS table service ✅. Next 6b KDS screen (kitchen mode in the POS, per station, bump / item statuses), then 6c admin set-up (stations, areas/tables, modifiers, menus with draft/publish, recipes, branch settings, 86) and 6d restaurant report screens.
 5. Then slice 7 (exit review: service-cycle drills, dev audit, design review).
 6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
 7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.

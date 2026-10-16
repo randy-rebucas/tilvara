@@ -9,6 +9,7 @@ import {
   createSaleSchema,
   idParamSchema,
   openCashierSessionSchema,
+  previewCheckSchema,
   saleListQuerySchema,
   stockAdjustmentSchema,
   stockQuerySchema,
@@ -20,6 +21,7 @@ import {
   type CreateSaleInput,
   type CreateSaleReturnInput,
   type OpenCashierSessionInput,
+  type PreviewCheckInput,
   type SaleListQuery,
   type StockAdjustmentInput,
   type StockQuery,
@@ -98,6 +100,13 @@ export class SalesController {
   @Post('restaurant/bills/:id/checks')
   createCheck(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(createCheckSchema)) body: CreateCheckInput) {
     return this.sales.createFromBill(auth, billId, body);
+  }
+
+  /** What a check would pay, priced like the check itself; records nothing. */
+  @HttpCode(200)
+  @Post('restaurant/bills/:id/checks/preview')
+  previewCheck(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(previewCheckSchema)) body: PreviewCheckInput) {
+    return this.sales.previewCheck(auth, billId, body);
   }
 
   @Get('sales')

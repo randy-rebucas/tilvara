@@ -5,12 +5,13 @@ import { History } from './components/History';
 import { RegisterPicker, type Shift } from './components/Registers';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
+import { Tables } from './components/Tables';
 import { useT } from './i18n';
 import { api, session, signOut } from './lib/api';
 import type { Me } from './types';
 
 type Stage = { name: 'signin' } | { name: 'business'; me: Me } | { name: 'register'; me: Me } | { name: 'counter'; me: Me; shift: Shift };
-type Tab = 'sell' | 'history' | 'close';
+type Tab = 'sell' | 'tables' | 'history' | 'close';
 
 export function App() {
   const { t } = useT();
@@ -59,8 +60,11 @@ export function App() {
   }
 
   const { me, shift } = stage;
+  const permissions = me.activeTenant?.permissions ?? [];
+  const tableService = permissions.includes('restaurant.orders');
   const tabs: [Tab, string][] = [
     ['sell', t('nav.sell')],
+    ...(tableService ? ([['tables', t('nav.tables')]] as [Tab, string][]) : []),
     ['history', t('nav.history')],
     ['close', t('nav.close')],
   ];
@@ -92,7 +96,13 @@ export function App() {
       <div hidden={tab !== 'sell'}>
         <Sell shift={shift} active={tab === 'sell'} />
       </div>
-      {tab === 'history' && <History shift={shift} permissions={me.activeTenant?.permissions ?? []} />}
+      {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
+      {tableService && (
+        <div hidden={tab !== 'tables'}>
+          <Tables shift={shift} permissions={permissions} active={tab === 'tables'} />
+        </div>
+      )}
+      {tab === 'history' && <History shift={shift} permissions={permissions} />}
       {tab === 'close' && <CloseShift shift={shift} onClosed={() => setStage({ name: 'register', me })} />}
     </Shell>
   );

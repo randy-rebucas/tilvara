@@ -405,6 +405,7 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/restaurant/bills/:id/checks': () =>
       http().post(`/v1/restaurant/bills/${a.billId}/checks`).set(auth).set('Idempotency-Key', randomUUID())
         .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] }),
+    'POST /v1/restaurant/bills/:id/checks/preview': () => http().post(`/v1/restaurant/bills/${a.billId}/checks/preview`).set(auth).send({}),
   };
 }
 

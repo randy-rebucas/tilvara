@@ -132,7 +132,10 @@ Slice 5 — restaurant reports (session 6): ✅ done.
 - open orders: items as they were at the cutoff (today: as attached now);
 - free modifiers ("no onions") counts in item performance (no sale line today);
 - the DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9).
-⬜ Slice 6 — UI: POS table service (floor/order/fire/bill/split/pay), KDS screen, admin for menus/modifiers/recipes/tables/settings.
+🟡 Slice 6 — UI (session 6):
+- ✅ 6a POS table service: floor, order with modifiers/courses, send/serve/void, server-priced subtotal, bill with SC/PWD + discount, checks (rest / even / by item) priced by the new check preview, shared payment panel; receipt prints the service charge; `test:e2e:tables` 25/25.
+- ⬜ 6b KDS screen; ⬜ 6c admin set-up (stations, floor, modifiers, menus, recipes, settings, 86); ⬜ 6d restaurant report screens.
+- ⬜ 6a leftovers: merge / move items between orders in the UI (API done); per-seat split helper; reprint a bill; servers without a drawer (today the Tables tab lives inside a register shift); floor positions/shapes on a drawn plan (tiles today).
 ⬜ Slice 7 — exit review: full service cycle (SPEC restaurant scenarios 1–10), drills (concurrent checks on one bill, two tablets on one order, void vs settlement), dev audit, design review.
 
 ⬜ Out of scope for Phase 4 (later): delivery orders, unit conversions/purchase units for recipes, sub-recipes/prep production, rule-based modifier pricing, tips, reservations, KDS push (SSE) and kitchen printers (Phase 5 devices).

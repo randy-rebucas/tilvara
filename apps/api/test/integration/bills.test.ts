@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import { toDec } from '@1pos/money';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
@@ -202,6 +203,37 @@ describe('splitting', () => {
     const paid = await sql<{ n: string }>(r, `SELECT sum(amount_due)::text AS n FROM sales WHERE order_bill_id = $1`, [bill.id]);
     expect(paid).toEqual([{ n: toFixed4(bill.amountDue) }]);
     expect(await sql(r, `SELECT bill_line_id, sum(share_num::numeric / share_den)::numeric(10,4)::text AS s FROM order_bill_allocations GROUP BY 1 HAVING sum(share_num::numeric / share_den) > 1.0000001`)).toEqual([]);
+  });
+});
+
+describe('check preview', () => {
+  it('shows exactly what the check will pay, records nothing, and a check paid in between is caught', async () => {
+    const r = await restaurant('bill-preview');
+    const orderId = await servedOrder(r, r.t1, [{ variantId: r.burger, quantity: '2', modifierOptionIds: [r.medium, r.cheeseOpt] }, { variantId: r.tea, quantity: '2' }]);
+    const bill = (await billOrder(r, orderId).expect(201)).body;
+    const preview = (body: Record<string, unknown>) => http().post(`/v1/restaurant/bills/${bill.id}/checks/preview`).set(r.server).send(body);
+    const third = { num: 1, den: 3 };
+    const allocations = bill.lines.filter((l: { parentLineId: string | null }) => !l.parentLineId).map((l: { id: string }) => ({ billLineId: l.id, share: third }));
+
+    const p1 = (await preview({ allocations }).expect(200)).body;
+    // A third: burger 100.00 + cheese 13.33 + tea 30.00 + charge 14.33; the last third takes the remainder.
+    expect(p1).toMatchObject({ billId: bill.id, settles: false, amountDue: '157.66' });
+    expect(p1.lines.map((l: { name: string; quantity: string; parentBillLineId: string | null }) => [l.name, l.quantity, l.parentBillLineId !== null])).toEqual([['Burger', '0.6667', false], ['Cheese', '0.6667', true], ['Iced tea', '0.6667', false]]);
+    expect(await sql(r, `SELECT count(*)::int AS n FROM sales`)).toEqual([{ n: 0 }]); // nothing recorded
+    const c1 = (await check(r, bill.id, { allocations, expectedAmountDue: p1.amountDue }).expect(201)).body;
+    expect([c1.amountDue, c1.charges[0].amountDue]).toEqual([p1.amountDue, p1.charges[0].amountDue]);
+
+    // The rest, previewed by two tills; the first pays, the second's preview is now stale.
+    const rest = (await preview({}).expect(200)).body;
+    expect([rest.settles, toDec(rest.amountDue).plus(c1.amountDue).toFixed(2)]).toEqual([true, '473.00']);
+    const p2 = (await preview({ allocations }).expect(200)).body;
+    await check(r, bill.id, { allocations, expectedAmountDue: p2.amountDue }).expect(201);
+    const stale = await check(r, bill.id, { expectedAmountDue: rest.amountDue }).expect(409);
+    expect(code(stale)).toBe('TOTAL_CHANGED');
+    const last = (await preview({}).expect(200)).body;
+    expect((await check(r, bill.id, { expectedAmountDue: last.amountDue }).expect(201)).body.billSettled).toBe(true);
+    expect(code(await preview({}).expect(409))).toBe('BILL_NOT_ACTIVE');
+    expect((await http().get(`/v1/restaurant/bills/${bill.id}`).set(r.server).expect(200)).body.amountPaid).toBe('473.00');
   });
 });
 

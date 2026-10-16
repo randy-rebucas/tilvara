@@ -28,7 +28,8 @@ import {
   type Database,
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
-import type { CreateCheckInput, CreateSaleInput, SaleListQuery, TendersInput } from '@1pos/validation';
+import type { CreateCheckInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput } from '@1pos/validation';
+import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { ENV } from '../infrastructure/env.provider.js';
@@ -213,98 +214,7 @@ export class SalesService extends TenantService {
       if (bill.branchId !== session.branchId) throw unprocessable('WRONG_BRANCH', 'Pay a bill at the branch that served it');
       if (bill.status !== 'ACTIVE') throw new AppError('BILL_NOT_ACTIVE', `This bill is ${bill.status.toLowerCase()}`, HttpStatus.CONFLICT, { status: bill.status });
 
-      const [lines, charges, beneficiaries, prior] = await Promise.all([
-        db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, billId)).orderBy(orderBillLines.lineNo),
-        db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, billId)),
-        db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, billId)),
-        db.select({ a: orderBillAllocations, l: saleLines }).from(orderBillAllocations)
-          .innerJoin(saleLines, eq(saleLines.id, orderBillAllocations.saleLineId))
-          .where(eq(orderBillAllocations.orderBillId, billId)),
-      ]);
-      const paid = new Map<string, { share: Fraction; quantity: Dec; buckets: Buckets[] }>();
-      for (const p of prior) {
-        const acc = paid.get(p.a.billLineId) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
-        acc.share = addFraction(acc.share, frac(p.a.shareNum, p.a.shareDen));
-        acc.quantity = acc.quantity.plus(p.l.quantity);
-        acc.buckets.push(pick(p.l));
-        paid.set(p.a.billLineId, acc);
-      }
-      const remaining = (lineId: string) => subFraction(ONE_FRACTION, paid.get(lineId)?.share ?? ZERO_FRACTION);
-
-      // What this check pays, per top-level line; modifiers follow their item's share.
-      const top = lines.filter((l) => !l.parentLineId);
-      const wanted = new Map<string, Fraction>();
-      if (!input.allocations) {
-        for (const l of top) if (remaining(l.id).n > 0n) wanted.set(l.id, remaining(l.id));
-      } else {
-        for (const [i, a] of input.allocations.entries()) {
-          const line = lines.find((l) => l.id === a.billLineId);
-          if (!line) throw new AppError('NOT_FOUND', 'Bill line not found', HttpStatus.NOT_FOUND, { path: ['allocations', i, 'billLineId'] });
-          if (line.parentLineId) throw unprocessable('PAY_WHOLE_ITEMS', 'Pay an item with its choices; choices follow their item', { path: ['allocations', i, 'billLineId'] });
-          if (wanted.has(line.id)) throw unprocessable('DUPLICATE_ALLOCATION', 'Each bill line once per check', { path: ['allocations', i, 'billLineId'] });
-          const share = a.quantity ? ratioOf(a.quantity, line.quantity) : a.share ? frac(a.share.num, a.share.den) : remaining(line.id);
-          if (share.n <= 0n || compareFraction(share, remaining(line.id)) > 0) {
-            throw unprocessable('ALLOCATION_EXCEEDS_LINE', 'More than what is left to pay on this line', { path: ['allocations', i], billLineId: line.id, remaining: `${remaining(line.id).n}/${remaining(line.id).d}` });
-          }
-          wanted.set(line.id, share);
-        }
-      }
-      if (!wanted.size) throw unprocessable('NOTHING_TO_PAY', 'Everything on this bill is already paid');
-
-      const rounding = ((bill.taxSnapshot as { roundingMode?: RoundingMode }).roundingMode ?? 'HALF_UP') as RoundingMode;
-      const r2 = (d: Dec) => roundTo(d, 2, rounding);
-      const recordLines: RecordLine[] = [];
-      const indexOf = new Map<string, number>();
-      for (const line of lines) {
-        const share = wanted.get(line.parentLineId ?? line.id);
-        if (!share) continue;
-        const before = paid.get(line.id) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
-        const last = compareFraction(addFraction(before.share, share), ONE_FRACTION) === 0;
-        const amounts = last ? rest(pick(line), sumBuckets([ZERO_BUCKETS, ...before.buckets])) : prorate(pick(line), fractionDec(share), r2);
-        const quantity = last ? toDec(line.quantity).minus(before.quantity) : roundTo(toDec(line.quantity).times(fractionDec(share)), 4, 'HALF_UP');
-        if (quantity.lte(0)) throw unprocessable('SHARE_TOO_SMALL', 'This share is too small to record', { billLineId: line.id });
-        const beneficiary = beneficiaries.find((b) => b.id === line.beneficiaryId);
-        indexOf.set(line.id, recordLines.length);
-        recordLines.push({
-          ...amounts,
-          clientLineId: `bill-${bill.billNumber}-${line.lineNo}`,
-          variantId: line.variantId,
-          sku: line.sku,
-          name: line.name,
-          taxCategoryCode: line.taxCategoryCode,
-          vatTreatment: line.vatTreatment,
-          quantity: quantity.toString(),
-          unitPrice: line.unitPrice,
-          priceIncludesTax: line.priceIncludesTax,
-          priceId: line.priceId,
-          priceListId: line.priceListId,
-          trackInventory: line.trackInventory,
-          beneficiaryRef: beneficiary?.id ?? null,
-          schemeShare: line.schemeShare,
-          snapshot: line.taxSnapshot,
-          parentIndex: line.parentLineId ? indexOf.get(line.parentLineId)! : null,
-          allocation: { billLineId: line.id, share },
-        });
-      }
-
-      // Charges follow the check's share of what the items cost (an even split pays half the service
-      // charge); the check that completes the bill takes the exact rest.
-      const settles = top.every((l) => compareFraction(addFraction(paid.get(l.id)?.share ?? ZERO_FRACTION, wanted.get(l.id) ?? ZERO_FRACTION), ONE_FRACTION) === 0);
-      const billItemsDue = lines.reduce((a, l) => a.plus(l.amountDue), new Dec(0));
-      const checkItemsDue = recordLines.reduce((a, l) => a.plus(l.amountDue), new Dec(0));
-      const ratio = billItemsDue.isZero() ? new Dec(0) : checkItemsDue.dividedBy(billItemsDue);
-      const recordCharges: RecordCharge[] = [];
-      for (const c of charges) {
-        const before = await db.select().from(saleCharges).where(eq(saleCharges.orderBillChargeId, c.id));
-        const amounts = settles ? rest(pick(c), sumBuckets([ZERO_BUCKETS, ...before.map(pick)])) : prorate(pick(c), ratio, r2);
-        // A charge is priced ex VAT: its gross is its sales, whatever rounding gave the parts.
-        amounts.gross = exVat(amounts).toString();
-        if (toDec(amounts.amountDue).isZero()) continue;
-        // The base follows the same rule, so Σ checks' bases = the bill's base (DOLE report).
-        const base = settles ? before.reduce((a, b) => a.minus(b.base), toDec(c.base)) : r2(toDec(c.base).times(ratio));
-        recordCharges.push({ ...amounts, kind: c.kind, orderBillChargeId: c.id, base: base.toString(), rate: c.rate, vatTreatment: c.vatTreatment, snapshot: c.taxSnapshot });
-      }
-
+      const { recordLines, recordCharges, settles, beneficiaries } = await this.priceCheck(db, bill, input.allocations);
       const used = new Set(recordLines.flatMap((l) => (l.beneficiaryRef ? [l.beneficiaryRef] : [])));
       const sale = await this.record(db, auth, session, input, {
         legalEntityId: bill.legalEntityId,
@@ -326,6 +236,130 @@ export class SalesService extends TenantService {
       }
       return { ...(await this.view(db, sale)), billSettled: settles };
     });
+  }
+
+  /**
+   * What a check with these allocations would pay, priced exactly as `createFromBill` would price it
+   * now, without recording anything. The till shows it before taking money; the check itself still
+   * sends `expectedAmountDue`, so a check recorded in between is caught as TOTAL_CHANGED.
+   */
+  previewCheck(auth: AuthContext, billId: string, input: PreviewCheckInput) {
+    return this.read(auth, async (db) => {
+      const [bill] = await db.select().from(orderBills).where(eq(orderBills.id, billId));
+      if (!bill) throw notFound('Bill');
+      const { scope } = await branchScope(db, bill.branchId);
+      if (!this.can(auth, 'restaurant.orders', scope)) this.assertCan(auth, 'sales.create', scope);
+      if (bill.status !== 'ACTIVE') throw new AppError('BILL_NOT_ACTIVE', `This bill is ${bill.status.toLowerCase()}`, HttpStatus.CONFLICT, { status: bill.status });
+      const { recordLines, recordCharges, settles, lines } = await this.priceCheck(db, bill, input.allocations);
+      const totals = sumBuckets([...recordLines, ...recordCharges]);
+      return {
+        billId: bill.id,
+        settles,
+        ...Object.fromEntries(MONEY_FIELDS.map((k) => [k, fixed(totals[k])])),
+        lines: recordLines.map((l) => {
+          const billLine = lines.find((x) => x.id === l.allocation!.billLineId)!;
+          return { billLineId: billLine.id, parentBillLineId: billLine.parentLineId, name: l.name, quantity: toDec(l.quantity).toString(), amountDue: fixed(l.amountDue) };
+        }),
+        charges: recordCharges.map((c) => ({ kind: c.kind, amountDue: fixed(c.amountDue) })),
+      };
+    });
+  }
+
+  /** A check's lines and charges for these allocations (ADR-0014 §8); shared by the check and its preview. */
+  private async priceCheck(db: Database, bill: typeof orderBills.$inferSelect, allocations: CreateCheckInput['allocations']) {
+    const billId = bill.id;
+    const [lines, charges, beneficiaries, prior] = await Promise.all([
+      db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, billId)).orderBy(orderBillLines.lineNo),
+      db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, billId)),
+      db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, billId)),
+      db.select({ a: orderBillAllocations, l: saleLines }).from(orderBillAllocations)
+        .innerJoin(saleLines, eq(saleLines.id, orderBillAllocations.saleLineId))
+        .where(eq(orderBillAllocations.orderBillId, billId)),
+    ]);
+    const paid = new Map<string, { share: Fraction; quantity: Dec; buckets: Buckets[] }>();
+    for (const p of prior) {
+      const acc = paid.get(p.a.billLineId) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
+      acc.share = addFraction(acc.share, frac(p.a.shareNum, p.a.shareDen));
+      acc.quantity = acc.quantity.plus(p.l.quantity);
+      acc.buckets.push(pick(p.l));
+      paid.set(p.a.billLineId, acc);
+    }
+    const remaining = (lineId: string) => subFraction(ONE_FRACTION, paid.get(lineId)?.share ?? ZERO_FRACTION);
+
+    // What this check pays, per top-level line; modifiers follow their item's share.
+    const top = lines.filter((l) => !l.parentLineId);
+    const wanted = new Map<string, Fraction>();
+    if (!allocations) {
+      for (const l of top) if (remaining(l.id).n > 0n) wanted.set(l.id, remaining(l.id));
+    } else {
+      for (const [i, a] of allocations.entries()) {
+        const line = lines.find((l) => l.id === a.billLineId);
+        if (!line) throw new AppError('NOT_FOUND', 'Bill line not found', HttpStatus.NOT_FOUND, { path: ['allocations', i, 'billLineId'] });
+        if (line.parentLineId) throw unprocessable('PAY_WHOLE_ITEMS', 'Pay an item with its choices; choices follow their item', { path: ['allocations', i, 'billLineId'] });
+        if (wanted.has(line.id)) throw unprocessable('DUPLICATE_ALLOCATION', 'Each bill line once per check', { path: ['allocations', i, 'billLineId'] });
+        const share = a.quantity ? ratioOf(a.quantity, line.quantity) : a.share ? frac(a.share.num, a.share.den) : remaining(line.id);
+        if (share.n <= 0n || compareFraction(share, remaining(line.id)) > 0) {
+          throw unprocessable('ALLOCATION_EXCEEDS_LINE', 'More than what is left to pay on this line', { path: ['allocations', i], billLineId: line.id, remaining: `${remaining(line.id).n}/${remaining(line.id).d}` });
+        }
+        wanted.set(line.id, share);
+      }
+    }
+    if (!wanted.size) throw unprocessable('NOTHING_TO_PAY', 'Everything on this bill is already paid');
+
+    const rounding = ((bill.taxSnapshot as { roundingMode?: RoundingMode }).roundingMode ?? 'HALF_UP') as RoundingMode;
+    const r2 = (d: Dec) => roundTo(d, 2, rounding);
+    const recordLines: RecordLine[] = [];
+    const indexOf = new Map<string, number>();
+    for (const line of lines) {
+      const share = wanted.get(line.parentLineId ?? line.id);
+      if (!share) continue;
+      const before = paid.get(line.id) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
+      const last = compareFraction(addFraction(before.share, share), ONE_FRACTION) === 0;
+      const amounts = last ? rest(pick(line), sumBuckets([ZERO_BUCKETS, ...before.buckets])) : prorate(pick(line), fractionDec(share), r2);
+      const quantity = last ? toDec(line.quantity).minus(before.quantity) : roundTo(toDec(line.quantity).times(fractionDec(share)), 4, 'HALF_UP');
+      if (quantity.lte(0)) throw unprocessable('SHARE_TOO_SMALL', 'This share is too small to record', { billLineId: line.id });
+      const beneficiary = beneficiaries.find((b) => b.id === line.beneficiaryId);
+      indexOf.set(line.id, recordLines.length);
+      recordLines.push({
+        ...amounts,
+        clientLineId: `bill-${bill.billNumber}-${line.lineNo}`,
+        variantId: line.variantId,
+        sku: line.sku,
+        name: line.name,
+        taxCategoryCode: line.taxCategoryCode,
+        vatTreatment: line.vatTreatment,
+        quantity: quantity.toString(),
+        unitPrice: line.unitPrice,
+        priceIncludesTax: line.priceIncludesTax,
+        priceId: line.priceId,
+        priceListId: line.priceListId,
+        trackInventory: line.trackInventory,
+        beneficiaryRef: beneficiary?.id ?? null,
+        schemeShare: line.schemeShare,
+        snapshot: line.taxSnapshot,
+        parentIndex: line.parentLineId ? indexOf.get(line.parentLineId)! : null,
+        allocation: { billLineId: line.id, share },
+      });
+    }
+
+    // Charges follow the check's share of what the items cost (an even split pays half the service
+    // charge); the check that completes the bill takes the exact rest.
+    const settles = top.every((l) => compareFraction(addFraction(paid.get(l.id)?.share ?? ZERO_FRACTION, wanted.get(l.id) ?? ZERO_FRACTION), ONE_FRACTION) === 0);
+    const billItemsDue = lines.reduce((a, l) => a.plus(l.amountDue), new Dec(0));
+    const checkItemsDue = recordLines.reduce((a, l) => a.plus(l.amountDue), new Dec(0));
+    const ratio = billItemsDue.isZero() ? new Dec(0) : checkItemsDue.dividedBy(billItemsDue);
+    const recordCharges: RecordCharge[] = [];
+    for (const c of charges) {
+      const before = await db.select().from(saleCharges).where(eq(saleCharges.orderBillChargeId, c.id));
+      const amounts = settles ? rest(pick(c), sumBuckets([ZERO_BUCKETS, ...before.map(pick)])) : prorate(pick(c), ratio, r2);
+      // A charge is priced ex VAT: its gross is its sales, whatever rounding gave the parts.
+      amounts.gross = exVat(amounts).toString();
+      if (toDec(amounts.amountDue).isZero()) continue;
+      // The base follows the same rule, so Σ checks' bases = the bill's base (DOLE report).
+      const base = settles ? before.reduce((a, b) => a.minus(b.base), toDec(c.base)) : r2(toDec(c.base).times(ratio));
+      recordCharges.push({ ...amounts, kind: c.kind, orderBillChargeId: c.id, base: base.toString(), rate: c.rate, vatTreatment: c.vatTreatment, snapshot: c.taxSnapshot });
+    }
+    return { recordLines, recordCharges, settles, beneficiaries, lines };
   }
 
   /** Lock the session, check who may sell on it, and refuse a transaction id the register already used. */

@@ -211,6 +211,8 @@ Warm, papery neutrals, with four banknote denominations that act as a closed voc
 - **Serial Ink** (`ink` as a stripe): the books, meaning journal entries, the chart of accounts, the trial balance and periods. It is the ink every note's serial number is printed in: money records that are not goods get no banknote colour.
 - **Alarm Red** (`red`): destructive actions (Revoke, danger buttons), validation errors, error callouts, revoked and read-only states, and a meter that has hit its limit. Red never marks a kind of record.
 
+Restaurant records (Phase 4) add no new colour; they map to the existing kinds. Dining areas, tables and kitchen stations are places in a branch, so they are **violet**. Menu items, menus and modifier choices are catalog, so they are **blue**. Recipes and ingredients are goods, so they are **gold**. Orders, bills and kitchen tickets are operational and carry no stripe. Their states are worded tags, amber only when someone must act: ready to serve, billed and waiting for payment.
+
 ### Neutral
 - **Note Paper** (`paper`): the page ground behind everything.
 - **Deep Paper** (`paper-deep`): hover fill for off-band toggles.

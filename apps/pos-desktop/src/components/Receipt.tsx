@@ -64,6 +64,13 @@ export function Receipt({ data }: { data: ReceiptData }) {
               </p>
             </li>
           ))}
+          {/* Not an item (RA 11360): the service charge prints on its own line (ADR-0014 §9). */}
+          {data.charges?.map((c) => (
+            <li key={c.kind} className="flex justify-between gap-3">
+              <span>{c.label}</span>
+              <Money value={c.amount} />
+            </li>
+          ))}
         </ul>
         <dl className="mt-3 grid gap-0.5 border-t border-dashed border-hair pt-2">
           {totals.map(([k, v]) => (

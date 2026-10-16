@@ -1,0 +1,306 @@
+import { toDec } from '@1pos/money';
+import { ArrowLeft, Minus, Plus } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useT, type MessageKey } from '../i18n';
+import { api } from '../lib/api';
+import { partOfRest } from '../lib/fraction';
+import { isPositive } from '../lib/money';
+import type { Bill, BillLine, CheckPreview, Receipt as ReceiptData } from '../types';
+import { errorText, PaymentPanel, usePayment, type Notice } from './Payment';
+import { Receipt } from './Receipt';
+import type { Shift } from './Registers';
+import { Callout, Field, Money, Note } from './ui';
+
+type Split = { kind: 'rest' } | { kind: 'even'; ways: number } | { kind: 'items'; picked: Record<string, number> };
+type Allocation = { billLineId: string; quantity?: string; share?: { num: number; den: number } };
+
+/** Units of a line still to pay, when they are whole units (else null: the line is paid as "the rest"). */
+const wholeLeft = (l: BillLine) => {
+  const left = toDec(l.quantity).minus(l.paidQuantity);
+  return left.isInteger() && left.gt(0) ? left.toNumber() : null;
+};
+
+/** Which shares of which lines this check pays; undefined = everything still unpaid. */
+function allocationsFor(bill: Bill, split: Split): Allocation[] | undefined | 'TOO_FINE' | 'NOTHING' {
+  const open = bill.lines.filter((l) => !l.parentLineId && !l.fullyPaid);
+  if (split.kind === 'rest' || (split.kind === 'even' && split.ways <= 1)) return undefined;
+  if (split.kind === 'even') {
+    const out: Allocation[] = [];
+    for (const l of open) {
+      const share = partOfRest(l.paidShare, split.ways);
+      if (!share) return 'TOO_FINE';
+      out.push({ billLineId: l.id, share });
+    }
+    return out;
+  }
+  const out = Object.entries(split.picked).map(([billLineId, qty]) => {
+    const line = open.find((l) => l.id === billLineId);
+    const left = line ? wholeLeft(line) : null;
+    return left !== null && qty < left ? { billLineId, quantity: String(qty) } : { billLineId };
+  });
+  return out.length ? out : 'NOTHING';
+}
+
+/**
+ * A frozen bill (ADR-0014 §8) paid in one or more checks: the rest, an even split, or by item. The
+ * server prices each check (preview) and records it as a sale; the till never prorates money itself.
+ */
+export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; billId: string; onBack: () => void; onDone: () => void }) {
+  const { t } = useT();
+  const [bill, setBill] = useState<Bill | null>(null);
+  const [split, setSplit] = useState<Split>({ kind: 'rest' });
+  const [preview, setPreview] = useState<CheckPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [reopening, setReopening] = useState(false);
+  const pay = usePayment({ shift, due: preview?.amountDue ?? '0.00', setNotice });
+
+  const load = useCallback(async () => {
+    try {
+      setBill(await api<Bill>('GET', `/v1/restaurant/bills/${billId}`));
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    }
+  }, [billId]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const allocations = bill ? allocationsFor(bill, split) : 'NOTHING';
+  const allocKey = JSON.stringify(allocations);
+
+  // The server's price for this check, whenever the split or what is already paid changes.
+  useEffect(() => {
+    if (!bill || bill.status !== 'ACTIVE' || allocations === 'TOO_FINE' || allocations === 'NOTHING') {
+      setPreview(null);
+      return;
+    }
+    let live = true;
+    setPreviewing(true);
+    api<CheckPreview>('POST', `/v1/restaurant/bills/${billId}/checks/preview`, allocations ? { allocations } : {})
+      .then((p) => live && setPreview(p))
+      .catch((err) => {
+        if (!live) return;
+        setPreview(null);
+        setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      })
+      .finally(() => live && setPreviewing(false));
+    return () => {
+      live = false;
+    };
+  }, [allocKey, bill?.amountPaid, bill?.status, billId]);
+
+  async function takePayment() {
+    if (!preview || allocations === 'TOO_FINE' || allocations === 'NOTHING') return;
+    const expected = preview.amountDue;
+    const saleId = await pay.submit(
+      (body, key) =>
+        api<{ id: string }>(
+          'POST',
+          `/v1/restaurant/bills/${billId}/checks`,
+          { cashierSessionId: shift.sessionId, ...body, ...(allocations && { allocations }), expectedAmountDue: expected },
+          { 'idempotency-key': key },
+        ),
+      () => void load(),
+    );
+    if (!saleId) return;
+    try {
+      setReceipt(await api<ReceiptData>('GET', `/v1/sales/${saleId}/receipt`));
+    } catch (err) {
+      setNotice({ kind: 'warn', text: errorText(err, t('common.error'), t('pay.unconfirmed')) });
+    }
+    await load();
+  }
+
+  function nextCheck() {
+    pay.reset();
+    setReceipt(null);
+    setNotice(null);
+    setSplit((s) => (s.kind === 'even' ? { kind: 'even', ways: Math.max(1, s.ways - 1) } : s.kind === 'items' ? { kind: 'items', picked: {} } : s));
+  }
+
+  async function reopen(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const reason = String(new FormData(e.currentTarget).get('reason') ?? '').trim();
+    if (!reason) return;
+    try {
+      await api('POST', `/v1/restaurant/bills/${billId}/void`, { reason });
+      onBack();
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    }
+  }
+
+  if (receipt) {
+    const settled = bill?.status === 'SETTLED';
+    return (
+      <div className="mx-auto grid max-w-[1100px] gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_360px]">
+        <Receipt data={receipt} />
+        <div className="no-print grid content-start gap-3">
+          {settled ? (
+            <>
+              <Callout kind="info">{t('bill.settled')}</Callout>
+              <button className="btn btn-primary w-full" autoFocus onClick={onDone}>{t('bill.backToFloor')}</button>
+            </>
+          ) : (
+            <>
+              {bill && <p className="flex justify-between"><span className="text-muted">{t('bill.left')}</span><Money value={bill.amountRemaining} className="font-semibold" /></p>}
+              <button className="btn btn-primary w-full" autoFocus onClick={nextCheck}>{t('bill.nextCheck')}</button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (!bill) {
+    return <div className="px-6 py-8">{notice ? <Callout kind={notice.kind}>{notice.text}</Callout> : <p className="text-muted">{t('floor.loading')}</p>}</div>;
+  }
+
+  const open = bill.lines.filter((l) => !l.parentLineId && !l.fullyPaid);
+  const childrenOf = (id: string) => bill.lines.filter((l) => l.parentLineId === id);
+  const locked = pay.intents.length > 0; // a card/QR payment was taken for this amount: keep the split
+  const picked = split.kind === 'items' ? split.picked : {};
+
+  return (
+    <div className="mx-auto grid max-w-[1440px] gap-4 px-4 py-5 sm:px-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="btn btn-sm" onClick={onBack}>
+          <ArrowLeft className="size-4" aria-hidden /> {t('bill.backToOrder')}
+        </button>
+        <h1 className="text-[1.25rem] font-semibold">{t('bill.title', { n: String(bill.billNumber) })}</h1>
+        <span className={`tag ${bill.status === 'ACTIVE' ? 'tag-warn' : ''}`}>{t(`bill.status.${bill.status}` as MessageKey)}</span>
+      </div>
+      {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
+      {bill.requiresProfessionalReview && <Callout kind="warn">{t('sell.pendingReview')}</Callout>}
+
+      <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
+        <div className="grid content-start gap-4">
+          <Note className="p-2">
+            <ul aria-label={t('bill.lines')}>
+              {bill.lines.filter((l) => !l.parentLineId).map((l) => (
+                <li key={l.id} className="row-rule px-3 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className={`font-semibold ${l.fullyPaid ? 'text-muted' : ''}`}><span className="money">{l.quantity}×</span> {l.name}</p>
+                      {childrenOf(l.id).map((c) => (
+                        <p key={c.id} className="flex justify-between gap-3 text-[0.875rem] text-muted"><span>+ {c.name}</span><Money value={c.amountDue} /></p>
+                      ))}
+                      {isPositive(l.statutoryDiscount) && <p className="text-[0.8125rem] text-muted">{t('totals.statutory')} −<Money value={l.statutoryDiscount} /></p>}
+                      {l.paidShare !== '0/1' && <span className={`tag mt-1 ${l.fullyPaid ? '' : 'tag-warn'}`}>{l.fullyPaid ? t('bill.paid') : t('bill.paidPart', { qty: toDec(l.paidQuantity).toString() })}</span>}
+                    </div>
+                    <Money value={l.amountDue} className={`text-[1.0625rem] font-semibold ${l.fullyPaid ? 'text-muted' : ''}`} />
+                  </div>
+                </li>
+              ))}
+              {bill.charges.map((c) => (
+                <li key={c.id} className="row-rule flex justify-between gap-3 px-3 py-3">
+                  <span>{t('bill.serviceCharge', { rate: toDec(c.rate).times(100).toString() })}</span>
+                  <Money value={c.amountDue} className="font-semibold" />
+                </li>
+              ))}
+            </ul>
+          </Note>
+          <Note className="grid gap-1 p-5">
+            <p className="flex items-baseline justify-between"><span className="text-muted">{t('bill.total')}</span><Money value={bill.amountDue} className="text-[1.5rem] font-semibold" /></p>
+            <p className="flex justify-between text-[0.9375rem]"><span className="text-muted">{t('totals.vat')}</span><Money value={bill.vatAmount} /></p>
+            {bill.checks.length > 0 && (
+              <>
+                <p className="flex justify-between text-[0.9375rem]"><span className="text-muted">{t('bill.paidSoFar', { n: String(bill.checks.length) })}</span><Money value={bill.amountPaid} /></p>
+                <p className="flex justify-between font-semibold"><span>{t('bill.left')}</span><Money value={bill.amountRemaining} /></p>
+              </>
+            )}
+          </Note>
+          {bill.status === 'ACTIVE' && bill.checks.length === 0 && (
+            reopening ? (
+              <Note className="p-4">
+                <form className="grid gap-3" onSubmit={reopen}>
+                  <p className="font-semibold">{t('bill.reopenTitle')}</p>
+                  <Field id="reopenReason" name="reason" required maxLength={200} label={t('history.reason')} autoFocus />
+                  <div className="flex gap-2">
+                    <button className="btn btn-danger">{t('bill.reopen')}</button>
+                    <button type="button" className="btn" onClick={() => setReopening(false)}>{t('common.cancel')}</button>
+                  </div>
+                </form>
+              </Note>
+            ) : (
+              <button type="button" className="btn btn-sm justify-self-start" onClick={() => setReopening(true)}>{t('bill.reopen')}</button>
+            )
+          )}
+        </div>
+
+        {bill.status === 'ACTIVE' ? (
+          <aside className="grid content-start gap-4" aria-label={t('bill.payTitle')}>
+            <Note className="grid gap-3 p-5">
+              <div className="flex flex-wrap gap-1" role="group" aria-label={t('bill.splitHow')}>
+                <button type="button" className="btn btn-sm" disabled={locked} aria-pressed={split.kind === 'rest'} onClick={() => setSplit({ kind: 'rest' })}>{t('bill.payRest')}</button>
+                <button type="button" className="btn btn-sm" disabled={locked} aria-pressed={split.kind === 'even'} onClick={() => setSplit({ kind: 'even', ways: 2 })}>{t('bill.splitEven')}</button>
+                <button type="button" className="btn btn-sm" disabled={locked} aria-pressed={split.kind === 'items'} onClick={() => setSplit({ kind: 'items', picked: {} })}>{t('bill.byItem')}</button>
+              </div>
+              {split.kind === 'even' && (
+                <div className="grid gap-2">
+                  <span className="text-[0.8125rem] font-semibold">{t('bill.ways')}</span>
+                  <div className="flex flex-wrap gap-1">
+                    {[2, 3, 4, 5, 6].map((n) => (
+                      <button key={n} type="button" className="btn btn-sm" disabled={locked} aria-pressed={split.ways === n} onClick={() => setSplit({ kind: 'even', ways: n })}>{n}</button>
+                    ))}
+                  </div>
+                  <p className="text-[0.875rem] text-muted">{split.ways > 1 ? t('bill.evenHint', { n: String(split.ways) }) : t('bill.lastShare')}</p>
+                </div>
+              )}
+              {split.kind === 'items' && (
+                <ul className="grid gap-1" aria-label={t('bill.byItem')}>
+                  {open.map((l) => {
+                    const left = wholeLeft(l);
+                    const qty = picked[l.id];
+                    const on = qty !== undefined;
+                    const setQty = (q: number | undefined) =>
+                      setSplit((s) => {
+                        if (s.kind !== 'items') return s;
+                        const next = { ...s.picked };
+                        if (q === undefined) delete next[l.id];
+                        else next[l.id] = q;
+                        return { kind: 'items', picked: next };
+                      });
+                    return (
+                      <li key={l.id} className="flex min-h-12 flex-wrap items-center gap-2">
+                        <label className="flex flex-1 items-center gap-3">
+                          <input type="checkbox" className="size-5" disabled={locked} checked={on} onChange={(e) => setQty(e.target.checked ? (left ?? 1) : undefined)} />
+                          <span>{l.name}</span>
+                        </label>
+                        {on && left !== null && left > 1 && (
+                          <span className="flex items-center gap-1">
+                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={locked || qty! <= 1} onClick={() => setQty(qty! - 1)}><Minus className="size-4" aria-hidden /></button>
+                            <span className="money w-12 text-center">{qty}/{left}</span>
+                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={locked || qty! >= left} onClick={() => setQty(qty! + 1)}><Plus className="size-4" aria-hidden /></button>
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {allocations === 'TOO_FINE' && <Callout kind="warn">{t('bill.tooFine')}</Callout>}
+              {allocations === 'NOTHING' && split.kind === 'items' && <p className="text-[0.875rem] text-muted">{t('bill.pickItems')}</p>}
+              <p className="flex items-baseline justify-between gap-3 border-t border-hair-soft pt-3">
+                <span className="text-muted">{t('bill.thisCheck')}</span>
+                <Money value={preview?.amountDue ?? null} className="text-[2.25rem] font-semibold leading-tight" />
+              </p>
+              {previewing && <p className="text-[0.8125rem] text-muted">{t('totals.updating')}</p>}
+              {preview && preview.charges.length > 0 && (
+                <p className="flex justify-between text-[0.875rem] text-muted"><span>{t('bill.includesCharge')}</span><Money value={preview.charges.reduce((a, c) => toDec(a).plus(c.amountDue).toFixed(2), '0.00')} /></p>
+              )}
+            </Note>
+            <PaymentPanel pay={pay} priced={!!preview && !previewing} submitLabel={t('bill.takePayment')} onSubmit={() => void takePayment()} canSubmit={!!preview} />
+          </aside>
+        ) : (
+          <aside className="grid content-start gap-3">
+            <Callout kind="info">{t('bill.settled')}</Callout>
+            <button className="btn btn-primary" onClick={onDone}>{t('bill.backToFloor')}</button>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
