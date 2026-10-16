@@ -142,6 +142,11 @@ configurable BLOCK policy cannot be enforced without connectivity and is not off
   - `OfflineEngine` with `ringUp`, `syncOnce` / `drain` (batches of 50), backoff of 1 s → 5 min with
     50–100 % jitter, `status`, and serialized work;
   - `httpTransport`.
+- **Slice 3**: `@1pos/escpos` (layout + ESC/POS bytes, pure). In the POS: converters for online and
+  offline receipts, and `escposPrinter` / `escposDrawer` on a byte channel. A print failure never touches
+  the sale; the cashier prints again.
+- **Slice 4 (admin)**: `/offline-sales` review screen. The POS outage banner, sync status and offline
+  selling wait for the shell (slice 5).
 - **Known gaps**
   - The queue of a **revoked** terminal can only be recovered by an administrator; no tool exists yet.
     Its envelopes name that terminal's snapshot, so another terminal cannot deliver them.

@@ -31,6 +31,7 @@
 - E2E: start API (`RATE_LIMITS_ENABLED=false` locally) + `next start`, then `pnpm test:e2e:web` (headless Edge via CDP; screenshots → `.impeccable/review/`).
 - POS (browser mode, ADR-0006): `pnpm dev:pos` → http://127.0.0.1:3330 (Vite proxies `/v1` to the API; tokens in memory only). E2E: build it, `npx vite preview --port 3330` in `apps/pos-desktop`, API with `RATE_LIMITS_ENABLED=false`, then `pnpm test:e2e:pos` (screenshots → `.impeccable/review/pos/`).
 - Restaurant E2E (API + POS preview + admin all running): `test:e2e:tables`, `test:e2e:kitchen`, `test:e2e:web:restaurant`, `test:e2e:web:reports`, and `test:e2e:service` (SPEC restaurant scenarios 1–10 as one service across admin, floor and KDS; args `[posUrl] [adminUrl] [outDir] [apiUrl]`).
+- Offline review E2E: `pnpm test:e2e:web:offline [adminUrl] [outDir] [apiUrl]` (a till delivers sales through the terminal API; the manager reviews them).
 - Dev DB traceability audit (after migrating, exit reviews): `AUDIT_DATABASE_URL=postgres://onepos_owner:<compose password>@127.0.0.1:55460/onepos pnpm --filter @1pos/api exec tsx test/dev-audit.ts` (needs a role that bypasses RLS; documents from before the ledger are reported apart).
 - Worker: `pnpm --filter @1pos/workers build` then `pnpm --filter @1pos/workers start` (outbox processor)
 - OpenAPI: `pnpm build` then `pnpm --filter @1pos/api openapi` → `docs/api/openapi.json` (a unit test fails if it drifts from the routes).

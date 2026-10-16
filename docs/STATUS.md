@@ -1,9 +1,35 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 7 — Phase 4 exit review; Phase 5 plan (ADR-0015), slices 1–2: offline sync server + client engine)_
+_Last updated: 2026-10-17 (session 7 — Phase 4 exit review; Phase 5 plan (ADR-0015), slices 1–4: offline sync server, client engine, receipt printing, admin review screen)_
 
 ## Current phase
-**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1 (server) and 2 (client engine) done; Rust is still not installed, so the Tauri shell (slice 5) stays blocked. Next: slice 3 (ESC/POS) or 4 (UI) — see "Next task".
+**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1–3 done, slice 4 done for the admin. Rust is still not installed, so the Tauri shell (slice 5) stays blocked, and with it the POS's offline screens. See "Next task".
+
+## Phase 5 slices 3–4 — printing and the review screen (session 7)
+- **`@1pos/escpos`** (new, pure): a neutral `PrintableReceipt` → fixed-width layout (32/42/48 columns; long names wrap with the amount on the last line) and ESC/POS bytes:
+  - init and the CP437 code page (`₱` printed as `PHP`, `ñ` kept, unknown characters as `?`);
+  - centred header, bold notice, double-height TOTAL DUE;
+  - the SC/PWD block with a signature line;
+  - partial cut, and an optional drawer kick.
+- **POS**:
+  - `lib/printing.ts` turns the server receipt and the offline receipt into that model (receipt labels moved there, shared with the screen);
+  - `escposPrinter` / `escposDrawer` on a byte channel, with a timeout;
+  - the receipt's Print button reports a printer failure ("The sale is recorded; check the printer and print again") and offers "Print again". The SPEC lists printer failure among the failures to handle; printing is never part of the sale.
+- **Admin `/offline-sales`** (nav "Offline", for `cash.reconcile`; the BFF allows `sync/transactions` only, never the terminal routes):
+  - tabs: to review / recorded / dismissed;
+  - each problem worded in EN/FIL (e.g. "The till charged a different total than its price list gives (₱20.00 vs ₱22.40)");
+  - "Record again" (a refused attempt is counted, and the row refreshes even on refusal); dismiss with a reason;
+  - stacked rows on phones.
+  - The API list now carries the cashier's name, register code and sale number.
+- **Found by the screenshots and fixed**:
+  - adding a twelfth nav item pushed "Subscription" off the bar at 1440 px; the label is now "Offline";
+  - a sale naming an unknown person showed "—" as cashier; it now reads "Unknown cashier".
+- **Tests**:
+  - escpos 5 and POS printing 4 (unit);
+  - `test:e2e:web:offline` **12/12**;
+  - every other E2E suite re-run on the new build: admin smoke 42/42, restaurant 22/22, reports 19/19, POS 19/19, tables 25/25, kitchen 13/13, service 22/22 (174 checks in all; reported by the building session, not re-run at commit time);
+  - gate at commit (2026-10-17): `pnpm build`, `pnpm typecheck`, `pnpm lint`, `pnpm test` all exit 0; `turbo run test:integration --concurrency=1 --continue` → database 21/21, workers 8/8, api 252/252.
+  - Note: two integration runs against `onepos_test` at once make `outbox.test.ts` flaky (processors claim across tenants) — run one at a time.
 
 ## Phase 5 slices 1–2 — offline sync (session 7)
 - **Server** (migrations 0041/0042, both with forced RLS):
@@ -536,7 +562,10 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
 2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
-3. **Phase 5** (ADR-0015): slices 1–2 ✅. Next, without Rust: slice 3 (ESC/POS encoder + printer port) and slice 4 (admin offline-sales review screen; the POS outage banner, sync status and offline selling path, built against the engine but enabled only in the desktop shell, since browser mode has no durable SQLite and is never advertised as offline — ADR-0006). Slice 5 (Tauri shell) needs `rustup` + MSVC build tools + WebView2 — ask the user before installing. Slice 6 needs PayMongo sandbox keys.
+3. **Phase 5** (ADR-0015): slices 1–3 ✅, slice 4 ✅ for the admin. **Blocked on the user**:
+   - slice 5 (the Tauri shell, which also unblocks the POS offline screens, the SQLite driver and the printer/drawer byte channel) needs `rustup` + MSVC build tools + WebView2 installed — ask before installing;
+   - slice 6 needs PayMongo sandbox keys.
+   Without either, the remaining non-blocked work is the Phase 5 leftovers in BACKLOG, or the carried items below.
 4. Decisions for the user:
    - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
    - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).

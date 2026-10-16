@@ -512,3 +512,27 @@ export interface TrialBalance {
   data: { accountId: string; code: string; name: string; type: AccountType; opening: string; debit: string; credit: string; closing: string }[];
   totals: { debit: string; credit: string; closing: string };
 }
+
+/** An offline sale a terminal delivered (ADR-0015): recorded, waiting for a manager, or dismissed. */
+export interface OfflineSale {
+  id: string;
+  terminalId: string;
+  terminalName: string;
+  registerCode: string;
+  cashierName: string | null;
+  saleNumber: number | null;
+  terminalTxnId: string;
+  deviceSeq: number;
+  status: 'RECORDED' | 'QUARANTINED' | 'DISMISSED';
+  cashierSessionId: string | null;
+  saleId: string | null;
+  errorCode: string | null;
+  errorDetail: { message?: string; details?: Record<string, unknown> } | null;
+  attempts: number;
+  receivedAt: string;
+  resolvedAt: string | null;
+  resolveReason: string | null;
+  localReference: string;
+  occurredAt: string;
+  amountDue: string;
+}

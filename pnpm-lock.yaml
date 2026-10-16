@@ -145,9 +145,15 @@ importers:
 
   apps/pos-desktop:
     dependencies:
+      '@1pos/escpos':
+        specifier: workspace:*
+        version: link:../../packages/escpos
       '@1pos/money':
         specifier: workspace:*
         version: link:../../packages/money
+      '@1pos/pos-offline':
+        specifier: workspace:*
+        version: link:../../packages/pos-offline
       '@fontsource/archivo':
         specifier: ^5.3.0
         version: 5.3.0
@@ -229,6 +235,8 @@ importers:
       drizzle-kit:
         specifier: ^0.31.11
         version: 0.31.11
+
+  packages/escpos: {}
 
   packages/money:
     dependencies:

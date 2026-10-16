@@ -1,43 +1,31 @@
 import { Printer } from 'lucide-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useT } from '../i18n';
-import { browserPrinter } from '../lib/devices';
+import { browserPrinter, type ReceiptPrinter } from '../lib/devices';
+import { receiptToPrintable, SETTLEMENT, signedTotal, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
-import { Money } from './ui';
-
-/** Receipt wording stays in English, matching BIR document terminology (not UI copy). */
-const TOTAL_LABELS: Record<string, string> = {
-  gross: 'Gross',
-  discount: 'Discount',
-  vatableSales: 'VATable sales',
-  vatAmount: 'VAT',
-  vatExemptSales: 'VAT-exempt sales',
-  zeroRatedSales: 'Zero-rated sales',
-  vatExemption: 'VAT exemption',
-  salesSubjectToPercentageTax: 'Sales subject to percentage tax',
-  exemptSales: 'Exempt sales',
-  statutoryDiscount: 'SC/PWD discount',
-  amountDue: 'TOTAL DUE',
-  tendered: 'Tendered',
-  change: 'Change',
-};
+import { Callout, Money } from './ui';
 
 /**
  * The server's receipt document, rendered as-is. Its notice (e.g. "THIS IS NOT AN OFFICIAL
  * INVOICE") is always printed; the counter never adds or removes compliance wording.
  */
-/** Amounts taken off the price print with a minus, as on the counter screen. */
-const DEDUCTIONS = new Set(['discount', 'vatExemption', 'statutoryDiscount']);
-/** Printed after the tenders, so the slip reads TOTAL DUE → how it was paid → tendered → change. */
-const SETTLEMENT = ['tendered', 'change'];
-
-export function Receipt({ data }: { data: ReceiptData }) {
+export function Receipt({ data, printer = browserPrinter }: { data: ReceiptData; printer?: ReceiptPrinter }) {
   const { t } = useT();
   const ref = useRef<HTMLDivElement>(null);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const print = async () => {
+    if (!ref.current) return;
+    setPrintError(null);
+    try {
+      await printer.print(ref.current, receiptToPrintable(data));
+    } catch (e) {
+      setPrintError((e as Error).message);
+    }
+  };
   const entries = Object.entries(data.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
   const totals = entries.filter(([k]) => !SETTLEMENT.includes(k));
   const settlement = SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k));
-  const amount = (k: string, v: string) => (DEDUCTIONS.has(k) && Number(v) !== 0 ? `-${v}` : v);
   return (
     <div className="grid content-start gap-3">
       <div ref={ref} className="printable note mx-auto w-full max-w-[420px] p-6 font-[family-name:var(--font-serial)] text-[0.875rem]">
@@ -76,7 +64,7 @@ export function Receipt({ data }: { data: ReceiptData }) {
           {totals.map(([k, v]) => (
             <div key={k} className={`flex justify-between ${k === 'amountDue' ? 'text-[1rem] font-semibold' : ''}`}>
               <dt>{k === 'vatAmount' ? data.totals.vatLabel : (TOTAL_LABELS[k] ?? k)}</dt>
-              <dd><Money value={amount(k, v)} /></dd>
+              <dd><Money value={signedTotal(k, v)} /></dd>
             </div>
           ))}
         </dl>
@@ -105,8 +93,13 @@ export function Receipt({ data }: { data: ReceiptData }) {
         {data.legend && <p className="mt-3 text-muted">{data.legend}</p>}
         <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.transaction.cashier} · {data.transaction.register}</p>
       </div>
-      <button className="no-print btn mx-auto" onClick={() => ref.current && browserPrinter.print(ref.current)}>
-        <Printer className="size-4" aria-hidden /> {t('receipt.print')}
+      {printError && (
+        <div className="no-print mx-auto w-full max-w-[420px]">
+          <Callout kind="error">{t('receipt.printFailed')} ({printError})</Callout>
+        </div>
+      )}
+      <button className="no-print btn mx-auto" onClick={() => void print()}>
+        <Printer className="size-4" aria-hidden /> {printError ? t('receipt.reprint') : t('receipt.print')}
       </button>
     </div>
   );

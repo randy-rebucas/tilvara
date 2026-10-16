@@ -41,14 +41,17 @@ export function useSubmit() {
     method: 'POST' | 'PATCH' | 'PUT',
     url: string,
     body?: unknown,
-    opts: { idempotent?: boolean; idempotencyKey?: string; refresh?: boolean } = {},
+    /** `refreshOnError`: the server records something even when it refuses (e.g. a counted attempt). */
+    opts: { idempotent?: boolean; idempotencyKey?: string; refresh?: boolean; refreshOnError?: boolean } = {},
   ): Promise<Result<T>> {
     setPending(true);
     setError(null);
     const r = await send<T>(method, url, body, opts);
     setPending(false);
-    if (!r.ok) setError(r.error);
-    else if (opts.refresh !== false) router.refresh();
+    if (!r.ok) {
+      setError(r.error);
+      if (opts.refreshOnError) router.refresh();
+    } else if (opts.refresh !== false) router.refresh();
     return r;
   }
 

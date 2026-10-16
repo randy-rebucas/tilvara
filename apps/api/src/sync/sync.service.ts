@@ -9,6 +9,7 @@ import {
   eq,
   legalEntities,
   registers,
+  sales,
   sql,
   terminals,
   terminalSnapshots,
@@ -245,17 +246,14 @@ export class SyncService extends TenantService {
   /** Offline deliveries the caller may reconcile (`cash.reconcile` at the terminal's register). */
   list(auth: AuthContext, q: OfflineListQuery) {
     return this.read(auth, async (db) => {
-      const rows = await db
-        .select({ d: terminalTransactions, registerId: terminals.registerId, terminalName: terminals.name })
-        .from(terminalTransactions)
-        .innerJoin(terminals, eq(terminals.id, terminalTransactions.terminalId))
+      const rows = await this.rows(db)
         .where(and(q.status ? eq(terminalTransactions.status, q.status) : undefined, q.terminalId ? eq(terminalTransactions.terminalId, q.terminalId) : undefined))
         .orderBy(q.status === 'QUARANTINED' ? asc(terminalTransactions.receivedAt) : desc(terminalTransactions.receivedAt))
         .limit(200);
       const out = [];
       for (const r of rows) {
         const { scope } = await registerScope(db, r.registerId);
-        if (this.can(auth, 'cash.reconcile', scope)) out.push(this.view(r.d, r.terminalName));
+        if (this.can(auth, 'cash.reconcile', scope)) out.push(this.view(r));
       }
       return { data: out };
     });
@@ -305,11 +303,10 @@ export class SyncService extends TenantService {
 
   async get(auth: AuthContext, id: string) {
     return this.read(auth, async (db) => {
-      const [r] = await db.select({ d: terminalTransactions, registerId: terminals.registerId, terminalName: terminals.name })
-        .from(terminalTransactions).innerJoin(terminals, eq(terminals.id, terminalTransactions.terminalId)).where(eq(terminalTransactions.id, id));
+      const [r] = await this.rows(db).where(eq(terminalTransactions.id, id));
       if (!r) throw notFound('Offline sale');
       this.assertCan(auth, 'cash.reconcile', (await registerScope(db, r.registerId)).scope);
-      return this.view(r.d, r.terminalName);
+      return this.view(r);
     });
   }
 
@@ -326,10 +323,27 @@ export class SyncService extends TenantService {
     return d;
   }
 
-  private view(d: Delivery, terminalName: string) {
+  /** A delivery with its terminal, register, the cashier it names and the sale it became. */
+  private rows(db: Database) {
+    return db
+      .select({
+        d: terminalTransactions, registerId: terminals.registerId, terminalName: terminals.name, registerCode: registers.code,
+        cashierName: users.displayName, saleNumber: sales.saleNumber,
+      })
+      .from(terminalTransactions)
+      .innerJoin(terminals, eq(terminals.id, terminalTransactions.terminalId))
+      .innerJoin(registers, eq(registers.id, terminals.registerId))
+      .leftJoin(users, sql`${users.id} = (${terminalTransactions.payload} ->> 'cashierUserId')::uuid`)
+      .leftJoin(sales, eq(sales.id, terminalTransactions.saleId))
+      .$dynamic();
+  }
+
+  private view(r: { d: Delivery; terminalName: string; registerCode: string; cashierName: string | null; saleNumber: number | null }) {
+    const { d } = r;
     const env = d.payload as OfflineSale;
     return {
-      id: d.id, terminalId: d.terminalId, terminalName, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
+      id: d.id, terminalId: d.terminalId, terminalName: r.terminalName, registerCode: r.registerCode, cashierName: r.cashierName,
+      saleNumber: r.saleNumber, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
       cashierSessionId: d.cashierSessionId, saleId: d.saleId, errorCode: d.errorCode, errorDetail: d.errorDetail, attempts: d.attempts,
       receivedAt: d.receivedAt, resolvedAt: d.resolvedAt, resolvedBy: d.resolvedBy, resolveReason: d.resolveReason,
       localReference: env.localReference, occurredAt: env.occurredAt, amountDue: env.amountDue, cashierUserId: env.cashierUserId,

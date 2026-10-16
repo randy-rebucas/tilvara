@@ -171,8 +171,14 @@ Slice 2 — client engine (session 7): ✅ done.
 - ✅ `@1pos/pos-offline`: `LocalStore` over `SqlDriver` (`node:sqlite` driver), `OfflineEngine` (ring up = one local tx with the device number and envelope; sync in device order, batches of 50; backoff with jitter; 401 stops; restart resumes), `httpTransport`.
 - ✅ Unit tests (7); drills against the live API (`offline-engine.test.ts`, 4): outage + restart, lost answers + DB down (503) → replayed never doubled, 120 sales in batches, price rise flagged, shift closed elsewhere → quarantine, revoked till stops.
 
-⬜ Slice 3 — ESC/POS receipt encoder + printer port (pure TS); offline receipt layout.
-⬜ Slice 4 — UI: POS outage banner + sync status + offline selling path; admin "offline sales" review screen (list / retry / dismiss); terminal set-up on the device (enter id + credential).
+Slice 3 — receipt printing (session 7): ✅ done.
+- ✅ `@1pos/escpos` (pure): a neutral `PrintableReceipt`, fixed-width layout for 32/42/48 columns (long names wrap, amounts right-aligned), CP437 with `₱` spelled `PHP`, ESC/POS bytes (init, code page, centre, bold notice, double-height total, SC/PWD signature block, partial cut, optional drawer kick); 5 unit tests with golden text.
+- ✅ POS: `receiptToPrintable` / `offlineReceiptToPrintable` (receipt labels shared with the screen), `escposPrinter` / `escposDrawer` on a byte channel with a timeout; a failed print shows "The sale is recorded; print again" (SPEC: printer failure); 4 unit tests.
+
+Slice 4 — UI (session 7): 🟡 admin done; POS offline screens wait for the shell.
+- ✅ Admin `/offline-sales` (nav "Offline", needs `cash.reconcile`; BFF allows `sync/transactions` only): to review / recorded / dismissed, each problem in words (EN/FIL), record again (a refused attempt is counted and shown), dismiss with a reason, stacked rows on phones; `test:e2e:web:offline` 12/12.
+- ✅ API list/get carry the cashier's name, register code and sale number.
+- ⬜ POS: outage banner, sync status (pending / needs review / snapshot age), selling through `OfflineEngine` when the API is unreachable, terminal set-up (id + credential) — built with slice 5, since browser mode has no durable SQLite (ADR-0006).
 ⬜ Slice 5 — Tauri shell (needs Rust): SQLite via the Tauri SQL plugin as `SqlDriver`, printer and drawer adapters, credential storage.
 ⬜ Slice 6 — PayMongo adapter + webhooks (needs sandbox keys); invoice transmission (compliance gate).
 ⬜ Slice 7 — exit review.
@@ -185,6 +191,8 @@ Slice 2 — client engine (session 7): ✅ done.
 - opening a shift offline;
 - snapshot paging for large catalogues;
 - push the snapshot when prices change (today: the till refreshes when online).
+- printer status (paper out, cover open) needs the device's status bytes (DLE EOT) through the shell;
+- receipt logo/QR images (ESC/POS raster) when a design asks for them.
 
 ## Phase 6 — Pilot readiness
 Load tests, security hardening, backup/restore drill, monitoring/alerts, support workflows, UAT, compliance release review, pilot.

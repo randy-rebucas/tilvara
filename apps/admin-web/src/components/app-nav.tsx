@@ -14,6 +14,7 @@ const ITEMS: { href: string; key: MessageKey; needs?: string[] }[] = [
   { href: '/books', key: 'nav.books', needs: ['accounting.read'] },
   { href: '/restaurant', key: 'nav.restaurant', needs: ['restaurant.manage'] },
   { href: '/reports', key: 'nav.reports', needs: ['reports.read'] },
+  { href: '/offline-sales', key: 'nav.offline', needs: ['cash.reconcile'] },
   { href: '/locations', key: 'nav.locations', needs: ['org.read', 'terminals.manage'] },
   { href: '/team', key: 'nav.team', needs: ['members.read'] },
   { href: '/subscription', key: 'nav.subscription', needs: ['subscription.manage', 'tenant.manage'] },
