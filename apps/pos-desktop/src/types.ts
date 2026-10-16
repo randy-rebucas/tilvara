@@ -199,7 +199,7 @@ export interface Receipt {
   transaction: { reference: string; dateTime: string; register: string; cashier: string };
   lines: { name: string; quantity: string; unitPrice: string; amount: string; discount?: string; flag: string }[];
   /** Non-item charges such as the service charge, each printed on its own line. */
-  charges?: { kind: string; label: string; amount: string }[];
+  charges?: { kind: string; label: string; amount: string; flag: string }[];
   totals: Record<string, string>;
   tenders: { method: string; amount: string; tendered?: string; change?: string }[];
   statutory: { label: string; name: string; idNumber: string; discount: string; signatureLine: boolean }[];

@@ -380,7 +380,7 @@ export interface RecipeVersion {
   effectiveFrom: string;
   note: string | null;
   state: 'IN_FORCE' | 'SCHEDULED' | 'SUPERSEDED';
-  ingredients: { variantId: string; sku: string; name: string | null; quantity: string }[];
+  ingredients: { variantId: string; sku: string; name: string; unit: string; quantity: string }[];
 }
 
 // ---- restaurant reports (ADR-0014 §10) ----

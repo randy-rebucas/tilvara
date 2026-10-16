@@ -8,6 +8,7 @@ import {
   recipeIngredients,
   recipeVersions,
   sql,
+  unitsOfMeasure,
   type Database,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
@@ -42,9 +43,12 @@ export class RecipesService extends TenantService {
       const versions = await db.select().from(recipeVersions).where(eq(recipeVersions.variantId, variantId)).orderBy(desc(recipeVersions.effectiveFrom));
       const ingredients = versions.length
         ? await db
-            .select({ row: recipeIngredients, sku: productVariants.sku, name: productVariants.name })
+            // A single-variant product names its variant only through the product.
+            .select({ row: recipeIngredients, sku: productVariants.sku, name: sql<string>`coalesce(${productVariants.name}, ${products.name})`, unit: unitsOfMeasure.code })
             .from(recipeIngredients)
             .innerJoin(productVariants, eq(productVariants.id, recipeIngredients.ingredientVariantId))
+            .innerJoin(products, eq(products.id, productVariants.productId))
+            .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.uomId))
             .where(inArray(recipeIngredients.recipeVersionId, versions.map((v) => v.id)))
             .orderBy(productVariants.sku)
         : [];
@@ -56,7 +60,7 @@ export class RecipesService extends TenantService {
           state: v.id === inForce ? 'IN_FORCE' : v.effectiveFrom.getTime() > now ? 'SCHEDULED' : 'SUPERSEDED',
           ingredients: ingredients
             .filter((i) => i.row.recipeVersionId === v.id)
-            .map((i) => ({ variantId: i.row.ingredientVariantId, sku: i.sku, name: i.name, quantity: toDec(i.row.quantity).toString() })),
+            .map((i) => ({ variantId: i.row.ingredientVariantId, sku: i.sku, name: i.name, unit: i.unit, quantity: toDec(i.row.quantity).toString() })),
         })),
       };
     });

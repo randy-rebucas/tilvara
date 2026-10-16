@@ -9,7 +9,9 @@ import type pg from 'pg';
  *   document → entry:    every document that moved value posted exactly one journal entry;
  *   entry → document:    every non-manual entry names a document that exists, in its own entity;
  *   value ties:          per document and branch, the entry's inventory lines equal the value of
- *                        that document's movements, and goods in transit clear when received.
+ *                        that document's movements, and goods in transit clear when received;
+ *   restaurant:          a settled bill's checks add up to it, no bill line is paid beyond the whole,
+ *                        and an order's state follows its bill (Phase 4).
  *
  * Also used against the dev database after migrations (scripts in the exit review).
  */
@@ -75,6 +77,19 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
            (SELECT coalesce(-sum(m.value), 0) FROM stock_movements m JOIN stock_transfer_lines x ON x.id = m.stock_transfer_line_id
              WHERE x.stock_transfer_id = t.id AND m.type = 'TRANSFER_OUT')::text AS sent
       FROM stock_transfers t`,
+  // Restaurant (ADR-0014 §8): a bill's checks add up to it, and the order follows its bill.
+  'settled bill whose checks ≠ the bill': `
+    SELECT b.id, b.amount_due::text AS bill, (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id)::text AS checks
+      FROM order_bills b
+     WHERE b.status = 'SETTLED' AND b.amount_due <> (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id)`,
+  'bill line paid beyond the whole, or a check not paying its bill': `
+    SELECT bill_line_id AS id, 'overpaid' AS problem FROM order_bill_allocations GROUP BY 1 HAVING sum(share_num::numeric / share_den) > 1.0000001
+    UNION ALL SELECT s.id, 'check on an unpaid-for bill' FROM sales s JOIN order_bills b ON b.id = s.order_bill_id WHERE b.status = 'VOIDED' OR b.branch_id <> s.branch_id`,
+  'order and bill states disagree': `
+    SELECT o.id, o.status, b.status AS bill FROM restaurant_orders o
+      LEFT JOIN order_bills b ON b.order_id = o.id AND b.status <> 'VOIDED'
+     WHERE (o.status = 'SETTLED') <> coalesce(b.status = 'SETTLED', false) OR (o.status = 'BILLED' AND b.status IS DISTINCT FROM 'ACTIVE')
+        OR (o.status IN ('OPEN', 'CANCELLED', 'MERGED') AND b.id IS NOT NULL)`,
 };
 
 /** Rows for the transit check are filtered in JS (its expected value depends on the status). */

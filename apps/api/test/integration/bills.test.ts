@@ -158,7 +158,9 @@ describe('the restaurant service cycle (SPEC restaurant scenarios 1–10)', () =
 
     // Receipt shows the charge on its own line.
     const receipt = (await http().get(`/v1/sales/${c1.id}/receipt`).set(r.server).expect(200)).body;
-    expect(receipt.charges).toEqual([{ kind: 'SERVICE_CHARGE', label: 'Service charge 10%', amount: '19.19' }]);
+    // With its VAT (19.19 + 2.31), so the printed lines add up to the gross and, without discounts, to the total due.
+    expect(receipt.charges).toEqual([{ kind: 'SERVICE_CHARGE', label: 'Service charge 10%', amount: '21.50', flag: 'V' }]);
+    expect([receipt.totals.gross, receipt.totals.amountDue]).toEqual(['236.50', '236.50']);
 
     // Reports: Σ products + Σ charges = the summary; COGS of the burger includes its ingredients.
     const day = new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);

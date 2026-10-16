@@ -635,7 +635,7 @@ export class SalesService extends TenantService {
         })),
         tenders: tenders.map((t) => ({ method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),
         beneficiaries,
-        charges: charges.map((c) => ({ kind: c.kind, rate: toDec(c.rate).toString(), gross: c.gross })),
+        charges: charges.map((c) => ({ kind: c.kind, rate: toDec(c.rate).toString(), gross: c.gross, amountDue: c.amountDue, vatTreatment: c.vatTreatment })),
       });
     });
   }

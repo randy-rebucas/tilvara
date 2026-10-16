@@ -113,7 +113,7 @@ const en = {
   'floor.noTables': 'No tables are set up for this branch yet. A manager sets up the floor in the admin.',
   'floor.free': 'Free',
   'floor.open': 'Open · #{n}',
-  'floor.billed': 'Billed · #{n}',
+  'floor.billed': 'To pay · #{n}',
   'floor.seats': '{n} seats',
   'floor.guestsNow': '{n} guests',
   'floor.toSend': '{n} to send',
@@ -128,7 +128,7 @@ const en = {
   'order.floor': 'Floor',
   'order.backToFloor': 'Back to the floor',
   'order.status.OPEN': 'Open',
-  'order.status.BILLED': 'Billed',
+  'order.status.BILLED': 'To pay',
   'order.status.SETTLED': 'Paid',
   'order.status.CANCELLED': 'Cancelled',
   'order.status.MERGED': 'Merged',
@@ -182,7 +182,7 @@ const en = {
   'bill.discountInvalid': 'Enter a percentage such as 10.',
   'bill.print': 'Print bill',
   'bill.title': 'Bill #{n}',
-  'bill.status.ACTIVE': 'Waiting for payment',
+  'bill.status.ACTIVE': 'To pay',
   'bill.status.SETTLED': 'Paid',
   'bill.status.VOIDED': 'Reopened',
   'bill.backToOrder': 'Order',
@@ -233,6 +233,7 @@ const en = {
   'kds.start': 'Start',
   'kds.ready': 'Ready',
   'kds.bump': 'All ready (bump)',
+  'kds.new': 'New',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -349,7 +350,7 @@ const fil: Record<MessageKey, string> = {
   'floor.noTables': 'Wala pang mesa sa branch na ito. Ise-set up ng manager ang floor sa admin.',
   'floor.free': 'Bakante',
   'floor.open': 'Bukas · #{n}',
-  'floor.billed': 'May bill · #{n}',
+  'floor.billed': 'Babayaran · #{n}',
   'floor.seats': '{n} upuan',
   'floor.guestsNow': '{n} bisita',
   'floor.toSend': '{n} ipapadala',
@@ -364,7 +365,7 @@ const fil: Record<MessageKey, string> = {
   'order.floor': 'Floor',
   'order.backToFloor': 'Bumalik sa floor',
   'order.status.OPEN': 'Bukas',
-  'order.status.BILLED': 'May bill',
+  'order.status.BILLED': 'Babayaran',
   'order.status.SETTLED': 'Bayad na',
   'order.status.CANCELLED': 'Kinansela',
   'order.status.MERGED': 'Pinagsama',
@@ -418,7 +419,7 @@ const fil: Record<MessageKey, string> = {
   'bill.discountInvalid': 'Maglagay ng porsiyento gaya ng 10.',
   'bill.print': 'I-print ang bill',
   'bill.title': 'Bill #{n}',
-  'bill.status.ACTIVE': 'Hinihintay ang bayad',
+  'bill.status.ACTIVE': 'Babayaran',
   'bill.status.SETTLED': 'Bayad na',
   'bill.status.VOIDED': 'Binuksan ulit',
   'bill.backToOrder': 'Order',
@@ -469,6 +470,7 @@ const fil: Record<MessageKey, string> = {
   'kds.start': 'Simulan',
   'kds.ready': 'Handa na',
   'kds.bump': 'Handa na lahat (bump)',
+  'kds.new': 'Bago',
 };
 
 export type Lang = 'en' | 'fil';

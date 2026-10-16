@@ -24,7 +24,8 @@
     "test:e2e:tables": "node apps/pos-desktop/e2e/tables.mjs",
     "test:e2e:kitchen": "node apps/pos-desktop/e2e/kitchen.mjs",
     "test:e2e:web:restaurant": "node apps/admin-web/e2e/restaurant.mjs",
-    "test:e2e:web:reports": "node apps/admin-web/e2e/reports.mjs"
+    "test:e2e:web:reports": "node apps/admin-web/e2e/reports.mjs",
+    "test:e2e:service": "node apps/pos-desktop/e2e/service.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

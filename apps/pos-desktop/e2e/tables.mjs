@@ -140,7 +140,7 @@ try {
   await clickText('Order');
   check('back on the order: billed, nothing can be added', await shown('Go to the bill'));
   await clickText('Floor');
-  check('floor lists the billed takeaway for Ana', await shown('Ana') && /#2\s+Ana\s+Billed/.test(await text()));
+  check('floor lists the billed takeaway for Ana', await shown('Ana') && /#2\s+Ana\s+To pay/.test(await text()));
 
   // Layout
   for (const [w, h] of [[1024, 768], [390, 844]]) {

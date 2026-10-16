@@ -39,15 +39,15 @@ export default async function IngredientUsagePage({ searchParams }: { searchPara
               columns={[
                 { header: t('rest.ingredient'), cell: (x) => <>{x.name} <Serial className="text-gold">{x.sku}</Serial></> },
                 { header: t('rep.expected'), num: true, cell: (x) => `${qty(x.quantity.expected)} ${x.unit}` },
-                { header: t('rep.waste'), num: true, cell: (x) => qty(sumDecimal([x.quantity.preparedWaste, x.quantity.otherWaste])) },
-                { header: t('rep.countVariance'), num: true, cell: (x) => signed(x.quantity.countVariance) },
+                { header: t('rep.waste'), num: true, cell: (x) => `${qty(sumDecimal([x.quantity.preparedWaste, x.quantity.otherWaste]))} ${x.unit}` },
+                { header: t('rep.countVariance'), num: true, cell: (x) => `${signed(x.quantity.countVariance)} ${x.unit}` },
                 { header: t('rep.actual'), num: true, cell: (x) => <b>{qty(x.quantity.actual)} {x.unit}</b> },
                 { header: t('rep.variance'), num: true, cell: (x) => <span className={over(x.quantity.variance)}>{signed(x.quantity.variance)}{x.variancePct !== null ? ` (${x.variancePct}%)` : ''}</span> },
                 { header: t('rep.varianceValue'), num: true, cell: (x) => <span className={`money ${over(x.value.variance)}`}>{signed(x.value.variance, peso)}</span> },
               ]}
               stacked={{
                 title: (x) => x.name,
-                meta: (x) => <Serial>{t('rep.expected')} {qty(x.quantity.expected)} · {t('rep.actual')} {qty(x.quantity.actual)} {x.unit}</Serial>,
+                meta: (x) => <Serial>{t('rep.expected')} {qty(x.quantity.expected)} {x.unit} · {t('rep.actual')} {qty(x.quantity.actual)} {x.unit}</Serial>,
                 figure: (x) => (
                   <span className="block">
                     <span className={`money block font-semibold ${over(x.value.variance)}`}>{signed(x.value.variance, peso)}</span>

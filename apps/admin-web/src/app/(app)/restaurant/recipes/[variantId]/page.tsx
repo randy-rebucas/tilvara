@@ -58,7 +58,7 @@ export default async function RecipePage({ params }: { params: Promise<{ variant
                   {v.ingredients.map((i) => (
                     <li key={i.variantId} className="flex justify-between gap-3 border-t border-hair-soft py-1.5 text-[0.9375rem]">
                       <span><Serial className="text-gold">{i.sku}</Serial> {i.name}</span>
-                      <span className="money">{qty(i.quantity)}</span>
+                      <span className="money">{qty(i.quantity)} {i.unit}</span>
                     </li>
                   ))}
                 </ul>

@@ -97,6 +97,12 @@ For any set of sales and returns (`sales.test.ts`, `reports.test.ts`, `reconcili
    - the waste value of a void = its WASTE entry in the books;
    - distributable service charge = Σ charges ex VAT − Σ returned = the credit to `SERVICE_CHARGE_PAYABLE`.
 5. **Traceability**: `CONSUMPTION` maps to its SALE; wasted voids are stock adjustments; the audit stays clean after every restaurant scenario.
+6. **Under concurrency** (`restaurant-drills.test.ts`, Phase 4 exit review): checks lock session → bill → order, reopening locks bill → order, and every order change locks the order first, so:
+   - two tills paying shares of one bill at once both record and the later one settles; a share that turns out to be the last is refused as `TOTAL_CHANGED` with its new amount instead of charging a total the diner was not shown;
+   - the same line at two tills, or "pay the rest" twice, is paid once; a card authorized for the losing check stays unconsumed and blocks the shift close until cancelled;
+   - a void and the bill, or a reopen and a check, serialize: one wins, and the other is refused with a state code;
+   - a check whose connection dies leaves nothing behind, and its retry with the same key pays once.
+7. **Audit rules** (`traceability-audit.ts`, also run over the dev DB by `apps/api/test/dev-audit.ts`): a settled bill's checks add up to it, no bill line is paid beyond the whole, no check pays a voided bill or another branch's bill, and an order's state follows its bill (settled ⇔ settled bill; billed ⇔ an active bill; open/cancelled/merged ⇒ no live bill).
 
 ### Purchase order (as built)
 `DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED`; `DRAFT | APPROVED (nothing received) → CANCELLED`; `PARTIALLY_RECEIVED → CLOSED` (close short with a reason). Trigger-enforced; lines editable only in DRAFT.

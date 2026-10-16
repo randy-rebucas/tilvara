@@ -69,6 +69,21 @@ describe('buildReceipt', () => {
     expect(r.legend).toBeNull();
   });
 
+  it('prints a service charge with its VAT, so the printed lines add up to the gross and the total', () => {
+    // Half a split check: burger 150 + cheese 20 + tea 45 = 215.00 incl. VAT; charge 19.19 + VAT 2.31.
+    const r = buildReceipt({
+      ...base,
+      sale: { ...base.sale, gross: '234.19', statutoryDiscount: '0.00', vatExemptionAmount: '0.00', vatableSales: '211.16', vatAmount: '25.34', vatExemptSales: '0.00', amountDue: '236.50', amountTendered: '250.00', changeDue: '13.50' },
+      lines: [{ name: 'Burger etc.', quantity: '1', unitPrice: '215.0000', gross: '215.00', discount: '0.00', statutoryDiscount: '0.00', vatTreatment: 'VATABLE', vatableSales: '191.97', vatExemptSales: '0.00', beneficiaryId: null }],
+      beneficiaries: [],
+      charges: [{ kind: 'SERVICE_CHARGE', rate: '0.1', gross: '19.19', amountDue: '21.50', vatTreatment: 'VATABLE' }],
+    });
+    expect(r.charges).toEqual([{ kind: 'SERVICE_CHARGE', label: 'Service charge 10%', amount: '21.50', flag: 'V' }]);
+    expect([r.totals.gross, r.totals.amountDue]).toEqual(['236.50', '236.50']);
+    const nonVat = buildReceipt({ ...base, seller: { ...base.seller, vatStatus: 'NON_VAT' }, charges: [{ kind: 'SERVICE_CHARGE', rate: '0.1', gross: '5.00', amountDue: '5.00', vatTreatment: 'VATABLE' }] });
+    expect(nonVat.charges![0]!.flag).toBe('');
+  });
+
   it('formats TINs only when present', () => {
     expect(formatTin(null, '00000')).toBeNull();
     expect(formatTin('987654321', '00002')).toBe('987-654-321-00002');

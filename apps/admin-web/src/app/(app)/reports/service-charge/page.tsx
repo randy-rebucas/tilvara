@@ -51,7 +51,7 @@ export default async function ServiceChargePage({ searchParams }: { searchParams
             ]}
             stacked={{
               title: (x) => formatDate(x.day, lang),
-              meta: (x) => <Serial>{x.checks} · {t('rep.charged')} {peso(x.charged.amountDue)} · {t('rep.returned')} {peso(x.returned.amountDue)}</Serial>,
+              meta: (x) => <Serial>{t('rep.checks')} {x.checks} · {t('rep.charged')} {peso(x.charged.amountDue)} · {t('rep.returned')} {peso(x.returned.amountDue)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.net.exVat)}</span>,
             }}
             foot={{

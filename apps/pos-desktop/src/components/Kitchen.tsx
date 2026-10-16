@@ -164,7 +164,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                             <span className="money">{i.quantity}×</span> {i.name}
                             {i.seat && <span className="serial ml-2 text-[0.8125rem] text-muted">{t('kds.seat', { n: String(i.seat) })}</span>}
                           </p>
-                          <span className={`tag ${i.status === 'READY' ? 'tag-warn' : ''}`}>{t(`item.status.${i.status}` as MessageKey)}</span>
+                          <span className={`tag ${i.status === 'READY' ? 'tag-warn' : ''}`}>{i.status === 'FIRED' ? t('kds.new') : t(`item.status.${i.status}` as MessageKey)}</span>
                         </div>
                         {i.modifiers.length > 0 && <p className="text-[1rem]">{i.modifiers.map((m) => m.name).join(' · ')}</p>}
                         {i.note && <p className="text-[1rem] italic">“{i.note}”</p>}

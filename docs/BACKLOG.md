@@ -141,7 +141,17 @@ Slice 6 — UI (session 6): ✅ done.
 - ✅ 6d report screens: `/reports` (item performance, ingredient usage, kitchen voids, prep times, open orders, service charge) for `reports.read`; `test:e2e:web:reports` 19/19.
 - ⬜ 6d leftovers: the retail reports (summary, by product, cashier, tender, tax, SC/PWD book) on the same `/reports` frame; CSV/PDF export; date presets (this week, last month, pay period).
 - ⬜ 6a leftovers: merge / move items between orders in the UI (API done); per-seat split helper; reprint a bill; servers without a drawer (today the Tables tab lives inside a register shift); floor positions/shapes on a drawn plan (tiles today).
-⬜ Slice 7 — exit review: full service cycle (SPEC restaurant scenarios 1–10), drills (concurrent checks on one bill, two tablets on one order, void vs settlement), dev audit, design review.
+Slice 7 — exit review (session 7): ✅ done.
+- ✅ SPEC restaurant scenarios 1–10 as one service through admin, floor and KDS (`test:e2e:service`, 22 checks).
+- ✅ Drills (`restaurant-drills.test.ts`, 9): two tills on one bill (halves, thirds from a stale preview, same item, cash vs card "rest"), double-tapped check, reopen vs check, two tablets (fire/add/edit/bill races), void vs bill, void vs KDS + double void, connection killed mid-check.
+- ✅ Audit: restaurant rules added to the traceability audit (mutation-checked); dev DB clean (`apps/api/test/dev-audit.ts`).
+- ✅ Design finish review: 8 fixes (receipt service charge with VAT so lines add up; ingredient/sold-out names; recipe units; "To pay"; KDS "New"; menu serial; labelled phone rows; usage units).
+**Exit: ✅ met 2026-10-17**, with the tax adviser's and accountant's answers on the service charge pending before customers rely on it.
+
+⬜ Slice 7 leftovers:
+- `sales.gross` counts a service charge ex VAT while item lines count VAT-inclusive; the receipt now adds the charge VAT back, but any other consumer of `gross` (exports, a future invoice) must do the same — decide whether to store a charge's gross with VAT;
+- no drill for an API restart between a check's commit and its answer (covered generically by the Phase 2 restart drill and the same idempotency path);
+- the "void vs bill" drill asserts both outcomes but cannot force each interleaving.
 
 ⬜ Out of scope for Phase 4 (later): delivery orders, unit conversions/purchase units for recipes, sub-recipes/prep production, rule-based modifier pricing, tips, reservations, KDS push (SSE) and kitchen printers (Phase 5 devices).
 ⬜ Open questions for the tax adviser and the accountant: service charge base and VAT; SC/PWD share of the service charge; service charge as a liability.

@@ -68,7 +68,7 @@ export function Receipt({ data }: { data: ReceiptData }) {
           {data.charges?.map((c) => (
             <li key={c.kind} className="flex justify-between gap-3">
               <span>{c.label}</span>
-              <Money value={c.amount} />
+              <span className="money">{c.amount} {c.flag}</span>
             </li>
           ))}
         </ul>

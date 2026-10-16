@@ -1,9 +1,55 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 6 — Phase 4 plan (ADR-0014), slices 1–6: recipes + consumption, menu foundation, orders + kitchen, bills + checks + service charge, restaurant reports, UI (POS table service, KDS, admin set-up, report screens))_
+_Last updated: 2026-10-17 (session 7 — Phase 4 slice 7, the exit review)_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§10 are built, with UI. The user proceeded with the ADR defaults: prices fixed at bill time, order locked once a check is paid, service charge to a liability. The tax-adviser and accountant questions remain open. Slices 1–6 done; next is slice 7, the exit review (see "Next task").
+**Phase 4 — Restaurant: exit criterion met** (session 7). A restaurant completes a full service cycle and reconciles stock, payments and books, through the real screens and under concurrency. Plan and as-built notes: `docs/decisions/ADR-0014-restaurant-orders.md` ("Exit review"). Still open outside the code: the tax adviser's and accountant's answers on the service charge (base, VAT, SC/PWD share, liability). **Next: Phase 5** (see "Next task").
+
+## Phase 4 exit review (session 7)
+**1. SPEC restaurant scenarios 1–10, end to end.** New `pnpm test:e2e:service` (`apps/pos-desktop/e2e/service.mjs`) runs one service in one tenant across three browsers (admin, floor, KDS), **22/22**:
+1. admin: menu published (Mains → Burger with Doneness + Extras at GRILL, Drinks → Iced tea at BAR), recipe 1 bun + 0.15 kg beef, 10 % service charge;
+2. floor opens T1 for 2;
+3. 2× burger (Medium · Cheese) + 2× tea, ₱430.00 priced by the server;
+4. KDS: the grill sees the burgers, not the tea;
+5. start → bump at the grill and the bar; the floor sees Ready by polling and serves; the board empties;
+6. bill ₱473.00 with the charge line; split evenly ₱236.50;
+7. cash (change ₱13.50, receipt) + card; settled; T1 free;
+8. stock bun 48, beef 4.7 kg, cheese 38; ingredient usage expected = actual;
+9. item performance, service charge ₱43.00 / ₱38.39 = books, trial balance balances, GL Sales 383.93 Cr / charge payable 38.39 Cr / output VAT 50.68 Cr / COGS 136.00 / cash 236.50 / card clearing 236.50;
+10. close: expected ₱1,236.50, drawer balanced, shift RECONCILED.
+
+**2. Drills.** New `restaurant-drills.test.ts` (9), two tills (R1/R2, two cashiers), each ending with the audit:
+- halves paid at two tills at once → both recorded, the later settles, Σ = ₱473.00, bases = 383.93, each drawer ₱1,236.50;
+- three thirds from one preview (₱157.66) at once → two recorded, the one that turns out last refused `TOTAL_CHANGED` with ₱157.68, re-previewed and paid;
+- the same tea at both tills → once (`ALLOCATION_EXCEEDS_LINE`); "pay the rest" by cash at R1 and an authorized card at R2 → one; the losing card blocks R2's close (`PAYMENTS_OUTSTANDING`) until cancelled;
+- double-tapped check (same key ×5) → one sale; reopen vs first check → one wins with a state code;
+- two tablets: fire while adding and editing → nothing lost, every item on exactly one ticket; add while the bill prints → `ORDER_HAS_PENDING_ITEMS` or `ORDER_NOT_OPEN`, and the bill = the live items;
+- void vs printing the bill on four tables → the bill leaves the tea out (₱374.00) or the void is refused;
+- two managers voiding a cooking burger while the kitchen marks it ready and bumps → one void, one WASTE document (1 bun, 1 cheese);
+- connection killed while a check waits on the bill lock → 503, nothing written (sales, lines, charges, allocations, cash, stock, numbers, entries, keys), bill still ACTIVE; the same key then pays once; replay answers the same sale.
+No product defect surfaced; the lock order (session → bill → order) held. Stable over 4 consecutive runs.
+
+**3. Audit.** `traceability-audit.ts` gained three restaurant rules (Σ checks = settled bill; no line paid beyond the whole, no check on a voided/foreign bill; order state follows its bill), mutation-checked (an order forged to SETTLED is reported). New `apps/api/test/dev-audit.ts` runs it over a whole DB: **dev DB: 98 tenants, 41 migrations (0000–0040, nothing to migrate), 68 sales, 21 bills, 206 movements, 123 entries — no violations**; 39 documents predate the ledger (29 sales, 7 returns, 3 variances — the same set accepted in Phase 3).
+
+**4. Design finish review** (impeccable-finish-reviewer, 8 material fixes, all applied):
+- **Defect: a check's receipt did not add up.** The service charge printed ex VAT (₱19.19) beside VAT-inclusive items, so Gross ₱234.19 ≠ TOTAL DUE ₱236.50. It now prints with its VAT (₱21.50 V) and the receipt's Gross is the sum of the printed lines (`receipt.ts`; unit test + `bills.test.ts`). The stored `sales.gross` is unchanged (BACKLOG).
+- Ingredient names on recipes and item names on the sold-out list were empty for single-variant products → product name; recipe lines show units (0.15 KG, 1 PC).
+- One word for a printed, unpaid bill: "To pay" / "Babayaran" on the floor, order and bill (was "Billed" and "Waiting for payment").
+- KDS: a fired, unstarted item reads "New" / "Bago" (was the floor's "Sent").
+- Published menu: the publish date sits below the title, not above the content.
+- Service charge phone rows label the check count; ingredient usage shows units on every column.
+DESIGN.md records the state-word rule.
+
+## Verified in session 7 (commands actually run)
+| Command | Result |
+|---|---|
+| `vitest run … restaurant-drills.test.ts` ×4 | 8/8 each (9/9 after the audit mutation case was added, with `traceability.test.ts`: 11/11) |
+| `pnpm test:integration` (before the review fixes) | **272 passed**: database 21, api **243**, workers 8 |
+| `pnpm --filter @1pos/api exec tsx test/dev-audit.ts` (dev DB, as `onepos_owner`) | no violations, 39 pre-ledger (twice: before and after the restaurant rules) |
+| `pnpm typecheck` (18/18) · `pnpm exec oxlint apps packages` (exit 0) · `pnpm build` · receipt unit tests (6) | ok |
+| All seven E2E suites against the rebuilt API (:4321), admin `next start` (:3321) and POS preview (:3330) | `test:e2e:pos` 19/19 · `tables` 25/25 · `kitchen` 13/13 · `web` 42/42 · `web:restaurant` 22/22 · `web:reports` 19/19 · **`service` 22/22** (162 checks) |
+| `pnpm test` + `pnpm test:integration` after the fixes | unit **121 passed** (api 35, tax 30, money 15, accounting 14, admin-web 9, config 6, validation 5, observability 5, workers 2) · integration **272 passed** (database 21, api 243, workers 8) |
+The services on :4321/:3321/:3330 (started in session 6) were stopped and restarted on the new build; the stale :4320/:3320 processes were left alone.
 
 ## Phase 4 slice 6d — report screens (session 6)
 - **Admin `/reports`** (nav item for `reports.read`, so branch managers see it): branch picker plus a plain GET date form (`?branch&from&to`, or `?day` for open orders), so a report can be bookmarked. Six tabs over the slice-5 API, all server-rendered, EN/FIL, stacked rows on phones:
@@ -443,18 +489,10 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. User review of ADR-0014's proposed parts. The choices that are theirs to confirm:
-   - prices are fixed when the bill is printed;
-   - an order is locked once a check is paid;
-   - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
-3. ~~Re-run the POS/web E2E after the checkout refactor~~ — done (19/19, 42/42).
-4. ~~Phase 4 slice 6 — UI~~ ✅ (6a POS table service, 6b KDS, 6c admin set-up, 6d report screens).
-5. **Phase 4 slice 7 — exit review**:
-   - the SPEC restaurant scenarios 1–10 end to end;
-   - drills: concurrent checks on one bill, two tablets on one order, a void racing settlement, connection loss mid-check;
-   - the traceability audit over the dev DB after migrating;
-   - a design finish review of the new POS/KDS/admin screens (impeccable-finish-reviewer);
-   - docs "as built".
-6. Open decision for the user: restaurant set-up for branch managers (a "restaurant manager" template or grant `restaurant.manage` to `branch_manager`).
-7. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
+2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
+3. **Phase 5 — Offline & integrations** (SPEC §Phase 5). Blocked on installing Rust/rustup for the Tauri shell; start with an ADR for the local store + sync protocol (what is allowed offline: cash sales only, per the SPEC) and the parts that need no Rust (sync API, conflict flags, durable outbox on the server side).
+4. Decisions for the user:
+   - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
+   - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).
+5. Carried, non-blocking: the tax adviser's and accountant's answers (service charge; ADR-0013 questions 1–10); Phase 3/4 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -8,6 +8,7 @@ import {
   isNull,
   kitchenStations,
   menus,
+  products,
   productVariants,
   restaurantOrders,
   restaurantSettings,
@@ -290,9 +291,10 @@ export class FloorService extends TenantService {
       const { scope } = await branchScope(db, branchId);
       this.assertAny(auth, FLOOR_READ, scope);
       const rows = await db
-        .select({ row: soldOutItems, sku: productVariants.sku, name: productVariants.name })
+        .select({ row: soldOutItems, sku: productVariants.sku, name: sql<string>`coalesce(${productVariants.name}, ${products.name})` })
         .from(soldOutItems)
         .innerJoin(productVariants, eq(productVariants.id, soldOutItems.variantId))
+        .innerJoin(products, eq(products.id, productVariants.productId))
         .where(eq(soldOutItems.branchId, branchId))
         .orderBy(asc(productVariants.sku));
       return { data: rows.map((r) => ({ ...r.row, sku: r.sku, name: r.name })) };

@@ -50,7 +50,8 @@ export interface ReceiptInput {
   tenders: { method: string; amount: string; tendered: string; change: string }[];
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
   /** Charges that are not items (service charge, ADR-0014 §9); included in the sale totals. */
-  charges?: { kind: string; rate: string; gross: string }[];
+  /** `gross` is the charge ex VAT (its sales); `amountDue` adds its VAT. */
+  charges?: { kind: string; rate: string; gross: string; amountDue: string; vatTreatment: string }[];
 }
 
 const CHARGE_LABELS: Record<string, string> = { SERVICE_CHARGE: 'Service charge' };
@@ -132,11 +133,17 @@ export function buildReceipt(r: ReceiptInput) {
       ...(positive(l.discount) && { discount: m(l.discount) }),
       flag: flag(l),
     })),
-    // Shown separately, never inside item prices (RA 11360).
-    charges: (r.charges ?? []).map((c) => ({ kind: c.kind, label: `${CHARGE_LABELS[c.kind] ?? c.kind} ${pct(c.rate)}`, amount: m(c.gross) })),
+    // Shown separately, never inside item prices (RA 11360); with its VAT, like the item lines above it.
+    charges: (r.charges ?? []).map((c) => ({
+      kind: c.kind,
+      label: `${CHARGE_LABELS[c.kind] ?? c.kind} ${pct(c.rate)}`,
+      amount: m(c.amountDue),
+      flag: !isVat ? '' : c.vatTreatment === 'VAT_EXEMPT' ? 'E' : c.vatTreatment === 'ZERO_RATED' ? 'Z' : 'V',
+    })),
     totals: {
       currency: r.sale.currency,
-      gross: r.sale.gross,
+      // The sale's gross counts a charge ex VAT; the receipt's gross is the sum of the printed lines.
+      gross: (r.charges ?? []).reduce((a, c) => a.plus(c.amountDue).minus(c.gross), toDec(r.sale.gross)).toFixed(2),
       ...(positive(r.sale.discount) && { discount: r.sale.discount }),
       ...(isVat
         ? {

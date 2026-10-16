@@ -40,7 +40,7 @@ try {
 
   check('grill ticket for T1: the burger with its choices and note', await shown('1× Burger') && (await text()).includes('Medium · Cheese') && (await text()).includes('No pickles'));
   check('the grill does not see the bar', !(await text()).includes('Iced tea'));
-  check('ticket shows course-free header, elapsed time and Sent', /T1/.test(await text()) && /\d+:\d\d/.test(await text()) && (await text()).includes('Sent'));
+  check('ticket shows course-free header, elapsed time and New (not started)', /T1/.test(await text()) && /\d+:\d\d/.test(await text()) && (await text()).includes('New'));
   await shot('kds-board.png', false);
 
   await clickText('Start');

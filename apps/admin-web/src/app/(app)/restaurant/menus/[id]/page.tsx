@@ -60,11 +60,11 @@ export default async function MenuPage({ params }: { params: Promise<{ id: strin
       </section>
 
       <section>
-        <h3 className="section-title mb-3">{published ? t('rest.publishedN', { n: published.version }) : t('rest.published')}</h3>
+        <h3 className="section-title">{published ? t('rest.publishedN', { n: published.version }) : t('rest.published')}</h3>
+        {published && <Serial className="mt-1 block">{t('rest.publishedOn', { date: formatDateTime(published.publishedAt, lang) })}</Serial>}
         {published ? (
-          <Note denom="blue" className="p-4 pr-6">
-            <Serial>{t('rest.publishedOn', { date: formatDateTime(published.publishedAt, lang) })}</Serial>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <Note denom="blue" className="mt-3 p-4 pr-6">
+            <div className="grid gap-4 md:grid-cols-2">
               {published.sections.map((s) => (
                 <div key={s.id}>
                   <p className="font-semibold">{s.name}</p>
@@ -81,7 +81,7 @@ export default async function MenuPage({ params }: { params: Promise<{ id: strin
             </div>
           </Note>
         ) : (
-          <Note><Empty>{t('rest.notPublishedYet')}</Empty></Note>
+          <Note className="mt-3"><Empty>{t('rest.notPublishedYet')}</Empty></Note>
         )}
         {published && menu.servedBy.length === 0 && <div className="mt-3"><Callout>{t('rest.notServedHint')}</Callout></div>}
       </section>
