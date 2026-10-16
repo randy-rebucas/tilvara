@@ -1,9 +1,38 @@
 # 1POS — Status
 
-_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slice 1 recipes + consumption, slice 2 menu foundation)_
+_Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slices 1–3: recipes + consumption, menu foundation, orders + kitchen)_
 
 ## Current phase
-**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§5 and the §9 settings are built; the other sections are proposed, and the user hasn't confirmed the three open choices yet. Slices 1–2 done; next is slice 3 (see "Next task").
+**Phase 4 — Restaurant, in progress.** Plan: `docs/decisions/ADR-0014-restaurant-orders.md`. §2–§7 and the §9 settings are built; §8–§11 are proposed, and the user hasn't confirmed the three open choices yet. Slices 1–3 done; next is slice 4, bills + checks (see "Next task").
+
+## Phase 4 slice 3 — orders and kitchen (session 6)
+- **Schema**: migrations 0037/0038 add `restaurant_orders`, `kitchen_tickets` and `order_items`, all with forced RLS. Composite FKs pin an order's table and a ticket's order and station to the same branch.
+- **DB guarantees** (triggers and column grants):
+  - order transitions OPEN → BILLED → SETTLED, BILLED → OPEN, OPEN → CANCELLED/MERGED; closed orders never change;
+  - one live order per table (partial unique index);
+  - items are inserted as PENDING into open orders only, beside a parent of the same order;
+  - fired items are frozen (quantity/course; variant, kind and name are never updatable);
+  - status only moves forward or to VOIDED (final);
+  - only pending items can be deleted, and items move only into open orders;
+  - orders and tickets are never deleted.
+- **API** (`orders.*`, `kitchen.service.ts`):
+  - open (dine-in on a free table / takeaway), list (live/all, with item counts), get (items with modifiers, tickets);
+  - add items (required Idempotency-Key) validated against the branch's published menu: on menu, available (priced, not 86), modifiers within each group's min/max, whole units;
+  - edit/remove pending items (modifiers follow);
+  - void fired items (`sales.void`, required key); a *wasted* void writes one WASTE stock adjustment (tracked item itself or its recipe, plus tracked priced modifiers) with its journal entry;
+  - fire by course → one ticket per station and course (station code, else default; refused with no station); re-fire is a no-op;
+  - transfer table, merge, move items (to an open order or a new order on a free table), cancel (only when nothing live was cooked);
+  - KDS ticket list (open/all, per station, shows where the food goes now), item status (IN_PREP/READY kitchen; SERVED kitchen or floor) and bump;
+  - archiving a table is refused while it has a live order.
+- **Tests**: `orders.test.ts` (6):
+  - order taking: table occupied, menu rules, sold-out, key required, replay not doubled, pending edits with modifiers following, access;
+  - kitchen: course firing into station tickets, no-op re-fire, frozen fired items, KDS view, permissions per status, no going backwards, bump, served by floor, branch without a station;
+  - voids: cashier refused, wasted void → WASTE document (₱136 = 2 buns + 0.3 kg beef + 2 cheese slices) with entry and clean audit, non-wasted void has no stock effect, cancel after all voided;
+  - moving: transfer, merge, move to a new table (KDS follows), whole-item moves only, cancel rules, table archive refused;
+  - drills: 5 concurrent opens of one table → 1, 10 concurrent adds from two tablets → all once, 5 concurrent fires → each item once, opposite-direction merges → one wins, no deadlock;
+  - DB guards.
+- **Isolation**: +12 id routes, +10 smuggling cases, 3 more list scans, all 3 tables in the DB sweep.
+- **Defect found by the isolation suite and fixed**: move-items to a new table created the order before validating the items, so a bad item id answered `TABLE_OCCUPIED` instead of 404 (and could have opened a table for nothing). Items are now validated first.
 
 ## Phase 4 slice 2 — menu foundation (session 6)
 - **Schema**: migrations 0035/0036 add 12 tables, all with forced RLS:
@@ -78,6 +107,9 @@ _Last updated: 2026-10-16 (session 6 — Phase 4 plan (ADR-0014), slice 1 recipe
 | slice 2: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` | ok |
 | slice 2: `pnpm test:integration` | **243 passed**: database 21, api **214** (+7 menu; isolation extended), workers 8 |
 | slice 2: `pnpm db:migrate` (dev) | 0035, 0036 applied |
+| slice 3: `pnpm build` · `pnpm typecheck` · oxlint (exit 0) · openapi · `pnpm test` | ok |
+| slice 3: `pnpm test:integration` | **249 passed**: database 21, api **220** (+6 orders; isolation extended), workers 8 |
+| slice 3: `pnpm db:migrate` (dev) | 0037, 0038 applied |
 Not re-run: `pnpm test:e2e:web` / `test:e2e:pos` (admin change is one label and one filter option; POS untouched).
 
 ## Phase 3 exit review (session 5)
@@ -283,14 +315,15 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - prices are fixed when the bill is printed;
    - an order is locked once a check is paid;
    - service charge goes to a liability, and its base/VAT defaults (these also go to the tax adviser).
-3. **Phase 4 slice 3 — orders + kitchen** (ADR-0014 §6, §7):
-   - `restaurant_orders` (DINE_IN/TAKEAWAY, one open order per table, per-branch numbers), with the order row locked for every change;
-   - `order_items` with modifier selections validated against the published menu (min/max, sold-out, priced options as child items), snapshotting names and the menu version;
-   - fire by course → `kitchen_tickets` per station (by station code, else the default), and re-fire is a no-op;
-   - KDS list + item status machine (trigger) + bump;
-   - transfer table, merge, move items;
-   - voids: pending items removable; fired items need `sales.void` + reason, and a WASTE stock adjustment of the recipe quantities when prep had started;
-   - archiving a table refused while it has an open order.
-4. Then slices 4 (bills + checks + service charge), 5 (reports), 6 (UI), 7 (exit review).
+3. **Phase 4 slice 4 — bills + checks** (ADR-0014 §8, §9). This depends on the user's answers to choices 1–3 above; build with the ADR defaults if they're not answered.
+   - `order_bills` + `order_bill_lines` + `order_bill_charges` snapshot from `TaxService.computeCart` over the order's live items: modifier children as child lines, SC/PWD per item (itemized or headcount share), order-level discount spread over non-statutory lines, service charge as a charge line;
+   - order → BILLED, adding items and voids refused, reopen only while no check is settled;
+   - `POST /v1/sales` order mode: `orderBillId` + allocations (whole quantity or n/d share), with exact proration and the remainder to the last allocation; a within-bill DB guard; order row lock;
+   - `sale_lines.parent_line_id`, `sale_charges`, `SERVICE_CHARGE_PAYABLE` in the chart (seed + back-fill) and in `salePosting`;
+   - consumption prorated per check;
+   - order → SETTLED when fully allocated;
+   - existing reports reconcile with charges (summary net = Σ by-product + Σ charges);
+   - `ledger.test` / traceability / reconciliation extended.
+4. Then slices 5 (reports), 6 (UI), 7 (exit review).
 5. Carried, non-blocking: send the accountant review request and fold the answers into `@1pos/accounting` / ADR-0013; Phase 3 leftovers in BACKLOG.
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

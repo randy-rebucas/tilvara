@@ -260,6 +260,20 @@
       "when": 1792141224091,
       "tag": "0036_menu_foundation_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1792142975816,
+      "tag": "0037_orders_kitchen",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792143000326,
+      "tag": "0038_orders_kitchen_rls",
+      "breakpoints": true
     }
   ]
 }

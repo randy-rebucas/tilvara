@@ -147,6 +147,95 @@ export type SoldOutInput = z.infer<typeof soldOutSchema>;
 export const branchMenuQuerySchema = z.object({ orderType: z.enum(['DINE_IN', 'TAKEAWAY']).default('DINE_IN') });
 export type BranchMenuQuery = z.infer<typeof branchMenuQuerySchema>;
 
+// ------------------------------------------------------------------ orders (ADR-0014 §6)
+
+const reason = z.string().trim().min(1).max(200);
+const course = z.number().int().min(1).max(9);
+const seat = z.number().int().min(1).max(500);
+
+export const openOrderSchema = z
+  .object({
+    branchId: z.uuid(),
+    orderType: z.enum(['DINE_IN', 'TAKEAWAY']),
+    tableId: z.uuid().optional(),
+    guestCount: z.number().int().min(1).max(500).optional(),
+    customerName: z.string().trim().min(1).max(100).optional(),
+    note: z.string().trim().max(500).optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.orderType === 'DINE_IN' && !v.tableId) ctx.addIssue({ code: 'custom', path: ['tableId'], message: 'Dine-in orders need a table' });
+    if (v.orderType === 'TAKEAWAY' && v.tableId) ctx.addIssue({ code: 'custom', path: ['tableId'], message: 'Takeaway orders have no table' });
+  });
+export type OpenOrderInput = z.infer<typeof openOrderSchema>;
+
+export const orderListQuerySchema = z.object({ branchId: z.uuid(), status: z.enum(['LIVE', 'ALL']).default('LIVE') });
+export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
+
+export const addOrderItemsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        /** The menu item's variant on the branch's published menu for this order type. */
+        variantId: z.uuid(),
+        quantity: quantitySchema,
+        course: course.default(1),
+        seat: seat.optional(),
+        note: z.string().trim().min(1).max(200).optional(),
+        modifierOptionIds: z.array(z.uuid()).max(30).default([]),
+      }),
+    )
+    .min(1)
+    .max(50),
+});
+export type AddOrderItemsInput = z.infer<typeof addOrderItemsSchema>;
+
+export const updateOrderItemSchema = z
+  .object({ quantity: quantitySchema, course, seat: seat.nullable(), note: z.string().trim().min(1).max(200).nullable() })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
+export type UpdateOrderItemInput = z.infer<typeof updateOrderItemSchema>;
+
+export const voidOrderItemSchema = z.object({
+  reason,
+  /** Preparation had started and the food is thrown away: its stock is written off as waste. */
+  wasted: z.boolean().default(false),
+});
+export type VoidOrderItemInput = z.infer<typeof voidOrderItemSchema>;
+
+export const fireOrderSchema = z.object({
+  /** Courses to send now; omitted = every pending item. */
+  courses: z.array(course).min(1).max(9).optional(),
+});
+export type FireOrderInput = z.infer<typeof fireOrderSchema>;
+
+export const transferOrderSchema = z.object({ tableId: z.uuid() });
+export type TransferOrderInput = z.infer<typeof transferOrderSchema>;
+
+export const mergeOrderSchema = z.object({ intoOrderId: z.uuid() });
+export type MergeOrderInput = z.infer<typeof mergeOrderSchema>;
+
+export const moveOrderItemsSchema = z
+  .object({
+    itemIds: z.array(z.uuid()).min(1).max(100),
+    /** Into an existing open order of the same branch … */
+    toOrderId: z.uuid().optional(),
+    /** … or into a new dine-in order on this free table. */
+    toTableId: z.uuid().optional(),
+  })
+  .refine((v) => (v.toOrderId ? 1 : 0) + (v.toTableId ? 1 : 0) === 1, { message: 'Give either toOrderId or toTableId', path: ['toOrderId'] });
+export type MoveOrderItemsInput = z.infer<typeof moveOrderItemsSchema>;
+
+export const cancelOrderSchema = z.object({ reason });
+export type CancelOrderInput = z.infer<typeof cancelOrderSchema>;
+
+// ------------------------------------------------------------------ kitchen (ADR-0014 §7)
+
+export const itemStatusSchema = z.object({ status: z.enum(['IN_PREP', 'READY', 'SERVED']) });
+export type ItemStatusInput = z.infer<typeof itemStatusSchema>;
+
+export const kitchenTicketQuerySchema = z.object({ branchId: z.uuid(), stationId: z.uuid().optional(), status: z.enum(['OPEN', 'ALL']).default('OPEN') });
+export type KitchenTicketQuery = z.infer<typeof kitchenTicketQuerySchema>;
+
 /**
  * A new recipe version for a sold item (ADR-0014 §4): what one unit consumes, in each ingredient's
  * own unit. An empty ingredient list stops consumption from `effectiveFrom` on.

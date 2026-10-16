@@ -84,7 +84,21 @@ Slice 2 — menu foundation (session 6): ✅ done.
 - the built-in `branch_manager` lacks `restaurant.manage` (only owner/admin set up restaurants): add a "restaurant manager" role template or grant it to branch managers;
 - the POS menu view prices item by item (N queries), so batch it if menus get large;
 - modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen).
-⬜ Slice 3 — orders + kitchen: orders/items with modifiers (child lines), fire by course → tickets per station, KDS statuses + bump, transfer/merge/move items, voids after firing (`sales.void`) with a WASTE document when prep started.
+Slice 3 — orders + kitchen (session 6): ✅ done.
+- ✅ Orders (one live per table, state machine trigger, transfer/merge/move/cancel under order-row locks).
+- ✅ Items validated against the published menu (modifiers min/max, sold-out, priced/free choices as modifier items), pending edits, frozen once fired.
+- ✅ Fire by course → tickets per station.
+- ✅ KDS list + statuses + bump.
+- ✅ Voids after firing (`sales.void`) with an optional WASTE document (`recordPreparedWaste`).
+- ✅ `orders.test.ts` (6) with concurrency drills; isolation +12 routes.
+
+⬜ Slice 3 leftovers:
+- KDS push (SSE) instead of polling;
+- per-seat views and "fire course N" reminders/timers;
+- kitchen printers (Phase 5 device adapters);
+- voiding a modifier alone (today: void the item and re-add);
+- reprint/recall a ticket;
+- order notes per course.
 ⬜ Slice 4 — bills + checks:
 - frozen bill snapshot with SC/PWD (itemized or headcount share), discounts and service charge;
 - order-mode checkout with exact allocations (whole quantity or n/d shares) and a within-bill DB guard;

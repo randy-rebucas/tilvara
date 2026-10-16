@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
+import { stockAdjustments } from './inventory.js';
 import { branches } from './organization.js';
 
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -27,6 +28,7 @@ export const kitchenStations = pgTable(
   },
   (t) => [
     unique('kitchen_stations_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('kitchen_stations_branch_id_unique').on(t.tenantId, t.branchId, t.id),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     uniqueIndex('kitchen_stations_code_active_unique').on(t.tenantId, t.branchId, t.code).where(sql`${t.archivedAt} IS NULL`),
     uniqueIndex('kitchen_stations_default_unique').on(t.tenantId, t.branchId).where(sql`${t.isDefault} AND ${t.archivedAt} IS NULL`),
@@ -80,6 +82,7 @@ export const restaurantTables = pgTable(
   },
   (t) => [
     unique('restaurant_tables_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('restaurant_tables_branch_id_unique').on(t.tenantId, t.branchId, t.id),
     foreignKey({ columns: [t.tenantId, t.branchId, t.areaId], foreignColumns: [diningAreas.tenantId, diningAreas.branchId, diningAreas.id] }),
     uniqueIndex('restaurant_tables_code_active_unique').on(t.tenantId, t.branchId, sql`lower(${t.code})`).where(sql`${t.archivedAt} IS NULL`),
     check('restaurant_tables_code_check', sql`length(trim(${t.code})) BETWEEN 1 AND 20`),
@@ -286,6 +289,147 @@ export const soldOutItems = pgTable(
     primaryKey({ columns: [t.tenantId, t.branchId, t.variantId] }),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+  ],
+);
+
+// ------------------------------------------------------------------ orders (ADR-0014 §6) — operational, never financial
+
+export const ORDER_STATUSES = ['OPEN', 'BILLED', 'SETTLED', 'CANCELLED', 'MERGED'] as const;
+export const ORDER_ITEM_STATUSES = ['PENDING', 'FIRED', 'IN_PREP', 'READY', 'SERVED', 'VOIDED'] as const;
+
+/**
+ * A table's (or takeaway customer's) order. OPEN → BILLED → SETTLED, BILLED → OPEN (bill reopened),
+ * OPEN → CANCELLED | MERGED (trigger-enforced). At most one live order per table. An order is not a
+ * sale: settling it creates sales through checkout (slice 4).
+ */
+export const restaurantOrders = pgTable(
+  'restaurant_orders',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    orderNumber: bigint('order_number', { mode: 'number' }).notNull(),
+    orderType: text('order_type').notNull(),
+    tableId: uuid('table_id'),
+    guestCount: integer('guest_count'),
+    /** Takeaway: the name called out at pickup. */
+    customerName: text('customer_name'),
+    note: text('note'),
+    status: text('status').notNull().default('OPEN'),
+    mergedIntoId: uuid('merged_into_id'),
+    closeReason: text('close_reason'),
+    openedBy: uuid('opened_by').notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+    closedBy: uuid('closed_by'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('restaurant_orders_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('restaurant_orders_branch_id_unique').on(t.tenantId, t.branchId, t.id),
+    unique('restaurant_orders_number_unique').on(t.tenantId, t.branchId, t.orderNumber),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.tableId], foreignColumns: [restaurantTables.tenantId, restaurantTables.branchId, restaurantTables.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.mergedIntoId], foreignColumns: [t.tenantId, t.branchId, t.id] }),
+    uniqueIndex('restaurant_orders_table_live_unique').on(t.tenantId, t.tableId).where(sql`${t.status} IN ('OPEN','BILLED') AND ${t.tableId} IS NOT NULL`),
+    index('restaurant_orders_branch_status_idx').on(t.tenantId, t.branchId, t.status),
+    check('restaurant_orders_type_check', sql`${t.orderType} IN ('DINE_IN','TAKEAWAY')`),
+    check('restaurant_orders_status_check', sql`${t.status} IN ('OPEN','BILLED','SETTLED','CANCELLED','MERGED')`),
+    check('restaurant_orders_table_check', sql`(${t.orderType} = 'DINE_IN') = (${t.tableId} IS NOT NULL)`),
+    check('restaurant_orders_merged_check', sql`(${t.status} = 'MERGED') = (${t.mergedIntoId} IS NOT NULL) AND ${t.mergedIntoId} IS DISTINCT FROM ${t.id}`),
+    check('restaurant_orders_guests_check', sql`${t.guestCount} IS NULL OR ${t.guestCount} BETWEEN 1 AND 500`),
+    check('restaurant_orders_cancel_reason', sql`${t.status} <> 'CANCELLED' OR length(trim(coalesce(${t.closeReason}, ''))) > 0`),
+  ],
+);
+
+/**
+ * A kitchen ticket: the items of one order fired together to one station for one course. The items
+ * carry their own preparation status; `bumped_at` records the station marking the whole ticket ready.
+ */
+export const kitchenTickets = pgTable(
+  'kitchen_tickets',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    orderId: uuid('order_id').notNull(),
+    stationId: uuid('station_id').notNull(),
+    ticketNumber: bigint('ticket_number', { mode: 'number' }).notNull(),
+    course: integer('course').notNull(),
+    firedBy: uuid('fired_by').notNull(),
+    firedAt: timestamp('fired_at', { withTimezone: true }).notNull().defaultNow(),
+    bumpedAt: timestamp('bumped_at', { withTimezone: true }),
+    bumpedBy: uuid('bumped_by'),
+  },
+  (t) => [
+    unique('kitchen_tickets_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('kitchen_tickets_number_unique').on(t.tenantId, t.branchId, t.ticketNumber),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.orderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.branchId, restaurantOrders.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.stationId], foreignColumns: [kitchenStations.tenantId, kitchenStations.branchId, kitchenStations.id] }),
+    index('kitchen_tickets_station_idx').on(t.tenantId, t.stationId, t.firedAt),
+    check('kitchen_tickets_course_check', sql`${t.course} BETWEEN 1 AND 9`),
+  ],
+);
+
+/**
+ * An item on an order: a menu ITEM, or a MODIFIER of one (priced options carry their variant, free
+ * instructions have none). PENDING items may be edited or removed; once fired, what was ordered is
+ * frozen and the item can only progress or be voided (trigger-enforced). Modifiers follow their item.
+ */
+export const orderItems = pgTable(
+  'order_items',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    orderId: uuid('order_id').notNull(),
+    parentItemId: uuid('parent_item_id'),
+    kind: text('kind').notNull(),
+    variantId: uuid('variant_id'),
+    modifierOptionId: uuid('modifier_option_id'),
+    menuVersionId: uuid('menu_version_id').notNull(),
+    /** Name as ordered (menu display name or option name). */
+    name: text('name').notNull(),
+    quantity: qty('quantity').notNull(),
+    course: integer('course').notNull().default(1),
+    seat: integer('seat'),
+    note: text('note'),
+    stationCode: text('station_code'),
+    status: text('status').notNull().default('PENDING'),
+    kitchenTicketId: uuid('kitchen_ticket_id'),
+    addedBy: uuid('added_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    firedAt: timestamp('fired_at', { withTimezone: true }),
+    prepStartedAt: timestamp('prep_started_at', { withTimezone: true }),
+    readyAt: timestamp('ready_at', { withTimezone: true }),
+    servedAt: timestamp('served_at', { withTimezone: true }),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: uuid('voided_by'),
+    voidReason: text('void_reason'),
+    /** Voided after preparation started and thrown away: the WASTE document that took the stock. */
+    wasteAdjustmentId: uuid('waste_adjustment_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('order_items_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.orderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.id] }),
+    foreignKey({ columns: [t.tenantId, t.parentItemId], foreignColumns: [t.tenantId, t.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    foreignKey({ columns: [t.tenantId, t.modifierOptionId], foreignColumns: [modifierOptions.tenantId, modifierOptions.id] }),
+    foreignKey({ columns: [t.tenantId, t.menuVersionId], foreignColumns: [menuVersions.tenantId, menuVersions.id] }),
+    foreignKey({ columns: [t.tenantId, t.kitchenTicketId], foreignColumns: [kitchenTickets.tenantId, kitchenTickets.id] }),
+    foreignKey({ columns: [t.tenantId, t.wasteAdjustmentId], foreignColumns: [stockAdjustments.tenantId, stockAdjustments.id] }),
+    index('order_items_order_idx').on(t.tenantId, t.orderId),
+    index('order_items_ticket_idx').on(t.tenantId, t.kitchenTicketId),
+    check('order_items_kind_check', sql`${t.kind} IN ('ITEM','MODIFIER')`),
+    check('order_items_shape_check', sql`(${t.kind} = 'ITEM' AND ${t.parentItemId} IS NULL AND ${t.modifierOptionId} IS NULL AND ${t.variantId} IS NOT NULL)
+      OR (${t.kind} = 'MODIFIER' AND ${t.parentItemId} IS NOT NULL AND ${t.modifierOptionId} IS NOT NULL)`),
+    check('order_items_status_check', sql`${t.status} IN ('PENDING','FIRED','IN_PREP','READY','SERVED','VOIDED')`),
+    check('order_items_quantity_check', sql`${t.quantity} > 0`),
+    check('order_items_course_check', sql`${t.course} BETWEEN 1 AND 9`),
+    check('order_items_seat_check', sql`${t.seat} IS NULL OR ${t.seat} BETWEEN 1 AND 500`),
+    check('order_items_fired_check', sql`(${t.status} = 'PENDING') = (${t.firedAt} IS NULL)`),
+    check('order_items_void_check', sql`(${t.status} = 'VOIDED') = (${t.voidedAt} IS NOT NULL) AND (${t.voidedAt} IS NULL OR length(trim(coalesce(${t.voidReason}, ''))) > 0)`),
+    check('order_items_station_check', sql`${t.stationCode} IS NULL OR ${t.stationCode} ~ ${sql.raw(STATION_CODE)}`),
   ],
 );
 

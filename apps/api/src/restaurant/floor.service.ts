@@ -4,10 +4,12 @@ import {
   asc,
   diningAreas,
   eq,
+  inArray,
   isNull,
   kitchenStations,
   menus,
   productVariants,
+  restaurantOrders,
   restaurantSettings,
   restaurantTables,
   soldOutItems,
@@ -234,7 +236,9 @@ export class FloorService extends TenantService {
       const table = await this.table(db, id);
       await this.managed(db, auth, table.branchId);
       if (table.archivedAt) return tableView(table);
-      // Slice 3 adds: refuse while the table has an open order.
+      const [live] = await db.select({ id: restaurantOrders.id }).from(restaurantOrders)
+        .where(and(eq(restaurantOrders.tableId, id), inArray(restaurantOrders.status, ['OPEN', 'BILLED']))).limit(1);
+      if (live) throw new AppError('TABLE_HAS_ORDER', 'This table has an open order; settle or move it first', HttpStatus.CONFLICT, { orderId: live.id });
       const [row] = await db.update(restaurantTables).set({ archivedAt: sql`now()` }).where(eq(restaurantTables.id, id)).returning();
       await this.audit(db, auth, 'restaurant_table.archived', 'restaurant_table', id);
       return tableView(row!);

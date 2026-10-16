@@ -59,6 +59,10 @@ interface World {
   modifierOptionId: string;
   menuId: string;
   draftVersionId: string;
+  orderId: string;
+  pendingItemId: string;
+  firedItemId: string;
+  ticketId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -190,6 +194,11 @@ async function world(prefix: string): Promise<World> {
   const draftVersion = ok(await http().post(`/v1/menus/${menu.id}/drafts`).set(auth));
   ok(await http().put(`/v1/branches/${branch.id}/restaurant-settings`).set(auth).send({ dineInMenuId: menu.id, takeawayMenuId: null, serviceChargeRate: '0.10', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' }), 200);
   ok(await http().put(`/v1/branches/${branch.id}/sold-out`).set(auth).send({ variantId, soldOut: true }), 200);
+  // Phase 4 slice 3: an order on T1 with one fired item (a kitchen ticket) and one pending item.
+  const order = ok<{ id: string }>(await http().post('/v1/restaurant/orders').set(auth).send({ branchId: branch.id, orderType: 'DINE_IN', tableId: table.id }));
+  ok(await http().post(`/v1/restaurant/orders/${order.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1', modifierOptionIds: [group.options[0]!.id] }] }));
+  const fired = ok<{ items: { id: string }[]; tickets: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${order.id}/fire`).set(auth).send({}), 200);
+  const withPending = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${order.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
   return {
     t,
     auth,
@@ -233,6 +242,10 @@ async function world(prefix: string): Promise<World> {
     modifierOptionId: group.options[1]!.id,
     menuId: menu.id,
     draftVersionId: draftVersion.id,
+    orderId: order.id,
+    firedItemId: fired.items[0]!.id,
+    pendingItemId: withPending.items[1]!.id,
+    ticketId: fired.tickets[0]!.id,
   };
 }
 
@@ -344,6 +357,19 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/menu-versions/:id': () => http().get(`/v1/menu-versions/${a.draftVersionId}`).set(auth),
     'PUT /v1/menu-versions/:id/content': () => http().put(`/v1/menu-versions/${a.draftVersionId}/content`).set(auth).send({ sections: [] }),
     'POST /v1/menu-versions/:id/publish': () => http().post(`/v1/menu-versions/${a.draftVersionId}/publish`).set(auth),
+    'GET /v1/restaurant/orders/:id': () => http().get(`/v1/restaurant/orders/${a.orderId}`).set(auth),
+    'POST /v1/restaurant/orders/:id/items': () =>
+      http().post(`/v1/restaurant/orders/${a.orderId}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: b.dishId, quantity: '1' }] }),
+    'POST /v1/restaurant/orders/:id/fire': () => http().post(`/v1/restaurant/orders/${a.orderId}/fire`).set(auth).send({}),
+    'POST /v1/restaurant/orders/:id/transfer': () => http().post(`/v1/restaurant/orders/${a.orderId}/transfer`).set(auth).send({ tableId: b.tableId }),
+    'POST /v1/restaurant/orders/:id/merge': () => http().post(`/v1/restaurant/orders/${a.orderId}/merge`).set(auth).send({ intoOrderId: b.orderId }),
+    'POST /v1/restaurant/orders/:id/move-items': () => http().post(`/v1/restaurant/orders/${a.orderId}/move-items`).set(auth).send({ itemIds: [a.firedItemId], toOrderId: b.orderId }),
+    'POST /v1/restaurant/orders/:id/cancel': () => http().post(`/v1/restaurant/orders/${a.orderId}/cancel`).set(auth).send({ reason: 'sabotage' }),
+    'PATCH /v1/order-items/:id': () => http().patch(`/v1/order-items/${a.pendingItemId}`).set(auth).send({ quantity: '9' }),
+    'POST /v1/order-items/:id/remove': () => http().post(`/v1/order-items/${a.pendingItemId}/remove`).set(auth),
+    'POST /v1/order-items/:id/void': () => http().post(`/v1/order-items/${a.firedItemId}/void`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'sabotage', wasted: true }),
+    'POST /v1/order-items/:id/status': () => http().post(`/v1/order-items/${a.firedItemId}/status`).set(auth).send({ status: 'SERVED' }),
+    'POST /v1/kitchen/tickets/:id/bump': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/bump`).set(auth),
   };
 }
 
@@ -428,6 +454,16 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['B menu with an A modifier group', () => http().put(`/v1/menu-versions/${b.draftVersionId}/content`).set(auth).send({ sections: [{ name: 'x', items: [{ variantId: b.dishId, modifierGroupIds: [a.modifierGroupId] }] }] })],
     ['B branch serving the A menu', () => http().put(`/v1/branches/${b.branchId}/restaurant-settings`).set(auth).send({ dineInMenuId: a.menuId, takeawayMenuId: null, serviceChargeRate: '0', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' })],
     ['86 an A item at the B branch', () => http().put(`/v1/branches/${b.branchId}/sold-out`).set(auth).send({ variantId: a.variantId, soldOut: true })],
+    ['open an order at the A branch', () => http().post('/v1/restaurant/orders').set(auth).send({ branchId: a.branchId, orderType: 'TAKEAWAY' })],
+    ['open a B order on an A table', () => http().post('/v1/restaurant/orders').set(auth).send({ branchId: b.branchId, orderType: 'DINE_IN', tableId: a.tableId })],
+    ['orders of the A branch', () => http().get('/v1/restaurant/orders').query({ branchId: a.branchId }).set(auth)],
+    ['move a B order to an A table', () => http().post(`/v1/restaurant/orders/${b.orderId}/transfer`).set(auth).send({ tableId: a.tableId })],
+    ['merge a B order into an A order', () => http().post(`/v1/restaurant/orders/${b.orderId}/merge`).set(auth).send({ intoOrderId: a.orderId })],
+    ['move B items into an A order', () => http().post(`/v1/restaurant/orders/${b.orderId}/move-items`).set(auth).send({ itemIds: [b.firedItemId], toOrderId: a.orderId })],
+    ['move B items onto an A table', () => http().post(`/v1/restaurant/orders/${b.orderId}/move-items`).set(auth).send({ itemIds: [b.firedItemId], toTableId: a.tableId })],
+    ['move A items out of a B order', () => http().post(`/v1/restaurant/orders/${b.orderId}/move-items`).set(auth).send({ itemIds: [a.firedItemId], toTableId: b.tableId })],
+    ['kitchen tickets of the A branch', () => http().get('/v1/kitchen/tickets').query({ branchId: a.branchId }).set(auth)],
+    ['A station on the B kitchen display', () => http().get('/v1/kitchen/tickets').query({ branchId: b.branchId, stationId: a.stationId }).set(auth)],
   ];
 }
 
@@ -443,7 +479,8 @@ const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
    w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
-   w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId];
+   w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
+   w.orderId, w.pendingItemId, w.firedItemId, w.ticketId];
 
 describe('Phase 1 cross-tenant sweep', () => {
   it('the attack matrix covers every id-addressed route in the router', () => {
@@ -496,6 +533,8 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect(stations.map((s: { name: string; isDefault: boolean }) => [s.name, s.isDefault])).toEqual([['Grill', true]]);
     const soldOut = (await http().get(`/v1/branches/${a.branchId}/sold-out`).set(a.auth).expect(200)).body.data;
     expect(soldOut.map((s: { variantId: string }) => s.variantId)).toEqual([a.variantId]);
+    const order = (await http().get(`/v1/restaurant/orders/${a.orderId}`).set(a.auth).expect(200)).body;
+    expect([order.status, order.table.id, order.items.map((i: { status: string; quantity: string }) => [i.status, i.quantity])]).toEqual(['OPEN', a.tableId, [['FIRED', '1'], ['PENDING', '1']]]);
   });
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
@@ -515,6 +554,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,
       `/v1/kitchen-stations?branchId=${b.branchId}`, `/v1/dining-areas?branchId=${b.branchId}`, '/v1/modifier-groups', '/v1/menus', `/v1/menus/${b.menuId}`,
       `/v1/menu-versions/${b.draftVersionId}`, `/v1/branches/${b.branchId}/restaurant-settings`, `/v1/branches/${b.branchId}/sold-out`, `/v1/branches/${b.branchId}/menu`,
+      `/v1/restaurant/orders?branchId=${b.branchId}&status=ALL`, `/v1/restaurant/orders/${b.orderId}`, `/v1/kitchen/tickets?branchId=${b.branchId}&status=ALL`,
     ];
     const foreign = new Set(idsOf(a));
     for (const path of paths) {

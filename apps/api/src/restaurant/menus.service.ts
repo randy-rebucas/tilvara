@@ -339,74 +339,79 @@ export class MenusService extends TenantService {
       const { scope } = await branchScope(db, branchId);
       if (!['restaurant.orders', 'restaurant.manage'].some((p) => this.can(auth, p as PermissionCode, scope))) this.assertCan(auth, 'restaurant.orders', scope);
       await assertFeature(db, 'restaurant');
-      const settings = await loadSettings(db, branchId);
-      const menuId = q.orderType === 'TAKEAWAY' ? settings?.takeawayMenuId : settings?.dineInMenuId;
-      const empty = { branchId, orderType: q.orderType, menu: null };
-      if (!menuId) return empty;
-      const [menu] = await db.select().from(menus).where(eq(menus.id, menuId));
-      const [version] = await db.select().from(menuVersions).where(and(eq(menuVersions.menuId, menuId), eq(menuVersions.status, 'PUBLISHED')));
-      if (!menu || menu.archivedAt || !version) return empty;
-
-      const content = await this.content(db, version.id);
-      const items = content.flatMap((s) => s.items);
-      const groupIds = [...new Set(items.flatMap((i) => i.modifierGroupIds))];
-      const groups = groupIds.length ? await this.withOptions(db, await db.select().from(modifierGroups).where(inArray(modifierGroups.id, groupIds))) : [];
-      const variantIds = [...new Set([...items.map((i) => i.variantId), ...groups.flatMap((g) => g.options.flatMap((o) => (o.variantId ? [o.variantId] : [])))])];
-      const variants = variantIds.length
-        ? await db.select({ id: productVariants.id, sku: productVariants.sku, name: productVariants.name, productName: products.name, archivedAt: productVariants.archivedAt, trackInventory: products.trackInventory })
-            .from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(inArray(productVariants.id, variantIds))
-        : [];
-      const soldOut = new Set((await db.select({ v: soldOutItems.variantId }).from(soldOutItems).where(eq(soldOutItems.branchId, branchId))).map((r) => r.v));
-      const prices = new Map<string, string | null>();
-      for (const v of variantIds) prices.set(v, (await this.pricing.effectivePrice(db, branchId, v))?.amount ?? null);
-      const variant = (id: string) => variants.find((v) => v.id === id)!;
-      const sellable = (id: string) => !variant(id).archivedAt && prices.get(id) !== null && !soldOut.has(id);
-
-      return {
-        branchId,
-        orderType: q.orderType,
-        menu: {
-          id: menu.id,
-          name: menu.name,
-          menuVersionId: version.id,
-          version: version.version,
-          sections: content.map((s) => ({
-            id: s.id,
-            name: s.name,
-            items: s.items.map((it) => {
-              const v = variant(it.variantId);
-              return {
-                id: it.id,
-                variantId: it.variantId,
-                sku: v.sku,
-                name: it.displayName ?? v.name ?? v.productName,
-                stationCode: it.stationCode,
-                price: prices.get(it.variantId) ?? null,
-                soldOut: soldOut.has(it.variantId),
-                available: sellable(it.variantId),
-                modifierGroups: it.modifierGroupIds.map((gid) => {
-                  const g = groups.find((x) => x.id === gid)!;
-                  return {
-                    id: g.id,
-                    name: g.name,
-                    minSelect: g.minSelect,
-                    maxSelect: g.maxSelect,
-                    required: g.required,
-                    options: g.options.map((o) => ({
-                      id: o.id,
-                      name: o.name,
-                      variantId: o.variantId,
-                      price: o.variantId ? (prices.get(o.variantId) ?? null) : '0',
-                      available: o.variantId ? sellable(o.variantId) : true,
-                    })),
-                  };
-                }),
-              };
-            }),
-          })),
-        },
-      };
+      return this.served(db, branchId, q.orderType);
     });
+  }
+
+  /** What a branch serves right now (no permission check: callers authorize). Used by ordering too. */
+  async served(db: Database, branchId: string, orderType: 'DINE_IN' | 'TAKEAWAY') {
+    const settings = await loadSettings(db, branchId);
+    const menuId = orderType === 'TAKEAWAY' ? settings?.takeawayMenuId : settings?.dineInMenuId;
+    const empty = { branchId, orderType, menu: null };
+    if (!menuId) return empty;
+    const [menu] = await db.select().from(menus).where(eq(menus.id, menuId));
+    const [version] = await db.select().from(menuVersions).where(and(eq(menuVersions.menuId, menuId), eq(menuVersions.status, 'PUBLISHED')));
+    if (!menu || menu.archivedAt || !version) return empty;
+
+    const content = await this.content(db, version.id);
+    const items = content.flatMap((s) => s.items);
+    const groupIds = [...new Set(items.flatMap((i) => i.modifierGroupIds))];
+    const groups = groupIds.length ? await this.withOptions(db, await db.select().from(modifierGroups).where(inArray(modifierGroups.id, groupIds))) : [];
+    const variantIds = [...new Set([...items.map((i) => i.variantId), ...groups.flatMap((g) => g.options.flatMap((o) => (o.variantId ? [o.variantId] : [])))])];
+    const variants = variantIds.length
+      ? await db.select({ id: productVariants.id, sku: productVariants.sku, name: productVariants.name, productName: products.name, archivedAt: productVariants.archivedAt, trackInventory: products.trackInventory })
+          .from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(inArray(productVariants.id, variantIds))
+      : [];
+    const soldOut = new Set((await db.select({ v: soldOutItems.variantId }).from(soldOutItems).where(eq(soldOutItems.branchId, branchId))).map((r) => r.v));
+    const prices = new Map<string, string | null>();
+    for (const v of variantIds) prices.set(v, (await this.pricing.effectivePrice(db, branchId, v))?.amount ?? null);
+    const variant = (id: string) => variants.find((v) => v.id === id)!;
+    const sellable = (id: string) => !variant(id).archivedAt && prices.get(id) !== null && !soldOut.has(id);
+
+    return {
+      branchId,
+      orderType,
+      menu: {
+        id: menu.id,
+        name: menu.name,
+        menuVersionId: version.id,
+        version: version.version,
+        sections: content.map((s) => ({
+          id: s.id,
+          name: s.name,
+          items: s.items.map((it) => {
+            const v = variant(it.variantId);
+            return {
+              id: it.id,
+              variantId: it.variantId,
+              sku: v.sku,
+              name: it.displayName ?? v.name ?? v.productName,
+              stationCode: it.stationCode,
+              price: prices.get(it.variantId) ?? null,
+              soldOut: soldOut.has(it.variantId),
+              available: sellable(it.variantId),
+              modifierGroups: it.modifierGroupIds.map((gid) => {
+                const g = groups.find((x) => x.id === gid)!;
+                return {
+                  id: g.id,
+                  name: g.name,
+                  minSelect: g.minSelect,
+                  maxSelect: g.maxSelect,
+                  required: g.required,
+                  options: g.options.map((o) => ({
+                    id: o.id,
+                    name: o.name,
+                    variantId: o.variantId,
+                    price: o.variantId ? (prices.get(o.variantId) ?? null) : '0',
+                    available: o.variantId ? sellable(o.variantId) : true,
+                  })),
+                };
+              }),
+            };
+          }),
+        })),
+      },
+    };
   }
 
   // ---------------------------------------------------------------- helpers

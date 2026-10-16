@@ -42,8 +42,12 @@ No persisted checkout state machine: a sale is one transaction (ARCHITECTURE §6
 `DRAFT (never numbered) → ISSUED (number allocated, immutable) → [TRANSMITTED → ACKNOWLEDGED | REJECTED]`; cancellation/correction via credit note or cancellation event per the applicable rules — never by edit.
 
 ### Restaurant order (operational)
-`OPEN → SENT (tickets fired) → PARTIALLY_SERVED → SERVED → BILL_REQUESTED → SETTLED | CANCELLED`.
-Ticket item: `QUEUED → IN_PREP → READY → SERVED | VOIDED`. Settling creates a **Sale** via the checkout engine; voiding a ticket item after settlement requires a Return/Refund, never an edit of the sale.
+As built (ADR-0014 §6, §7):
+- **Order**: `OPEN → BILLED → SETTLED`, `BILLED → OPEN` (bill reopened), `OPEN → CANCELLED | MERGED` (trigger). Closed orders never change. At most one live (OPEN/BILLED) order per table.
+- **Order item**: `PENDING → FIRED → IN_PREP → READY → SERVED` (forward, skipping allowed) or `→ VOIDED` from any fired state. PENDING items are edited or removed; fired items are frozen.
+- How far food got (sent, partly served) is derived from the items, not stored on the order.
+
+Settling creates **Sales** via the checkout engine (slice 4). Voiding after settlement requires a Return/Refund, never an edit of the sale.
 
 ### Purchase order
 `DRAFT → APPROVED → SENT → PARTIALLY_RECEIVED → RECEIVED → CLOSED | CANCELLED`.

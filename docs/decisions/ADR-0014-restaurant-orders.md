@@ -1,6 +1,6 @@
 # ADR-0014: Restaurant orders, kitchen, bills and recipe consumption
 
-- Status: Accepted for §2–§5 and the §9 settings (built in slices 1–2, 2026-10-16); the rest proposed (Phase 4 plan). Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
+- Status: Accepted for §2–§7 and the §9 settings (built in slices 1–3, 2026-10-16); §8–§11 proposed (Phase 4 plan). Items marked **(tax adviser)** or **(accountant)** are defaults pending professional review; they are configuration or posting rules, not hard-coded law.
 
 ## Context
 SPEC §6.4 / Phase 4: menus and versions, modifiers (required/optional, priced), areas and tables, dine-in and takeaway orders, table transfer, merge and split, kitchen tickets routed to stations, KDS with preparation statuses, courses, item voids, split bills and split payments, service charge and discounts, versioned recipes with ingredient consumption and waste, restaurant reports. Exit: *a restaurant completes a full service cycle and reconciles its stock, payments and financial records.*
@@ -48,16 +48,20 @@ A dish, a drink and a priced add-on are **product variants** (usually `track_inv
 
 ### 6. Orders (operational, never financial)
 - `restaurant_orders`: branch, per-branch number, type `DINE_IN | TAKEAWAY` (delivery later), table (dine-in), guest count, status `OPEN → BILLED → SETTLED`, plus `CANCELLED` and `MERGED` (with `merged_into_id`). At most one non-final order per table (partial unique index).
-- `order_items`: variant, quantity, course (1..n, default 1), seat (optional), note, parent item for modifier lines, modifier option, station, `menu_version_id`. Prep status: `PENDING` (not yet fired) → `FIRED` → `IN_PREP` → `READY` → `SERVED`, or `VOIDED`.
-  - A trigger enforces the status machine and freezes variant, quantity and modifiers once fired.
-  - `PENDING` items may be edited or removed. A fired item can only be voided.
-- **Voids after firing** need `sales.void` and a reason. If preparation had started (`IN_PREP` or later), the void may be marked *wasted*. A wasted void writes a `WASTE` stock adjustment of the item's recipe quantities in the same transaction, so it is costed, posted to Spoilage and waste and traceable through the existing document.
-- Mutations lock the order row (`FOR UPDATE`). Adding items requires an Idempotency-Key (tablet retries must not double an order).
-- **Transfer** a table: move the order to a free table. **Merge**: move all live items of B into A; B becomes `MERGED`. **Move items**: selected items (with their modifier children) go to another or new order. All are recorded in the audit log.
+- `order_items`: an `ITEM` (variant from the published menu) or a `MODIFIER` of one. A priced option carries its variant; a free instruction has none. Rows hold the name as ordered, quantity (modifiers follow their item), course (1–9), optional seat and note, station code and `menu_version_id`. Prep status: `PENDING` (not yet fired) → `FIRED` → `IN_PREP` → `READY` → `SERVED` (forward only, skipping allowed), or `VOIDED` (final).
+  - Triggers and column grants enforce the rest:
+    - items are inserted as PENDING into OPEN orders only, next to their parent;
+    - once fired, quantity and course are frozen, and variant, kind, name and parent are never updatable;
+    - only PENDING items can be deleted;
+    - items move only into OPEN orders.
+  - Adding validates against the branch's published menu for the order type: the item must be on it and available (priced here, not sold out). Modifier choices must belong to the item's groups, within min/max and available. Whole units are required unless the unit allows fractions.
+- **Voids after firing** need `sales.void` and a reason. A void marked *wasted* writes one `WASTE` stock adjustment in the same transaction: the item itself if tracked, else its recipe in force, plus tracked priced modifiers (`recordPreparedWaste`). It is costed, posted to Spoilage and waste, linked from the item (`waste_adjustment_id`) and traceable through the existing document. Pending items are removed, not voided.
+- Mutations lock the order row (`FOR UPDATE`); two orders are locked in id order. Adding items and voids require an Idempotency-Key.
+- **Transfer** a table: move the order to a free table. **Merge**: move every item of B into A, and B becomes `MERGED`. **Move items**: selected items (with their modifier children) go to another open order or to a new order on a free table; voided items stay put. **Cancel**: only when nothing live was cooked; pending items disappear. All are recorded in the audit log. A table with a live order cannot be archived.
 
 ### 7. Kitchen tickets and KDS
-- **Fire** sends the order's `PENDING` items of the chosen courses (default: all not held). It groups them by station into `kitchen_tickets` (per-branch number, station, course, fired_at, fired_by). Re-firing with nothing pending is a no-op, so it is safe to retry.
-- **KDS**: `GET /v1/kitchen/tickets?stationId&since=` (cursor polling, ~3 s; push via SSE is a later option). Item status changes come from `kitchen.operate`, and "bump" moves a whole ticket to READY. Prep times (fired → ready) are kept for reports.
+- **Fire** sends the order's `PENDING` items of the chosen courses (default: all). It groups them by station into `kitchen_tickets` (per-branch number, station, course, fired_at, fired_by): one per station and course. An item routes to the branch's station with its station code, else the default station, else the fire is refused (`NO_KITCHEN_STATION`). Re-firing with nothing pending is a no-op, so it is safe to retry.
+- **KDS**: `GET /v1/kitchen/tickets?branchId&stationId&status=OPEN|ALL` (polling, ~3 s; push via SSE is a later option). A ticket shows where its food goes now (current order and table, even after a move). Item status changes: `IN_PREP`/`READY` need `kitchen.operate`; `SERVED` needs `kitchen.operate` or `restaurant.orders`. "Bump" moves a whole ticket's fired and in-prep items to READY. Timestamps (fired, prep started, ready, served) are kept for reports.
 - Courses: items carry a course number. Later courses can be held and fired on demand.
 
 ### 8. Bills: freeze, then settle in one or more checks
