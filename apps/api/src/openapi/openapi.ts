@@ -85,7 +85,9 @@ export function buildOpenApi(version = '0.1.0'): Json {
       const perms = meta<string[]>(REQUIRED_PERMISSIONS);
       const needsTenant = meta<boolean>(REQUIRES_TENANT) === true || (perms?.length ?? 0) > 0;
       const idempotent = meta<IdempotentOptions>(IDEMPOTENT);
-      const rateLimit = meta<RateLimitRule>(RATE_LIMIT);
+      const rateLimits = meta<RateLimitRule[]>(RATE_LIMIT) ?? [];
+      const rateLimit = rateLimits.length > 0;
+      const per = { ip: 'IP', account: 'account (email)', terminal: 'terminal' } as const;
       const status = (Reflect.getMetadata(HTTP_CODE_METADATA, handler) as number | undefined) ?? (verb === 'post' ? 201 : 200);
 
       const args = Object.entries((Reflect.getMetadata(ROUTE_ARGS_METADATA, ctrl, name) ?? {}) as Record<string, RouteArg>);
@@ -122,7 +124,7 @@ export function buildOpenApi(version = '0.1.0'): Json {
         needsTenant ? 'Requires an active tenant on the access token.' : null,
         perms?.length ? `Tenant-scope permissions: ${perms.join(', ')}.` : null,
         !isPublic && !perms?.length ? 'Fine-grained permission (incl. branch/register scope) is checked in the service.' : null,
-        rateLimit ? `Rate limit: ${rateLimit.limit} per ${rateLimit.windowSeconds}s per IP (bucket ${rateLimit.bucket}).` : null,
+        ...rateLimits.map((r) => `Rate limit: ${r.limit} per ${r.windowSeconds}s per ${per[r.by ?? 'ip']} (bucket ${r.bucket}).`),
       ].filter(Boolean);
 
       const errors: Record<string, Json> = {};

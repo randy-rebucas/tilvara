@@ -13,7 +13,7 @@ async function main(): Promise<void> {
     error: (msg, meta) => log.error(meta ?? {}, msg),
   };
   const workerId = env.WORKER_ID ?? `${hostname()}:${process.pid}`;
-  const pool = new pg.Pool({ connectionString: env.DATABASE_URL, max: 5 });
+  const pool = new pg.Pool({ connectionString: env.WORKER_DATABASE_URL ?? env.DATABASE_URL, max: 5 });
   // Idle connections dropped by the server (DB restart) surface here; unhandled, they would exit the worker.
   pool.on('error', (err) => logger.error('idle database connection lost', { error: err.message.slice(0, 200) }));
   const processor = new OutboxProcessor({

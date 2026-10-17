@@ -26,7 +26,8 @@ export function AppNav({ permissions }: { permissions: string[] }) {
   const path = usePathname();
   const visible = ITEMS.filter((i) => !i.needs || i.needs.some((p) => permissions.includes(p)));
   return (
-    <nav aria-label="Main" className="-mx-1 flex min-w-0 gap-1 overflow-x-auto">
+    // No gap in the band (lg+): the tabs' own padding separates them, and all twelve fit at 1440px.
+    <nav aria-label="Main" className="-mx-1 flex min-w-0 gap-1 overflow-x-auto lg:gap-0">
       {visible.map((i) => {
         const active = i.href === '/' ? path === '/' : path.startsWith(i.href);
         return (

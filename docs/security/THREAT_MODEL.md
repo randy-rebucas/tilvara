@@ -27,15 +27,46 @@ Sales & invoices (legal records), payment references, cash records, inventory/co
 | T9 | Revoked terminal replay (S) | Stolen terminal keeps syncing | Terminal credential revocation checked every sync; device sequence monotonic | Revoked-terminal sync test |
 | T10 | Local SQLite tampering (T) | Edit offline sale amounts | Server re-validates every synced sale against price versions; mismatches flagged, not trusted | Sync validation tests |
 | T11 | Secret leakage in client bundle (I) | API keys in Next.js `NEXT_PUBLIC_*` | Only public config in client env; CI grep for secrets; gitleaks | CI check |
-| T12 | Credential stuffing (S) | Password spraying | argon2id, rate limits per IP+account, MFA for privileged roles, lockout with backoff | Rate-limit tests |
-| T13 | Session theft (S) | Stolen refresh token | Rotation + reuse detection revokes family; short access TTL | Token reuse test |
+| T12 | Credential stuffing (S) | Password spraying | argon2id, rate limits per IP (per account: Phase 6 slice 2), lockout with backoff (wrong TOTP codes count too), **TOTP MFA required for privileged members after a grace period** (ADR-0016), lockouts audited | `auth.test.ts` lockout; `account-security.test.ts` (MFA, code replay, lock via codes, grace) |
+| T13 | Session theft (S) | Stolen refresh token | Rotation + reuse detection revokes family (audited `auth.refresh_reuse`); short access TTL; MFA challenge token is its own `typ`, never an access token; password reset revokes every session; enrolling needs the password again | Token reuse test; `account-security.test.ts` |
+| T13a | Account takeover via reset (S) | Guessing or replaying a reset link | 256-bit one-time token stored as SHA-256, 30 min, newest only, ≤ 5/hour; same answer for unknown emails; `Referrer-Policy: same-origin`; reset never disables MFA | `account-security.test.ts` password reset |
 | T14 | Support over-access (I/E) | Staff browse tenant sales | Time-boxed, tenant-approved grants; audit every access | Support-grant tests |
 | T15 | Export/backup exposure (I) | Public bucket | Private bucket, signed short-lived URLs scoped to tenant, encrypted backups | Export access tests |
 | T16 | Audit tampering (R) | Delete audit rows | Append-only trigger; app role has no UPDATE/DELETE grant | Trigger test |
-| T17 | PII in logs (I) | Customer phone in logs | Structured logger redaction list; no request body logging by default | Log redaction test |
+| T17 | PII in logs (I) | Customer phone in logs | Structured logger redaction list; no request body logging by default; reset links and MFA secrets never logged (DevMailer logs recipient + template only) | Log redaction test |
+| T17a | Secret disclosure from a dump or backup (I) | Stolen DB backup yields authenticator secrets | TOTP secrets AES-256-GCM under `MFA_ENCRYPTION_KEY` (kept outside the DB, required in production); recovery codes and reset tokens hashed; credential tables have no runtime grants | `totp.test.ts`, `rls-catalog.test.ts`, `account-security.test.ts` |
+| T21 | Clickjacking / injected content in the admin (T) | Framing the back office; injected script exfiltrating data | CSP `default-src 'self'`, `frame-ancestors 'none'`, `form-action 'self'`, X-Frame-Options DENY; API CSP `default-src 'none'`; HSTS. Gap: inline scripts allowed (nonce policy pending) | `test:e2e:web:security` header checks; `account-security.test.ts` headers |
 | T18 | DoS on checkout (D) | Flood API | Rate limiting per terminal/tenant; graceful degradation to offline cash at terminal | Load test (Phase 6) |
 | T19 | Dependency compromise | Malicious package | Lockfile, `pnpm audit`, Renovate review, minimal deps | CI |
 | T20 | Payment data handling (I) | Storing PAN/CVV | Never accept card data; provider-hosted fields/terminals only; store provider tokens/refs only | Code review gate |
+
+## Control → test map (security pass, Phase 6 slice 2, 2026-10-17)
+Each control and the automated check that proves it, or the gap. Test files are under `apps/api/test/integration/` unless a path is given.
+
+| # | Status | Evidence |
+|---|---|---|
+| T1 | ✅ | `isolation.test.ts` (the attack matrix equals the live router's `:id` routes; smuggling; DB sweep); `packages/database/test/integration/rls-catalog.test.ts` (schema rules) |
+| T2 | ✅ | `packages/database/test/integration/tenant-isolation.test.ts` ("drops tenant context when the transaction ends, on the same physical connection", also after a rollback) |
+| T3 | ✅ | `sales.test.ts`, `bills.test.ts`, `restaurant-drills.test.ts` (stale or forged totals refused: `STALE_TOTAL`, `TOTAL_CHANGED`) |
+| T4 | ✅ | `reliability.test.ts` (idempotency, concurrent duplicates), `failure-drills.test.ts`, `sales.test.ts` (`DUPLICATE_TRANSACTION`), `offline-engine.test.ts` |
+| T5 | 🟡 | Returns are refused beyond what was sold (`sales.test.ts`, the DB within-sold trigger), with permission checks. **Gap**: no manager-approval thresholds or refund anomaly report |
+| T6 | ⬜ | **Gap**: no webhooks yet (PayMongo, D6). Signature, timestamp and dedupe tests come with the adapter |
+| T7 | 🟡 | Sale and return numbers are gapless under concurrency (`failure-drills.test.ts`, `sales.test.ts`). Invoice issuance is DISABLED in production (`invoicingMode`); the issuance tests come with the compliance gate |
+| T8 | ✅ | `inventory.adjust` permission and reason checks (`inventory-drills.test.ts`, `ledger.test.ts`, `traceability.test.ts`); audit on every mutation |
+| T9 | ✅ | `offline-sync.test.ts` and `offline-engine.test.ts` (`TERMINAL_REVOKED`: the till stops) |
+| T10 | ✅ | `offline-sync.test.ts` (`TOTAL_MISMATCH` quarantine; re-pricing as of the snapshot) |
+| T11 | ✅ | `pnpm security:bundles`: a self-test plants leaks, then the admin static and POS bundles are scanned for server-only names, secret shapes and `.env` secret values. Limit: pages the admin server renders are not scanned |
+| T12 | ✅ | `auth.test.ts` (lockout), `account-security.test.ts` (MFA), `rate-limit.test.ts` (per IP, per account, shared across replicas, Redis down) |
+| T13 / T13a | ✅ | `auth.test.ts` (reuse revokes the family), `account-security.test.ts` (challenge ≠ access token; password reset) |
+| T14 | ⬜ | **Gap**: there is no support access at all yet (slice 6). Platform staff have no login |
+| T15 | ⬜ | **Gap**: there are no exports or backups yet (slices 4 and 6) |
+| T16 | ✅ | `tenant-isolation.test.ts` ("blocks UPDATE/DELETE by trigger even for the schema owner"); append-only checks per document type across the API suites |
+| T17 / T17a | ✅ | `logging.test.ts` (never query strings or credentials), `totp.test.ts`, `account-security.test.ts` (secret encrypted), `rls-catalog.test.ts` (no grants on credential tables) |
+| T18 | 🟡 | Per-terminal and per-IP sync caps (`rate-limit.test.ts`). **Gap**: no load test yet (slice 5) |
+| T19 | 🟡 | `pnpm security:audit` (production dependencies, high or worse fails); `pnpm-lock.yaml` committed. **Gap**: no automation, since there is no CI (D3). Accepted: drizzle-kit's bundled esbuild ≤ 0.24.2 (moderate, dev-server-only advisory; drizzle-kit never runs that server) |
+| T20 | ✅ | By construction: there is no PAN/CVV field in any schema; the card path is provider intents only (ADR-0010). Re-check when the PayMongo adapter lands |
+| T21 | 🟡 | Header checks in `account-security.test.ts` and `test:e2e:web:security`. **Gap**: no nonce CSP |
+| — least privilege | ✅ | `rls-catalog.test.ts`: the app, read-only and worker roles have no superuser or BYPASSRLS; the worker owns nothing and writes no table; outbox functions are worker-only. `apps/workers/test/integration/outbox.test.ts`: the worker role's denials |
 
 ## Release-blocking classes
 Cross-tenant exposure, duplicate charges, unbalanced journals, untraceable stock movements, secrets in client bundles.

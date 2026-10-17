@@ -206,7 +206,9 @@ export class SyncService extends TenantService {
       throw new AppError('CASHIER_NOT_AUTHORIZED', 'The cashier of this sale is no longer an active member of the business', HttpStatus.FORBIDDEN);
     }
     const grants = await loadGrants(this.database.pool, t.tenantId, ctx.membership_id, userId);
-    return { userId, sessionId: `terminal:${t.terminalId}`, correlationId: t.correlationId, tenant: { tenantId: t.tenantId, membershipId: ctx.membership_id, status: ctx.tenant_status, grants } };
+    // No user session here: the terminal's credential authenticated the delivery (MFA is a sign-in control).
+    const mfa = { enrolled: false, sessionVerified: false, required: false, dueAt: null };
+    return { userId, sessionId: `terminal:${t.terminalId}`, correlationId: t.correlationId, tenant: { tenantId: t.tenantId, membershipId: ctx.membership_id, status: ctx.tenant_status, grants }, mfa };
   }
 
   private async delivery(t: TerminalPrincipal, terminalTxnId: string): Promise<Delivery | undefined> {

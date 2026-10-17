@@ -95,17 +95,35 @@ export interface Membership {
   tenantSlug: string;
 }
 
-export async function signIn(email: string, password: string, tenantId?: string) {
-  const res = await fetch(`${apiBase()}/v1/auth/login`, {
+/** Signed in, or — for an account with two-step sign-in (ADR-0016) — a challenge to answer with a code. */
+export type SignInResult = { activeTenantId: string | null; challenge?: undefined } | { challenge: string };
+
+async function postAuth(path: string, body: unknown) {
+  const res = await fetch(`${apiBase()}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ email, password, ...(tenantId ? { tenantId } : {}) }),
+    body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new ApiFailure({ status: res.status, code: data?.error?.code ?? 'ERROR', message: data?.error?.message ?? 'Sign-in failed' });
+  return data;
+}
+
+function startSession(data: { tokens: Tokens; activeTenantId?: string | null }): SignInResult {
   tokens = { accessToken: data.tokens.accessToken, refreshToken: data.tokens.refreshToken };
   activeTenantId = data.activeTenantId ?? null;
   return { activeTenantId };
+}
+
+export async function signIn(email: string, password: string, tenantId?: string): Promise<SignInResult> {
+  const data = await postAuth('/v1/auth/login', { email, password, ...(tenantId ? { tenantId } : {}) });
+  // The 5-minute challenge stays in memory like the tokens.
+  if (data?.mfaRequired) return { challenge: String(data.challengeToken) };
+  return startSession(data);
+}
+
+export async function verifyMfa(challenge: string, answer: { code: string } | { recoveryCode: string }): Promise<SignInResult> {
+  return startSession(await postAuth('/v1/auth/mfa/verify', { challengeToken: challenge, ...answer }));
 }
 
 /** A new access token for the chosen business; the refresh token (same session) stays. */

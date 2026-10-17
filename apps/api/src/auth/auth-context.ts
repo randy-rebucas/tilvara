@@ -14,6 +14,15 @@ export interface AuthContext {
     status: string;
     grants: Grant[];
   } | null;
+  /** Two-step sign-in state of this user and session (ADR-0016). */
+  mfa: {
+    enrolled: boolean;
+    sessionVerified: boolean;
+    /** Privileged in the active tenant. */
+    required: boolean;
+    /** End of the grace period for a privileged member without MFA. */
+    dueAt: Date | null;
+  };
 }
 
 export type AuthedRequest = CorrelatedRequest & { auth?: AuthContext };

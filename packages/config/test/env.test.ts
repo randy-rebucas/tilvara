@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { EnvValidationError, loadServerEnv, productionIssues } from '../src/index.js';
+import { EnvValidationError, loadServerEnv, loadWorkerEnv, productionIssues } from '../src/index.js';
+
+describe('loadWorkerEnv', () => {
+  it('requires the worker its own database login in production', () => {
+    expect(() => loadWorkerEnv({ NODE_ENV: 'production', DATABASE_URL: 'postgres://a:b@db/onepos' } as NodeJS.ProcessEnv)).toThrow(/WORKER_DATABASE_URL/);
+    const dev = loadWorkerEnv({ DATABASE_URL: 'postgres://a:b@db/onepos', WORKER_DATABASE_URL: '' } as NodeJS.ProcessEnv);
+    expect(dev.WORKER_DATABASE_URL).toBeUndefined();
+  });
+});
 
 const base = {
   NODE_ENV: 'development',
@@ -62,10 +70,33 @@ describe('loadServerEnv', () => {
   });
 
   it('accepts a real secret with otherwise production-safe settings', () => {
-    const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
+    const env = loadServerEnv({
+      ...base,
+      JWT_ACCESS_SECRET: 'x'.repeat(48),
+      MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+      REDIS_URL: 'redis://cache.internal:6379/0',
+    });
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
       'PAYMENT_PROVIDER: the dev payment simulator cannot be used in production',
     ]);
+  });
+
+  it('requires Redis for shared rate limits in production', () => {
+    const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
+    expect(productionIssues(env)).toContain('REDIS_URL: required in production (rate limits shared across API replicas)');
+    expect(env.TRUST_PROXY_HOPS).toBe(0);
+  });
+
+  it('requires an MFA encryption key in production and checks its format without echoing it', () => {
+    const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
+    expect(productionIssues(env)).toContain('MFA_ENCRYPTION_KEY: required in production (32 random bytes, base64)');
+    try {
+      loadServerEnv({ ...base, MFA_ENCRYPTION_KEY: 'too-short-key' });
+      expect.unreachable();
+    } catch (e) {
+      expect((e as Error).message).toContain('MFA_ENCRYPTION_KEY');
+      expect((e as Error).message).not.toContain('too-short-key');
+    }
   });
 });

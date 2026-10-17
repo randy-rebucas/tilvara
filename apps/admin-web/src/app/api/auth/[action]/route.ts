@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { clearAuthCookies, writeAuthCookies, type TokenSet } from '@/lib/auth-cookies';
 import { API_URL, SECURE_COOKIES } from '@/lib/config';
-import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
+import { ACCESS_COOKIE, LANG_COOKIE, MFA_COOKIE } from '@/lib/cookies';
 import { rejectCrossSite } from '@/lib/csrf';
 
 interface AuthResponse {
@@ -9,6 +9,15 @@ interface AuthResponse {
   memberships: unknown[];
   tokens: TokenSet;
 }
+
+interface MfaChallenge {
+  mfaRequired: true;
+  challengeToken: string;
+  challengeExpiresAt: string;
+}
+
+const MFA_COOKIE_OPTS = { httpOnly: true, secure: SECURE_COOKIES, sameSite: 'strict' as const, path: '/api/auth' };
+const clearMfaCookie = (res: NextResponse) => res.cookies.set(MFA_COOKIE, '', { ...MFA_COOKIE_OPTS, maxAge: 0 });
 
 async function callApi(path: string, body: unknown, bearer?: string) {
   const res = await fetch(`${API_URL}${path}`, {
@@ -41,10 +50,49 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const bearer = request.cookies.get(ACCESS_COOKIE)?.value;
 
   switch (action) {
-    case 'login':
+    case 'login': {
+      const { res, json } = await callApi('/auth/login', input);
+      if (!res.ok) return passError(res, json);
+      const challenge = json as Partial<MfaChallenge>;
+      if (challenge.mfaRequired && challenge.challengeToken) {
+        // The challenge stays server-side like every other token; the browser only learns a code is needed.
+        const reply = NextResponse.json({ mfaRequired: true });
+        reply.cookies.set(MFA_COOKIE, challenge.challengeToken, { ...MFA_COOKIE_OPTS, expires: new Date(challenge.challengeExpiresAt!) });
+        return reply;
+      }
+      return sessionReply(json as AuthResponse);
+    }
     case 'signup': {
-      const { res, json } = await callApi(`/auth/${action}`, input);
+      const { res, json } = await callApi('/auth/signup', input);
       return res.ok ? sessionReply(json as AuthResponse) : passError(res, json);
+    }
+    case 'mfa-verify': {
+      const challengeToken = request.cookies.get(MFA_COOKIE)?.value;
+      if (!challengeToken) {
+        return NextResponse.json({ error: { code: 'INVALID_MFA_CHALLENGE', message: 'Sign in again' } }, { status: 401 });
+      }
+      const { code, recoveryCode } = input as { code?: string; recoveryCode?: string };
+      const { res, json } = await callApi('/auth/mfa/verify', { challengeToken, ...(code ? { code } : { recoveryCode }) });
+      if (!res.ok) {
+        const reply = passError(res, json);
+        if ((json as { error?: { code?: string } } | null)?.error?.code === 'INVALID_MFA_CHALLENGE') clearMfaCookie(reply);
+        return reply;
+      }
+      const reply = sessionReply(json as AuthResponse);
+      clearMfaCookie(reply);
+      return reply;
+    }
+    case 'password-reset-request':
+    case 'password-reset-confirm': {
+      const { res, json } = await callApi(`/auth/password-reset/${action.slice('password-reset-'.length)}`, input);
+      return res.ok ? NextResponse.json(json ?? { ok: true }) : passError(res, json);
+    }
+    case 'mfa-enroll':
+    case 'mfa-confirm':
+    case 'mfa-disable': {
+      if (!bearer) return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
+      const { res, json } = await callApi(`/auth/mfa/${action.slice('mfa-'.length)}`, input, bearer);
+      return res.ok ? NextResponse.json(json ?? { ok: true }) : passError(res, json);
     }
     case 'accept-invite': {
       const { res, json } = await callApi('/invitations/accept', input);

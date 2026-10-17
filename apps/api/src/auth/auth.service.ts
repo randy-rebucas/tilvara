@@ -4,7 +4,9 @@ import {
   ROLE_TEMPLATES,
   type AuthResponse,
   type LoginInput,
+  type LoginResponse,
   type MembershipSummary,
+  type MfaVerifyInput,
   type SignupInput,
   type TokenPair,
 } from '@1pos/validation';
@@ -17,10 +19,32 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import type { AuthContext } from './auth-context.js';
 import { PasswordService } from './password.service.js';
-import { TokenService } from './token.service.js';
+import { InvalidTokenError, TokenService } from './token.service.js';
+import { hashRecoveryCode, matchTotp, SecretBox } from './totp.js';
 
 const invalidCredentials = () =>
   new AppError('INVALID_CREDENTIALS', 'Email or password is incorrect', HttpStatus.UNAUTHORIZED);
+
+const invalidChallenge = () =>
+  new AppError('INVALID_MFA_CHALLENGE', 'Your sign-in expired. Enter your email and password again.', HttpStatus.UNAUTHORIZED);
+
+function assertNotLocked(lockedUntil: Date | null): void {
+  if (lockedUntil && lockedUntil.getTime() > Date.now()) {
+    const retryAfter = Math.ceil((lockedUntil.getTime() - Date.now()) / 1000);
+    throw new AppError('TOO_MANY_ATTEMPTS', 'Too many failed attempts. Try again later.', HttpStatus.TOO_MANY_REQUESTS, {
+      retryAfterSeconds: retryAfter,
+    });
+  }
+}
+
+export interface MfaFactorRow {
+  secret_ciphertext: string | null;
+  confirmed: boolean | null;
+  last_used_step: number | null;
+  recovery_codes_left: number | null;
+  user_status: string;
+  locked_until: Date | null;
+}
 
 interface PgError {
   code?: string;
@@ -44,6 +68,7 @@ export class AuthService {
     @Inject(TenantDb) private readonly tenantDb: TenantDb,
     @Inject(PasswordService) private readonly passwords: PasswordService,
     @Inject(TokenService) private readonly tokens: TokenService,
+    @Inject(SecretBox) private readonly secrets: SecretBox,
   ) {}
 
   /** Self-service onboarding: user + tenant + system roles + owner membership, atomically. */
@@ -90,7 +115,7 @@ export class AuthService {
     return this.issueSession(ids.userId, ids.tenantId, meta);
   }
 
-  async login(input: LoginInput, meta: RequestMeta): Promise<AuthResponse> {
+  async login(input: LoginInput, meta: RequestMeta): Promise<LoginResponse> {
     const { rows } = await this.database.pool.query<{
       user_id: string;
       password_hash: string;
@@ -102,41 +127,107 @@ export class AuthService {
       await this.passwords.verifyAgainstDummy(input.password);
       throw invalidCredentials();
     }
-    if (rec.locked_until && rec.locked_until.getTime() > Date.now()) {
-      const retryAfter = Math.ceil((rec.locked_until.getTime() - Date.now()) / 1000);
-      throw new AppError('TOO_MANY_ATTEMPTS', 'Too many failed attempts. Try again later.', HttpStatus.TOO_MANY_REQUESTS, {
-        retryAfterSeconds: retryAfter,
-      });
-    }
+    assertNotLocked(rec.locked_until);
     const ok = await this.passwords.verify(input.password, rec.password_hash);
-    await this.database.pool.query('SELECT auth_record_login_result($1, $2)', [rec.user_id, ok]);
-    if (!ok || rec.status !== 'ACTIVE') throw invalidCredentials();
+    if (!ok || rec.status !== 'ACTIVE') {
+      if (!ok) await this.recordLoginResult(rec.user_id, false);
+      throw invalidCredentials();
+    }
 
     const memberships = await this.memberships(rec.user_id);
-    let tenantId: string | null = null;
-    if (input.tenantId) {
-      if (!memberships.some((m) => m.tenantId === input.tenantId)) throw this.notMember();
-      tenantId = input.tenantId;
-    } else if (memberships.length === 1) {
-      tenantId = memberships[0]!.tenantId;
+    const tenantId = this.pickTenant(memberships, input.tenantId);
+    // With two-step sign-in the password alone resets nothing: failed codes keep counting towards the lock.
+    if ((await this.mfaFactor(rec.user_id))?.confirmed) {
+      const challenge = await this.tokens.signMfaChallenge(rec.user_id, tenantId);
+      return { mfaRequired: true, challengeToken: challenge.token, challengeExpiresAt: challenge.expiresAt.toISOString() };
     }
+    await this.recordLoginResult(rec.user_id, true);
+    return this.completeLogin(rec.user_id, tenantId, meta, memberships, false);
+  }
+
+  /** Second step: a code from the authenticator app (each time step once) or one recovery code. */
+  async verifyMfa(input: MfaVerifyInput, meta: RequestMeta): Promise<AuthResponse> {
+    let claims: { userId: string; tenantId: string | null };
+    try {
+      claims = await this.tokens.verifyMfaChallenge(input.challengeToken);
+    } catch (e) {
+      if (e instanceof InvalidTokenError) throw invalidChallenge();
+      throw e;
+    }
+    const factor = await this.mfaFactor(claims.userId);
+    if (!factor?.confirmed || factor.user_status !== 'ACTIVE') throw invalidChallenge();
+    assertNotLocked(factor.locked_until);
+
+    let ok: boolean;
+    if (input.code !== undefined) {
+      const step = matchTotp(this.secrets.open(factor.secret_ciphertext!), input.code);
+      ok = step !== null && (await this.scalarPool<boolean>('SELECT auth_mfa_use_step($1, $2) AS v', [claims.userId, step]));
+    } else {
+      const left = await this.scalarPool<number>('SELECT auth_mfa_use_recovery($1, $2, $3) AS v', [
+        claims.userId,
+        hashRecoveryCode(input.recoveryCode!),
+        meta.correlationId ?? null,
+      ]);
+      ok = left >= 0;
+    }
+    if (!ok) {
+      await this.recordLoginResult(claims.userId, false);
+      throw new AppError('INVALID_MFA_CODE', 'That code is not right. Try the newest code from your app.', HttpStatus.UNAUTHORIZED);
+    }
+    await this.recordLoginResult(claims.userId, true);
+    const memberships = await this.memberships(claims.userId);
+    // Membership may have changed during the 5 minutes: re-check.
+    const tenantId = claims.tenantId && memberships.some((m) => m.tenantId === claims.tenantId) ? claims.tenantId : this.pickTenant(memberships);
+    return this.completeLogin(claims.userId, tenantId, meta, memberships, true);
+  }
+
+  private pickTenant(memberships: MembershipSummary[], requested?: string): string | null {
+    if (requested) {
+      if (!memberships.some((m) => m.tenantId === requested)) throw this.notMember();
+      return requested;
+    }
+    return memberships.length === 1 ? memberships[0]!.tenantId : null;
+  }
+
+  private async completeLogin(
+    userId: string,
+    tenantId: string | null,
+    meta: RequestMeta,
+    memberships: MembershipSummary[],
+    mfa: boolean,
+  ): Promise<AuthResponse> {
     if (tenantId) {
       await this.tenantDb.tx(
         async (tx) => {
           await tx.setTenant(tenantId);
           await recordAudit(tx.db, {
             tenantId,
-            actorUserId: rec.user_id,
+            actorUserId: userId,
             action: 'auth.login',
             resourceType: 'user',
-            resourceId: rec.user_id,
+            resourceId: userId,
             correlationId: meta.correlationId,
+            metadata: { mfa },
           });
         },
-        { userId: rec.user_id, correlationId: meta.correlationId },
+        { userId, correlationId: meta.correlationId },
       );
     }
-    return this.issueSession(rec.user_id, tenantId, meta, memberships);
+    return this.issueSession(userId, tenantId, meta, memberships, mfa);
+  }
+
+  private async recordLoginResult(userId: string, ok: boolean): Promise<void> {
+    await this.database.pool.query('SELECT auth_record_login_result($1, $2)', [userId, ok]);
+  }
+
+  async mfaFactor(userId: string): Promise<MfaFactorRow | undefined> {
+    const { rows } = await this.database.pool.query<MfaFactorRow>('SELECT * FROM auth_mfa_get($1)', [userId]);
+    return rows[0];
+  }
+
+  private async scalarPool<T>(sql: string, params: unknown[]): Promise<T> {
+    const { rows } = await this.database.pool.query<{ v: T }>(sql, params);
+    return rows[0]!.v;
   }
 
   async refresh(refreshToken: string, tenantId: string | undefined): Promise<{ activeTenantId: string | null; tokens: TokenPair }> {
@@ -169,6 +260,8 @@ export class AuthService {
 
   async logout(auth: AuthContext): Promise<void> {
     await this.database.pool.query('SELECT auth_revoke_session($1, $2, $3)', [auth.sessionId, auth.userId, 'LOGOUT']);
+    if (auth.tenant) await this.tenantAudit(auth.tenant.tenantId, auth.userId, 'auth.logout', auth.correlationId);
+    else await this.platformEvent(auth.userId, 'auth.logout', {}, auth.correlationId);
   }
 
   /** New access token for another tenant within the same session (refresh token unchanged). */
@@ -176,7 +269,23 @@ export class AuthService {
     const memberships = await this.memberships(auth.userId);
     if (!memberships.some((m) => m.tenantId === tenantId)) throw this.notMember();
     const access = await this.tokens.signAccess({ sub: auth.userId, sid: auth.sessionId, tid: tenantId });
+    await this.tenantAudit(tenantId, auth.userId, 'auth.switch_tenant', auth.correlationId);
     return { accessToken: access.token, accessTokenExpiresAt: access.expiresAt.toISOString() };
+  }
+
+  private tenantAudit(tenantId: string, userId: string, action: string, correlationId: string | undefined): Promise<void> {
+    return this.tenantDb.tx(
+      async (tx) => {
+        await tx.setTenant(tenantId);
+        await recordAudit(tx.db, { tenantId, actorUserId: userId, action, resourceType: 'user', resourceId: userId, correlationId });
+      },
+      { userId, correlationId },
+    );
+  }
+
+  /** An account event outside any tenant (visible to no tenant; ADR-0016). */
+  async platformEvent(userId: string, action: string, metadata: Record<string, unknown>, correlationId: string | undefined): Promise<void> {
+    await this.database.pool.query('SELECT auth_record_event($1, $2, $3, $4)', [userId, action, metadata, correlationId ?? null]);
   }
 
   /** The signed-in user's own profile (RLS: a user can always read themself). */
@@ -216,13 +325,15 @@ export class AuthService {
     tenantId: string | null,
     meta: RequestMeta,
     memberships?: MembershipSummary[],
+    mfa = false,
   ): Promise<AuthResponse> {
     const refresh = this.tokens.newRefreshToken();
-    const family = await this.database.pool.query<{ v: string }>('SELECT auth_create_session($1, $2, $3, $4) AS v', [
+    const family = await this.database.pool.query<{ v: string }>('SELECT auth_create_session($1, $2, $3, $4, $5) AS v', [
       userId,
       refresh.hash,
       refresh.expiresAt,
       meta.userAgent ?? null,
+      mfa,
     ]);
     const access = await this.tokens.signAccess({ sub: userId, sid: family.rows[0]!.v, tid: tenantId });
     const user = await this.tenantDb.tx(

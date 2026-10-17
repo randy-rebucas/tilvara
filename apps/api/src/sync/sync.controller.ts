@@ -7,8 +7,15 @@ import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { SyncService } from './sync.service.js';
 
 const id = new ZodPipe(idParamSchema);
-/** A terminal syncing a long outage sends many batches; a stolen credential still cannot flood. */
-const TERMINAL_LIMIT = { bucket: 'terminal', limit: 600, windowSeconds: 60 };
+/**
+ * A terminal syncing a long outage sends many batches; a stolen credential still cannot flood.
+ * Counted per terminal, plus a looser per-IP cap (a shop's tills share one address) so made-up
+ * terminal ids cannot each get a fresh allowance.
+ */
+const TERMINAL_LIMITS = [
+  { bucket: 'terminal', limit: 600, windowSeconds: 60, by: 'terminal' as const },
+  { bucket: 'terminal-ip', limit: 3000, windowSeconds: 60 },
+];
 
 /** Offline sync (ADR-0015). Terminal routes authenticate with the terminal credential, not a user token. */
 @Controller()
@@ -16,14 +23,14 @@ export class SyncController {
   constructor(@Inject(SyncService) private readonly sync: SyncService) {}
 
   @TerminalAuth()
-  @RateLimit(TERMINAL_LIMIT)
+  @RateLimit(...TERMINAL_LIMITS)
   @Get('terminal/snapshot')
   async snapshot(@Req() req: AuthedRequest) {
     return this.sync.snapshot(await this.sync.authenticate((h) => req.header(h), req.correlationId));
   }
 
   @TerminalAuth()
-  @RateLimit(TERMINAL_LIMIT)
+  @RateLimit(...TERMINAL_LIMITS)
   @HttpCode(200)
   @Post('sync/sales')
   async syncSales(@Req() req: AuthedRequest, @Body(new ZodPipe(syncSalesRequestSchema)) body: SyncSalesRequest) {

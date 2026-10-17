@@ -1,21 +1,35 @@
 import { Body, Controller, Get, HttpCode, Inject, Post, Req } from '@nestjs/common';
 import {
   loginSchema,
+  mfaConfirmSchema,
+  mfaDisableSchema,
+  mfaEnrollSchema,
+  mfaVerifySchema,
+  passwordResetConfirmSchema,
+  passwordResetRequestSchema,
   refreshSchema,
   signupSchema,
   switchTenantSchema,
   type LoginInput,
+  type MfaConfirmInput,
+  type MfaDisableInput,
+  type MfaEnrollInput,
+  type MfaVerifyInput,
+  type PasswordResetConfirmInput,
+  type PasswordResetRequestInput,
   type RefreshInput,
   type SignupInput,
   type SwitchTenantInput,
 } from '@1pos/validation';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
+import { AccountSecurityService, mfaStatus } from './account-security.service.js';
 import { Auth, Public, type AuthContext, type AuthedRequest } from './auth-context.js';
 import { permissionCodes } from './authorization.js';
 import { AuthService, type RequestMeta } from './auth.service.js';
 
 const AUTH_LIMIT = { bucket: 'auth', limit: 20, windowSeconds: 60 };
+const MFA_LIMIT = { bucket: 'mfa-setup', limit: 10, windowSeconds: 600 };
 
 function meta(req: AuthedRequest): RequestMeta {
   return { userAgent: req.header('user-agent'), correlationId: req.correlationId };
@@ -23,7 +37,10 @@ function meta(req: AuthedRequest): RequestMeta {
 
 @Controller()
 export class AuthController {
-  constructor(@Inject(AuthService) private readonly auth: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(AccountSecurityService) private readonly security: AccountSecurityService,
+  ) {}
 
   @Public()
   @RateLimit({ bucket: 'signup', limit: 5, windowSeconds: 600 })
@@ -33,7 +50,8 @@ export class AuthController {
   }
 
   @Public()
-  @RateLimit(AUTH_LIMIT)
+  // Per IP, and per account so a spread-out attack on one person is slowed too (the DB lock still applies).
+  @RateLimit(AUTH_LIMIT, { bucket: 'login-account', limit: 10, windowSeconds: 600, by: 'account' })
   @HttpCode(200)
   @Post('auth/login')
   login(@Body(new ZodPipe(loginSchema)) body: LoginInput, @Req() req: AuthedRequest) {
@@ -46,6 +64,58 @@ export class AuthController {
   @Post('auth/refresh')
   refresh(@Body(new ZodPipe(refreshSchema)) body: RefreshInput) {
     return this.auth.refresh(body.refreshToken, body.tenantId);
+  }
+
+  @Public()
+  @RateLimit(AUTH_LIMIT)
+  @HttpCode(200)
+  @Post('auth/mfa/verify')
+  verifyMfa(@Body(new ZodPipe(mfaVerifySchema)) body: MfaVerifyInput, @Req() req: AuthedRequest) {
+    return this.auth.verifyMfa(body, meta(req));
+  }
+
+  @Get('auth/mfa')
+  mfaStatus(@Auth() auth: AuthContext) {
+    return this.security.status(auth);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(200)
+  @Post('auth/mfa/enroll')
+  enrollMfa(@Auth() auth: AuthContext, @Body(new ZodPipe(mfaEnrollSchema)) body: MfaEnrollInput) {
+    return this.security.enroll(auth, body.password);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(200)
+  @Post('auth/mfa/confirm')
+  confirmMfa(@Auth() auth: AuthContext, @Body(new ZodPipe(mfaConfirmSchema)) body: MfaConfirmInput) {
+    return this.security.confirm(auth, body.code);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(204)
+  @Post('auth/mfa/disable')
+  async disableMfa(@Auth() auth: AuthContext, @Body(new ZodPipe(mfaDisableSchema)) body: MfaDisableInput): Promise<void> {
+    await this.security.disable(auth, body.password, body.code);
+  }
+
+  @Public()
+  // Per account as well: nobody can fill a person's inbox with reset mails from many addresses.
+  @RateLimit({ bucket: 'password-reset', limit: 5, windowSeconds: 600 }, { bucket: 'password-reset-account', limit: 3, windowSeconds: 3600, by: 'account' })
+  @HttpCode(202)
+  @Post('auth/password-reset/request')
+  async requestPasswordReset(@Body(new ZodPipe(passwordResetRequestSchema)) body: PasswordResetRequestInput, @Req() req: AuthedRequest) {
+    await this.security.requestReset(body.email, meta(req));
+    return { accepted: true };
+  }
+
+  @Public()
+  @RateLimit(AUTH_LIMIT)
+  @HttpCode(204)
+  @Post('auth/password-reset/confirm')
+  async confirmPasswordReset(@Body(new ZodPipe(passwordResetConfirmSchema)) body: PasswordResetConfirmInput, @Req() req: AuthedRequest) {
+    await this.security.confirmReset(body, meta(req));
   }
 
   @HttpCode(204)
@@ -75,6 +145,7 @@ export class AuthController {
           }
         : null,
       memberships: await this.auth.memberships(auth.userId),
+      mfa: mfaStatus(auth),
     };
   }
 }

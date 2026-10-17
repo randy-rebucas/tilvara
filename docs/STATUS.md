@@ -1,13 +1,104 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 8 — Rust toolchain installed; Phase 5 slice 5: the Tauri desktop till, POS offline screens; PayMongo env settings; SNAPSHOT_EXPIRED test)_
+_Last updated: 2026-10-17 (session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
 
-## Current phase
-**Phase 5 — Offline & integrations: exit criterion met for offline cash sales (2026-10-17, session 8)**, with two items deferred by the user's decision ("continue without PayMongo"):
+## Current phase — Phase 6: pilot and commercial readiness (started session 9)
+Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
+1. account security;
+2. platform hardening;
+3. monitoring;
+4. backup and restore;
+5. performance;
+6. onboarding and support;
+7. deployment;
+8. runbooks and privacy;
+9. UAT, compliance review and pilot.
+
+The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1 and 2 are done** (below).
+
+## Phase 6 slice 2 — platform hardening (session 9)
+- **Rate limits shared through Redis** (ADR-0016 "As built — slice 2"):
+  - an atomic Lua counter;
+  - if Redis is unreachable each hit is counted in the instance instead: still limited, sign-in still works, a `fallbacks` counter, a warning at most once a minute;
+  - rules per IP, per account (hashed email) or per terminal, several per route:
+    - login: per IP + per account;
+    - password reset: per IP + per account;
+    - sync: per terminal + per IP;
+  - `TRUST_PROXY_HOPS` setting;
+  - production requires `REDIS_URL`.
+  - **Defect found by the first test run and fixed**: in the first moments after boot, ioredis had not connected yet, so hits were split between memory and Redis and no limit was reached. Boot now waits up to 2.5 s for the connection.
+- **`onepos_worker` DB role** (migration 0045):
+  - only this role can run the outbox and the idempotency purge; both are revoked from the API role;
+  - read-only, column-level, under RLS: `tenants`, `tenant_memberships`, `users` (no secrets);
+  - it writes no table directly;
+  - the worker uses `WORKER_DATABASE_URL`, required in production.
+  - The dev cluster was upgraded with `infra/docker/postgres/upgrade/2026-10-17-worker-role.sql`, and `.env` gained `WORKER_DATABASE_URL` / `TEST_WORKER_DATABASE_URL`.
+  - The real worker booted against the dev DB as `onepos_worker` and delivered the queued welcome mails.
+- **Dependencies**: `pnpm security:audit` found 7 advisories in Next.js 16.3.5 (critical RCE in `next/og`, high SSRF in image optimization, 4 moderate, 1 low). Upgraded to **16.3.8**: 0 left in production dependencies. One dev-only moderate advisory accepted (esbuild in drizzle-kit).
+- **Bundle secret scan**: `pnpm security:bundles` (self-test with planted leaks, then the admin static and POS bundles): 38 files, 0 findings.
+- **Security pass**: THREAT_MODEL "Control → test map". Gaps are named: webhooks, support access, exports/backups, load, CI automation, nonce CSP, refund approval thresholds.
+- **Tests (run this session, final code)**:
+  - `rate-limit.test.ts` **6** (two replicas share one allowance; per-account reset and login caps; per-terminal + per-IP sync caps; Redis down);
+  - workers **11** (+3 role tests);
+  - database **22** (worker posture in the schema guard);
+  - config 11;
+  - full gate `turbo run test:integration --concurrency=1 --continue` → database 22, workers 11, api **279** (all green);
+  - `pnpm typecheck` 24/24, `pnpm lint` clean, `pnpm test` 24/24 tasks, OpenAPI regenerated;
+  - E2E on the rebuilt API (:4321), admin `next start` on Next 16.3.8 (:3322) and POS preview (:3331):
+    - `test:e2e:web` 42/42, `web:security` 21/21, `web:offline` 14/14;
+    - `test:e2e:pos` 19/19, `pos:mfa` 5/5.
+  - Not re-run: `test:e2e:desktop`, restaurant/reports/tables/kitchen/service suites.
+
+## Phase 6 slice 1 — account security (session 9)
+- **Two-step sign-in (TOTP)**, as built in ADR-0016:
+  - **Who needs it**: privileged members. A member is privileged when they hold any of the `PRIVILEGED_PERMISSIONS`. Built-in roles: owner, admin, accountant.
+  - **When**: required after `MFA_GRACE_DAYS` (7). Until then the admin shows a banner with the date.
+  - **When it applies**:
+    - Once due, business routes answer `403 MFA_REQUIRED` and the admin redirects to `/security`.
+    - A session that started before enrolment must sign in again.
+  - **How codes work**:
+    - Each time step is accepted once; recovery codes are shown once.
+    - Wrong codes count towards the password lock.
+    - Secrets are encrypted at rest (`MFA_ENCRYPTION_KEY`, required in production).
+- **Password reset**: one-time link (30 min, only the newest works, at most 5 per hour). The answer is the same for unknown emails. A reset revokes every session and keeps MFA on. Mail goes through `Mailer`, which is DevMailer until the email provider is chosen (D2).
+- **Audit**:
+  - lockout, refresh reuse, MFA and reset are recorded at platform level (NULL tenant);
+  - sign-out, switching business and login `{mfa}` are recorded in the tenant.
+- **Headers**:
+  - API: helmet now in `configureApp`, so tests see it; CSP `default-src 'none'`; HSTS.
+  - Admin: CSP (self only, no framing), HSTS outside dev, Permissions-Policy.
+  - `API_HOST` setting for containers.
+- **Admin screens**:
+  - sign-in code step (the challenge is held in an httpOnly cookie);
+  - `/forgot-password`, `/reset-password`;
+  - `/security` (QR code via `uqr`, set-up key, recovery codes, turn off).
+  - **POS**: code step at sign-in.
+- **Migrations** 0043 (DDL) and 0044 (hand-written: RLS posture, the `auth_*` functions); applied to the dev DB.
+- **Defect found by the screenshots and fixed**: the 1440px band clipped the last tab. It was already 4px over before this slice and got worse with the new account link. Fixed with `lg:gap-0`; the E2E now asserts the nav does not overflow (that check was confirmed to fail on the old build).
+- **Gaps (BACKLOG)**:
+  - no way to regenerate recovery codes;
+  - no support reset of a member's MFA (needed before the pilot);
+  - no nonce CSP;
+  - no passkeys;
+  - no per-account rate limit.
+- **Tests (run this session)**:
+  - unit: `totp.test.ts` 9 (RFC vectors, window, base32, otpauth URI, recovery codes, AES-GCM tamper); config 9; API unit 44;
+  - integration: `account-security.test.ts` **19** with `auth.test.ts` 17 (36/36); database 21 (schema guard extended to the credential tables);
+  - E2E against a fresh API (:4321), admin `next start` (:3322) and POS preview (:3331):
+    - `test:e2e:web:security` **21/21**;
+    - `test:e2e:web` 42/42;
+    - `test:e2e:pos:mfa` **5/5**;
+    - `test:e2e:pos` 19/19;
+  - `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` clean, OpenAPI regenerated;
+  - full gate: `turbo run test:integration --concurrency=1 --continue` → database 21/21, workers 8/8, api **273/273**. `vitest list` collects exactly 273, so nothing was skipped. 273 − 19 new = 254 tests from before this session, not the 257 session 8 recorded; the difference was not traced.
+  - **Not run this session**: `test:e2e:desktop` (the till's sign-in screen changed; only typechecked and covered by the browser-mode `test:e2e:pos:mfa`), and the restaurant/reports/offline/service/tables/kitchen E2E suites (no change in their paths).
+
+## Phase 5 — Offline & integrations
+**Exit criterion met for offline cash sales (2026-10-17, session 8)**, with two items deferred by the user's decision ("continue without PayMongo"):
 - payment integration hardening (PayMongo; waits for sandbox keys);
 - invoice transmission (compliance gate).
 
-Plan and exit review: `docs/decisions/ADR-0015-offline-sync.md` ("Exit review"). The starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows. **Next: Phase 6** (see "Next task"). PayMongo slots in whenever the keys arrive.
+Plan and exit review: `docs/decisions/ADR-0015-offline-sync.md` ("Exit review"). The starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows. PayMongo slots in whenever the keys arrive.
 
 ## Phase 5 exit review (session 8)
 - **SPEC §11 traced** requirement by requirement (ADR-0015 table). The one gap, monitoring delayed or failed sync, was built:
@@ -622,13 +713,28 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
-3. **Phase 5** ✅ exit met for offline cash sales (session 8). **Next: Phase 6 — pilot and commercial readiness** (SPEC: performance, security hardening, backup restoration tests, operational monitoring, tenant onboarding, support workflows). Plan it first (ADR), as for earlier phases. Deferred Phase 5 items:
+2. **Phase 6** (ADR-0016). Slices 1–2 are done. **Next: slice 3, monitoring**:
+   - Prometheus metrics on an internal port for the API and the worker (SPEC §16 list, including rate-limit fallbacks and Redis health);
+   - readiness checks Redis and the migration head;
+   - a worker heartbeat;
+   - alert rules with runbook links;
+   - a DEAD-letter replay tool.
+
+   Then slice 4 (backup/restore drill) and slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
+   - Before any pilot, add support "reset a member's MFA" (slice 6). Otherwise a privileged member who loses their phone and codes is locked out.
+   - Decisions for the user (ADR-0016):
+     - **D1** hosting provider and region;
+     - **D2** email provider (password reset, invitations and the production boot wait on it);
+     - **D4** pilot businesses and pilot length;
+     - **D5** invoicing during the pilot (tax adviser);
+     - **D6** PayMongo keys.
+     - D3: no git remote yet (user, 2026-10-15), so CI stays deferred.
+3. **Phase 5** ✅ exit met for offline cash sales (session 8). Deferred Phase 5 items:
    - **Slice 6 — PayMongo**: the user said they will put the sandbox keys in `.env` (`PAYMONGO_SECRET_KEY`, `PAYMONGO_PUBLIC_KEY`, `PAYMONGO_WEBHOOK_SECRET`; never in chat). At session end they were not set yet. Check with `grep -c '^PAYMONGO_SECRET_KEY=sk_test_' .env`. Then build the adapter behind `PaymentProvider` (ADR-0010) with webhooks and card/QR refunds, and add `paymongo` to `PAYMENT_PROVIDER`.
    - Slice 7: exit review. Run every E2E suite incl. `test:e2e:desktop`, and drill the till on real printer/drawer hardware if the user has it.
    - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), signed installer + auto-update, real printer/drawer check.
 4. Decisions for the user:
    - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
-   - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).
-5. Carried, non-blocking: the tax adviser's and accountant's answers (service charge; ADR-0013 questions 1–10); Phase 3/4 leftovers in BACKLOG.
+   - whether a service charge's stored gross should include its VAT (LEFTOVER.md, Phase 4 slice 7).
+5. Carried, non-blocking: the tax adviser's and accountant's answers (service charge; ADR-0013 questions 1–10); all phase/slice leftovers now live in `docs/LEFTOVER.md` (moved out of BACKLOG 2026-10-17).
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -27,7 +27,11 @@
     "test:e2e:web:reports": "node apps/admin-web/e2e/reports.mjs",
     "test:e2e:service": "node apps/pos-desktop/e2e/service.mjs",
     "test:e2e:web:offline": "node apps/admin-web/e2e/offline.mjs",
-    "test:e2e:desktop": "node apps/pos-desktop/e2e/desktop.mjs"
+    "test:e2e:desktop": "node apps/pos-desktop/e2e/desktop.mjs",
+    "security:audit": "pnpm audit --prod --audit-level high",
+    "security:bundles": "node scripts/security/scan-bundles.mjs --self-test && node scripts/security/scan-bundles.mjs",
+    "test:e2e:web:security": "node apps/admin-web/e2e/security.mjs",
+    "test:e2e:pos:mfa": "node apps/pos-desktop/e2e/mfa.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -46,6 +46,26 @@ export function isPermissionCode(value: string): value is PermissionCode {
   return (PERMISSIONS as readonly string[]).includes(value);
 }
 
+/**
+ * Holding any of these (at any scope) makes a member privileged: two-step sign-in is required
+ * after the grace period (ADR-0016). Built-in roles that qualify: owner, admin, accountant.
+ */
+export const PRIVILEGED_PERMISSIONS: readonly PermissionCode[] = [
+  'tenant.manage',
+  'subscription.manage',
+  'members.manage',
+  'roles.manage',
+  'terminals.manage',
+  'tax.manage',
+  'accounting.post',
+  'integrations.manage',
+];
+
+export const isPrivilegedSet = (codes: Iterable<string>): boolean => {
+  for (const c of codes) if ((PRIVILEGED_PERMISSIONS as readonly string[]).includes(c)) return true;
+  return false;
+};
+
 export interface RoleTemplate {
   key: string;
   name: string;

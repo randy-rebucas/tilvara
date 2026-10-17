@@ -6,6 +6,7 @@ import { ENV } from '../infrastructure/env.provider.js';
 
 const ISSUER = '1pos-api';
 const AUDIENCE = '1pos';
+const MFA_CHALLENGE_SECONDS = 300;
 
 export interface AccessClaims {
   /** user id */
@@ -57,6 +58,35 @@ export class TokenService {
       const tid = payload.tid;
       if (tid !== null && typeof tid !== 'string') throw new InvalidTokenError();
       return { sub: payload.sub, sid: payload.sid, tid };
+    } catch {
+      throw new InvalidTokenError();
+    }
+  }
+
+  /**
+   * Second-step challenge after a correct password (ADR-0016): 5 minutes, its own `typ`, so it is
+   * never accepted as an access token (verifyAccess requires typ=access) and vice versa.
+   */
+  async signMfaChallenge(userId: string, tenantId: string | null): Promise<{ token: string; expiresAt: Date }> {
+    const expiresAt = new Date(Date.now() + MFA_CHALLENGE_SECONDS * 1000);
+    const token = await new SignJWT({ tid: tenantId, typ: 'mfa_challenge' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(userId)
+      .setIssuer(ISSUER)
+      .setAudience(AUDIENCE)
+      .setIssuedAt()
+      .setExpirationTime(Math.floor(expiresAt.getTime() / 1000))
+      .sign(this.key);
+    return { token, expiresAt };
+  }
+
+  async verifyMfaChallenge(token: string): Promise<{ userId: string; tenantId: string | null }> {
+    try {
+      const { payload } = await jwtVerify(token, this.key, { issuer: ISSUER, audience: AUDIENCE, algorithms: ['HS256'] });
+      if (payload.typ !== 'mfa_challenge' || typeof payload.sub !== 'string') throw new InvalidTokenError();
+      const tid = payload.tid;
+      if (tid !== null && typeof tid !== 'string') throw new InvalidTokenError();
+      return { userId: payload.sub, tenantId: tid };
     } catch {
       throw new InvalidTokenError();
     }

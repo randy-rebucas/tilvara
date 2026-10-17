@@ -51,6 +51,14 @@ export interface Me {
   user: { email: string; displayName: string };
   activeTenant: { tenantId: string; membershipId: string; status: string; permissions: string[] } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];
+  mfa: MfaStatus;
+}
+/** Two-step sign-in (ADR-0016): required for privileged members, after a grace period. */
+export interface MfaStatus {
+  enabled: boolean;
+  sessionVerified: boolean;
+  required: boolean;
+  dueAt: string | null;
 }
 export interface LegalEntity {
   id: string;

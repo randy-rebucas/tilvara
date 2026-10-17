@@ -18,6 +18,9 @@ const NON_TENANT_TABLES: Record<string, string> = {
   tenants: 'the tenant itself; policy tenant_self (id = current tenant)',
   users: 'global identities; policies users_visible / users_self_update',
   user_sessions: 'no runtime access at all; only auth_* SECURITY DEFINER functions',
+  user_mfa_factors: 'per-user TOTP secret (encrypted); no runtime access, only auth_mfa_* functions',
+  user_mfa_recovery_codes: 'per-user recovery code hashes; no runtime access, only auth_mfa_* functions',
+  password_reset_tokens: 'per-user reset token hashes; no runtime access, only auth_password_reset_* functions',
   permissions: 'global read-only permission catalog',
   plans: 'global read-only plan catalog',
   discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
@@ -88,9 +91,23 @@ describe('schema isolation catalog', () => {
 
   it('allow-listed non-tenant tables keep their reviewed posture', async () => {
     const byName = Object.fromEntries((await publicTables()).map((t) => [t.name, t]));
-    for (const name of ['tenants', 'users', 'user_sessions']) {
+    const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens'];
+    for (const name of ['tenants', 'users', ...credentialTables]) {
       expect([name, byName[name]?.rls, byName[name]?.forced]).toEqual([name, true, true]);
     }
+    // Credential tables: no privilege of any kind for the runtime or read-only roles.
+    const credentialAccess = await q(
+      `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
+        WHERE grantee IN ('onepos_app', 'onepos_readonly') AND table_name = ANY ($1)`,
+      [credentialTables],
+    );
+    expect(credentialAccess).toEqual([]);
+    const secretColumns = await q(
+      `SELECT column_name FROM information_schema.column_privileges
+        WHERE grantee IN ('onepos_app', 'onepos_readonly') AND table_name = 'users'
+          AND column_name IN ('password_hash', 'privileged_since', 'failed_login_count', 'locked_until')`,
+    );
+    expect(secretColumns).toEqual([]);
     const writes = await q<{ table: string; priv: string }>(`
       SELECT table_name AS table, privilege_type AS priv FROM information_schema.table_privileges
        WHERE grantee = 'onepos_app' AND table_schema = 'public'
@@ -141,11 +158,31 @@ describe('schema isolation catalog', () => {
          AND privilege_type IN ('TRUNCATE', 'TRIGGER', 'REFERENCES')`);
     expect(dangerous).toEqual([]);
     const roles = await q<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean; rolcreaterole: boolean }>(`
-      SELECT rolname, rolsuper, rolbypassrls, rolcreaterole FROM pg_roles WHERE rolname IN ('onepos_app', 'onepos_readonly') ORDER BY 1`);
+      SELECT rolname, rolsuper, rolbypassrls, rolcreaterole FROM pg_roles WHERE rolname IN ('onepos_app', 'onepos_readonly', 'onepos_worker') ORDER BY 1`);
     expect(roles).toEqual([
       { rolname: 'onepos_app', rolsuper: false, rolbypassrls: false, rolcreaterole: false },
       { rolname: 'onepos_readonly', rolsuper: false, rolbypassrls: false, rolcreaterole: false },
+      { rolname: 'onepos_worker', rolsuper: false, rolbypassrls: false, rolcreaterole: false },
     ]);
+  });
+
+  it('the worker role (ADR-0016) owns nothing, writes no table directly and reads only what handlers need', async () => {
+    const owned = await q(`SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND pg_get_userbyid(relowner) = 'onepos_worker'`);
+    expect(owned).toEqual([]);
+    const tableWrites = await q(`SELECT table_name, privilege_type FROM information_schema.table_privileges
+       WHERE grantee = 'onepos_worker' AND table_schema = 'public'`);
+    expect(tableWrites).toEqual([]);
+    const columns = await q<{ t: string }>(`SELECT DISTINCT table_name || '.' || privilege_type AS t FROM information_schema.column_privileges
+       WHERE grantee = 'onepos_worker' AND table_schema = 'public' ORDER BY 1`);
+    expect(columns.map((c) => c.t)).toEqual(['tenant_memberships.SELECT', 'tenants.SELECT', 'users.SELECT']);
+    const secret = await q(`SELECT 1 FROM information_schema.column_privileges
+       WHERE grantee = 'onepos_worker' AND table_name = 'users' AND column_name IN ('password_hash', 'failed_login_count', 'locked_until', 'privileged_since')`);
+    expect(secret).toEqual([]);
+    // Only the worker may drive the outbox.
+    const [claim] = await q<{ app: boolean; worker: boolean }>(`SELECT
+       has_function_privilege('onepos_app', 'outbox_claim(text, int, int)', 'EXECUTE') AS app,
+       has_function_privilege('onepos_worker', 'outbox_claim(text, int, int)', 'EXECUTE') AS worker`);
+    expect(claim).toEqual({ app: false, worker: true });
   });
 
   it('SECURITY DEFINER functions are platform-owned, pin search_path and are not PUBLIC-executable', async () => {

@@ -12,7 +12,16 @@ export const serverEnvSchema = z.object({
   DATABASE_URL: z.url(),
   REDIS_URL: z.url().optional(),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4320),
+  /** Listen address. 127.0.0.1 locally; 0.0.0.0 inside a container behind the edge proxy. */
+  API_HOST: z.string().min(1).default('127.0.0.1'),
   JWT_ACCESS_SECRET: z.string().min(32),
+  /**
+   * 32 random bytes, base64, that encrypt TOTP secrets at rest (ADR-0016). Required in production;
+   * elsewhere a key is derived from JWT_ACCESS_SECRET so dev and tests need no extra setting.
+   */
+  MFA_ENCRYPTION_KEY: optionalKey(/^[A-Za-z0-9+/]{43}=$/, 'must be 32 bytes, base64 (44 characters)'),
+  /** Days a privileged member may work without two-step sign-in before it is required (ADR-0016). */
+  MFA_GRACE_DAYS: z.coerce.number().int().min(0).max(30).default(7),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
   /** Comma-separated origins allowed by CORS (admin web; the desktop till is served from http://tauri.localhost on Windows). */
@@ -34,6 +43,14 @@ export const serverEnvSchema = z.object({
   PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
   /** How long a terminal snapshot may price offline sales before they are flagged SNAPSHOT_EXPIRED (ADR-0015). */
   OFFLINE_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  /** Key prefix of the rate-limit counters in Redis (tests use a unique one per run). */
+  RATE_LIMIT_PREFIX: z.string().min(1).max(64).default('onepos:rl:'),
+  /**
+   * Proxies in front of the API whose X-Forwarded-For may be believed (Express "trust proxy").
+   * 0 = none (direct). Behind one load balancer: 1. Wrong values let clients spoof their IP and
+   * dodge per-IP limits, or put every client in one bucket.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   /** Test-only escape hatch; refused in production. */
   RATE_LIMITS_ENABLED: z
     .enum(['true', 'false'])
@@ -54,6 +71,8 @@ export const workerEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.url(),
+  /** The worker's own login (role onepos_worker, ADR-0016); required in production. Falls back to DATABASE_URL elsewhere. */
+  WORKER_DATABASE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
   WORKER_ID: z.string().min(1).max(100).optional(),
   OUTBOX_POLL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
@@ -67,9 +86,12 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   if (!parsed.success) {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
-  if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') {
-    throw new EnvValidationError(['MAILER_DRIVER: the dev mailer cannot be used in production']);
+  const issues: string[] = [];
+  if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') issues.push('MAILER_DRIVER: the dev mailer cannot be used in production');
+  if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
+    issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');
   }
+  if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
 
@@ -96,6 +118,8 @@ export function productionIssues(cfg: ServerEnv): string[] {
     issues.push('JWT_ACCESS_SECRET: development placeholder secret used in production');
   }
   if (!cfg.RATE_LIMITS_ENABLED) issues.push('RATE_LIMITS_ENABLED: cannot be disabled in production');
+  if (!cfg.REDIS_URL) issues.push('REDIS_URL: required in production (rate limits shared across API replicas)');
+  if (!cfg.MFA_ENCRYPTION_KEY) issues.push('MFA_ENCRYPTION_KEY: required in production (32 random bytes, base64)');
   if (cfg.MAILER_DRIVER === 'dev') {
     issues.push('MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)');
   }

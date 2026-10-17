@@ -5,11 +5,18 @@ import { UserMenu } from '@/components/user-menu';
 import { api, apiOrNull, type Me, type Subscription } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { Callout } from '@/components/note';
+import { formatDateTime } from '@/lib/format';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const me = await api<Me>('/me');
   if (!me.activeTenant) redirect('/select-business');
-  const { t } = await getT();
+  // Two-step sign-in (ADR-0016): once it is due, or the session predates enrolment, the API closes
+  // business routes, so send the person where they can fix it instead of rendering errors.
+  const mfaBlocked =
+    me.mfa.required && !me.mfa.sessionVerified && (me.mfa.enabled || (me.mfa.dueAt !== null && new Date(me.mfa.dueAt).getTime() <= Date.now()));
+  if (mfaBlocked) redirect('/security');
+  const mfaDue = me.mfa.required && !me.mfa.enabled ? me.mfa.dueAt : null;
+  const { t, lang } = await getT();
   const current = me.memberships.find((m) => m.tenantId === me.activeTenant!.tenantId);
   const sub = await apiOrNull<Subscription>('/subscription');
 
@@ -30,6 +37,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
+      {mfaDue && (
+        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7">
+          <Callout tone="warn">
+            {t('mfa.banner', { date: formatDateTime(mfaDue, lang) })}{' '}
+            <a href="/security" className="font-semibold underline">
+              {t('mfa.bannerLink')}
+            </a>
+          </Callout>
+        </div>
+      )}
       {sub?.access === 'READ_ONLY' && (
         <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7">
           <Callout tone="warn">{t('sub.readOnly')}</Callout>

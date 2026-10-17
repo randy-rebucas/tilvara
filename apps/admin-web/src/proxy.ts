@@ -3,7 +3,7 @@ import { clearAuthCookies, writeAuthCookies } from './lib/auth-cookies';
 import { API_URL } from './lib/config';
 import { ACCESS_COOKIE, ACCESS_EXP_COOKIE, REFRESH_COOKIE, TENANT_COOKIE } from './lib/cookies';
 
-const PUBLIC = ['/sign-in', '/sign-up', '/accept-invite'];
+const PUBLIC = ['/sign-in', '/sign-up', '/accept-invite', '/forgot-password', '/reset-password'];
 const REFRESH_MARGIN_MS = 60_000;
 
 /**

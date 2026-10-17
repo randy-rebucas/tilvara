@@ -302,6 +302,27 @@
       "when": 1792171851903,
       "tag": "0042_offline_sync_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792220229156,
+      "tag": "0043_account_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792220261293,
+      "tag": "0044_account_security_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792231944285,
+      "tag": "0045_worker_role",
+      "breakpoints": true
     }
   ]
 }

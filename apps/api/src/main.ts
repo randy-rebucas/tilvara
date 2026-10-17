@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
-import helmet from 'helmet';
 import { createLogger, LOG_LEVELS, type LogLevel } from '@1pos/observability';
 import { AppModule } from './app.module.js';
 import { configureApp } from './bootstrap.js';
@@ -13,12 +12,11 @@ async function bootstrap(): Promise<void> {
   const requested = process.env.LOG_LEVEL as LogLevel | undefined;
   const logger = createLogger({ service: 'api', level: requested && LOG_LEVELS.includes(requested) ? requested : 'info' });
   const app = await NestFactory.create(AppModule, { logger: new PinoNestLogger(logger) });
-  app.use(helmet());
   configureApp(app, logger);
   app.enableShutdownHooks();
   const env = app.get<ServerEnv>(ENV);
-  await app.listen(env.API_PORT, '127.0.0.1');
-  logger.info({ port: env.API_PORT }, `1POS API listening on http://127.0.0.1:${env.API_PORT}/v1`);
+  await app.listen(env.API_PORT, env.API_HOST);
+  logger.info({ port: env.API_PORT, host: env.API_HOST }, `1POS API listening on http://${env.API_HOST}:${env.API_PORT}/v1`);
 }
 
 void bootstrap();

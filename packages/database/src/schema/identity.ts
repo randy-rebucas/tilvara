@@ -34,6 +34,8 @@ export const users = pgTable(
     failedLoginCount: integer('failed_login_count').notNull().default(0),
     lockedUntil: timestamp('locked_until', { withTimezone: true }),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    /** First time the guard saw this user hold a privileged permission without MFA: start of the MFA grace period (ADR-0016). */
+    privilegedSince: timestamp('privileged_since', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -63,9 +65,57 @@ export const userSessions = pgTable(
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     revokeReason: text('revoke_reason'),
     userAgent: text('user_agent'),
+    /** Set when the session passed a second factor (at sign-in or by enrolling); copied on rotation. */
+    mfaVerifiedAt: timestamp('mfa_verified_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('user_sessions_family_idx').on(t.familyId), index('user_sessions_user_idx').on(t.userId)],
+);
+
+/**
+ * A user's TOTP factor (RFC 6238). The secret is AES-256-GCM ciphertext made by the API
+ * (`MFA_ENCRYPTION_KEY`), so a dump or backup does not reveal it. `last_used_step` refuses a
+ * code twice. No runtime access: only auth_mfa_* SECURITY DEFINER functions.
+ */
+export const userMfaFactors = pgTable('user_mfa_factors', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id),
+  secretCiphertext: text('secret_ciphertext').notNull(),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  lastUsedStep: integer('last_used_step').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** One-time recovery codes, SHA-256 only. No runtime access. */
+export const userMfaRecoveryCodes = pgTable(
+  'user_mfa_recovery_codes',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    codeHash: text('code_hash').notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('user_mfa_recovery_codes_hash_unique').on(t.userId, t.codeHash)],
+);
+
+/** One-time password reset tokens (SHA-256 only), 30 minutes. No runtime access. */
+export const passwordResetTokens = pgTable(
+  'password_reset_tokens',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('password_reset_tokens_user_idx').on(t.userId)],
 );
 
 /** Global permission catalog, seeded by migration. Codes are referenced by role_permissions. */

@@ -1,6 +1,7 @@
 # 1POS — Prioritized Backlog (dependency order)
 
 Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file at the end of every session.
+Open items left by finished slices and phases live in [LEFTOVER.md](LEFTOVER.md); this file keeps the plan.
 
 ## MVP definition
 **MVP = single-tenant-usable, multi-tenant-safe retail POS for a PH VAT-registered or non-VAT shop**, online browser-mode POS, cash + one e-payment adapter (dev), cashier sessions with reconciliation, returns/refunds, stock ledger, basic reports. Restaurant, offline, and BIR-live invoicing follow.
@@ -25,34 +26,31 @@ Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file
 - ✅ `@1pos/money` exact-decimal package + tests
 - ✅ `@1pos/database`: migration runner, tenant-scoped transaction helper, `tenants` + `audit_logs` with forced RLS and append-only trigger, integration tests
 - ✅ `apps/api` skeleton: env gate, health endpoints, correlation id, error envelope
-- ⬜ CI pipeline (GitHub Actions: install, lint, typecheck, unit, integration with Postgres service) — needs a remote repo decision
 
 ## Phase 1 — Platform foundation
-1. 🟡 Identity: ✅ users, argon2id (node:crypto), login with lockout, JWT access (15 min), rotating refresh with reuse detection, logout/revoke, switch-tenant, `/me`. ⬜ TOTP MFA for privileged roles, ⬜ password reset (needs email adapter), ⬜ Redis-backed rate limiter (in-memory now)
+1. ✅ Identity: users, argon2id (node:crypto), login with lockout, JWT access (15 min), rotating refresh with reuse detection, logout/revoke, switch-tenant, `/me`. ✅ TOTP MFA for privileged roles and ✅ password reset (Phase 6 slice 1; mail via DevMailer until a provider is chosen), ✅ Redis-backed rate limiter (Phase 6 slice 2)
 2. ✅ Tenant provisioning via `POST /v1/auth/signup` (user + tenant + 6 system roles + owner membership, atomic)
-3. 🟡 Roles/permissions: ✅ catalog (35 codes), role templates, scoped grants (`hasPermission`), global AuthGuard + `@RequirePermissions`, `GET /v1/members`, `GET /v1/roles`. ✅ invitations (hashed one-time token, 7-day expiry, new-user and signed-in accept, DevMailer only), ✅ role assignment, suspend/reactivate/remove, ✅ custom roles, ✅ anti-escalation (grant only what you hold at a covering scope), ✅ last-owner DB guard (deferred constraint trigger), ✅ scope-id validation trigger. ⬜ real email provider (prod boot refuses dev mailer)
-4. 🟡 Legal entities ✅ (TIN, VAT status, registered name/address, RDO, price display, rounding, invoicing mode DISABLED/DEV_SERIES only). ⬜ effective-dated `tax_profiles` (moved to Phase 2 with the tax engine — VAT status changes after sales exist must be versioned)
-5. ✅ Branches (BIR branch code), registers, terminals (one-time credential, hash not readable by app role, final revocation), archive-not-delete with child checks, scope-aware permissions, role-scope validation trigger. ⬜ terminal authentication for API calls (Phase 2)
-6. ✅ Catalog: UoM, tax categories (classification), category tree (acyclic, depth ≤ 5), products (STANDARD/SERVICE, sold by UNIT/WEIGHT), variants (SKU unique per tenant among active, case-insensitive), multiple barcodes, search + cursor pagination, archive-not-delete (frees codes). ⬜ bundles/composites, product images (needs S3 adapter), batch/expiry & serial tracking (Phase 3), UoM conversions (Phase 3)
+3. ✅ Roles/permissions: catalog (35 codes), role templates, scoped grants (`hasPermission`), global AuthGuard + `@RequirePermissions`, `GET /v1/members`, `GET /v1/roles`. ✅ invitations (hashed one-time token, 7-day expiry, new-user and signed-in accept, DevMailer only), ✅ role assignment, suspend/reactivate/remove, ✅ custom roles, ✅ anti-escalation (grant only what you hold at a covering scope), ✅ last-owner DB guard (deferred constraint trigger), ✅ scope-id validation trigger.
+4. ✅ Legal entities (TIN, VAT status, registered name/address, RDO, price display, rounding, invoicing mode DISABLED/DEV_SERIES only). Effective-dated `tax_profiles` ✅ in Phase 2 slice 1.
+5. ✅ Branches (BIR branch code), registers, terminals (one-time credential, hash not readable by app role, final revocation), archive-not-delete with child checks, scope-aware permissions, role-scope validation trigger. Terminal authentication ✅ in Phase 5 slice 1.
+6. ✅ Catalog: UoM, tax categories (classification), category tree (acyclic, depth ≤ 5), products (STANDARD/SERVICE, sold by UNIT/WEIGHT), variants (SKU unique per tenant among active, case-insensitive), multiple barcodes, search + cursor pagination, archive-not-delete (frees codes).
 7. ✅ Price lists (one default, branch assignment), append-only effective-dated prices (scheduled changes, no backdating), POS lookup by barcode/SKU returning the branch price in force (null when unpriced)
-8. ✅ Plans (placeholder prices), one subscription per tenant (14-day Growth trial at signup), write-access rule (trial/active/past-due-in-grace = full; else read-only 402, never deletes), plan limits under advisory lock (race-tested), `GET /v1/subscription`. ⬜ PayMongo billing integration (grant `platform_set_subscription` to it), feature flags enforced once restaurant/multi-entity features exist, per-tenant entitlement overrides
-9. ✅ Idempotency: `@Idempotent()` + `Idempotency-Key`, record written in the same transaction as the business change (exactly-once incl. concurrent duplicates), 422 on key reuse with different payload/user, failures leave no record. ✅ Outbox: `emitEvent()` in-transaction, `apps/workers` OutboxProcessor (claim with SKIP LOCKED + lease, retries w/ exponential backoff, DEAD after max attempts, lease-expiry reclaim, tenant context from the row), welcome-email handler, idempotency purge. ⬜ dedicated `onepos_worker` DB role, ops metrics for queue depth/age, DEAD-letter admin view
-10. 🟡 Audit logging: ✅ every tenant mutation through `TenantService` (catalog, pricing, org, team) + login + onboarding. ⬜ logout/refresh-reuse/switch-tenant/lockout events, audit viewer UI
-11. 🟡 `apps/admin-web` (Next.js 16 + Tailwind 4, "Salapi" visual world chosen by the user; hand-built components instead of shadcn): ✅ BFF auth (httpOnly cookies, proxy.ts token refresh, CSRF header + origin check, allow-listed API proxy), sign-up / sign-in / accept-invite / business picker, overview, locations (entities, branches, registers, terminals with one-time key), team (invite with scope, suspend/remove), products (search, cursor paging, quick add), prices (lists, versioned/scheduled prices), subscription (limits as exact-cell meters), EN/FIL catalog, E2E smoke (`pnpm test:e2e:web`, 19 checks). ✅ review capture pass (`e2e/review.mjs`, 15 states × 1440/390) with fixes: translated validation messages (API sends zod issue code+bounds), singular select labels, legible ₱ (system-face `unicode-range` for U+20B1). ⬜ product edit/variants UI, custom-role editor, member role editing UI, price-list create UI, Filipino copy review by a native speaker (enum labels e.g. VAT status still English in FIL), tables at 390px: trailing columns/actions start off-screen inside the scroll container (consider stacked rows)
+8. ✅ Plans (placeholder prices), one subscription per tenant (14-day Growth trial at signup), write-access rule (trial/active/past-due-in-grace = full; else read-only 402, never deletes), plan limits under advisory lock (race-tested), `GET /v1/subscription`.
+9. ✅ Idempotency: `@Idempotent()` + `Idempotency-Key`, record written in the same transaction as the business change (exactly-once incl. concurrent duplicates), 422 on key reuse with different payload/user, failures leave no record. ✅ Outbox: `emitEvent()` in-transaction, `apps/workers` OutboxProcessor (claim with SKIP LOCKED + lease, retries w/ exponential backoff, DEAD after max attempts, lease-expiry reclaim, tenant context from the row), welcome-email handler, idempotency purge. ✅ dedicated `onepos_worker` DB role (Phase 6 slice 2).
+10. ✅ Audit logging: every tenant mutation through `TenantService` (catalog, pricing, org, team) + login + onboarding. ✅ logout/refresh-reuse/switch-tenant/lockout/MFA/reset events (Phase 6 slice 1). Audit viewer UI planned in Phase 6 slice 6.
+11. ✅ `apps/admin-web` (Next.js 16 + Tailwind 4, "Salapi" visual world chosen by the user; hand-built components instead of shadcn): ✅ BFF auth (httpOnly cookies, proxy.ts token refresh, CSRF header + origin check, allow-listed API proxy), sign-up / sign-in / accept-invite / business picker, overview, locations (entities, branches, registers, terminals with one-time key), team (invite with scope, suspend/remove), products (search, cursor paging, quick add), prices (lists, versioned/scheduled prices), subscription (limits as exact-cell meters), EN/FIL catalog, E2E smoke (`pnpm test:e2e:web`, 19 checks). ✅ review capture pass (`e2e/review.mjs`, 15 states × 1440/390) with fixes: translated validation messages (API sends zod issue code+bounds), singular select labels, legible ₱ (system-face `unicode-range` for U+20B1). Tables at 390px ✅ stacked rows below md (`RecordTable`, Phase 3 slice 5).
 12. ✅ Cross-tenant adversarial suite: schema guard (`rls-catalog.test.ts`) + API/DB sweep (`isolation.test.ts`, attack matrix = live router's `:id` routes)
-13. 🟡 ✅ pino structured logging (`@1pos/observability`, correlation/tenant/user ids, redaction, trace ids when OTel active), ✅ OpenAPI 3.1 generation + drift test. ⬜ OTel SDK + exporter (needs hosting choice), ⬜ typed response schemas
+13. ✅ pino structured logging (`@1pos/observability`, correlation/tenant/user ids, redaction, trace ids when OTel active), ✅ OpenAPI 3.1 generation + drift test.
 Exit: multiple tenants configure their businesses without cross-access (suite green). **✅ Met 2026-10-15 (session 2).**
 
 ## Phase 2 — Retail transaction engine
 Slice 1 — tax foundation (session 3): ✅ ADR-0008; ✅ `tax_profiles` (append-only, effective-dated, DB no-backdating trigger, migrated from legal_entities); ✅ `discount_schemes` (SC/PWD seeded, PENDING_PROFESSIONAL_REVIEW); ✅ `@1pos/tax` pure engine (VAT incl/excl, exempt, zero-rated, non-VAT/percentage-tax sales, SC/PWD incl. partial share, no stacking, per-line centavo rounding, snapshots; golden vectors + 2,000 random-cart invariants); ✅ API: tax-profile history/create (`tax.manage`), `GET /v1/discount-schemes`, `POST /v1/tax/quote` (branch price + category + profile in force, cashier scope, `sales.discount` for ordinary discounts); ✅ DB clock is the single clock for effective dating (fixed latent host-clock drift in price stamping).
-⬜ Slice 1 leftovers: admin UI for tax profiles (history + "change registration"), SC/PWD sign-off by a PH tax professional (gate #6), 5 % BNPC / NAAC / Solo Parent schemes (rules unverified), invoice-level rounding option, production refusal of PENDING schemes at checkout.
 Slice 2 — sales core (session 3): ✅ ADR-0009; ✅ cashier sessions (one open per register, state machine trigger, pay-in/out, close with count, variance approval by a different user), ✅ `POST /v1/sales` (required Idempotency-Key + clientTransactionId, server recompute, stale-total refusal, cash tender with change, gapless per-register numbers, SC/PWD beneficiaries, production refusal of pending schemes, audit + outbox), ✅ append-only stock ledger with trigger-maintained balances + adjustments, ✅ isolation guards extended (5 id routes, 7 smuggling cases, 10 new tables in the sweep), ✅ DB clock 5 s skew allowance (fixed intermittent "not in force" from VM clock steps).
-Slice 3 — payments + receipts (session 3): ✅ ADR-0010; ✅ `payment_intents` (state-machine trigger, request-key idempotency, consumed once) + append-only `payment_events`; ✅ provider port + deterministic `DevPaymentProvider` (refused in production by config); ✅ intent → provider call outside any transaction → settle; timeouts become UNKNOWN and are reconciled, never re-authorized (tests prove one charge); ✅ cancel/void of unused intents; ✅ split tender (intents first, cash remainder with change; electronic never gives change); ✅ `GET /v1/sales/:id/receipt` — explicitly NOT an invoice while invoicing is DISABLED, VAT/non-VAT breakdowns, SC/PWD block with ID + signature line. ⬜ PayMongo adapter + webhooks (needs sandbox keys).
-Slice 4 — voids/returns (session 3): ✅ ADR-0011; ✅ append-only `sale_returns`/`sale_return_lines`, exact proration (final return takes the remainder), RESTOCK vs DAMAGED, cash refund from an open same-branch drawer (insufficient-cash and stale-refund refusals), void only in the original session and only once, per-sale advisory lock + DB within-sold trigger, own return-number series. ⬜ refunds to card/QR (needs PayMongo), cross-branch returns, receipt for return documents.
-Slice 5 — reports (session 3): ✅ sales summary (per local day, sales/returns/net buckets), by product, by cashier, by tender (collected − refunded), tax summary by VAT rate snapshot, SC/PWD sales book (sales and negative return rows), cashier-session report (X-reading style); `reports.read` at branch scope (own session report for cashiers); local-date ranges ≤ 366 days; cross-report reconciliation tests. ⬜ Z-reading with accumulated grand total (fiscal gate G2), exports (CSV/PDF), report UI.
-Slice 6 — POS browser checkout (session 3): ✅ `apps/pos-desktop` (React + Vite, browser mode, tokens in memory only): sign-in → business → register picker (`GET /v1/pos/workstations`, works without org.read) → open shift with float → scan/SKU/name search → server-priced cart (`/v1/tax/quote`) with VAT breakdown → SC/PWD per line (name + ID) → cash with quick tenders and change / card-QR via payment intents (UNKNOWN → check payment, cancel) → `POST /v1/sales` with the same key on network retry, stale-total handling → receipt (print via browser) → shift history with manager void/return → close with count; EN/FIL; Salapi adapted for the counter (48px targets). E2E `pnpm test:e2e:pos` 15 checks. Fixes found by it: receipt flagged SC lines as VATable (now E / V/E by actual taxation), shift reopen landed on the close tab, band overflow at 390px. ⬜ CSP response header in production hosting, keyboard shortcuts (F-keys), customer display, barcode scale codes, offline (Phase 5).
+Slice 3 — payments + receipts (session 3): ✅ ADR-0010; ✅ `payment_intents` (state-machine trigger, request-key idempotency, consumed once) + append-only `payment_events`; ✅ provider port + deterministic `DevPaymentProvider` (refused in production by config); ✅ intent → provider call outside any transaction → settle; timeouts become UNKNOWN and are reconciled, never re-authorized (tests prove one charge); ✅ cancel/void of unused intents; ✅ split tender (intents first, cash remainder with change; electronic never gives change); ✅ `GET /v1/sales/:id/receipt` — explicitly NOT an invoice while invoicing is DISABLED, VAT/non-VAT breakdowns, SC/PWD block with ID + signature line.
+Slice 4 — voids/returns (session 3): ✅ ADR-0011; ✅ append-only `sale_returns`/`sale_return_lines`, exact proration (final return takes the remainder), RESTOCK vs DAMAGED, cash refund from an open same-branch drawer (insufficient-cash and stale-refund refusals), void only in the original session and only once, per-sale advisory lock + DB within-sold trigger, own return-number series.
+Slice 5 — reports (session 3): ✅ sales summary (per local day, sales/returns/net buckets), by product, by cashier, by tender (collected − refunded), tax summary by VAT rate snapshot, SC/PWD sales book (sales and negative return rows), cashier-session report (X-reading style); `reports.read` at branch scope (own session report for cashiers); local-date ranges ≤ 366 days; cross-report reconciliation tests.
+Slice 6 — POS browser checkout (session 3): ✅ `apps/pos-desktop` (React + Vite, browser mode, tokens in memory only): sign-in → business → register picker (`GET /v1/pos/workstations`, works without org.read) → open shift with float → scan/SKU/name search → server-priced cart (`/v1/tax/quote`) with VAT breakdown → SC/PWD per line (name + ID) → cash with quick tenders and change / card-QR via payment intents (UNKNOWN → check payment, cancel) → `POST /v1/sales` with the same key on network retry, stale-total handling → receipt (print via browser) → shift history with manager void/return → close with count; EN/FIL; Salapi adapted for the counter (48px targets). E2E `pnpm test:e2e:pos` 15 checks. Fixes found by it: receipt flagged SC lines as VATable (now E / V/E by actual taxation), shift reopen landed on the close tab, band overflow at 390px. Offline ✅ in Phase 5.
 Exit review (session 4): ✅ reconciliation suite (multi-register/multi-session day, card sale refunded in cash, local days at UTC±), ✅ failure drills (restart, connection killed mid-checkout, DB unreachable, idle connections dropped, provider timeout, duplicates), ✅ fixes: no crash on dropped DB connections, 503 `SERVICE_UNAVAILABLE` for transient DB errors, close refused over unsettled card/QR payments, `DUPLICATE_TRANSACTION` carries `saleId`, POS keeps keys on 5xx, Sell stays mounted across tabs, POS business picker fixed; ✅ POS review captures (`e2e/review.mjs`) + finish-review fixes. **Exit: ✅ met 2026-10-16.**
-⬜ Phase 2 leftovers (non-blocking): `@1pos/pricing` promotions; invoice sequences (dev series only); negative-stock policy (BLOCK/ALLOW_WITH_FLAG) — today sales may go negative and it stays visible; POS phone layout: sticky total + Pay bar; shift history: tender + voided/returned tags; receipt SC block repeats the discount line; a test for one session spanning local midnight (needs clock control); DB-level guard for PAYMENTS_OUTSTANDING (service-level today, race-safe by the session lock).
 
 ## Phase 3 — Inventory, purchasing, accounting
 Slice 1 — costing (session 4): ✅ ADR-0012; ✅ `unit_cost`/`value` on every movement, `value`/`avg_cost` on balances, computed by the ledger trigger under the balance lock (outbound at average, emptying takes the remainder, returns at sale cost, revaluation of units sold short visible); ✅ legacy rows back-filled at reference cost; ✅ variant-ordered inserts (no deadlocks); ✅ golden vectors + concurrency + DB guards (`costing.test.ts`).
@@ -61,8 +59,6 @@ Slice 3 — inventory ops (session 4): ✅ transfers (dispatch → in transit �
 Slice 4 — double-entry ledger (session 4): ✅ ADR-0013; ✅ `@1pos/accounting` pure posting rules (13 unit tests); ✅ accounts (default chart seeded per entity + back-filled), periods, append-only journal with deferred balance trigger and closed-period trigger; ✅ every sale, return, receipt, supplier return, adjustment/waste, count, transfer, pay-in/out and drawer variance posts one entry in its own transaction; ✅ manual entries, reversals (once), period close/reopen (reason), trial balance; ✅ GL = evidence for inventory, transit, cash, card clearing, output VAT, revenue, COGS, GRNI (`ledger.test.ts`); ✅ isolation (+2 id routes, +9 smuggling cases, 4 tables).
 Slice 5 — admin UI (session 5): ✅ Purchasing (suppliers, POs with lines, approve/cancel/close, receiving with accept/reject per line, receipt page); ✅ Inventory (stock & value checked against the ledger, low stock + reorder points, transfers send/receive with shortfall reason, counts with signed variance, movements report); ✅ Books (journal with two-way source links, manual entry, reversal, trial balance, chart + add account, period close/reopen); ✅ one Idempotency-Key per open form for stock/books documents; ✅ stacked rows below md; ✅ EN/FIL; ✅ E2E smoke 41/41 + review captures 35/35.
 Exit review (session 5): ✅ traceability audit both ways (`traceability-audit.ts`: movement → document → entry, entry → document, per-document/branch value ties, transit clearing) — clean on a mixed day, in every drill, and over all 54 dev tenants; mutation-tested; ✅ defect fixed: multi-item stock adjustments had no document (only the first movement traced to the entry) → `stock_adjustments` (0031, back-filled) + `GET /v1/stock/adjustments[/:id]` + admin page; ✅ defect fixed: a posting could land in a month being closed (unlocked check) → period row held FOR SHARE (0032), drill fails on the old trigger; ✅ drills: connection killed mid-receipt, DB unreachable (receipt/transfer/count), double-click receive, 5 concurrent receivers of one transfer, 4 concurrent supplier returns of the last units, mixed receipts/transfers/counts/adjustments on the same items (no deadlock, books = stock), 4 concurrent reversals, close vs posting both orders; ✅ inventory officers see their own branches in `/v1/branches` (admin pickers); ✅ design finish review: 8 fixes applied; ✅ accountant review request written (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). **Exit: ✅ met 2026-10-16**, with the accountant's answers pending before customers rely on the books.
-⬜ Slice 5 leftovers: supplier returns UI (API done); PO draft line editing (API `PATCH`); supplier edit/archive UI; journal filters by date range / source type; admin document pages for sales, returns and cash movements (their entries trace in the API, not yet in the admin UI); `POST /v1/stock/adjustments` accepts but does not require an Idempotency-Key (other stock documents require one) — decide and align; accountant review answers (ADR-0013 questions 1–10); item names on receipts beyond the first 200 products (needs a variants-by-id lookup); low-stock list shows only items at/below the point — no view of all configured reorder points (no GET).
-⬜ Phase 3 leftovers: supplier invoices + accounts payable (GRNI → AP, input VAT); low-stock push alerts (outbox event when crossing the reorder point); blind counts (freeze + post later); UoM conversions and purchase units; batch/expiry and serial tracking; landed cost; financial exports (CSV/journal export); accountant review of the default chart and posting policies.
 
 ## Phase 4 — Restaurant (plan: ADR-0014)
 Slice 1 — recipes + consumption (session 6): ✅ done.
@@ -80,10 +76,6 @@ Slice 2 — menu foundation (session 6): ✅ done.
 - ✅ POS menu view with branch prices.
 - ✅ `menu.test.ts` (7); isolation +22 routes.
 
-⬜ Slice 2 leftovers:
-- the built-in `branch_manager` lacks `restaurant.manage` (only owner/admin set up restaurants): add a "restaurant manager" role template or grant it to branch managers;
-- the POS menu view prices item by item (N queries), so batch it if menus get large;
-- modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen).
 Slice 3 — orders + kitchen (session 6): ✅ done.
 - ✅ Orders (one live per table, state machine trigger, transfer/merge/move/cancel under order-row locks).
 - ✅ Items validated against the published menu (modifiers min/max, sold-out, priced/free choices as modifier items), pending edits, frozen once fired.
@@ -92,13 +84,6 @@ Slice 3 — orders + kitchen (session 6): ✅ done.
 - ✅ Voids after firing (`sales.void`) with an optional WASTE document (`recordPreparedWaste`).
 - ✅ `orders.test.ts` (6) with concurrency drills; isolation +12 routes.
 
-⬜ Slice 3 leftovers:
-- KDS push (SSE) instead of polling;
-- per-seat views and "fire course N" reminders/timers;
-- kitchen printers (Phase 5 device adapters);
-- voiding a modifier alone (today: void the item and re-add);
-- reprint/recall a ticket;
-- order notes per course.
 Slice 4 — bills + checks + service charge (session 6): ✅ done.
 - ✅ Frozen bill (computeCart + SC/PWD per item + order discount + `serviceCharge()`), reopen before any check.
 - ✅ Checks via `SalesService.createFromBill` (exact fraction shares, residual-bucket proration, "pay the rest", last check settles).
@@ -106,15 +91,6 @@ Slice 4 — bills + checks + service charge (session 6): ✅ done.
 - ✅ `sale_charges` in sale totals; `SERVICE_CHARGE_PAYABLE` (chart + back-fill + postings); returns give charges back proportionally.
 - ✅ Receipt charge line; by-product charges; recipe COGS fix in by-product.
 - ✅ `bills.test.ts` (5) incl. the SPEC service cycle and concurrent checks.
-
-⬜ Slice 4 leftovers:
-- re-run POS/web E2E after the checkout refactor (blocked this session by a stale API on :4320);
-- card/QR checks use the existing intent flow, but no POS UI yet;
-- tips;
-- a bill print/PDF;
-- per-seat split helper (today: allocate the seat's lines);
-- adding items after a partial payment (today: a new order once the bill settles);
-- returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns.
 
 Slice 5 — restaurant reports (session 6): ✅ done.
 - ✅ `item-performance` (modifiers nested under their item, COGS incl. recipe, margin; Σ = by-product).
@@ -126,35 +102,17 @@ Slice 5 — restaurant reports (session 6): ✅ done.
 - ✅ Defect fixed: a check's service-charge base was always prorated, so the bases of an even split added to ₱383.94 against a ₱383.93 bill. The settling check now takes the rest of the base too.
 - ✅ `restaurant-reports.test.ts` (8) incl. the ADR §10 invariants; isolation extended.
 
-⬜ Slice 5 leftovers:
-- report UI (admin) and CSV export (with slice 6 / the retail report UI);
-- prep times by hour or day part and per item;
-- open orders: items as they were at the cutoff (today: as attached now);
-- free modifiers ("no onions") counts in item performance (no sale line today);
-- the DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9).
 Slice 6 — UI (session 6): ✅ done.
 - ✅ 6a POS table service: floor, order with modifiers/courses, send/serve/void, server-priced subtotal, bill with SC/PWD + discount, checks (rest / even / by item) priced by the new check preview, shared payment panel; receipt prints the service charge; `test:e2e:tables` 25/25.
 - ✅ 6b KDS: kitchen mode in the POS (station picker, open tickets, start/ready/bump, late marker, survives a dropped connection); kitchen crew see their branch in `/v1/branches`; `test:e2e:kitchen` 13/13.
-- ⬜ 6b leftovers: sound/flash on a new ticket; recall bumped tickets (`status=ALL` exists); no built-in "kitchen crew" role template (custom role today; decide with the restaurant-manager template question); push (SSE) instead of polling.
 - ✅ 6c admin set-up: `/restaurant` with floor & kitchen, choices, menus (draft editor → publish), recipes, branch settings and 86; `test:e2e:web:restaurant` 22/22.
-- ⬜ 6c leftovers: rename stations/areas/tables and edit seats (API PATCH exists); edit a choice group's name/bounds (PATCH exists); drag-and-drop ordering (buttons today); recipe units shown per ingredient (the API returns no unit); menu editor lists the first 200 products only; a plan view of the floor (positions/shapes are stored, tiles today).
 - ✅ 6d report screens: `/reports` (item performance, ingredient usage, kitchen voids, prep times, open orders, service charge) for `reports.read`; `test:e2e:web:reports` 19/19.
-- ⬜ 6d leftovers: the retail reports (summary, by product, cashier, tender, tax, SC/PWD book) on the same `/reports` frame; CSV/PDF export; date presets (this week, last month, pay period).
-- ⬜ 6a leftovers: merge / move items between orders in the UI (API done); per-seat split helper; reprint a bill; servers without a drawer (today the Tables tab lives inside a register shift); floor positions/shapes on a drawn plan (tiles today).
 Slice 7 — exit review (session 7): ✅ done.
 - ✅ SPEC restaurant scenarios 1–10 as one service through admin, floor and KDS (`test:e2e:service`, 22 checks).
 - ✅ Drills (`restaurant-drills.test.ts`, 9): two tills on one bill (halves, thirds from a stale preview, same item, cash vs card "rest"), double-tapped check, reopen vs check, two tablets (fire/add/edit/bill races), void vs bill, void vs KDS + double void, connection killed mid-check.
 - ✅ Audit: restaurant rules added to the traceability audit (mutation-checked); dev DB clean (`apps/api/test/dev-audit.ts`).
 - ✅ Design finish review: 8 fixes (receipt service charge with VAT so lines add up; ingredient/sold-out names; recipe units; "To pay"; KDS "New"; menu serial; labelled phone rows; usage units).
 **Exit: ✅ met 2026-10-17**, with the tax adviser's and accountant's answers on the service charge pending before customers rely on it.
-
-⬜ Slice 7 leftovers:
-- `sales.gross` counts a service charge ex VAT while item lines count VAT-inclusive; the receipt now adds the charge VAT back, but any other consumer of `gross` (exports, a future invoice) must do the same — decide whether to store a charge's gross with VAT;
-- no drill for an API restart between a check's commit and its answer (covered generically by the Phase 2 restart drill and the same idempotency path);
-- the "void vs bill" drill asserts both outcomes but cannot force each interleaving.
-
-⬜ Out of scope for Phase 4 (later): delivery orders, unit conversions/purchase units for recipes, sub-recipes/prep production, rule-based modifier pricing, tips, reservations, KDS push (SSE) and kitchen printers (Phase 5 devices).
-⬜ Open questions for the tax adviser and the accountant: service charge base and VAT; SC/PWD share of the service charge; service charge as a liability.
 
 ## Phase 5 — Offline & integrations (plan: ADR-0015)
 Slice 1 — server (session 7): ✅ done.
@@ -189,7 +147,7 @@ Slice 5 — Tauri shell (session 8): ✅ done (ADR-0015 "As built (slices 4–5)
 - ✅ A lost answer then offline → same transaction id → never counted twice.
 - ✅ Snapshot `receiptTin`.
 - ✅ `cargo test` 8; `test:e2e:desktop` 20 (real exe, simulated outage, restart, reconnect).
-⬜ Slice 6 — PayMongo adapter + webhooks (env settings done session 8; waiting for the user's sandbox keys in `.env`); invoice transmission (compliance gate).
+⬜ Slice 6 — PayMongo adapter + webhooks; invoice transmission (deferred; see LEFTOVER.md).
 Slice 7 — exit review (session 8): ✅ done. **Exit: ✅ met 2026-10-17 for offline cash sales**; payment hardening (PayMongo) and invoice transmission deferred by the user's decision.
 - ✅ SPEC §11 traced (ADR-0015 table).
 - ✅ Till health: `GET /v1/sync/terminals` + admin "Tills" panel (silent tills); flags shown on recorded sales.
@@ -197,22 +155,32 @@ Slice 7 — exit review (session 8): ✅ done. **Exit: ✅ met 2026-10-17 for of
 - ✅ Fixes: snapshot every 30 s online → 10 min; invisible flags; wrong till clock shown as "Rung up".
 - ✅ Runbook `docs/operations/offline-terminal-recovery.md`.
 - ✅ All nine E2E suites; integration (api 257); dev audit clean.
-- ⬜ Not drilled: `PERIOD_CLOSED` for an offline sale (needs month-old fixtures).
+- ✅ Session 8: integration test for `SNAPSHOT_EXPIRED`; API URL set at runtime (set-up field, https only).
 
-⬜ Phase 5 leftovers so far:
-- recovering a revoked terminal's queue (admin tool);
-- device sequence restarts if the till's file is lost;
-- ~~an integration test for `SNAPSHOT_EXPIRED`~~ ✅ session 8;
-- desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier); ~~API URL set at runtime~~ ✅ session 8 (set-up field, https only); signed NSIS installer + auto-update; serial/COM printers without a Windows driver; real printer/drawer hardware check;
-- offline SC/PWD and discounts (refused offline today);
-- opening a shift offline;
-- snapshot paging for large catalogues;
-- push the snapshot when prices change (today: the till refreshes when online).
-- printer status (paper out, cover open) needs the device's status bytes (DLE EOT) through the shell;
-- receipt logo/QR images (ESC/POS raster) when a design asks for them.
-
-## Phase 6 — Pilot readiness
-Load tests, security hardening, backup/restore drill, monitoring/alerts, support workflows, UAT, compliance release review, pilot.
+## Phase 6 — Pilot readiness (plan: ADR-0016)
+Slice 1 — account security (session 9): ✅ done.
+- ✅ TOTP MFA (RFC 6238, `node:crypto`): enrol with the password, confirm with a code, 10 recovery codes once, each step once, secrets AES-256-GCM under `MFA_ENCRYPTION_KEY` (required in production).
+- ✅ Required for privileged members (owner, admin, accountant; any role with tenant/subscription/members/roles/terminals/tax/accounting.post/integrations) after `MFA_GRACE_DAYS` (7); older sessions re-sign in.
+- ✅ Password reset (one-time 30-min link, newest only, ≤ 5/h, same answer for unknown emails, revokes sessions, MFA kept) through the `Mailer` port (DevMailer until D2).
+- ✅ Auth audit events: lockout, refresh reuse, MFA, reset (platform level); logout, switch business, login {mfa} (tenant).
+- ✅ Headers: API helmet in `configureApp` (CSP `default-src 'none'`, HSTS); admin CSP (no nonces) + HSTS + Permissions-Policy; `API_HOST`.
+- ✅ Admin: code step at sign-in, `/forgot-password`, `/reset-password`, `/security` (QR, key, codes, turn off), grace banner and redirect. POS: code step.
+- ✅ Tests: `totp.test.ts` (9), `account-security.test.ts` (19), schema guard extended, `test:e2e:web:security` (21), `test:e2e:pos:mfa` (5).
+- ✅ Defect fixed: the 1440px band clipped the last tab (4px over before, worse with the new link) → `lg:gap-0`, asserted by the E2E.
+Slice 2 — platform hardening (session 9): ✅ done.
+- ✅ Redis rate limiter (atomic Lua counter, shared by replicas, falls back to per-instance counting when Redis is down, boot waits for the connection), rules per IP / account (hashed email) / terminal, several per route; login + per-account cap, reset + per-account cap, sync per terminal + per IP; `TRUST_PROXY_HOPS`; production requires `REDIS_URL`.
+- ✅ `onepos_worker` role (0045): only role that drives the outbox and the idempotency purge (revoked from the API role); column-level reads under RLS; no table writes; `WORKER_DATABASE_URL` (required in production); dev cluster upgraded by `infra/docker/postgres/upgrade/2026-10-17-worker-role.sql`.
+- ✅ `pnpm security:audit`: Next.js 16.3.5 → 16.3.8 (7 advisories incl. a critical RCE and a high SSRF); 0 left in production deps. `pnpm security:bundles` (self-test + scan) clean.
+- ✅ THREAT_MODEL control → test map.
+- ✅ Tests: `rate-limit.test.ts` (6), worker role (3), schema guard (worker posture), config (+3).
+⬜ Slice 3 — monitoring: Prometheus metrics on an internal port (SPEC §16 list), readiness (Redis, migration head), worker heartbeat, alert rules + runbook links, DEAD-letter replay tool. OTel exporter waits on D1.
+⬜ Slice 4 — backup and restore: encrypted `pg_dump` + manifest, automated restore drill (`pnpm drill:restore`: roles, RLS, counts, audit, API smoke), RTO measured, backup-age metric. PITR waits on D1.
+⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
+⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
+⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
+⬜ Slice 8 — runbooks + privacy pack (drafts for the DPO, not legal advice).
+⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
+Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
 
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

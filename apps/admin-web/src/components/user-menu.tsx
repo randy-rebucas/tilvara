@@ -14,10 +14,11 @@ export function UserMenu({ tenantName, userName, multiple }: { tenantName: strin
   }
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <span className="flex min-w-0 flex-col items-end leading-tight">
+      {/* The person's own account settings (two-step sign-in); no extra icon, the band has no room left at 1440px. */}
+      <a href="/security" title={t('mfa.title')} className="group flex min-w-0 flex-col items-end leading-tight">
         <span className="max-w-[44vw] truncate text-[0.875rem] font-semibold text-white sm:max-w-[240px]">{tenantName}</span>
-        <span className="max-w-[44vw] truncate text-[0.75rem] text-blue-ink sm:max-w-[240px]">{userName}</span>
-      </span>
+        <span className="max-w-[44vw] truncate text-[0.75rem] text-blue-ink underline-offset-2 group-hover:underline sm:max-w-[240px]">{userName}</span>
+      </a>
       {multiple && (
         <button type="button" onClick={() => router.push('/select-business')} title={t('nav.switchBusiness')}
           className="grid size-8 shrink-0 place-items-center rounded-[4px] text-blue-ink hover:bg-white/10 hover:text-white">
