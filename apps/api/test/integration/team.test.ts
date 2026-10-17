@@ -264,6 +264,36 @@ describe('member lifecycle & custom roles', () => {
   });
 });
 
+describe('audit log', () => {
+  it('shows the business its own events, newest first, filtered by action, person and day; audit.read only', async () => {
+    const o = await biz('auditlog');
+    const created = (await http().post('/v1/roles').set(o.auth).send({ key: 'clerk', name: 'Clerk', permissions: ['catalog.read'] }).expect(201)).body;
+    await http().patch(`/v1/roles/${created.id}`).set(o.auth).send({ name: 'Counter clerk' }).expect(200);
+    const all = (await http().get('/v1/audit-logs').set(o.auth).expect(200)).body;
+    const actions = all.data.map((r: { action: string }) => r.action);
+    expect(actions.slice(0, 2)).toEqual(['role.updated', 'role.created']); // newest first
+    expect(all.data[0]).toMatchObject({ actorUserId: o.t.userId, actorName: expect.any(String), resourceType: 'role', resourceId: created.id });
+    expect(all.data.every((r: { tenantId: string | null }) => r.tenantId === o.t.tenantId)).toBe(true); // never platform rows
+
+    const roleOnly = (await http().get('/v1/audit-logs').query({ action: 'role.' }).set(o.auth).expect(200)).body.data;
+    expect(roleOnly.map((r: { action: string }) => r.action).sort()).toEqual(['role.created', 'role.updated']);
+    const byRecord = (await http().get('/v1/audit-logs').query({ resourceType: 'role', resourceId: created.id }).set(o.auth).expect(200)).body.data;
+    expect(byRecord).toHaveLength(2);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+    expect((await http().get('/v1/audit-logs').query({ from: today, to: today, action: 'role.' }).set(o.auth).expect(200)).body.data).toHaveLength(2);
+    expect((await http().get('/v1/audit-logs').query({ from: '2020-01-01', to: '2020-01-31' }).set(o.auth).expect(200)).body.data).toEqual([]);
+    const page = (await http().get('/v1/audit-logs').query({ limit: 1 }).set(o.auth).expect(200)).body;
+    const next = (await http().get('/v1/audit-logs').query({ limit: 1, cursor: page.nextCursor }).set(o.auth).expect(200)).body;
+    expect([page.data[0].action, next.data[0].action]).toEqual(['role.updated', 'role.created']);
+    await http().get('/v1/audit-logs').query({ from: '2026-02-01', to: '2026-01-01' }).set(o.auth).expect(400);
+
+    const cashier = bearer(await loginToken(app, (await addMember(owner, o.t.tenantId, 'cashier')).email));
+    expect((await http().get('/v1/audit-logs').set(cashier).expect(403)).body.error.code).toBe('FORBIDDEN');
+    const acct = bearer(await loginToken(app, (await addMember(owner, o.t.tenantId, 'accountant')).email));
+    await http().get('/v1/audit-logs').set(acct).expect(200); // accountants hold audit.read
+  });
+});
+
 describe('cross-tenant isolation (team)', () => {
   it("cannot invite with, assign, or act on another tenant's roles, members or invitations", async () => {
     const a = await biz('team-a');

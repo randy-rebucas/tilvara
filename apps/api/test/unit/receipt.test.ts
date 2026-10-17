@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReceipt, DEV_SERIES_NOTICE, formatTin, NOT_AN_INVOICE, type ReceiptInput } from '../../src/sales/receipt.js';
+import { buildReceipt, buildReturnReceipt, DEV_SERIES_NOTICE, formatTin, NOT_AN_INVOICE, RETURN_NOTICE, VOID_NOTICE, type ReceiptInput } from '../../src/sales/receipt.js';
 
 const base: ReceiptInput = {
   invoicingMode: 'DISABLED',
@@ -32,6 +32,24 @@ const base: ReceiptInput = {
   tenders: [{ method: 'CASH', amount: '822.40', tendered: '1000.00', change: '177.60' }],
   beneficiaries: [{ id: 'b1', schemeCode: 'SC', name: 'Corazon Dela Cruz', idNumber: 'OSCA-0001', tin: null }],
 };
+
+describe('buildReturnReceipt', () => {
+  const ret = (kind: 'RETURN' | 'VOID') =>
+    buildReturnReceipt({
+      invoicingMode: 'DISABLED', seller: base.seller, branch: base.branch, register: base.register, processedBy: 'Manager Mia',
+      sale: { saleNumber: 42, registerCode: 'R1', vatRate: '0.12', currency: 'PHP' },
+      doc: { kind, returnNumber: 3, reason: 'Dented can', createdAt: new Date('2026-10-16T03:00:00Z'), refundMethod: null, vatableSales: '20.00', vatAmount: '2.40', vatExemptSales: '0.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', statutoryDiscount: '0.00', vatExemptionAmount: '0.00', amountDue: '22.40' },
+      lines: [{ name: 'Cola', quantity: '1', unitPrice: '22.4000', amountDue: '22.40', vatTreatment: 'VATABLE', vatableSales: '20.00', vatExemptSales: '0.00', disposition: 'DAMAGED' }],
+    });
+  it('is a refund slip against the original sale, never an invoice or an official receipt', () => {
+    const r = ret('RETURN');
+    expect(r).toMatchObject({ documentType: 'RETURN_SLIP', notice: RETURN_NOTICE, transaction: { reference: 'RETURN 3 of R1-000042', cashier: 'Manager Mia', dateTime: '10/16/2026, 11:00:00' } });
+    expect(r.totals).toMatchObject({ refund: '22.40', vatAmount: '2.40' });
+    expect(r.lines).toEqual([{ name: 'Cola (damaged)', quantity: '1', unitPrice: '22.40', amount: '22.40', flag: 'V' }]);
+    expect(JSON.stringify(r)).not.toMatch(/official receipt/i);
+    expect(ret('VOID')).toMatchObject({ documentType: 'VOID_SLIP', notice: VOID_NOTICE });
+  });
+});
 
 describe('buildReceipt', () => {
   it('never claims to be an invoice while invoicing is disabled', () => {

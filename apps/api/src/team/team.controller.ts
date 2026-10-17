@@ -5,12 +5,14 @@ import {
   createInvitationSchema,
   createRoleSchema,
   idParamSchema,
+  resetMemberMfaSchema,
   setMemberRolesSchema,
   updateRoleSchema,
   type AcceptInvitationExistingInput,
   type AcceptInvitationInput,
   type CreateInvitationInput,
   type CreateRoleInput,
+  type ResetMemberMfaInput,
   type SetMemberRolesInput,
   type UpdateRoleInput,
 } from '@1pos/validation';
@@ -87,6 +89,18 @@ export class TeamController {
   @Post('members/:id/remove')
   remove(@Auth() auth: AuthContext, @Param('id', id) membershipId: string) {
     return this.team.setMemberStatus(auth, membershipId, 'remove');
+  }
+
+  /** A member who lost their phone and recovery codes: clear their two-step sign-in (audited). */
+  @HttpCode(200)
+  @Post('members/:id/reset-mfa')
+  resetMfa(@Auth() auth: AuthContext, @Param('id', id) membershipId: string, @Body(new ZodPipe(resetMemberMfaSchema)) body: ResetMemberMfaInput) {
+    return this.team.resetMemberMfa(auth, membershipId, body.reason);
+  }
+
+  @Get('members/mfa')
+  membersMfa(@Auth() auth: AuthContext) {
+    return this.team.membersMfa(auth);
   }
 
   // custom roles

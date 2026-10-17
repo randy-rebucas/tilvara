@@ -6,6 +6,7 @@ import type {
   AccountListQuery,
   CreateAccountInput,
   CreateJournalEntryInput,
+  JournalLinesQuery,
   JournalListQuery,
   PeriodActionInput,
   PeriodListQuery,
@@ -20,6 +21,8 @@ import { unprocessable } from '../tax/tax.service.js';
 import { post } from './ledger.js';
 
 const money = (v: string | null | undefined) => toDec(v ?? '0').toFixed(2);
+/** Most lines one export returns (a busy shop's year is far below this). */
+const LINES_CAP = 50_000;
 
 /**
  * Chart of accounts, journal, manual entries and reversals, periods, trial balance (ADR-0013).
@@ -73,6 +76,43 @@ export class AccountingService extends TenantService {
           memo: r.memo,
           reversesEntryId: r.reverses_entry_id,
           total: money(r.total),
+        })),
+      };
+    });
+  }
+
+  /** Flat journal lines (entry, account, branch, debit, credit) in entry order, for an export. */
+  listLines(auth: AuthContext, q: JournalLinesQuery) {
+    return this.read(auth, async (db) => {
+      await this.entity(db, auth, q.legalEntityId, 'accounting.read');
+      const { rows } = await db.execute<{ entry_number: number; entry_date: string; source_type: string; source_id: string | null; memo: string | null; account_code: string; account_name: string; branch_code: string | null; debit: string; credit: string }>(sql`
+        SELECT e.entry_number::int, e.entry_date::text, e.source_type, e.source_id, e.memo,
+               a.code AS account_code, a.name AS account_name, b.code AS branch_code, l.debit::text, l.credit::text
+          FROM journal_entries e
+          JOIN journal_lines l ON l.journal_entry_id = e.id
+          JOIN accounts a ON a.id = l.account_id
+          LEFT JOIN branches b ON b.id = l.branch_id
+         WHERE e.legal_entity_id = ${q.legalEntityId} AND e.entry_date BETWEEN ${q.from} AND ${q.to}
+         ORDER BY e.entry_number, l.id
+         LIMIT ${LINES_CAP + 1}`);
+      if (rows.length > LINES_CAP) {
+        throw new AppError('RANGE_TOO_LARGE', `More than ${LINES_CAP} lines: export a shorter range`, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      return {
+        legalEntityId: q.legalEntityId,
+        from: q.from,
+        to: q.to,
+        data: rows.map((r) => ({
+          entryNumber: r.entry_number,
+          entryDate: r.entry_date,
+          sourceType: r.source_type,
+          sourceId: r.source_id,
+          memo: r.memo,
+          accountCode: r.account_code,
+          accountName: r.account_name,
+          branchCode: r.branch_code,
+          debit: money(r.debit),
+          credit: money(r.credit),
         })),
       };
     });

@@ -136,6 +136,11 @@ export class SalesController {
     return this.returns.get(auth, returnId);
   }
 
+  @Get('sale-returns/:id/receipt')
+  returnReceipt(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
+    return this.returns.receipt(auth, returnId);
+  }
+
   @Get('cash-movements/:id')
   getCashMovement(@Auth() auth: AuthContext, @Param('id', id) movementId: string) {
     return this.cash.getMovement(auth, movementId);

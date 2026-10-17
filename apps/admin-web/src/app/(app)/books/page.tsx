@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, ApiError, type Account, type JournalRow, type Me } from '@/lib/api';
-import { formatDate, peso } from '@/lib/format';
+import { Download } from 'lucide-react';
+import { formatDate, peso, todayManila } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
@@ -39,6 +40,9 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
   const type = SOURCE_TYPES.find((s) => s === sp.type);
   const filter = `${source ? `&sourceId=${source}` : ''}${account ? `&accountId=${account}` : ''}`;
   const narrowed = `${from ? `&from=${from}` : ''}${to ? `&to=${to}` : ''}${type ? `&sourceType=${type}` : ''}`;
+  const today = todayManila();
+  const exportTo = to ?? today;
+  const exportFrom = from ?? `${exportTo.slice(0, 8)}01`;
   const [me, entries, accounts] = await Promise.all([
     api<Me>('/me'),
     entity ? loadJournal(`/journal-entries?legalEntityId=${entity.id}${filter}${narrowed}`) : null,
@@ -86,6 +90,15 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
             <button className="btn">{t('common.show')}</button>
             {narrowed && <Link href={`/books?entity=${entity.id}${source ? `&source=${source}` : ''}${account ? `&account=${account}` : ''}`} className="self-center text-[0.875rem] underline">{t('books.clearFilter')}</Link>}
           </form>
+        )}
+        {entity && (
+          // The accountant's export: the dates above, else this month so far.
+          <p className="mb-3 flex flex-wrap items-center gap-2 text-[0.875rem] text-muted">
+            <a href={`/books/export?entity=${entity.id}&from=${exportFrom}&to=${exportTo}`} className="btn" download>
+              <Download aria-hidden className="size-4" /> {t('books.exportCsv')}
+            </a>
+            {t('books.exportHint', { from: formatDate(exportFrom, lang), to: formatDate(exportTo, lang) })}
+          </p>
         )}
         {entries && 'error' in entries && <Callout tone="error">{entries.error}</Callout>}
         <Note denom="ink" className="pr-2">

@@ -155,6 +155,13 @@ try {
   await fill('from', '2030-01-01');
   await evaluate(`document.querySelector('form[action="/books"]').requestSubmit()`);
   check('a date range with nothing in it says so', await shown('No entries match these dates and source.'));
+  await go(`/books?entity=${le.id}`);
+  const journalCsv = await evaluate(`fetch(document.querySelector('a[href^="/books/export"]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), body: await r.text() }))`);
+  check('journal CSV: one row per line with account codes, debits = credits', journalCsv.type.startsWith('text/csv') && journalCsv.body.includes('Account code') && (() => {
+    const rows = journalCsv.body.replace(/^﻿/, '').trim().split('\r\n').slice(1).map((r) => r.split(','));
+    const sum = (i) => rows.reduce((a, r) => a + Math.round(Number(r.at(i)) * 100), 0);
+    return rows.length > 4 && sum(-2) === sum(-1);
+  })());
   await go(`/books?entity=${le.id}&type=SALE`);
   await clickHref(`/sales/${sale.id}`);
   await waitFor(`location.pathname === '/sales/${sale.id}'`);
@@ -191,7 +198,19 @@ try {
   await clickText('Add a role');
   await sleep(200);
   check('access editor offers the new role and the branches', await evaluate(`[...document.querySelectorAll('select')].some((s) => [...s.options].some((o) => o.textContent === 'Stock counter')) && document.body.innerHTML.includes('CUB-01')`));
+  check('member page says whether two-step sign-in is on; no reset offered for oneself', (await has('two-step sign-in off')) && !(await has('Reset two-step sign-in')));
   await shot('bo-member.png');
+
+  // Audit log: from the Team page; the role's history; filtered by family.
+  await go('/team');
+  await clickHref('/audit');
+  await waitFor(`location.pathname === '/audit'`);
+  check('audit log lists the role changes, newest first, with who did them', (await shown('role.updated')) && (await has('role.created', 'Nena Reyes')));
+  await fill('action', 'role');
+  await evaluate(`document.querySelector('form[action="/audit"]').requestSubmit()`);
+  await waitFor(`location.search.includes('action=role')`);
+  check('filtered to roles: only role.* entries', await evaluate(`(() => { const a = [...document.querySelectorAll('main table tbody tr td:nth-child(3)')].map((td) => td.innerText.trim().toLowerCase()); return a.length >= 2 && a.every((x) => x.startsWith('role.')); })()`));
+  await shot('bo-audit.png');
 
   // 9. Tax registration history: schedule a change.
   await go(`/locations/entities/${le.id}`);

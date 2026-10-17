@@ -59,7 +59,7 @@ Each control and the automated check that proves it, or the gap. Test files are 
 | T11 | ✅ | `pnpm security:bundles`: a self-test plants leaks, then the admin static and POS bundles are scanned for server-only names, secret shapes and `.env` secret values. Limit: pages the admin server renders are not scanned |
 | T12 | ✅ | `auth.test.ts` (lockout), `account-security.test.ts` (MFA), `rate-limit.test.ts` (per IP, per account, shared across replicas, Redis down) |
 | T13 / T13a | ✅ | `auth.test.ts` (reuse revokes the family), `account-security.test.ts` (challenge ≠ access token; password reset) |
-| T14 | ⬜ | **Gap**: there is no support access at all yet (slice 6). Platform staff have no login |
+| T14 | ◐ | No standing support access (slice 6 still to build). The one support action is the owner MFA reset: `auth_mfa_support_reset()` runs only as the migrator (ops credentials), needs actor + reason + ticket, and writes `auth.mfa.support_reset` (`account-security.test.ts` "support resets an owner", `rls-catalog.test.ts` grants). Members are reset by their own owner/admin (`auth_mfa_admin_reset()`, tenant from the session, `members.manage` re-checked in SQL). Runbook: docs/operations/support-mfa-reset.md |
 | T15 | ⬜ | **Gap**: there are no exports or backups yet (slices 4 and 6) |
 | T16 | ✅ | `tenant-isolation.test.ts` ("blocks UPDATE/DELETE by trigger even for the schema owner"); append-only checks per document type across the API suites |
 | T17 / T17a | ✅ | `logging.test.ts` (never query strings or credentials), `totp.test.ts`, `account-security.test.ts` (secret encrypted), `rls-catalog.test.ts` (no grants on credential tables) |

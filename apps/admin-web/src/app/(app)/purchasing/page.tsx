@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier } from '@/lib/api';
-import { formatDate, formatTin, peso } from '@/lib/format';
+import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier, type SupplierReturn } from '@/lib/api';
+import { formatDate, formatDateTime, formatTin, peso } from '@/lib/format';
 import { branchLabel, docNo, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
@@ -27,6 +27,10 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
   const canManage = me.activeTenant?.permissions.includes('purchasing.manage') ?? false;
   const activeSuppliers = suppliers?.data.filter((s) => !s.archivedAt) ?? [];
   const activeBranches = branches?.data.filter((b) => !b.archivedAt) ?? [];
+  // Returns to suppliers, newest first, across the branches this person can see (listed per branch by the API).
+  const returnLists = await Promise.all(activeBranches.map((b) => apiOrNull<List<Omit<SupplierReturn, 'lines' | 'creditValue'>>>(`/supplier-returns?branchId=${b.id}`)));
+  const returns = returnLists.flatMap((l) => l?.data ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+  const supplierName = new Map(suppliers?.data.map((s) => [s.id, s.name]));
 
   return (
     <div className="flex flex-col gap-8">
@@ -73,6 +77,31 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
             />
           ) : (
             <Empty>{orders ? (activeSuppliers.length === 0 ? t('pur.needSupplier') : t('pur.noOrders')) : t('common.noAccess')}</Empty>
+          )}
+        </Note>
+      </section>
+
+      <section>
+        <h2 className="section-title mb-3">{t('pur.returns')}</h2>
+        <Note denom="gold" className="pr-2">
+          {returns.length > 0 ? (
+            <RecordTable
+              rows={returns}
+              rowKey={(r) => r.id}
+              columns={[
+                { header: t('common.number'), cell: (r) => <Link href={`/purchasing/returns/${r.id}`} className="serial font-semibold text-gold underline">{docNo(r.returnNumber)}</Link> },
+                { header: t('pur.supplierOne'), cell: (r) => supplierName.get(r.supplierId) ?? '—' },
+                { header: t('common.branch'), cell: (r) => <Serial className="text-ink">{branchLabel(branches?.data, r.branchId)}</Serial> },
+                { header: t('common.reason'), cell: (r) => <span className="text-muted">{r.reason}</span> },
+                { header: t('common.date'), cell: (r) => <span className="text-muted">{formatDateTime(r.createdAt, lang)}</span> },
+              ]}
+              stacked={{
+                title: (r) => <Link href={`/purchasing/returns/${r.id}`} className="underline">{supplierName.get(r.supplierId) ?? '—'}</Link>,
+                meta: (r) => <Serial>{docNo(r.returnNumber)} · {branchLabel(branches?.data, r.branchId)} · {r.reason}</Serial>,
+              }}
+            />
+          ) : (
+            <Empty>{t('pur.noReturnsYet')}</Empty>
           )}
         </Note>
       </section>

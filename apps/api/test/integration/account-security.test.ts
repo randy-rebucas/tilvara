@@ -192,6 +192,54 @@ describe('two-step sign-in (TOTP)', () => {
     expect((await http().get('/v1/auth/mfa').set(bearer(t.access)).expect(200)).body).toMatchObject({ enabled: true, recoveryCodesLeft: 9 });
   });
 
+  it('an owner resets a member who lost their phone: factor gone, sessions ended, audited; never oneself; a cashier cannot', async () => {
+    const t = await signup(app, 'mfareset');
+    await enroll(t.access);
+    const acct = await addMember(owner, t.tenantId, 'accountant');
+    const acctToken = (await login(acct.email).expect(200)).body.tokens;
+    await enroll(acctToken.accessToken);
+    const cashier = await addMember(owner, t.tenantId, 'cashier');
+    const cashierToken = (await login(cashier.email).expect(200)).body.tokens.accessToken;
+    const reset = (who: string, membershipId: string, reason = 'Lost phone and codes') =>
+      http().post(`/v1/members/${membershipId}/reset-mfa`).set(bearer(who)).send({ reason });
+
+    const listed = (await http().get('/v1/members/mfa').set(bearer(t.access)).expect(200)).body.data as { userId: string; enrolled: boolean }[];
+    expect(listed.find((x) => x.userId === acct.userId)?.enrolled).toBe(true);
+    expect(listed.find((x) => x.userId === cashier.userId)?.enrolled).toBe(false);
+
+    expect((await reset(cashierToken, acct.membershipId).expect(403)).body.error.code).toBe('FORBIDDEN');
+    expect((await reset(t.access, acct.membershipId, '').expect(400)).body.error.code).toBe('VALIDATION_FAILED');
+    const own = (await http().get('/v1/members').set(bearer(t.access))).body.data.find((m: { user: { id: string } }) => m.user.id === t.userId).membershipId;
+    expect((await reset(t.access, own).expect(409)).body.error.code).toBe('MFA_RESET_SELF');
+    expect((await reset(t.access, cashier.membershipId).expect(409)).body.error.code).toBe('MFA_NOT_ENABLED');
+
+    await reset(t.access, acct.membershipId).expect(200);
+    // The accountant's old session is over; they sign in with the password alone and set up again.
+    await http().post('/v1/auth/refresh').send({ refreshToken: acctToken.refreshToken, tenantId: t.tenantId }).expect(401);
+    const fresh = (await login(acct.email).expect(200)).body;
+    expect(fresh.tokens).toBeDefined();
+    expect((await http().get('/v1/auth/mfa').set(bearer(fresh.tokens.accessToken)).expect(200)).body).toMatchObject({ enabled: false, required: true });
+    // Platform row: the owner reset the accountant (actor = owner, resource = the accountant).
+    const [row] = await asPlatform<{ actor: string; reason: string }>(
+      `SELECT actor_user_id AS actor, metadata->>'reason' AS reason FROM audit_logs WHERE tenant_id IS NULL AND action = 'auth.mfa.reset' AND resource_id = $1`, [acct.userId],
+    );
+    expect(row).toEqual({ actor: t.userId, reason: 'Lost phone and codes' });
+    expect(await tenantEvents(t.tenantId, t.userId)).toContain('member.mfa_reset');
+  });
+
+  it('support resets an owner who lost phone and codes, only with ops credentials, a reason and a ticket', async () => {
+    const t = await signup(app, 'mfasupport');
+    await enroll(t.access);
+    await expect(owner.query(`SELECT auth_mfa_support_reset($1, 'ops@1pos', 'Lost phone', '')`, [t.email])).rejects.toThrow(/required/);
+    const { rows } = await owner.query<{ v: string | null }>(`SELECT auth_mfa_support_reset($1, 'ops@1pos', 'Lost phone, ID checked on a call', 'TCK-1042') AS v`, [t.email]);
+    expect(rows[0]!.v).toBe(t.userId);
+    expect((await login(t.email).expect(200)).body.tokens).toBeDefined(); // no code asked any more
+    const [audit] = await asPlatform<{ metadata: { ticket: string; actor: string } }>(
+      `SELECT metadata FROM audit_logs WHERE tenant_id IS NULL AND action = 'auth.mfa.support_reset' AND resource_id = $1`, [t.userId],
+    );
+    expect(audit!.metadata).toMatchObject({ ticket: 'TCK-1042', actor: 'ops@1pos' });
+  });
+
   it('wrong codes count towards the lock, and a correct password does not reset the count', async () => {
     const t = await signup(app, 'mfalock');
     const { secret: sec } = await enroll(t.access);

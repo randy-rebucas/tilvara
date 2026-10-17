@@ -1,6 +1,6 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; pilot-safety leftovers (new recovery codes, DB guard for open charges at close, required key on stock adjustments, receipt SC block). Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
+_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -15,6 +15,34 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 9. UAT, compliance review and pilot.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–3 are done** (below).
+
+## Session 10 — leftovers worked through (after the pilot-safety batch below)
+The user asked to "proceed all" with LEFTOVER.md. Done in five commits after slice 3 and the pilot-safety batch; what is still open stays in LEFTOVER.md (mostly blocked on D1–D6/reviewers, or larger product features that need decisions: AP/supplier invoices, promotions, UoM/batch/expiry, landed cost, typed OpenAPI responses).
+
+**1. Admin back office** (`56d281b`):
+- purchasing: supplier page (edit, archive), draft order editing, return to supplier from a goods receipt and its return page (receipts now carry `returnedQuantity` and their returns), a list of returns;
+- journal filters (dates, source type) and a document link for every entry: new **sale page** (lines, returns, voids), **shift page** (float, pay-ins/outs, count, sales), return and pay-in redirects;
+- team: member access editor, custom roles (create/edit/archive) with every permission worded in EN/FIL (unit test: each permission in one group, worded in both languages);
+- products: edit product, variants, barcodes; price lists: create, rename, make default, use at a branch;
+- legal entity page with the tax registration history and scheduled changes;
+- all reorder points (new `GET /v1/stock/reorder-points`); restaurant renames (stations, areas, tables and seats) and choice group bounds; recipe ingredient units;
+- no first-200 limit any more: pickers page through all products; documents name lines through new `GET /v1/variants?ids=`;
+- new API routes `GET /v1/sale-returns/:id`, `/v1/cash-movements/:id`; members carry `roleId`, roles `archivedAt`, price lists `branchIds`, products `barcodeIds`.
+
+**2. Reports** (`ee7d840`): the Sales group on `/reports` (summary, by product, cashier, tender, tax summary, SC/PWD book; the Reports tab opens there), quick ranges (week from Monday, months, semi-monthly pay periods; `datePresets` unit-tested), **CSV download for every report** (exact decimal strings, UTF-8 BOM, formula-safe fields; `report-csv` unit-tested).
+
+**3. Built-in Restaurant Manager and Kitchen Crew roles** (`94e712c`), back-filled by migration 0049 into every business. **Defect found and fixed:** the first 0049 read `tenants` under FORCE RLS and inserted nothing (209 dev businesses, 0 roles); the fix lifts RLS on `tenants` for the back-fill too; dev DB re-applied (209/209). CLAUDE.md's back-fill rule now says "every table it reads".
+
+**4. POS and kitchen display** (`de48db9`): F2/F4/F8/F9 shortcuts; a phone pay bar that steps aside when the payment panel is on screen; shift history tags (tender, voided, items returned; `GET /v1/sales` carries them); KDS chime + flash for new tickets and a Done view; seats in the composer and on tickets; move items / merge orders; split a check by seat (bill lines carry `seat`); print and reprint the bill.
+
+**5. Support and exports** (this commit): MFA reset by an owner/admin and by support for owners (migration 0050, ADR-0016 "ahead of slice 6", runbook `docs/operations/support-mfa-reset.md`, `pnpm --filter @1pos/database support mfa-reset`); audit log reader `GET /v1/audit-logs` and admin `/audit`; journal lines export `GET /v1/journal-lines` (≤ 366 days, 50,000 lines) and a journal CSV download; return/void slips `GET /v1/sale-returns/:id/receipt`, shown and printable in the POS shift history. **Defect found by the test and fixed:** the slip first printed the stored 4-decimal amounts (₱16.5000).
+
+**Verified this session (final code, servers rebuilt: API :4320 with rate limits off, admin `next start` :3320, POS preview :3330):**
+- `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` exit 0, `pnpm test` 24/24 tasks (admin-web 19, pos-desktop 9, validation 7, api 48, …);
+- `turbo run test:integration --concurrency=1 --continue --force` → database **22**, workers **17**, api **299**;
+- E2E: `test:e2e:web:backoffice` **43/43** (new), `web` 42/42, `web:security` 24/24, `web:reports` 19/19, `web:restaurant` 22/22, `web:offline` 14/14, `pos` **27/27**, `pos:mfa` 5/5, `tables` **32/32**, `kitchen` **17/17**, `service` 22/22;
+- `pnpm db:migrate` on the dev DB (0048–0050); OpenAPI regenerated.
+- Not re-run: `test:e2e:desktop` (the till shares the POS front end that the browser suites cover; its shell did not change).
 
 ## Pilot-safety leftovers (session 10)
 From `docs/LEFTOVER.md`, picked by the user. Migration **0048** (hand-written).
@@ -740,8 +768,9 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–3 are done, and so are the session 10 pilot-safety leftovers. **Next: slice 4 (backup/restore drill)**, then slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
-   - Before any pilot, add support "reset a member's MFA" (slice 6). Otherwise a privileged member who loses their phone and codes is locked out.
+2. **Phase 6** (ADR-0016). Slices 1–3 are done, and most unblocked leftovers were worked through in session 10 (see "Session 10 — leftovers worked through"). **Next: slice 4 (backup/restore drill)**, then slice 5 (load: pilot-scale seed, POS menu N+1, snapshot paging). Slices 4–5 can run locally and label their numbers as measured on this machine.
+   - MFA reset is in place (owner/admin; support CLI for owners). Slice 6 still owes time-limited, tenant-approved support access, tenant data export, offboarding and trial sample data.
+   - `test:e2e:desktop` was not run in session 10; run it with the next till change.
    - Decisions for the user (ADR-0016):
      - **D1** hosting provider and region;
      - **D2** email provider (password reset, invitations and the production boot wait on it);
@@ -754,7 +783,6 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
    - Slice 7: exit review. Run every E2E suite incl. `test:e2e:desktop`, and drill the till on real printer/drawer hardware if the user has it.
    - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), signed installer + auto-update, real printer/drawer check.
 4. Decisions for the user:
-   - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
    - whether a service charge's stored gross should include its VAT (LEFTOVER.md, Phase 4 slice 7).
 5. Carried, non-blocking: the tax adviser's and accountant's answers (service charge; ADR-0013 questions 1–10); all phase/slice leftovers now live in `docs/LEFTOVER.md` (moved out of BACKLOG 2026-10-17).
 Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

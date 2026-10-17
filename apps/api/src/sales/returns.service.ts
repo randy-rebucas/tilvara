@@ -1,11 +1,14 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   and,
+  branches,
   cashMovements,
   eq,
   inArray,
+  legalEntities,
   productVariants,
   products,
+  registers,
   saleCharges,
   saleLines,
   saleReturnCharges,
@@ -14,8 +17,10 @@ import {
   sales,
   sql,
   stockMovements,
+  users,
   type Database,
 } from '@1pos/database';
+import { buildReturnReceipt } from './receipt.js';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { CreateSaleReturnInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -265,6 +270,48 @@ export class ReturnsService extends TenantService {
       if (sale.cashierUserId !== auth.userId) this.assertCan(auth, 'sales.read', scope);
       const docs = await db.select().from(saleReturns).where(eq(saleReturns.saleId, saleId)).orderBy(saleReturns.createdAt, saleReturns.id);
       return { data: await Promise.all(docs.map((d) => this.view(db, d))) };
+    });
+  }
+
+  /** The refund or void slip for a return document (printed at the counter), from its own records. */
+  receipt(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [doc] = await db.select().from(saleReturns).where(eq(saleReturns.id, id));
+      if (!doc) throw notFound('Return');
+      const [sale] = await db.select().from(sales).where(eq(sales.id, doc.saleId));
+      const scope = { legalEntityId: sale!.legalEntityId, branchId: sale!.branchId, registerId: sale!.registerId };
+      if (sale!.cashierUserId !== auth.userId) this.assertCan(auth, 'sales.read', scope);
+      const [[entity], [branch], [register], [person], lines] = await Promise.all([
+        db.select().from(legalEntities).where(eq(legalEntities.id, sale!.legalEntityId)),
+        db.select().from(branches).where(eq(branches.id, sale!.branchId)),
+        db.select().from(registers).where(eq(registers.id, sale!.registerId)),
+        db.select({ displayName: users.displayName }).from(users).where(eq(users.id, doc.processedBy)),
+        db.select({ r: saleReturnLines, name: saleLines.name, unitPrice: saleLines.unitPrice, vatTreatment: saleLines.vatTreatment })
+          .from(saleReturnLines)
+          .innerJoin(saleLines, eq(saleLines.id, saleReturnLines.saleLineId))
+          .where(eq(saleReturnLines.saleReturnId, doc.id))
+          .orderBy(saleLines.lineNo),
+      ]);
+      const snapshot = sale!.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
+      return buildReturnReceipt({
+        invoicingMode: entity!.invoicingMode,
+        seller: { registeredName: entity!.registeredName, tradeName: entity!.tradeName, registeredAddress: entity!.registeredAddress, tin: entity!.tin, vatStatus: snapshot.vatStatus },
+        branch: { name: branch!.name, code: branch!.code, birBranchCode: branch!.birBranchCode, address: branch!.address, timezone: branch!.timezone },
+        register: { code: register!.code, name: register!.name },
+        processedBy: person?.displayName ?? 'Staff',
+        sale: { saleNumber: sale!.saleNumber, registerCode: register!.code, vatRate: snapshot.vatRate, currency: sale!.currency },
+        doc: { ...doc, kind: doc.kind as 'RETURN' | 'VOID' },
+        lines: lines.map((l) => ({
+          name: l.name,
+          quantity: toDec(l.r.quantity).toString(),
+          unitPrice: l.unitPrice,
+          amountDue: l.r.amountDue,
+          vatTreatment: l.vatTreatment,
+          vatableSales: l.r.vatableSales,
+          vatExemptSales: l.r.vatExemptSales,
+          disposition: l.r.disposition,
+        })),
+      });
     });
   }
 

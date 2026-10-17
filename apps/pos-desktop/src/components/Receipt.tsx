@@ -68,7 +68,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
         </ul>
         <dl className="mt-3 grid gap-0.5 border-t border-dashed border-hair pt-2">
           {totals.map(([k, v]) => (
-            <div key={k} className={`flex justify-between ${k === 'amountDue' ? 'text-[1rem] font-semibold' : ''}`}>
+            <div key={k} className={`flex justify-between ${k === 'amountDue' || k === 'refund' ? 'text-[1rem] font-semibold' : ''}`}>
               <dt>{k === 'vatAmount' ? data.totals.vatLabel : (TOTAL_LABELS[k] ?? k)}</dt>
               <dd><Money value={signedTotal(k, v)} /></dd>
             </div>
@@ -96,6 +96,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
             {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{t('receipt.signature')}</p>}
           </div>
         ))}
+        {data.reason && <p className="mt-3">Reason: {data.reason}</p>}
         {data.legend && <p className="mt-3 text-muted">{data.legend}</p>}
         <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.transaction.cashier} · {data.transaction.register}</p>
       </div>

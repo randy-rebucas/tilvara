@@ -229,6 +229,41 @@ export class TeamService extends TenantService {
     );
   }
 
+  /**
+   * A member lost their phone and recovery codes: an owner/admin clears their two-step sign-in. The
+   * member's sessions end; a privileged member sets up a new factor at the next sign-in. Only for
+   * people whose access the actor could have granted (like suspend/remove), never oneself.
+   */
+  resetMemberMfa(auth: AuthContext, membershipId: string, reason: string) {
+    this.assertCan(auth, 'members.manage');
+    return this.mutate(auth, async (db) => {
+      const m = await this.membership(db, membershipId);
+      if (m.userId === auth.userId) throw new AppError('MFA_RESET_SELF', 'Use one of your recovery codes to sign in, then set up two-step sign-in again', HttpStatus.CONFLICT);
+      await this.assertCanGrantAll(db, auth, await this.assignmentsOf(db, membershipId));
+      let reset: boolean;
+      try {
+        const { rows } = await db.execute<{ v: boolean }>(sql`SELECT auth_mfa_admin_reset(${m.userId}, ${auth.userId}, ${reason}, ${auth.correlationId ?? null}) AS v`);
+        reset = rows[0]!.v;
+      } catch (e) {
+        const pg = pgError(e);
+        if (pg.constraint === 'mfa_reset_forbidden') throw new AppError('FORBIDDEN', 'Only someone who manages the whole team can reset two-step sign-in', HttpStatus.FORBIDDEN, { missing: ['members.manage'] });
+        throw e;
+      }
+      if (!reset) throw new AppError('MFA_NOT_ENABLED', 'This member does not use two-step sign-in', HttpStatus.CONFLICT);
+      await this.audit(db, auth, 'member.mfa_reset', 'membership', membershipId, { reason });
+      return { membershipId, mfaReset: true };
+    });
+  }
+
+  /** Who in this business has two-step sign-in on (the member page offers a reset only for them). */
+  membersMfa(auth: AuthContext) {
+    this.assertCan(auth, 'members.read');
+    return this.read(auth, async (db) => {
+      const { rows } = await db.execute<{ user_id: string; enrolled: boolean }>(sql`SELECT user_id, enrolled FROM auth_members_mfa()`);
+      return { data: rows.map((r) => ({ userId: r.user_id, enrolled: r.enrolled })) };
+    });
+  }
+
   // ---------------------------------------------------------------- custom roles
   createRole(auth: AuthContext, input: CreateRoleInput) {
     this.assertCan(auth, 'roles.manage');

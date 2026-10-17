@@ -48,6 +48,8 @@ export async function BooksChrome({ tab, entities, entity, children }: { tab: Bo
           { key: 'trial', href: `${PATHS.trial}${q}`, label: t('books.tab.trial') },
           { key: 'accounts', href: `${PATHS.accounts}${q}`, label: t('books.tab.accounts') },
           { key: 'periods', href: `${PATHS.periods}${q}`, label: t('books.tab.periods') },
+          // The business's audit log (not per entity): accountants hold audit.read.
+          { key: 'audit', href: '/audit', label: t('audit.link') },
         ]}
       />
       <ScopePicker label={t('loc.entityOne')} items={entities.map((e) => ({ id: e.id, name: e.registeredName }))} selected={entity?.id} href={(id) => `${PATHS[tab]}?entity=${id}`} />

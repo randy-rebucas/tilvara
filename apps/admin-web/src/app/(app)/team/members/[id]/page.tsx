@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ReasonAction } from '@/components/actions';
 import { Note, Serial } from '@/components/note';
 import { api, apiOrNull, type Branch, type LegalEntity, type Me, type Member, type Role } from '@/lib/api';
 import { isUuid } from '@/lib/options';
@@ -15,12 +16,13 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t } = await getT();
-  const [me, members, roles, branches, entities] = await Promise.all([
+  const [me, members, roles, branches, entities, mfa] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<{ data: Member[] }>('/members'),
     apiOrNull<{ data: Role[] }>('/roles'),
     apiOrNull<{ data: Branch[] }>('/branches'),
     apiOrNull<{ data: LegalEntity[] }>('/legal-entities'),
+    apiOrNull<{ data: { userId: string; enrolled: boolean }[] }>('/members/mfa'),
   ]);
   const member = members?.data.find((m) => m.membershipId === id);
   if (!member) notFound();
@@ -36,13 +38,14 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
           ? t('team.legalEntity', { name: entities?.data.find((e) => e.id === scopeId)?.registeredName ?? '—' })
           : type;
   const status = (s: string) => (`status.${s}` in en ? t(`status.${s}` as MessageKey) : s);
+  const enrolled = mfa?.data.find((x) => x.userId === member.user.id)?.enrolled ?? false;
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <Link href="/team" className="text-[0.875rem] text-muted underline">{t('team.title')}</Link>
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{member.user.displayName}{isMe ? ` ${t('team.you')}` : ''}</h1>
-        <Serial className="mt-1 block">{member.user.email} · {status(member.status)}</Serial>
+        <Serial className="mt-1 block">{member.user.email} · {status(member.status)}{mfa && ` · ${enrolled ? t('team.mfaOn') : t('team.mfaOff')}`}</Serial>
       </div>
 
       <section>
@@ -70,6 +73,16 @@ export default async function MemberPage({ params }: { params: Promise<{ id: str
           {!isMe && member.status === 'ACTIVE' && <RowAction url={`/api/v1/members/${member.membershipId}/suspend`} label={t('team.suspend')} />}
           {!isMe && member.status === 'SUSPENDED' && <RowAction url={`/api/v1/members/${member.membershipId}/reactivate`} label={t('team.reactivate')} />}
         </div>
+      )}
+
+      {canManage && !isMe && enrolled && member.status !== 'REMOVED' && (
+        <section className="flex flex-col gap-2">
+          <h2 className="section-title">{t('team.mfaResetTitle')}</h2>
+          <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('team.mfaResetLede')}</p>
+          <div>
+            <ReasonAction url={`/api/v1/members/${member.membershipId}/reset-mfa`} label={t('team.mfaReset')} reasonLabel={t('common.reason')} hint={t('team.mfaResetHint')} danger />
+          </div>
+        </section>
       )}
     </div>
   );

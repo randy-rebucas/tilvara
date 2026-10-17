@@ -70,6 +70,99 @@ const pct = (rate: string) => `${toDec(rate).times(100).toString()}%`;
 const m = (v: string) => toDec(v).toFixed(2);
 const positive = (v: string) => toDec(v).gt(0);
 
+export const RETURN_NOTICE = 'RETURN / REFUND — NOT AN OFFICIAL INVOICE';
+export const VOID_NOTICE = 'VOID — NOT AN OFFICIAL INVOICE';
+
+export interface ReturnReceiptInput extends Pick<ReceiptInput, 'invoicingMode' | 'seller' | 'branch' | 'register'> {
+  processedBy: string;
+  sale: { saleNumber: number; registerCode: string; vatRate: string; currency: string };
+  doc: {
+    kind: 'RETURN' | 'VOID';
+    returnNumber: number;
+    reason: string;
+    createdAt: Date;
+    refundMethod: string | null;
+    vatableSales: string;
+    vatAmount: string;
+    vatExemptSales: string;
+    zeroRatedSales: string;
+    percentageTaxSales: string;
+    statutoryDiscount: string;
+    vatExemptionAmount: string;
+    amountDue: string;
+  };
+  lines: { name: string; quantity: string; unitPrice: string; amountDue: string; vatTreatment: string; vatableSales: string; vatExemptSales: string; disposition: string }[];
+}
+
+/**
+ * The slip handed over with a refund or a void: what came back, the refund and how it was paid
+ * back, against which sale. Same shape as the sale receipt (so tills print it the same way); never
+ * an invoice, and never called an official receipt.
+ */
+export function buildReturnReceipt(r: ReturnReceiptInput) {
+  const isVat = r.seller.vatStatus === 'VAT';
+  const local = new Intl.DateTimeFormat('en-PH', {
+    timeZone: r.branch.timezone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(r.doc.createdAt);
+  const flag = (l: ReturnReceiptInput['lines'][number]) => {
+    if (!isVat) return '';
+    if (l.vatTreatment === 'ZERO_RATED') return 'Z';
+    if (l.vatTreatment === 'VAT_EXEMPT') return 'E';
+    const vatable = positive(l.vatableSales);
+    const exempt = positive(l.vatExemptSales);
+    return vatable && exempt ? 'V/E' : exempt ? 'E' : 'V';
+  };
+  const saleRef = `${r.sale.registerCode}-${String(r.sale.saleNumber).padStart(6, '0')}`;
+  return {
+    documentType: r.doc.kind === 'VOID' ? 'VOID_SLIP' : 'RETURN_SLIP',
+    notice: r.invoicingMode === 'DEV_SERIES' ? DEV_SERIES_NOTICE : r.doc.kind === 'VOID' ? VOID_NOTICE : RETURN_NOTICE,
+    seller: {
+      name: r.seller.tradeName ?? r.seller.registeredName,
+      registeredName: r.seller.registeredName,
+      address: r.branch.address ?? r.seller.registeredAddress,
+      tinLabel: isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN',
+      tin: formatTin(r.seller.tin, r.branch.birBranchCode),
+      branch: r.branch.name,
+    },
+    transaction: {
+      reference: `${r.doc.kind === 'VOID' ? 'VOID' : 'RETURN'} ${r.doc.returnNumber} of ${saleRef}`,
+      saleNumber: r.sale.saleNumber,
+      dateTime: local,
+      timezone: r.branch.timezone,
+      register: r.register.name,
+      cashier: r.processedBy,
+    },
+    lines: r.lines.map((l) => ({
+      name: l.disposition === 'DAMAGED' ? `${l.name} (damaged)` : l.name,
+      quantity: l.quantity,
+      unitPrice: m(l.unitPrice),
+      amount: m(l.amountDue),
+      flag: flag(l),
+    })),
+    charges: [],
+    totals: {
+      currency: r.sale.currency,
+      // Stored with 4 decimals; the slip shows centavos like the sale receipt.
+      ...(isVat
+        ? {
+            vatableSales: m(r.doc.vatableSales),
+            vatLabel: `VAT ${pct(r.sale.vatRate)}`,
+            vatAmount: m(r.doc.vatAmount),
+            vatExemptSales: m(r.doc.vatExemptSales),
+            zeroRatedSales: m(r.doc.zeroRatedSales),
+            ...(positive(r.doc.vatExemptionAmount) && { vatExemption: m(r.doc.vatExemptionAmount) }),
+          }
+        : { salesSubjectToPercentageTax: m(r.doc.percentageTaxSales), exemptSales: m(r.doc.vatExemptSales) }),
+      ...(positive(r.doc.statutoryDiscount) && { statutoryDiscount: m(r.doc.statutoryDiscount) }),
+      refund: m(r.doc.amountDue),
+    },
+    tenders: [{ method: r.doc.refundMethod ?? 'CASH', amount: m(r.doc.amountDue) }],
+    statutory: [],
+    reason: r.doc.reason,
+    legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
+  };
+}
+
 export function buildReceipt(r: ReceiptInput) {
   const isVat = r.seller.vatStatus === 'VAT';
   const local = new Intl.DateTimeFormat('en-PH', {

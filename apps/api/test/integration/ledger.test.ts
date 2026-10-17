@@ -148,6 +148,16 @@ describe('a day in the books', () => {
     expect(tb.totals.debit).toBe(tb.totals.credit);
     expect(tb.totals.closing).toBe('0.00');
     expect(tb.data.find((r: { systemKey: string }) => r.systemKey === 'TRANSIT_LOSS')).toMatchObject({ debit: '12.00', closing: '12.00' });
+
+    // ---- the accountant's export: every line, balanced per entry, the same totals as the trial balance
+    const lines = (await http().get('/v1/journal-lines').query({ legalEntityId: s.le, from: localToday, to: localToday }).set(s.accountant).expect(200)).body.data as { entryNumber: number; accountCode: string; debit: string; credit: string }[];
+    const byEntry = new Map<number, number>();
+    for (const l of lines) byEntry.set(l.entryNumber, (byEntry.get(l.entryNumber) ?? 0) + cents(l.debit) - cents(l.credit));
+    expect([...byEntry.values()].every((v) => v === 0)).toBe(true);
+    expect(lines.reduce((a, l) => a + cents(l.debit), 0)).toBe(cents(tb.totals.debit));
+    expect(lines.every((l) => /^\d{4}$/.test(l.accountCode))).toBe(true);
+    await http().get('/v1/journal-lines').query({ legalEntityId: s.le, from: '2025-01-01', to: '2026-06-30' }).set(s.accountant).expect(400); // over 366 days
+    await http().get('/v1/journal-lines').query({ legalEntityId: s.le, from: localToday, to: localToday }).set(s.manager).expect(403); // no accounting.read
   });
 });
 

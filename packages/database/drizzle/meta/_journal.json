@@ -351,6 +351,13 @@
       "when": 1792244423002,
       "tag": "0049_restaurant_role_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1792247568060,
+      "tag": "0050_mfa_reset",
+      "breakpoints": true
     }
   ]
 }

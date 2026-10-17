@@ -525,6 +525,17 @@ describe('voids and returns (ADR-0011)', () => {
     expect((await http().get(`/v1/cashier-sessions/${session.id}`).set(s.cashier)).body.expectedCash).toBe('1000.00');
     expect((await http().get(`/v1/sales/${sold.id}`).set(s.cashier)).body.lines[0].returnedQuantity).toBe('3');
     expect((await http().get(`/v1/sales/${sold.id}/returns`).set(s.cashier).expect(200)).body.data).toHaveLength(3);
+    // The slip handed over with the third refund: against sale R1-000001, its own buckets, refunded in cash.
+    const slip = (await http().get(`/v1/sale-returns/${returns[2].id}/receipt`).set(s.cashier).expect(200)).body;
+    expect(slip).toMatchObject({
+      documentType: 'RETURN_SLIP',
+      notice: 'RETURN / REFUND — NOT AN OFFICIAL INVOICE',
+      transaction: { reference: 'RETURN 3 of R1-000001' },
+      lines: [{ name: 'Pancit Canton', quantity: '1', amount: '16.50', flag: 'V' }],
+      totals: { vatableSales: '14.74', vatAmount: '1.76', refund: '16.50' },
+      tenders: [{ method: 'CASH', amount: '16.50' }],
+      reason: 'Expired',
+    });
   });
 
   it('damaged goods are refunded but not restocked', async () => {

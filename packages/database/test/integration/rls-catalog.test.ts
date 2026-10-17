@@ -222,5 +222,16 @@ describe('schema isolation catalog', () => {
       `SELECT has_function_privilege('onepos_app', 'platform_set_subscription(uuid, text, text, timestamptz, timestamptz)', 'EXECUTE') AS ok`,
     );
     expect(setSub!.ok).toBe(false);
+    // MFA resets (session 10): the business resets its own members; support resets need ops credentials.
+    const resets = await q<{ fn: string; app: boolean; worker: boolean; readonly: boolean; migrator: boolean }>(`
+      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
+             has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly, has_function_privilege('onepos_migrator', f, 'EXECUTE') AS migrator
+        FROM unnest(ARRAY['auth_mfa_admin_reset(uuid, uuid, text, text)', 'auth_members_mfa()', 'auth_mfa_support_reset(text, text, text, text)']) AS f`);
+    // (The migrator inherits the runtime role's rights, so only the support reset's "migrator only" is asserted.)
+    expect(resets.map(({ migrator, ...r }) => (r.fn.startsWith('auth_mfa_support_reset') ? { ...r, migrator } : r))).toEqual([
+      { fn: 'auth_mfa_admin_reset(uuid, uuid, text, text)', app: true, worker: false, readonly: false },
+      { fn: 'auth_members_mfa()', app: true, worker: false, readonly: false },
+      { fn: 'auth_mfa_support_reset(text, text, text, text)', app: false, worker: false, readonly: false, migrator: true },
+    ]);
   });
 });

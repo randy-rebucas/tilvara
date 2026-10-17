@@ -36,6 +36,26 @@ export type AcceptInvitationInput = z.infer<typeof acceptInvitationSchema>;
 export const acceptInvitationExistingSchema = z.object({ token: z.string().min(32).max(128) });
 export type AcceptInvitationExistingInput = z.infer<typeof acceptInvitationExistingSchema>;
 
+/** The business's audit log, newest first (audit.read for the whole business). Dates are Manila days. */
+export const auditLogQuerySchema = z
+  .object({
+    from: z.iso.date().optional(),
+    to: z.iso.date().optional(),
+    /** An action or its prefix: "sale", "member.", "stock.reorder_points_set". */
+    action: z.string().trim().toLowerCase().regex(/^[a-z_.]{2,80}$/).optional(),
+    actorUserId: z.uuid().optional(),
+    resourceType: z.string().trim().regex(/^[a-z_]{2,40}$/).optional(),
+    resourceId: z.string().trim().min(1).max(100).optional(),
+    cursor: z.uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  })
+  .refine((v) => !v.from || !v.to || v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] });
+export type AuditLogQuery = z.infer<typeof auditLogQuerySchema>;
+
+/** Why an owner/admin clears a member's two-step sign-in (kept in the audit log). */
+export const resetMemberMfaSchema = z.object({ reason: z.string().trim().min(3).max(500) });
+export type ResetMemberMfaInput = z.infer<typeof resetMemberMfaSchema>;
+
 export const setMemberRolesSchema = z.object({ roles: assignments });
 export type SetMemberRolesInput = z.infer<typeof setMemberRolesSchema>;
 

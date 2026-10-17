@@ -9,7 +9,6 @@ Moved out of `docs/BACKLOG.md` on 2026-10-17. BACKLOG keeps the plan (phases, sl
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)
 - ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once restaurant/multi-entity features exist; per-tenant entitlement overrides
-- ⬜ Audit viewer UI (planned in Phase 6 slice 6)
 - ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft, Takeaway are kept in English on purpose until reviewed)
 - ⏳ OTel SDK + exporter — D1 (hosting)
 - ⬜ Typed OpenAPI response schemas
@@ -26,7 +25,6 @@ Slice 3 (payments):
 Slice 4 (voids/returns):
 - ⬜ Refunds to card/QR (needs PayMongo)
 - ⬜ Cross-branch returns
-- ⬜ Receipt for return documents
 
 Slice 5 (reports):
 - ⬜ Z-reading with accumulated grand total (fiscal gate G2)
@@ -46,7 +44,6 @@ Phase-level:
 ## Phase 3 — Inventory, purchasing, accounting
 Slice 5 (admin UI):
 - ⏳ Accountant review answers (ADR-0013 questions 1–10)
-- ⬜ A list of all supplier returns per branch (each is reachable from its receipt and the journal today)
 
 Phase-level:
 - ⬜ Supplier invoices + accounts payable (GRNI → AP, input VAT)
@@ -55,7 +52,7 @@ Phase-level:
 - ⬜ UoM conversions and purchase units
 - ⬜ Batch/expiry and serial tracking
 - ⬜ Landed cost
-- ⬜ Financial exports (CSV/journal export)
+- ⬜ Financial exports beyond the journal CSV (e.g. a ready-made import for a given accounting package)
 - ⏳ Accountant review of the default chart and posting policies
 
 ## Phase 4 — Restaurant
@@ -132,7 +129,7 @@ Phase-level:
 
 ## Phase 6 — Pilot readiness
 Slice 1 (account security):
-- ⬜ Support "reset a member's MFA" (slice 6) — needed before the pilot so a lost phone is not a lockout
+- ⬜ Time-limited, tenant-approved support access (slice 6); MFA reset itself is done (owner/admin on the member page; owners by the support CLI with a ticket)
 - ⬜ Nonce-based CSP for the admin; CSP for POS browser hosting
 - ⬜ WebAuthn/passkeys
 
@@ -149,13 +146,4 @@ Slice 3 (monitoring):
 - ⬜ No authentication on the metrics port: relies on network placement (slice 7)
 - ⬜ DEAD letters are a CLI only; no admin/support screen (slice 6)
 
-⬜ Slice 4 — backup and restore: encrypted `pg_dump` + manifest, automated restore drill (`pnpm drill:restore`: roles, RLS, counts, audit, API smoke), RTO measured, backup-age metric. PITR waits on D1.
-⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
-⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
-⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
-⬜ Slice 8 — runbooks + privacy pack (drafts for the DPO, not legal advice).
-⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
-Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
-
-## Phase 7 — Differentiation (validated demand only)
-Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.
+The remaining Phase 6 slices (4 backup/restore, 5 performance, 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.

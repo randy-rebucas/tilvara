@@ -4,6 +4,7 @@ import {
   createAccountSchema,
   createJournalEntrySchema,
   idParamSchema,
+  journalLinesQuerySchema,
   journalListQuerySchema,
   periodActionSchema,
   periodListQuerySchema,
@@ -12,6 +13,7 @@ import {
   type AccountListQuery,
   type CreateAccountInput,
   type CreateJournalEntryInput,
+  type JournalLinesQuery,
   type JournalListQuery,
   type PeriodActionInput,
   type PeriodListQuery,
@@ -45,6 +47,12 @@ export class AccountingController {
   @Get('journal-entries')
   listEntries(@Auth() auth: AuthContext, @Query(new ZodPipe(journalListQuerySchema)) q: JournalListQuery) {
     return this.accounting.listEntries(auth, q);
+  }
+
+  /** Every line in a date range, flat, for the accountant's export (the admin offers it as CSV). */
+  @Get('journal-lines')
+  listLines(@Auth() auth: AuthContext, @Query(new ZodPipe(journalLinesQuerySchema)) q: JournalLinesQuery) {
+    return this.accounting.listLines(auth, q);
   }
 
   @Get('journal-entries/:id')

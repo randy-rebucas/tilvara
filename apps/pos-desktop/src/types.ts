@@ -211,4 +211,6 @@ export interface Receipt {
   tenders: { method: string; amount: string; tendered?: string; change?: string }[];
   statutory: { label: string; name: string; idNumber: string; discount: string; signatureLine: boolean }[];
   legend: string | null;
+  /** A return or void slip: why the goods came back. */
+  reason?: string;
 }

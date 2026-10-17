@@ -27,6 +27,13 @@ export const journalListQuerySchema = z
   .refine((v) => !v.from || !v.to || v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] });
 export type JournalListQuery = z.infer<typeof journalListQuerySchema>;
 
+/** Every journal line of a legal entity in a date range (for the accountant's export), at most 366 days. */
+export const journalLinesQuerySchema = z
+  .object({ legalEntityId: z.uuid(), from: z.iso.date(), to: z.iso.date() })
+  .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
+  .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days at a time', path: ['to'] });
+export type JournalLinesQuery = z.infer<typeof journalLinesQuerySchema>;
+
 /** A manual journal entry (accounting.post): at least two lines, each a debit or a credit, balanced. */
 export const createJournalEntrySchema = z
   .object({

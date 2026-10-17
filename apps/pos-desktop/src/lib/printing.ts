@@ -17,6 +17,7 @@ export const TOTAL_LABELS: Record<string, string> = {
   exemptSales: 'Exempt sales',
   statutoryDiscount: 'SC/PWD discount',
   amountDue: 'TOTAL DUE',
+  refund: 'REFUND',
   tendered: 'Tendered',
   change: 'Change',
 };
@@ -43,7 +44,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     ],
     totals: entries
       .filter(([k]) => !SETTLEMENT.includes(k))
-      .map(([k, v]) => ({ label: k === 'vatAmount' ? (r.totals.vatLabel ?? 'VAT') : (TOTAL_LABELS[k] ?? k), amount: peso(signedTotal(k, v)), ...(k === 'amountDue' && { emphasis: true }) })),
+      .map(([k, v]) => ({ label: k === 'vatAmount' ? (r.totals.vatLabel ?? 'VAT') : (TOTAL_LABELS[k] ?? k), amount: peso(signedTotal(k, v)), ...((k === 'amountDue' || k === 'refund') && { emphasis: true }) })),
     payments: [
       ...r.tenders.map((t) => ({ label: t.method, amount: peso(t.amount) })),
       ...SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k).map(([, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v) }))),
@@ -54,7 +55,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
-    footer: [...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
+    footer: [...(r.reason ? [`Reason: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
   };
 }
 

@@ -115,6 +115,10 @@ try {
   await setInput('reason', 'Dented can');
   await submitVisible();
   check('cash refund for the returned item (₱22.40)', await waitFor(`document.body.innerText.includes('Refund ₱22.40')`).then(() => true, () => false));
+  check('the refund slip is shown to print: against R1-000001, REFUND ₱22.40, never an invoice', await shown('RETURN / REFUND — NOT AN OFFICIAL INVOICE')
+    && (await text()).toLowerCase().includes('return 1 of r1-000001') && (await text()).includes('Reason: Dented can') && /REFUND\s+₱22\.40/.test(await text()));
+  await shot('history-refund-slip.png');
+  await clickText('Show the sale receipt');
   await shot('history-return.png');
   check('shift history tags: #000001 cash with items returned, #000002 card', await evaluate(`(() => {
     // innerText follows CSS text-transform (the time line is a serial): compare in lower case.

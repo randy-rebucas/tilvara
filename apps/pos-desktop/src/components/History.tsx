@@ -15,6 +15,8 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
   const { t } = useT();
   const [sales, setSales] = useState<SaleSummary[] | null>(null);
   const [selected, setSelected] = useState<{ detail: SaleDetail; receipt: ReceiptData } | null>(null);
+  /** The refund/void slip just made, shown (and printable) until the cashier goes back to the sale. */
+  const [slip, setSlip] = useState<ReceiptData | null>(null);
   const [mode, setMode] = useState<'void' | 'return' | null>(null);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
   const [key, setKey] = useState(uuid);
@@ -32,6 +34,7 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
   async function open(id: string) {
     const [detail, receipt] = await Promise.all([api<SaleDetail>('GET', `/v1/sales/${id}`), api<ReceiptData>('GET', `/v1/sales/${id}/receipt`)]);
     setSelected({ detail, receipt });
+    setSlip(null);
     setMode(null);
     setMessage(null);
   }
@@ -47,7 +50,7 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
             .filter((l) => l.quantity && l.quantity !== '0')
         : undefined;
     try {
-      const r = await api<{ amountDue: string; returnNumber: number }>(
+      const r = await api<{ id: string; amountDue: string; returnNumber: number }>(
         'POST',
         `/v1/sales/${selected.detail.id}/returns`,
         { cashierSessionId: shift.sessionId, kind: mode === 'void' ? 'VOID' : 'RETURN', reason: String(f.get('reason') ?? ''), ...(lines && { lines }) },
@@ -55,8 +58,9 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
       );
       setKey(uuid());
       await open(selected.detail.id);
-      // After reloading the sale (which clears messages), confirm the refund to hand over.
+      // After reloading the sale (which clears messages), confirm the refund and show its slip to hand over.
       setMessage({ kind: 'info', text: t('history.refund', { amount: peso(r.amountDue) }) });
+      void api<ReceiptData>('GET', `/v1/sale-returns/${r.id}/receipt`).then(setSlip).catch(() => undefined);
       void load();
     } catch (err) {
       // No answer or a server failure: the refund may have been recorded. Keep the key so
@@ -132,7 +136,14 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
                 </form>
               </Note>
             )}
-            <Receipt data={selected.receipt} />
+            {slip ? (
+              <>
+                <button type="button" className="no-print btn btn-sm justify-self-start" onClick={() => setSlip(null)}>{t('history.showSale')}</button>
+                <Receipt data={slip} />
+              </>
+            ) : (
+              <Receipt data={selected.receipt} />
+            )}
           </>
         )}
       </div>

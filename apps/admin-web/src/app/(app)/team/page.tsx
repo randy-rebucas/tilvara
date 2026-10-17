@@ -34,7 +34,11 @@ export default async function TeamPage() {
 
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={t('team.title')} lede={t('team.lede')} />
+      <PageHeader
+        title={t('team.title')}
+        lede={t('team.lede')}
+        actions={perms.includes('audit.read') ? <Link href="/audit" className="btn">{t('audit.link')}</Link> : undefined}
+      />
 
       <section>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">

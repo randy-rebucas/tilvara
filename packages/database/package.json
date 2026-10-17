@@ -17,7 +17,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file=../../.env dist/migrate.js",
     "test": "vitest run --passWithNoTests",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "support": "node --env-file=../../.env dist/support-cli.js"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.4",
