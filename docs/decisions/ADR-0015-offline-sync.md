@@ -189,8 +189,11 @@ configurable BLOCK policy cannot be enforced without connectivity and is not off
     Locally, `ringUp` is idempotent on that id.
   - Receipts print to the configured thermal printer (`Receipt` and `OfflineReceipt`). The snapshot
     carries `legalEntity.receiptTin`, so offline receipts print the TIN as online ones do.
-  - API base: `VITE_API_URL` at build time (default `http://127.0.0.1:4320`); the API allows
-    `http://tauri.localhost` in its default `CORS_ORIGINS`.
+  - Server address: entered at set-up and checked by fetching a snapshot, then kept in the till
+    database (`api_url`) and used from launch on. `VITE_API_URL` only pre-fills the field. Only
+    `https://` is accepted, or plain `http://` to this computer (development), so the terminal key never
+    crosses a network unencrypted. The API allows `http://tauri.localhost` in its default
+    `CORS_ORIGINS`.
 - **Tests**:
   - Rust 8: store, printer, secrets;
   - engine 9 (+ checkout id, lookup);
@@ -202,5 +205,6 @@ configurable BLOCK policy cannot be enforced without connectivity and is not off
   - After a restart during an outage nobody can sign in (sign-in needs the API), so selling waits for
     the connection; an offline PIN for the shift's cashier is the candidate.
   - No serial/COM-port printers except through a Windows driver; no printer status (DLE EOT).
-  - The API URL is fixed at build time; no signed installer or auto-update yet (only `--debug
-    --no-bundle` builds have been made); not yet run against real printer or drawer hardware.
+  - No signed installer or auto-update yet (only `--debug --no-bundle` builds have been made); not yet
+    run against real printer or drawer hardware. Changing a till's server means disconnecting and
+    setting it up again.

@@ -1,8 +1,8 @@
 // End-to-end test of the desktop till (Tauri shell, ADR-0015 slice 5) through a real outage.
 // Usage: node apps/pos-desktop/e2e/desktop.mjs [tillExe] [screenshotDir] [apiUrl]
-// Requires the API (RATE_LIMITS_ENABLED=false) on apiUrl, and the till built with
-//   VITE_API_URL=http://127.0.0.1:4399 (this script's proxy, which it cuts to simulate the outage):
-//   cd apps/pos-desktop && VITE_API_URL=http://127.0.0.1:4399 pnpm exec tauri build --debug --no-bundle
+// Requires the API (RATE_LIMITS_ENABLED=false) on apiUrl and a built till
+//   (cd apps/pos-desktop && pnpm tauri build --debug --no-bundle). At set-up the script points the till
+//   at its own proxy (127.0.0.1:4399), which it cuts to simulate the outage.
 // Each run uses its own till profile (database + credential entry), never a real till's.
 import { randomUUID } from 'node:crypto';
 import net from 'node:net';
@@ -111,6 +111,11 @@ const signIn = async () => {
 try {
   await check('first launch asks to set up the till', await shown('Set up this till'));
   await fill('terminalId', term.terminal.id);
+  await fill('credential', term.credential);
+  await fill('apiUrl', 'http://192.168.1.10:4320');
+  await submitForm();
+  await check('set-up refuses a plain-http server on the network (the key would travel unencrypted)', await shown('https:// address'));
+  await fill('apiUrl', `http://127.0.0.1:${PROXY_PORT}`);
   await fill('credential', 'tpk_not-the-key');
   await submitForm();
   await check('a wrong key is refused at set-up', await shown('did not accept'));

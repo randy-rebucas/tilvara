@@ -44,7 +44,7 @@ export const session = {
 };
 
 async function raw(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
-  return fetch(apiBase + path, {
+  return fetch(apiBase() + path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
@@ -57,7 +57,7 @@ async function raw(method: string, path: string, body?: unknown, headers: Record
 
 async function refresh(): Promise<boolean> {
   if (!tokens) return false;
-  const res = await fetch(`${apiBase}/v1/auth/refresh`, {
+  const res = await fetch(`${apiBase()}/v1/auth/refresh`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken: tokens.refreshToken, ...(activeTenantId ? { tenantId: activeTenantId } : {}) }),
@@ -96,7 +96,7 @@ export interface Membership {
 }
 
 export async function signIn(email: string, password: string, tenantId?: string) {
-  const res = await fetch(`${apiBase}/v1/auth/login`, {
+  const res = await fetch(`${apiBase()}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password, ...(tenantId ? { tenantId } : {}) }),

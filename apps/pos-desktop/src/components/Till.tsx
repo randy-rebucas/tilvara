@@ -33,7 +33,7 @@ export function TillStatus({ onOpen }: { onOpen: () => void }) {
 /** First launch of the desktop till: bind it to a terminal issued in the admin. */
 export function TillSetup({ onSkip }: { onSkip: () => void }) {
   const { t } = useT();
-  const { setUp } = useTill();
+  const { setUp, apiUrl } = useTill();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -43,9 +43,10 @@ export function TillSetup({ onSkip }: { onSkip: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await setUp(String(f.get('terminalId') ?? '').trim(), String(f.get('credential') ?? '').trim());
+      await setUp(String(f.get('terminalId') ?? '').trim(), String(f.get('credential') ?? '').trim(), String(f.get('apiUrl') ?? ''));
     } catch (err) {
-      setError((err as { kind?: string }).kind === 'NETWORK' ? t('till.setupOffline') : t('till.setupFailed'));
+      const kind = (err as { kind?: string }).kind;
+      setError(kind === 'INVALID_URL' ? t('till.serverInvalid') : kind === 'NETWORK' ? t('till.setupOffline') : t('till.setupFailed'));
     } finally {
       setBusy(false);
     }
@@ -57,6 +58,7 @@ export function TillSetup({ onSkip }: { onSkip: () => void }) {
       <p className="text-muted">{t('till.setupHint')}</p>
       <Note className="p-6">
         <form className="grid gap-4" onSubmit={submit}>
+          <Field id="apiUrl" name="apiUrl" type="url" label={t('till.server')} hint={t('till.serverHint')} required defaultValue={apiUrl} autoComplete="off" spellCheck={false} />
           <Field id="terminalId" name="terminalId" label={t('till.terminalId')} required autoComplete="off" spellCheck={false} />
           <Field id="credential" name="credential" type="password" label={t('till.credential')} required autoComplete="off" />
           {error && <Callout kind="error">{error}</Callout>}
@@ -114,7 +116,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
 
       <Note denom="orange" className="grid gap-2 p-5">
         <h2 className="section-title">{t('till.statusTitle')}</h2>
-        <p className="serial text-[0.8125rem] text-muted">{t('till.terminal', { id: till.terminalId ?? '—' })}</p>
+        <p className="serial text-[0.8125rem] text-muted">{t('till.terminal', { id: till.terminalId ?? '—' })} · {till.apiUrl}</p>
         <p className="font-semibold">{till.online ? t('till.online') : t('till.offline')}</p>
         {status && (
           <ul className="grid gap-1 text-[0.9375rem]">

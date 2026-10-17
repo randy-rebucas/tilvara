@@ -196,7 +196,7 @@ Slice 5 — Tauri shell (session 8): ✅ done (ADR-0015 "As built (slices 4–5)
 - recovering a revoked terminal's queue (admin tool);
 - device sequence restarts if the till's file is lost;
 - ~~an integration test for `SNAPSHOT_EXPIRED`~~ ✅ session 8;
-- desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier); API URL set at runtime (build-time `VITE_API_URL` today); signed NSIS installer + auto-update; serial/COM printers without a Windows driver; real printer/drawer hardware check;
+- desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier); ~~API URL set at runtime~~ ✅ session 8 (set-up field, https only); signed NSIS installer + auto-update; serial/COM printers without a Windows driver; real printer/drawer hardware check;
 - offline SC/PWD and discounts (refused offline today);
 - opening a shift offline;
 - snapshot paging for large catalogues;

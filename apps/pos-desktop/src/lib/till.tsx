@@ -1,7 +1,7 @@
 import { httpTransport, LocalStore, OfflineEngine, type EngineStatus } from '@1pos/pos-offline';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { browserPrinter, escposDrawer, escposPrinter, noDrawer, type CashDrawer, type ReceiptPrinter } from './devices';
-import { apiBase, isDesktop, tauriByteChannel, tauriSqlDriver, terminalSecret, type PrinterTarget } from './desktop';
+import { apiBase, isDesktop, normalizeApiUrl, setApiBase, tauriByteChannel, tauriSqlDriver, terminalSecret, type PrinterTarget } from './desktop';
 
 /**
  * The desktop till (ADR-0015 slice 5): which terminal this is, its offline engine, whether the API
@@ -18,8 +18,13 @@ export interface Till {
   printerTarget: PrinterTarget | null;
   printer: ReceiptPrinter;
   drawer: CashDrawer;
-  /** Check the terminal id and one-time credential against the API, then keep them (credential in the OS store). */
-  setUp(terminalId: string, credential: string): Promise<void>;
+  /** The server this till talks to (saved at set-up). */
+  apiUrl: string;
+  /**
+   * Check the server address, terminal id and one-time credential against the API, then keep them
+   * (credential in the OS store). Rejects with `INVALID_URL` for an address the till will not use.
+   */
+  setUp(terminalId: string, credential: string, apiUrl: string): Promise<void>;
   /** Forget this terminal (the queue stays in the file; a new set-up continues it). */
   forget(): Promise<void>;
   setPrinter(target: PrinterTarget | null): Promise<void>;
@@ -50,11 +55,12 @@ export function TillProvider({ children }: { children: ReactNode }) {
   const [online, setOnline] = useState(true);
   const [terminalId, setTerminalId] = useState<string | null>(null);
   const [printerTarget, setPrinterTarget] = useState<PrinterTarget | null>(null);
+  const [apiUrl, setApiUrl] = useState(apiBase());
   const engineRef = useRef<OfflineEngine | null>(null);
 
   const start = useCallback(async (id: string, credential: string) => {
     engineRef.current?.stop();
-    const e = new OfflineEngine({ store: store!, transport: httpTransport({ baseUrl: apiBase, terminalId: id, credential }) });
+    const e = new OfflineEngine({ store: store!, transport: httpTransport({ baseUrl: apiBase(), terminalId: id, credential }) });
     await e.open();
     engineRef.current = e;
     setEngine(e);
@@ -71,9 +77,14 @@ export function TillProvider({ children }: { children: ReactNode }) {
     void (async () => {
       await store.migrate();
       const printer = await store.meta('printer');
+      const savedUrl = await store.meta('api_url');
       const id = await store.meta('terminal_id');
       const credential = id ? await terminalSecret.get().catch(() => null) : null;
       if (cancelled) return;
+      if (savedUrl) {
+        setApiBase(savedUrl);
+        setApiUrl(savedUrl);
+      }
       if (printer) setPrinterTarget(JSON.parse(printer) as PrinterTarget);
       if (id && credential) await start(id, credential);
       else setMode('unconfigured');
@@ -108,10 +119,15 @@ export function TillProvider({ children }: { children: ReactNode }) {
     else if (status?.lastSyncAt && !status.lastError) setOnline(true);
   }, [status?.lastError, status?.lastSyncAt]);
 
-  const setUp = useCallback(async (id: string, credential: string) => {
-    // Proves the pair before keeping it: a wrong credential is refused here, not at the first outage.
-    await httpTransport({ baseUrl: apiBase, terminalId: id, credential }).snapshot();
+  const setUp = useCallback(async (id: string, credential: string, url: string) => {
+    const origin = normalizeApiUrl(url);
+    if (!origin) throw Object.assign(new Error('Use an https:// server address'), { kind: 'INVALID_URL' });
+    // Proves the address and the pair before keeping them: a wrong one is refused here, not at the first outage.
+    await httpTransport({ baseUrl: origin, terminalId: id, credential }).snapshot();
     await terminalSecret.set(credential);
+    await store!.setMeta('api_url', origin);
+    setApiBase(origin);
+    setApiUrl(origin);
     await store!.setMeta('terminal_id', id);
     await store!.setMeta('auth_state', 'OK');
     await start(id, credential);
@@ -136,7 +152,7 @@ export function TillProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Till>(() => {
     const channel = printerTarget ? tauriByteChannel(printerTarget) : null;
     return {
-      mode, engine, status, online, terminalId, printerTarget,
+      mode, engine, status, online, terminalId, printerTarget, apiUrl,
       printer: channel ? escposPrinter(channel) : browserPrinter,
       drawer: channel ? escposDrawer(channel) : noDrawer,
       setUp, forget, setPrinter, refresh,
@@ -148,7 +164,7 @@ export function TillProvider({ children }: { children: ReactNode }) {
         setStatus(await e.status());
       },
     };
-  }, [mode, engine, status, online, terminalId, printerTarget, setUp, forget, setPrinter, refresh]);
+  }, [mode, engine, status, online, terminalId, printerTarget, apiUrl, setUp, forget, setPrinter, refresh]);
 
   return <TillContext.Provider value={value}>{children}</TillContext.Provider>;
 }

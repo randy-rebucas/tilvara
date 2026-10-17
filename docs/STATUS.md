@@ -25,6 +25,7 @@ _Last updated: 2026-10-17 (session 8 — Rust toolchain installed; Phase 5 slice
   - Test-harness traps found on the way:
     - Chromium silently re-sends a POST whose connection closed before any reply byte (the API's idempotency replayed it), so the lost-answer drill cuts after the reply starts;
     - WebView2 starts on about:blank, and reloading it during start-up can leave a blank page.
+- **Server address at set-up** (after the slice 5 commit): a field on the set-up screen, checked by fetching a snapshot and saved in the till. It must be `https://`, or `http://` to this computer only. `normalizeApiUrl` has unit tests. `test:e2e:desktop` is now **21/21** (twice), adding the refusal of a LAN `http://` address. A plain build is used, and the script types the proxy address at set-up.
 - **Also this session**:
   - PayMongo env settings (format-checked, live keys refused outside production; `PAYMENT_PROVIDER` stays `dev` until the adapter exists);
   - `SNAPSHOT_EXPIRED` integration test (23 h clean / 25 h flagged).
@@ -597,7 +598,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 3. **Phase 5** (ADR-0015): slices 1–5 ✅ (session 8: the desktop till).
    - **Slice 6 — PayMongo**: the user said they will put the sandbox keys in `.env` (`PAYMONGO_SECRET_KEY`, `PAYMONGO_PUBLIC_KEY`, `PAYMONGO_WEBHOOK_SECRET`; never in chat). At session end they were not set yet. Check with `grep -c '^PAYMONGO_SECRET_KEY=sk_test_' .env`. Then build the adapter behind `PaymentProvider` (ADR-0010) with webhooks and card/QR refunds, and add `paymongo` to `PAYMENT_PROVIDER`.
    - Slice 7: exit review. Run every E2E suite incl. `test:e2e:desktop`, and drill the till on real printer/drawer hardware if the user has it.
-   - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), runtime API URL, signed installer + auto-update.
+   - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), signed installer + auto-update, real printer/drawer check.
 4. Decisions for the user:
    - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
    - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).

@@ -8,11 +8,35 @@ import type { ByteChannel } from './devices';
  */
 export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+/** The server a new till suggests at set-up (`VITE_API_URL` at build time). */
+export const defaultApiUrl: string = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:4320';
+
 /**
- * Where the API is. Browser mode goes through its own origin (the Vite proxy); the desktop app is
- * served from tauri.localhost and calls the API directly (the API's CORS_ORIGINS must list it).
+ * Where the API is. Browser mode goes through its own origin (the Vite proxy). The desktop app is
+ * served from tauri.localhost and calls the API directly (the API's CORS_ORIGINS must list it), at
+ * the address saved at set-up.
  */
-export const apiBase: string = isDesktop ? (import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:4320') : '';
+let base: string = isDesktop ? defaultApiUrl : '';
+export const apiBase = () => base;
+export function setApiBase(url: string) {
+  if (isDesktop) base = url;
+}
+
+/**
+ * A server address as the till keeps it: the origin only. HTTPS, or plain HTTP to this machine
+ * (development); anything else is refused (null), so the terminal key never crosses a network unencrypted.
+ */
+export function normalizeApiUrl(input: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  const loopback = u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]';
+  if (u.protocol === 'https:' || (u.protocol === 'http:' && loopback)) return u.origin;
+  return null;
+}
 
 /**
  * `SqlDriver` over the shell's single SQLite connection (WAL, synchronous=FULL). The connection
