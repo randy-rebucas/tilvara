@@ -27,6 +27,7 @@ export function LineItems({
   addLabel,
   removeLabel,
   min = 1,
+  initial,
 }: {
   fields: LineField[];
   options: VariantOption[];
@@ -34,10 +35,13 @@ export function LineItems({
   addLabel: string;
   removeLabel: string;
   min?: number;
+  /** Rows to start from (e.g. a draft being edited), keyed by field name. */
+  initial?: Record<string, string>[];
 }) {
   const base = useId();
-  const [rows, setRows] = useState(() => Array.from({ length: min }, (_, i) => i));
-  const [next, setNext] = useState(min);
+  const start = Math.max(min, initial?.length ?? 0);
+  const [rows, setRows] = useState(() => Array.from({ length: start }, (_, i) => i));
+  const [next, setNext] = useState(start);
   const cols = `minmax(0,2fr) ${fields.slice(1).map(() => 'minmax(0,1fr)').join(' ')} auto`;
   return (
     <div className="col-span-full flex flex-col gap-2">
@@ -47,16 +51,17 @@ export function LineItems({
             const name = `lines.${i}.${f.name}`;
             const id = `${base}-${row}-${f.name}`;
             const error = fieldError(name);
+            const value = initial?.[row]?.[f.name] ?? '';
             return (
               <div key={f.name} className="field min-w-0">
                 <label htmlFor={id} className={i > 0 ? 'sm:sr-only' : undefined}>{f.label}</label>
                 {f.kind === 'select' ? (
-                  <select id={id} name={name} className="input" defaultValue="" aria-invalid={error ? true : undefined}>
+                  <select id={id} name={name} className="input" defaultValue={value} aria-invalid={error ? true : undefined}>
                     <option value="" disabled>—</option>
                     {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
                 ) : (
-                  <input id={id} name={name} className="input" inputMode={f.kind === 'decimal' ? 'decimal' : undefined} placeholder={f.placeholder} aria-invalid={error ? true : undefined} />
+                  <input id={id} name={name} className="input" defaultValue={value} inputMode={f.kind === 'decimal' ? 'decimal' : undefined} placeholder={f.placeholder} aria-invalid={error ? true : undefined} />
                 )}
                 {error && <p className="hint text-red!">{error}</p>}
               </div>

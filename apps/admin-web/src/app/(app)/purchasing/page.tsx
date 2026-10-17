@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type Branch, type Me, type Product, type PurchaseOrderRow, type Supplier } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier } from '@/lib/api';
 import { formatDate, formatTin, peso } from '@/lib/format';
 import { branchLabel, docNo, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -19,10 +19,10 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
   const filter = STATUSES.find((s) => s === status);
   const [me, suppliers, orders, branches, products] = await Promise.all([
     api<Me>('/me'),
-    apiOrNull<List<Supplier>>('/suppliers'),
+    apiOrNull<List<Supplier>>('/suppliers?includeArchived=true'),
     apiOrNull<List<PurchaseOrderRow>>(`/purchase-orders${filter ? `?status=${filter}` : ''}`),
     apiOrNull<List<Branch>>('/branches'),
-    apiOrNull<List<Product>>('/products?limit=200'),
+    allProducts(),
   ]);
   const canManage = me.activeTenant?.permissions.includes('purchasing.manage') ?? false;
   const activeSuppliers = suppliers?.data.filter((s) => !s.archivedAt) ?? [];
@@ -87,15 +87,16 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
             <RecordTable
               rows={suppliers.data}
               rowKey={(s) => s.id}
+              dimmed={(s) => Boolean(s.archivedAt)}
               columns={[
-                { header: t('pur.supplierCode'), cell: (s) => <Serial className="font-semibold text-gold">{s.code}</Serial> },
-                { header: t('pur.supplierName'), cell: (s) => <span className="font-semibold">{s.name}</span> },
+                { header: t('pur.supplierCode'), cell: (s) => <Link href={`/purchasing/suppliers/${s.id}`} className="serial font-semibold text-gold underline">{s.code}</Link> },
+                { header: t('pur.supplierName'), cell: (s) => <span className="font-semibold">{s.name}{s.archivedAt && <span className="tag ml-2">{t('common.archived')}</span>}</span> },
                 { header: t('loc.tin'), cell: (s) => <Serial className="text-ink">{formatTin(s.tin)}</Serial> },
                 { header: t('pur.phone'), cell: (s) => s.phone ?? '—' },
                 { header: t('pur.terms'), num: true, cell: (s) => <Serial className="text-ink">{t('pur.termsDays', { n: s.paymentTermsDays })}</Serial> },
               ]}
               stacked={{
-                title: (s) => s.name,
+                title: (s) => <Link href={`/purchasing/suppliers/${s.id}`} className="underline">{s.name}</Link>,
                 meta: (s) => <Serial><span className="text-gold">{s.code}</span> · TIN {formatTin(s.tin)} · {t('pur.termsDays', { n: s.paymentTermsDays })}</Serial>,
               }}
             />

@@ -1,12 +1,13 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Note, Serial } from '@/components/note';
+import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { apiOrNull, type Branch, type GoodsReceipt, type Product, type Supplier } from '@/lib/api';
-import { formatDateTime, peso, qty, signOf } from '@/lib/format';
-import { docNo, isUuid, variantNames } from '@/lib/options';
+import { api, apiOrNull, variantNamesById, type Branch, type GoodsReceipt, type Me, type Supplier } from '@/lib/api';
+import { formatDateTime, peso, qty, signOf, subtractQty } from '@/lib/format';
+import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { ReturnForm } from '../../forms';
 
 export const metadata = { title: 'Goods receipt' };
 
@@ -14,16 +15,21 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [receipt, branches, products] = await Promise.all([
+  const [me, receipt, branches] = await Promise.all([
+    api<Me>('/me'),
     apiOrNull<GoodsReceipt>(`/goods-receipts/${id}`),
     apiOrNull<{ data: Branch[] }>('/branches'),
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
   ]);
   if (!receipt) notFound();
-  const supplier = await apiOrNull<Supplier>(`/suppliers/${receipt.supplierId}`);
+  const [supplier, names] = await Promise.all([
+    apiOrNull<Supplier>(`/suppliers/${receipt.supplierId}`),
+    variantNamesById(receipt.lines.map((l) => l.variantId)),
+  ]);
   const branch = branches?.data.find((b) => b.id === receipt.branchId);
-  const names = variantNames(products?.data);
   const rejected = receipt.lines.some((l) => signOf(l.rejectedQuantity) > 0);
+  const returned = receipt.lines.some((l) => signOf(l.returnedQuantity) > 0);
+  const canReturn = (me.activeTenant?.permissions.includes('purchasing.manage') ?? false) && !supplier?.archivedAt
+    && receipt.lines.some((l) => signOf(subtractQty(l.quantity, l.returnedQuantity)) > 0);
 
   return (
     <div className="flex flex-col gap-6">
@@ -68,6 +74,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
                   { header: t('pur.rejectReason'), cell: (l: GoodsReceipt['lines'][number]) => <span className="text-muted">{l.rejectionReason ?? ''}</span> },
                 ]
               : []),
+            ...(returned ? [{ header: t('pur.returned'), num: true, cell: (l: GoodsReceipt['lines'][number]) => qty(l.returnedQuantity) }] : []),
             { header: t('common.cost'), num: true, cell: (l) => <span className="money">{peso(l.unitCost)}</span> },
             { header: t('common.value'), num: true, cell: (l) => <span className="money font-semibold">{peso(l.lineValue)}</span> },
           ]}
@@ -77,12 +84,33 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
               <Serial>
                 {names.get(l.variantId)?.sku} · {qty(l.quantity)} × {peso(l.unitCost)}
                 {signOf(l.rejectedQuantity) > 0 && ` · ${t('pur.rejected')} ${qty(l.rejectedQuantity)}`}
+                {signOf(l.returnedQuantity) > 0 && ` · ${t('pur.returned')} ${qty(l.returnedQuantity)}`}
               </Serial>
             ),
             figure: (l) => <span className="money font-semibold">{peso(l.lineValue)}</span>,
           }}
         />
       </Note>
+
+      {canReturn && <div><ReturnForm receipt={receipt} names={Object.fromEntries(names)} /></div>}
+
+      <section>
+        <h2 className="section-title mb-3">{t('pur.returns')}</h2>
+        <Note denom="gold" className="pr-2">
+          {receipt.returns.length > 0 ? (
+            <ul>
+              {receipt.returns.map((r) => (
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-b border-hair-soft px-4 py-3 last:border-b-0">
+                  <Link href={`/purchasing/returns/${r.id}`} className="font-semibold underline">{t('pur.returnTitle', { n: docNo(r.returnNumber) })}</Link>
+                  <Serial>{r.reason} · {formatDateTime(r.createdAt, lang)}</Serial>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Empty>{t('pur.noReturns')}</Empty>
+          )}
+        </Note>
+      </section>
     </div>
   );
 }

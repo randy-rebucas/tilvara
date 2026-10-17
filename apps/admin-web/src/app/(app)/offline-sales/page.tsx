@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { ActionButton, ReasonAction } from '@/components/actions';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
@@ -56,7 +57,11 @@ export default async function OfflineSalesPage({ searchParams }: { searchParams:
     x.status === 'RECORDED'
       ? (
         <>
-          {t('off.saleN', { ref: `${x.registerCode}-${String(x.saleNumber ?? 0).padStart(6, '0')}` })}
+          {x.saleId ? (
+            <Link href={`/sales/${x.saleId}`} className="underline">{t('off.saleN', { ref: `${x.registerCode}-${String(x.saleNumber ?? 0).padStart(6, '0')}` })}</Link>
+          ) : (
+            t('off.saleN', { ref: `${x.registerCode}-${String(x.saleNumber ?? 0).padStart(6, '0')}` })
+          )}
           {/* Recorded, not refused, but worth a look (ADR-0015 §5): each flag in words. */}
           {x.flags.filter((f) => FLAGS.has(f)).map((f) => (
             <span key={f} className="tag tag-warn mt-1 block w-fit">{t(`off.flag.${f}` as MessageKey, { deviceTime: formatDateTime(x.occurredAt, lang) })}</span>

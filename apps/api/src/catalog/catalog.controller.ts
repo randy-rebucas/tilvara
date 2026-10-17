@@ -16,6 +16,7 @@ import {
   updatePriceListSchema,
   updateProductSchema,
   updateVariantSchema,
+  variantLookupQuerySchema,
   type AssignPriceListInput,
   type CreateCategoryInput,
   type CreatePriceListInput,
@@ -30,6 +31,7 @@ import {
   type UpdateProductInput,
   type UpdateVariantInput,
   type VariantInput,
+  type VariantLookupQuery,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
@@ -123,6 +125,11 @@ export class CatalogController {
   @Post('products/:id/variants')
   addVariant(@Auth() auth: AuthContext, @Param('id', id) productId: string, @Body(new ZodPipe(addVariantSchema)) body: VariantInput) {
     return this.catalog.addVariant(auth, productId, body);
+  }
+
+  @Get('variants')
+  lookupVariants(@Auth() auth: AuthContext, @Query(new ZodPipe(variantLookupQuerySchema)) query: VariantLookupQuery) {
+    return this.catalog.lookupVariants(auth, query.ids);
   }
 
   @Patch('variants/:id')

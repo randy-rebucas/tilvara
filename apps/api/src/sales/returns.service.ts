@@ -268,6 +268,18 @@ export class ReturnsService extends TenantService {
     });
   }
 
+  /** One return or void by its own id (journal entries point here); same access as the sale's list. */
+  get(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [doc] = await db.select().from(saleReturns).where(eq(saleReturns.id, id));
+      if (!doc) throw notFound('Return');
+      const [sale] = await db.select().from(sales).where(eq(sales.id, doc.saleId));
+      const scope = { legalEntityId: sale!.legalEntityId, branchId: sale!.branchId, registerId: sale!.registerId };
+      if (sale!.cashierUserId !== auth.userId) this.assertCan(auth, 'sales.read', scope);
+      return this.view(db, doc);
+    });
+  }
+
   private async view(db: Database, d: typeof saleReturns.$inferSelect) {
     const lines = await db.select().from(saleReturnLines).where(eq(saleReturnLines.saleReturnId, d.id));
     const money = (v: string) => toDec(v).toFixed(2);

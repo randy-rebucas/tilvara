@@ -1,9 +1,9 @@
 import { Empty, Note, Serial } from '@/components/note';
-import { apiOrNull, type ModifierGroup, type Product } from '@/lib/api';
+import { allProducts, apiOrNull, type ModifierGroup } from '@/lib/api';
 import { variantNames, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../chrome';
-import { ModifierGroupForm, OptionForm, RowAction } from '../forms';
+import { EditRecord, ModifierGroupForm, OptionForm, RowAction } from '../forms';
 
 export const metadata = { title: 'Modifiers' };
 
@@ -12,7 +12,7 @@ export default async function ModifiersPage() {
   const { t } = await getT();
   const [groups, products] = await Promise.all([
     apiOrNull<{ data: ModifierGroup[] }>('/modifier-groups'),
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
   ]);
   const variants = variantOptions(products?.data);
   const names = variantNames(products?.data);
@@ -58,7 +58,18 @@ export default async function ModifiersPage() {
                     );
                   })}
                 </ul>
-                <div><OptionForm groupId={g.id} variants={variants} /></div>
+                <div className="flex flex-wrap items-start gap-2">
+                  <OptionForm groupId={g.id} variants={variants} />
+                  <EditRecord
+                    label={t('rest.editGroup')}
+                    url={`/api/v1/modifier-groups/${g.id}`}
+                    fields={[
+                      { name: 'name', label: t('rest.groupName'), value: g.name },
+                      { name: 'minSelect', label: t('rest.minSelect'), value: String(g.minSelect), numeric: true, hint: t('rest.minHint') },
+                      { name: 'maxSelect', label: t('rest.maxSelect'), value: String(g.maxSelect), numeric: true },
+                    ]}
+                  />
+                </div>
               </Note>
             ))}
           </div>

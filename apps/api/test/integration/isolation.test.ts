@@ -41,6 +41,8 @@ interface World {
   openSessionId: string;
   closedSessionId: string;
   saleId: string;
+  saleReturnId: string;
+  cashMovementId: string;
   paymentIntentId: string;
   openSessionCash: string;
   supplierId: string;
@@ -135,7 +137,8 @@ async function world(prefix: string): Promise<World> {
   ok(await http().post(`/v1/cashier-sessions/${closedSession.id}/close`).set(auth).send({ countedCash: '90.00' }), 200);
   const openSession = ok(await http().post('/v1/cashier-sessions').set(auth).send({ registerId: register.id, openingFloat: '100.00' }));
   const soldLines = (await http().get(`/v1/sales/${sold.id}`).set(auth)).body.lines as { id: string }[];
-  ok(
+  const payIn = ok(await http().post(`/v1/cashier-sessions/${openSession.id}/movements`).set(auth).send({ type: 'PAY_IN', amount: '10.00', reason: 'Fixture float top-up' }));
+  const saleReturn = ok(
     await http()
       .post(`/v1/sales/${sold.id}/returns`)
       .set(auth)
@@ -259,6 +262,8 @@ async function world(prefix: string): Promise<World> {
     openSessionId: openSession.id,
     closedSessionId: closedSession.id,
     saleId: sold.id,
+    saleReturnId: saleReturn.id,
+    cashMovementId: payIn.id,
     paymentIntentId: payment.id,
     openSessionCash,
     supplierId: supplier.id,
@@ -358,6 +363,8 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/sales/:id': () => http().get(`/v1/sales/${a.saleId}`).set(auth),
     'GET /v1/reports/cashier-sessions/:id': () => http().get(`/v1/reports/cashier-sessions/${a.closedSessionId}`).set(auth),
     'GET /v1/sales/:id/returns': () => http().get(`/v1/sales/${a.saleId}/returns`).set(auth),
+    'GET /v1/sale-returns/:id': () => http().get(`/v1/sale-returns/${a.saleReturnId}`).set(auth),
+    'GET /v1/cash-movements/:id': () => http().get(`/v1/cash-movements/${a.cashMovementId}`).set(auth),
     'POST /v1/sales/:id/returns': () =>
       http().post(`/v1/sales/${a.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, kind: 'VOID', reason: 'steal' }),
     'GET /v1/sales/:id/receipt': () => http().get(`/v1/sales/${a.saleId}/receipt`).set(auth),
@@ -483,6 +490,7 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['reorder points at the A branch', () => http().put('/v1/stock/reorder-points').set(auth).send({ branchId: a.branchId, items: [{ variantId: b.variantId, reorderPoint: '1' }] })],
     ['reorder point for an A variant', () => http().put('/v1/stock/reorder-points').set(auth).send({ branchId: b.branchId, items: [{ variantId: a.variantId, reorderPoint: '1' }] })],
     ['low stock at the A branch', () => http().get('/v1/stock/low').query({ branchId: a.branchId }).set(auth)],
+    ['reorder points of the A branch', () => http().get('/v1/stock/reorder-points').query({ branchId: a.branchId }).set(auth)],
     ['transfers at the A branch', () => http().get('/v1/stock/transfers').query({ branchId: a.branchId }).set(auth)],
     ['counts at the A branch', () => http().get('/v1/stock/counts').query({ branchId: a.branchId }).set(auth)],
     ['adjustments at the A branch', () => http().get('/v1/stock/adjustments').query({ branchId: a.branchId }).set(auth)],
@@ -624,14 +632,16 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, `/v1/variants/${b.dishId}/recipe`, '/v1/invitations',
+      // Names by id: A's variant asked for alongside B's comes back as nothing.
+      `/v1/variants?ids=${b.variantId},${a.variantId},${b.dishId}`,
       '/v1/sync/transactions', `/v1/sync/transactions?terminalId=${b.terminalId}`,
-      '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
+      '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/sale-returns/${b.saleReturnId}`, `/v1/cash-movements/${b.cashMovementId}`,`/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
       ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
       `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
-      `/v1/stock/low?branchId=${b.branchId}`, `/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
+      `/v1/stock/low?branchId=${b.branchId}`, `/v1/stock/reorder-points?branchId=${b.branchId}`,`/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-entries/${b.journalEntryId}`,
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,
       `/v1/kitchen-stations?branchId=${b.branchId}`, `/v1/dining-areas?branchId=${b.branchId}`, '/v1/modifier-groups', '/v1/menus', `/v1/menus/${b.menuId}`,

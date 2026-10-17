@@ -62,7 +62,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 return (
                   <tr key={p.id} className={p.archivedAt ? 'text-muted' : ''}>
                     <td>
-                      <span className="block font-semibold">{p.name}</span>
+                      <Link href={`/products/${p.id}`} className="block font-semibold underline">{p.name}</Link>
                       {v.length > 1 && <span className="text-[0.8125rem] text-muted">{t('prod.variants', { n: v.length })}</span>}
                     </td>
                     <td><Serial className="text-ink">{first?.sku}</Serial></td>

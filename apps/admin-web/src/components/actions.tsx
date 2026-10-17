@@ -6,7 +6,7 @@ import { useFormKey, useSubmit } from './use-submit';
 import { useT } from '@/i18n/client';
 
 /** A one-click state change (approve) with optional confirmation and inline error. */
-export function ActionButton({ url, label, body, primary = false, confirmText, refreshOnError = false }: { url: string; label: string; body?: unknown; primary?: boolean; confirmText?: string; refreshOnError?: boolean }) {
+export function ActionButton({ url, label, body, primary = false, confirmText, refreshOnError = false, method = 'POST' }: { url: string; label: string; body?: unknown; primary?: boolean; confirmText?: string; refreshOnError?: boolean; method?: 'POST' | 'PATCH' | 'PUT' }) {
   const { pending, submit, error } = useSubmit();
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
@@ -15,7 +15,7 @@ export function ActionButton({ url, label, body, primary = false, confirmText, r
         className={`btn ${primary ? 'btn-primary' : ''}`}
         disabled={pending}
         onClick={() => {
-          if (!confirmText || window.confirm(confirmText)) void submit('POST', url, body ?? {}, { refreshOnError });
+          if (!confirmText || window.confirm(confirmText)) void submit(method, url, body ?? {}, { refreshOnError });
         }}
       >
         {label}

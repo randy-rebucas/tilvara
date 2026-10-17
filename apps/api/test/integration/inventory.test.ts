@@ -133,6 +133,10 @@ describe('reorder points and low stock', () => {
     await http().put('/v1/stock/reorder-points').set(s.manager).send({ branchId: s.b1, items: [{ variantId: cola, reorderPoint: '10', reorderQuantity: '24' }, { variantId: rice, reorderPoint: '5' }] }).expect(200);
     let low = (await http().get('/v1/stock/low').query({ branchId: s.b1 }).set(s.manager).expect(200)).body.data;
     expect(low).toEqual([expect.objectContaining({ variantId: cola, quantity: '6', reorderPoint: '10', onOrder: '0', suggestedOrder: '24', lastCost: '12.0000' })]);
+    // Every configured point, low or not (rice is above its point, so not in the low list).
+    const all = (await http().get('/v1/stock/reorder-points').query({ branchId: s.b1 }).set(s.manager).expect(200)).body.data;
+    expect(all.map((r: { variantId: string }) => r.variantId).sort()).toEqual([cola, rice].sort());
+    expect(all.find((r: { variantId: string }) => r.variantId === rice)).toMatchObject({ reorderPoint: '5' });
 
     const supplier = (await http().post('/v1/suppliers').set(s.auth).send({ code: 'SUP', name: 'Supplier' }).expect(201)).body;
     const po = (await http().post('/v1/purchase-orders').set(s.auth).send({ branchId: s.b1, supplierId: supplier.id, lines: [{ variantId: cola, quantity: '24', unitCost: '12.00' }] }).expect(201)).body;

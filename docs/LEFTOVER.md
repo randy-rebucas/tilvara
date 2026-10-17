@@ -10,13 +10,12 @@ Moved out of `docs/BACKLOG.md` on 2026-10-17. BACKLOG keeps the plan (phases, sl
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)
 - ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once restaurant/multi-entity features exist; per-tenant entitlement overrides
 - ⬜ Audit viewer UI (planned in Phase 6 slice 6)
-- ⬜ Admin web: product edit/variants UI; custom-role editor; member role editing UI; price-list create UI; Filipino copy review by a native speaker (enum labels, e.g. VAT status, still English in FIL)
+- ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft, Takeaway are kept in English on purpose until reviewed)
 - ⏳ OTel SDK + exporter — D1 (hosting)
 - ⬜ Typed OpenAPI response schemas
 
 ## Phase 2 — Retail transaction engine
 Slice 1 (tax):
-- ⬜ Admin UI for tax profiles (history + "change registration")
 - ⏳ SC/PWD sign-off by a PH tax professional (MVP gate #6)
 - ⬜ 5 % BNPC / NAAC / Solo Parent schemes (rules unverified)
 - ⬜ Invoice-level rounding option
@@ -50,14 +49,8 @@ Phase-level:
 
 ## Phase 3 — Inventory, purchasing, accounting
 Slice 5 (admin UI):
-- ⬜ Supplier returns UI (API done)
-- ⬜ PO draft line editing (API `PATCH`)
-- ⬜ Supplier edit/archive UI
-- ⬜ Journal filters by date range / source type
-- ⬜ Admin document pages for sales, returns and cash movements (their entries trace in the API, not yet in the admin UI)
 - ⏳ Accountant review answers (ADR-0013 questions 1–10)
-- ⬜ Item names on receipts beyond the first 200 products (needs a variants-by-id lookup)
-- ⬜ Low-stock list shows only items at/below the point — no view of all configured reorder points (no GET)
+- ⬜ A list of all supplier returns per branch (each is reachable from its receipt and the journal today)
 
 Phase-level:
 - ⬜ Supplier invoices + accounts payable (GRNI → AP, input VAT)
@@ -111,11 +104,7 @@ Slice 6 (UI):
   - ⬜ No built-in "kitchen crew" role template (custom role today; decide with the restaurant-manager template question)
   - ⬜ Push (SSE) instead of polling
 - 6c admin set-up:
-  - ⬜ Rename stations/areas/tables and edit seats (API PATCH exists)
-  - ⬜ Edit a choice group's name/bounds (PATCH exists)
   - ⬜ Drag-and-drop ordering (buttons today)
-  - ⬜ Recipe units shown per ingredient (the API returns no unit)
-  - ⬜ Menu editor lists the first 200 products only
   - ⬜ A plan view of the floor (positions/shapes are stored, tiles today)
 - 6d report screens:
   - ⬜ The retail reports (summary, by product, cashier, tender, tax, SC/PWD book) on the same `/reports` frame

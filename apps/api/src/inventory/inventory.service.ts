@@ -362,6 +362,15 @@ export class InventoryService extends TenantService {
     });
   }
 
+  /** Every configured reorder point at the branch (low or not), with stock and what is on order. */
+  listReorderPoints(auth: AuthContext, q: BranchQuery) {
+    return this.read(auth, async (db) => {
+      const { scope } = await branchScope(db, q.branchId);
+      this.assertCan(auth, 'inventory.read', scope);
+      return this.lowStockRows(db, q.branchId, false);
+    });
+  }
+
   /** Items at or below their reorder point, with what is already on order and a suggested order. */
   lowStock(auth: AuthContext, q: BranchQuery) {
     return this.read(auth, async (db) => {

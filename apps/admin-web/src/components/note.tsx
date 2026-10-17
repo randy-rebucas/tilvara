@@ -19,14 +19,17 @@ export function Note({
   className = '',
   children,
   as: Tag = 'section',
+  id,
 }: {
   denom?: Denomination;
   className?: string;
   children: ReactNode;
   as?: 'section' | 'div' | 'article' | 'li';
+  /** An anchor, e.g. a return inside its sale's page. */
+  id?: string;
 }) {
   return (
-    <Tag className={`note ${className}`}>
+    <Tag id={id} className={`note ${className}`}>
       {stripe[denom] && <span className="denom" style={{ background: stripe[denom] }} aria-hidden />}
       {children}
     </Tag>

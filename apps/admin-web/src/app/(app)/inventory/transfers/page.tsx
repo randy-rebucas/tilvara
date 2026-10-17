@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type Me, type Product, type TransferRow } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Me, type TransferRow } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { branchLabel, docNo, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -17,7 +17,7 @@ export default async function TransfersPage({ searchParams }: { searchParams: Pr
   const [me, transfers, products] = await Promise.all([
     api<Me>('/me'),
     branch ? apiOrNull<{ data: TransferRow[] }>(`/stock/transfers?branchId=${branch.id}`) : null,
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
   ]);
   const canTransfer = me.activeTenant?.permissions.includes('inventory.transfer') ?? false;
   const destinations = branch ? branches.filter((b) => b.id !== branch.id && b.legalEntityId === branch.legalEntityId) : [];

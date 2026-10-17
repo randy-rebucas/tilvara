@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { apiOrNull, type Product } from '@/lib/api';
+import { allProducts } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../chrome';
 
@@ -13,7 +13,7 @@ export const metadata = { title: 'Recipes' };
  */
 export default async function RecipesPage() {
   const { t } = await getT();
-  const products = await apiOrNull<{ data: Product[] }>('/products?limit=200');
+  const products = await allProducts();
   const dishes = (products?.data ?? [])
     .filter((p) => !p.archivedAt && !p.trackInventory)
     .flatMap((p) => p.variants.filter((v) => !v.archivedAt).map((v) => ({ id: v.id, sku: v.sku, name: v.name ? `${p.name} — ${v.name}` : p.name })));

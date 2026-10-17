@@ -304,13 +304,24 @@ export class ReceivingService extends TenantService {
   private async receiptView(db: Database, r: typeof goodsReceipts.$inferSelect) {
     const lines = await db.select().from(goodsReceiptLines).where(eq(goodsReceiptLines.goodsReceiptId, r.id)).orderBy(goodsReceiptLines.createdAt, goodsReceiptLines.id);
     const value = lines.reduce((a, l) => a.plus(toDec(l.quantity).times(l.unitCost)), new Dec(0));
+    // What already went back to the supplier, so a return form can offer only the rest.
+    const { rows: back } = await db.execute<{ id: string; returned: string }>(sql`
+      SELECT goods_receipt_line_id AS id, sum(quantity)::text AS returned FROM supplier_return_lines
+       WHERE goods_receipt_line_id IN (SELECT id FROM goods_receipt_lines WHERE goods_receipt_id = ${r.id}) GROUP BY 1`);
+    const returns = await db
+      .select({ id: supplierReturns.id, returnNumber: supplierReturns.returnNumber, reason: supplierReturns.reason, createdAt: supplierReturns.createdAt })
+      .from(supplierReturns)
+      .where(eq(supplierReturns.goodsReceiptId, r.id))
+      .orderBy(supplierReturns.createdAt);
     return {
       ...r,
       receivedValue: value.toFixed(2),
+      returns,
       lines: lines.map((l) => ({
         ...l,
         quantity: toDec(l.quantity).toString(),
         rejectedQuantity: toDec(l.rejectedQuantity).toString(),
+        returnedQuantity: toDec(back.find((b) => b.id === l.id)?.returned ?? '0').toString(),
         unitCost: toDec(l.unitCost).toFixed(4),
         lineValue: toDec(l.quantity).times(l.unitCost).toFixed(2),
       })),

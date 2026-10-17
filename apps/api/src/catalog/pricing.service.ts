@@ -50,7 +50,14 @@ export class PricingService extends TenantService {
 
   listPriceLists(auth: AuthContext) {
     this.assertCan(auth, 'catalog.read');
-    return this.read(auth, (db) => db.select().from(priceLists).orderBy(asc(priceLists.name)));
+    return this.read(auth, async (db) => {
+      const [lists, assigned] = await Promise.all([
+        db.select().from(priceLists).orderBy(asc(priceLists.name)),
+        db.select({ branchId: branchPriceLists.branchId, priceListId: branchPriceLists.priceListId }).from(branchPriceLists),
+      ]);
+      // Which branches use each list explicitly (a branch with none uses the default list).
+      return lists.map((l) => ({ ...l, branchIds: assigned.filter((a) => a.priceListId === l.id).map((a) => a.branchId) }));
+    });
   }
 
   createPriceList(auth: AuthContext, input: CreatePriceListInput) {

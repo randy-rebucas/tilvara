@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { duration, peso, percentFromRate, qty, rateFromPercent, signOf, sumDecimal } from './format';
+import { duration, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
 
 describe('duration', () => {
   it('prints m:ss, h:mm:ss from an hour, and a dash when not measured', () => {
@@ -52,6 +52,11 @@ describe('sumDecimal / signOf', () => {
     expect(signOf('0.000')).toBe(0);
     expect(signOf('-0')).toBe(0);
     expect(signOf('4')).toBe(1);
+  });
+  it('subtracts exactly (what is still returnable)', () => {
+    expect(subtractQty('10.000', '2.500')).toBe('7.5000');
+    expect(subtractQty('0.3', '0.1')).toBe('0.2000');
+    expect(subtractQty('1', '1.000')).toBe('0.0000');
   });
   it('refuses something that is not a decimal', () => {
     expect(() => sumDecimal(['1e3'])).toThrow();

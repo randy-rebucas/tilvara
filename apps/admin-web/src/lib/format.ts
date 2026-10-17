@@ -44,6 +44,12 @@ export function sumDecimal(values: string[]): string {
   return `${total < 0n ? '-' : ''}${abs / SCALE}.${(abs % SCALE).toString().padStart(4, '0')}`;
 }
 
+/** Exact a − b of decimal strings (e.g. received − already returned). */
+export function subtractQty(a: string, b: string): string {
+  const negB = b.trim().startsWith('-') ? b.trim().slice(1) : `-${b.trim()}`;
+  return sumDecimal([a, negB]);
+}
+
 /** -1, 0 or 1 for a decimal string. */
 export function signOf(value: string): -1 | 0 | 1 {
   const u = toUnits(value);

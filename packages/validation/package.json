@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./permissions": {
+      "types": "./dist/permissions.d.ts",
+      "default": "./dist/permissions.js"
     }
   },
   "scripts": {

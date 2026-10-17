@@ -93,6 +93,36 @@ describe('traceability (Phase 3 exit criterion)', () => {
     expect((await http().get('/v1/stock/adjustments').query({ branchId: d.b1 }).set(d.auth).expect(200)).body.data).toHaveLength(2);
   });
 
+  it('every entry opens its document through the API (the admin links each journal line to it)', async () => {
+    const d = await day();
+    const READ: Record<string, (id: string) => string> = {
+      SALE: (id) => `/v1/sales/${id}`,
+      SALE_RETURN: (id) => `/v1/sale-returns/${id}`,
+      CASH_MOVEMENT: (id) => `/v1/cash-movements/${id}`,
+      CASH_VARIANCE: (id) => `/v1/cashier-sessions/${id}`,
+      GOODS_RECEIPT: (id) => `/v1/goods-receipts/${id}`,
+      SUPPLIER_RETURN: (id) => `/v1/supplier-returns/${id}`,
+      STOCK_ADJUSTMENT: (id) => `/v1/stock/adjustments/${id}`,
+      STOCK_COUNT: (id) => `/v1/stock/counts/${id}`,
+      TRANSFER_DISPATCH: (id) => `/v1/stock/transfers/${id}`,
+      TRANSFER_RECEIPT: (id) => `/v1/stock/transfers/${id}`,
+    };
+    const entries = (await http().get('/v1/journal-entries').query({ legalEntityId: d.le }).set(d.auth).expect(200)).body.data as { sourceType: string; sourceId: string }[];
+    expect(new Set(entries.map((e) => e.sourceType))).toEqual(new Set(Object.keys(READ)));
+    for (const e of entries) {
+      const doc = await http().get(READ[e.sourceType]!(e.sourceId)).set(d.auth);
+      expect([e.sourceType, doc.status]).toEqual([e.sourceType, 200]);
+      expect(doc.body.id).toBe(e.sourceId);
+    }
+    // A return names its sale, a pay-in its shift, so the admin can open the right page.
+    const ret = entries.find((e) => e.sourceType === 'SALE_RETURN')!;
+    expect((await http().get(`/v1/sale-returns/${ret.sourceId}`).set(d.auth)).body.saleId).toBeTruthy();
+    const pay = (await http().get(`/v1/cash-movements/${entries.find((e) => e.sourceType === 'CASH_MOVEMENT')!.sourceId}`).set(d.auth)).body;
+    expect(pay).toMatchObject({ type: 'PAY_IN', amount: '100.00', reason: 'Change fund' });
+    const shift = (await http().get(`/v1/cashier-sessions/${pay.cashierSessionId}`).set(d.auth)).body;
+    expect(shift.payInOut).toMatchObject([{ id: pay.id, type: 'PAY_IN', amount: '100.00' }]);
+  });
+
   it('the audit is not vacuous: an entry pointing nowhere, or one whose inventory differs from its movements, is reported', async () => {
     const d = await day();
     const c = await owner.connect();

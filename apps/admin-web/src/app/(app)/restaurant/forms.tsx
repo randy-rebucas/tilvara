@@ -56,6 +56,85 @@ export function RowAction({ method = 'POST', url, body, label, danger = false, c
   );
 }
 
+// ---------------------------------------------------------------- edits (PATCH)
+
+type EditField = { name: string; label: string; value: string; numeric?: boolean; hint?: string };
+
+/** Change a record's fields in place (rename a station or area, a choice group's bounds); only changed fields are sent. */
+function PatchFields({ url, fields, close }: { url: string; fields: EditField[]; close: () => void }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const body: Record<string, unknown> = {};
+    for (const x of fields) {
+      const v = text(f, x.name);
+      if (v !== x.value) body[x.name] = x.numeric && /^\d+$/.test(v) ? Number(v) : v;
+    }
+    if (Object.keys(body).length === 0) return close();
+    const r = await submit('PATCH', url, body);
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+      {fields.map((x, i) => (
+        <TextField key={x.name} label={x.label} name={x.name} defaultValue={x.value} autoFocus={i === 0} inputMode={x.numeric ? 'numeric' : undefined} hint={x.hint} error={fieldError(x.name)} />
+      ))}
+      <Actions pending={pending} general={general(error) ?? fieldError('')} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditRecord({ label, url, fields }: { label: string; url: string; fields: EditField[] }) {
+  return <Disclosure kind="edit" label={label}>{(close) => <PatchFields url={url} fields={fields} close={close} />}</Disclosure>;
+}
+
+/** Rename tables and change their seats, all tables of an area in one panel; each changed table is saved. */
+function TablesFields({ tables, close }: { tables: { id: string; code: string; seats: number }[]; close: () => void }) {
+  const { t } = useT();
+  const router = useRouter();
+  const { pending, submit, error } = useSubmit();
+  const [failed, setFailed] = useState<string | null>(null);
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    setFailed(null);
+    for (const tb of tables) {
+      const code = text(f, `code.${tb.id}`);
+      const seats = text(f, `seats.${tb.id}`);
+      const body: Record<string, unknown> = {};
+      if (code !== tb.code) body.code = code;
+      if (seats !== String(tb.seats)) body.seats = /^\d+$/.test(seats) ? Number(seats) : seats;
+      if (Object.keys(body).length === 0) continue;
+      const r = await submit('PATCH', `/api/v1/restaurant-tables/${tb.id}`, body, { refresh: false });
+      if (!r.ok) {
+        setFailed(tb.code);
+        router.refresh();
+        return;
+      }
+    }
+    router.refresh();
+    close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-2" noValidate>
+      {tables.map((tb, i) => (
+        <div key={tb.id} className="grid grid-cols-2 gap-2">
+          <TextField label={t('rest.tableCode')} name={`code.${tb.id}`} defaultValue={tb.code} labelClassName={i > 0 ? 'sr-only' : undefined} />
+          <TextField label={t('rest.seats')} name={`seats.${tb.id}`} defaultValue={String(tb.seats)} inputMode="numeric" labelClassName={i > 0 ? 'sr-only' : undefined} />
+        </div>
+      ))}
+      <Actions pending={pending} general={failed ? `${failed}: ${error?.message ?? ''}` : null} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditTablesForm({ tables }: { tables: { id: string; code: string; seats: number }[] }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('rest.editTables')}>{(close) => <TablesFields tables={tables} close={close} />}</Disclosure>;
+}
+
 // ---------------------------------------------------------------- floor
 
 export function StationForm({ branchId }: { branchId: string }) {

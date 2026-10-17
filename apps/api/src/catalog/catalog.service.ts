@@ -37,7 +37,7 @@ type ProductRow = typeof products.$inferSelect;
 type VariantRow = typeof productVariants.$inferSelect;
 
 export interface ProductView extends ProductRow {
-  variants: (VariantRow & { barcodes: string[] })[];
+  variants: (VariantRow & { barcodes: string[]; barcodeIds: { id: string; code: string }[] })[];
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -212,6 +212,29 @@ export class CatalogService extends TenantService {
     });
   }
 
+  /** sku and display name per variant id ("Product — Variant"), archived included, for document lines. */
+  lookupVariants(auth: AuthContext, ids: string[]) {
+    this.assertCan(auth, 'catalog.read');
+    return this.read(auth, async (db) => {
+      const rows = await db
+        .select({
+          id: productVariants.id,
+          productId: products.id,
+          sku: productVariants.sku,
+          variantName: productVariants.name,
+          productName: products.name,
+          trackInventory: products.trackInventory,
+          archivedAt: sql<string | null>`coalesce(${productVariants.archivedAt}, ${products.archivedAt})`,
+        })
+        .from(productVariants)
+        .innerJoin(products, eq(products.id, productVariants.productId))
+        .where(inArray(productVariants.id, ids));
+      return {
+        data: rows.map(({ variantName, productName, ...r }) => ({ ...r, productName, name: variantName ? `${productName} — ${variantName}` : productName })),
+      };
+    });
+  }
+
   updateProduct(auth: AuthContext, id: string, input: UpdateProductInput) {
     this.assertCan(auth, 'catalog.manage');
     return this.mutate(auth, async (db) => {
@@ -374,7 +397,7 @@ export class CatalogService extends TenantService {
       .orderBy(asc(productVariants.createdAt));
     const codes = variants.length
       ? await db
-          .select({ variantId: barcodes.variantId, code: barcodes.code })
+          .select({ id: barcodes.id, variantId: barcodes.variantId, code: barcodes.code })
           .from(barcodes)
           .where(and(inArray(barcodes.variantId, variants.map((v) => v.id)), isNull(barcodes.archivedAt)))
       : [];
@@ -382,7 +405,11 @@ export class CatalogService extends TenantService {
       ...p,
       variants: variants
         .filter((v) => v.productId === p.id)
-        .map((v) => ({ ...v, barcodes: codes.filter((c) => c.variantId === v.id).map((c) => c.code) })),
+        .map((v) => {
+          const mine = codes.filter((c) => c.variantId === v.id);
+          // `barcodeIds` sits beside the plain codes so an editor can archive one (POST /barcodes/:id/archive).
+          return { ...v, barcodes: mine.map((c) => c.code), barcodeIds: mine.map(({ id, code }) => ({ id, code })) };
+        }),
     }));
   }
 

@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type Branch, type LegalEntity, type Me, type Register, type Terminal } from '@/lib/api';
 import { formatDateTime, formatTin } from '@/lib/format';
@@ -45,7 +46,7 @@ export default async function LocationsPage() {
               <tbody>
                 {entities.data.map((e) => (
                   <tr key={e.id} className={e.archivedAt ? 'text-muted' : ''}>
-                    <td className="font-semibold">{e.registeredName}</td>
+                    <td><Link href={`/locations/entities/${e.id}`} className="font-semibold underline">{e.registeredName}</Link></td>
                     <td><Serial className="text-ink">{formatTin(e.tin)}</Serial></td>
                     <td>{e.vatStatus === 'VAT' ? t('loc.vatReg') : t('loc.nonVat')}</td>
                     <td><span className="tag">{e.archivedAt ? t('common.archived') : t('common.active')}</span></td>

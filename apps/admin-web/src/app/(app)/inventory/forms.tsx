@@ -57,6 +57,26 @@ export function ReorderForm(props: { branchId: string; variants: VariantOption[]
   return <Disclosure label={t('inv.setReorder')}>{(close) => <ReorderFields close={close} {...props} />}</Disclosure>;
 }
 
+/** Stop watching an item's stock level at this branch (the point is removed, not set to zero). */
+export function RemoveReorderPoint({ branchId, variantId, name }: { branchId: string; variantId: string; name: string }) {
+  const { t } = useT();
+  const { pending, submit, error } = useSubmit();
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        className="btn h-8 px-2.5 text-[0.8125rem]"
+        disabled={pending}
+        aria-label={`${t('inv.removeReorder')}: ${name}`}
+        onClick={() => void submit('PUT', '/api/v1/stock/reorder-points', { branchId, items: [{ variantId, reorderPoint: null }] })}
+      >
+        {t('inv.removeReorder')}
+      </button>
+      <FormError message={error?.message} />
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------- transfer
 function TransferFields({ close, from, destinations, variants }: { close: () => void; from: Branch; destinations: Branch[]; variants: VariantOption[] }) {
   const { t } = useT();

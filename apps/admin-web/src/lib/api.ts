@@ -45,6 +45,47 @@ export async function apiOrNull<T>(path: string): Promise<T | null> {
   }
 }
 
+/**
+ * Every product (following the API's cursor, 200 a page) for pickers and name lookups, so nothing
+ * past the first page goes missing. Null when the person cannot read the catalogue.
+ */
+export async function allProducts(): Promise<{ data: Product[] } | null> {
+  const data: Product[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 50; page++) {
+    const r: { data: Product[]; nextCursor: string | null } | null = await apiOrNull(`/products?limit=200${cursor ? `&cursor=${cursor}` : ''}`);
+    if (!r) return page === 0 ? null : { data };
+    data.push(...r.data);
+    cursor = r.nextCursor;
+    if (!cursor) break;
+  }
+  return { data };
+}
+
+export interface VariantName {
+  id: string;
+  productId: string;
+  sku: string;
+  name: string;
+  productName: string;
+  trackInventory: boolean;
+  archivedAt: string | null;
+}
+
+/**
+ * "SKU · Name" for the variants a document names, however large the catalogue (no first-200 limit).
+ * Empty when the person cannot read the catalogue; callers show "—".
+ */
+export async function variantNamesById(ids: string[]): Promise<Map<string, VariantName>> {
+  const unique = [...new Set(ids)];
+  const out = new Map<string, VariantName>();
+  for (let i = 0; i < unique.length; i += 200) {
+    const page = await apiOrNull<{ data: VariantName[] }>(`/variants?ids=${unique.slice(i, i + 200).join(',')}`);
+    for (const v of page?.data ?? []) out.set(v.id, v);
+  }
+  return out;
+}
+
 // ---- response shapes used by the admin (subset of the API) ----
 export interface Me {
   userId: string;
@@ -112,8 +153,16 @@ export interface Product {
   soldBy: string;
   trackInventory: boolean;
   categoryId: string | null;
+  uomId?: string;
   archivedAt: string | null;
   variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null }[];
+}
+/** One product as GET /products/:id returns it (the editor's view). */
+export interface ProductDetail extends Omit<Product, 'variants'> {
+  description: string | null;
+  taxCategoryId: string;
+  uomId: string;
+  variants: { id: string; sku: string; name: string | null; referenceCost: string | null; barcodes: string[]; barcodeIds: { id: string; code: string }[]; archivedAt: string | null }[];
 }
 export interface PriceList {
   id: string;
@@ -122,6 +171,8 @@ export interface PriceList {
   pricesIncludeTax: boolean;
   isDefault: boolean;
   archivedAt: string | null;
+  /** Branches assigned this list; a branch with none uses the default list. */
+  branchIds: string[];
 }
 export interface CurrentPrice {
   priceId: string;
@@ -137,13 +188,14 @@ export interface Member {
   membershipId: string;
   status: string;
   user: { id: string; email: string; displayName: string };
-  roles: { roleKey: string; scopeType: string; scopeId: string | null }[];
+  roles: { roleId: string; roleKey: string; scopeType: string; scopeId: string | null }[];
 }
 export interface Role {
   id: string;
   key: string;
   name: string;
   isSystem: boolean;
+  archivedAt: string | null;
   permissions: string[];
 }
 export interface Invitation {
@@ -175,6 +227,8 @@ export interface Supplier {
   tin: string | null;
   email: string | null;
   phone: string | null;
+  address?: string | null;
+  notes?: string | null;
   paymentTermsDays: number;
   archivedAt: string | null;
 }
@@ -227,7 +281,85 @@ export interface GoodsReceiptRow {
 export interface GoodsReceipt extends Omit<GoodsReceiptRow, 'supplierName'> {
   notes: string | null;
   receivedValue: string;
-  lines: { id: string; purchaseOrderLineId: string | null; variantId: string; quantity: string; rejectedQuantity: string; rejectionReason: string | null; unitCost: string; lineValue: string }[];
+  lines: { id: string; purchaseOrderLineId: string | null; variantId: string; quantity: string; rejectedQuantity: string; returnedQuantity: string; rejectionReason: string | null; unitCost: string; lineValue: string }[];
+  returns: { id: string; returnNumber: number; reason: string; createdAt: string }[];
+}
+// ---- tax profiles (ADR-0008): versioned, effective-dated, never backdated ----
+export interface TaxProfile {
+  id: string;
+  legalEntityId: string;
+  effectiveFrom: string;
+  vatStatus: 'VAT' | 'NON_VAT';
+  vatRate: string;
+  percentageTaxRate: string;
+  roundingMode: 'HALF_UP' | 'HALF_EVEN';
+  note: string | null;
+  createdAt: string;
+  state: 'IN_FORCE' | 'SCHEDULED' | 'SUPERSEDED';
+}
+
+// ---- sales, returns and shifts (admin document pages) ----
+type Buckets = { gross: string; discount: string; statutoryDiscount: string; vatExemptionAmount: string; vatableSales: string; vatAmount: string; vatExemptSales: string; zeroRatedSales: string; percentageTaxSales: string };
+export interface Sale extends Buckets {
+  id: string;
+  legalEntityId: string;
+  branchId: string;
+  registerId: string;
+  cashierSessionId: string;
+  cashierUserId: string;
+  saleNumber: number;
+  status: string;
+  origin: string;
+  offlineReference: string | null;
+  orderBillId: string | null;
+  amountDue: string;
+  amountTendered: string;
+  changeDue: string;
+  completedAt: string;
+  lines: (Buckets & { id: string; lineNo: number; variantId: string; name: string; quantity: string; unitPrice: string; amountDue: string; returnedQuantity: string; parentLineId: string | null })[];
+  charges: { id: string; kind: string; rate: string; amountDue: string }[];
+  tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
+}
+export interface SaleReturnDoc extends Buckets {
+  id: string;
+  saleId: string;
+  cashierSessionId: string;
+  kind: 'RETURN' | 'VOID';
+  returnNumber: number;
+  reason: string;
+  processedBy: string;
+  amountDue: string;
+  refundMethod: string | null;
+  createdAt: string;
+  lines: { id: string; saleLineId: string; quantity: string; disposition: string; amountDue: string }[];
+}
+export interface CashierSession {
+  id: string;
+  branchId: string;
+  registerId: string;
+  openedBy: string;
+  openedAt: string;
+  openingFloat: string;
+  status: 'OPEN' | 'CLOSED' | 'RECONCILED';
+  closedBy: string | null;
+  closedAt: string | null;
+  expectedCash: string;
+  movements: { type: string; total: string; count: number }[];
+  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
+  sales: { count: number; total: string };
+  reconciliation: { expectedCash: string; countedCash: string; variance: string; countedBy: string; note: string | null; approvedBy: string | null; approvedAt: string | null; approvalNote: string | null } | null;
+}
+
+export interface SupplierReturn {
+  id: string;
+  branchId: string;
+  supplierId: string;
+  goodsReceiptId: string | null;
+  returnNumber: number;
+  reason: string;
+  createdAt: string;
+  creditValue: string;
+  lines: { id: string; goodsReceiptLineId: string | null; variantId: string; quantity: string; creditUnitCost: string; creditValue: string }[];
 }
 
 // ---- inventory (Phase 3) ----

@@ -67,6 +67,11 @@ export class InventoryController {
     return this.inventory.getCount(auth, countId);
   }
 
+  @Get('stock/reorder-points')
+  listReorderPoints(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) q: BranchQuery) {
+    return this.inventory.listReorderPoints(auth, q);
+  }
+
   @Put('stock/reorder-points')
   setReorderPoints(@Auth() auth: AuthContext, @Body(new ZodPipe(setReorderPointsSchema)) body: SetReorderPointsInput) {
     return this.inventory.setReorderPoints(auth, body);

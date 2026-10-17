@@ -2,6 +2,7 @@ import { Check, ChevronRight } from 'lucide-react';
 import Link from 'next/link';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import {
+  allProducts,
   apiOrNull,
   type Branch,
   type CurrentPrice,
@@ -9,7 +10,6 @@ import {
   type LegalEntity,
   type Member,
   type PriceList,
-  type Product,
   type Register,
   type Subscription,
   type Terminal,
@@ -29,7 +29,7 @@ export default async function OverviewPage() {
     apiOrNull<List<Branch>>('/branches'),
     apiOrNull<List<Register>>('/registers'),
     apiOrNull<List<Terminal>>('/terminals'),
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
     apiOrNull<List<PriceList>>('/price-lists'),
     apiOrNull<List<Member>>('/members'),
     apiOrNull<List<Invitation>>('/invitations'),

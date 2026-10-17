@@ -115,6 +115,15 @@ export const productListQuerySchema = z.object({
 });
 export type ProductListQuery = z.infer<typeof productListQuerySchema>;
 
+/** Names for document lines that carry only variant ids (archived ones included): `?ids=a,b,c`. */
+export const variantLookupQuerySchema = z.object({
+  ids: z
+    .string()
+    .transform((s) => [...new Set(s.split(',').map((x) => x.trim()).filter(Boolean))])
+    .pipe(z.array(z.uuid()).min(1).max(200)),
+});
+export type VariantLookupQuery = z.infer<typeof variantLookupQuerySchema>;
+
 export const lookupQuerySchema = z.object({
   code: z.string().trim().min(1).max(64),
   branchId: z.uuid(),

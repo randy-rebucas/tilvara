@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
-import { api, apiOrNull, type Branch, type KitchenStation, type Menu, type MenuVersion, type ModifierGroup, type Product } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Branch, type KitchenStation, type Menu, type MenuVersion, type ModifierGroup } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { branchLabel, isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
@@ -22,7 +22,7 @@ export default async function MenuPage({ params }: { params: Promise<{ id: strin
     menu.draft ? api<MenuVersion>(`/menu-versions/${menu.draft.id}`) : null,
     menu.published ? api<MenuVersion>(`/menu-versions/${menu.published.id}`) : null,
     apiOrNull<{ data: ModifierGroup[] }>('/modifier-groups'),
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
     apiOrNull<{ data: Branch[] }>('/branches'),
   ]);
   // Station codes offered for routing: those of every branch (a menu is tenant-wide).

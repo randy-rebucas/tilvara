@@ -4,12 +4,12 @@ import { ActionButton, ReasonAction } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, type Branch, type Me, type PurchaseOrder } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrder, type Supplier } from '@/lib/api';
 import { formatDate, formatDateTime, peso, qty, signOf } from '@/lib/format';
-import { branchLabel, docNo, isUuid } from '@/lib/options';
+import { branchLabel, docNo, isUuid, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
-import { ReceiveForm } from '../../forms';
+import { EditDraftForm, ReceiveForm } from '../../forms';
 
 export const metadata = { title: 'Purchase order' };
 
@@ -25,6 +25,8 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
   if (!order) notFound();
   const perms = me.activeTenant?.permissions ?? [];
   const canManage = perms.includes('purchasing.manage');
+  const editing = canManage && order.status === 'DRAFT';
+  const [suppliers, products] = editing ? await Promise.all([apiOrNull<{ data: Supplier[] }>('/suppliers'), allProducts()]) : [null, null];
   const canReceive = canManage || perms.includes('inventory.adjust');
   const receiving = order.status === 'APPROVED' || order.status === 'PARTIALLY_RECEIVED';
   const base = `/api/v1/purchase-orders/${order.id}`;
@@ -57,6 +59,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
 
       {/* Receiving opens full width in its own row, so the other actions never wrap around the panel. */}
       {canReceive && receiving && <div><ReceiveForm order={order} /></div>}
+      {editing && <div><EditDraftForm order={order} suppliers={suppliers?.data ?? []} variants={variantOptions(products?.data)} /></div>}
       {canManage && (
         <div className="flex flex-wrap items-start gap-2">
           {order.status === 'DRAFT' && <ActionButton url={`${base}/approve`} label={t('pur.approve')} primary />}

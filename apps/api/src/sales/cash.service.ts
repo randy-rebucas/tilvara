@@ -149,6 +149,17 @@ export class CashService extends TenantService {
     });
   }
 
+  /** One drawer movement by id (a pay-in/out's journal entry points here), with its session id. */
+  getMovement(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [row] = await db.select().from(cashMovements).where(eq(cashMovements.id, id));
+      if (!row) throw notFound('Cash movement');
+      const { session, scope } = await loadSession(db, row.cashierSessionId);
+      this.assertCanSee(auth, session, scope);
+      return { ...row, amount: money(row.amount) };
+    });
+  }
+
   addMovement(auth: AuthContext, id: string, input: CashMovementInput) {
     return this.mutate(auth, async (db) => {
       const { session, scope } = await loadSession(db, id, true);
@@ -285,9 +296,16 @@ export class CashService extends TenantService {
       sql`SELECT count(*)::int AS count, sum(amount_due)::text AS total FROM sales WHERE cashier_session_id = ${s.id}`,
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
+    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry).
+    const payInOut = await db
+      .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
+      .from(cashMovements)
+      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT'])))
+      .orderBy(cashMovements.createdAt, cashMovements.id);
     return {
       ...base,
       movements: byType.map((m) => ({ type: m.type, total: money(m.total), count: m.count })),
+      payInOut: payInOut.map((m) => ({ ...m, amount: money(m.amount) })),
       sales: { count: salesAgg[0]!.count, total: money(salesAgg[0]!.total ?? '0') },
       reconciliation: rec
         ? { ...rec, expectedCash: money(rec.expectedCash), countedCash: money(rec.countedCash), variance: money(rec.variance) }

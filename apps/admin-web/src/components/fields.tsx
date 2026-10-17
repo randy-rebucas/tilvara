@@ -7,13 +7,14 @@ export function TextField({
   label,
   hint,
   error,
+  labelClassName,
   ...props
-}: { label: string; hint?: string; error?: string | undefined } & InputHTMLAttributes<HTMLInputElement>) {
+}: { label: string; hint?: string; error?: string | undefined; /** e.g. `sr-only` on repeated rows. */ labelClassName?: string } & InputHTMLAttributes<HTMLInputElement>) {
   const id = useId();
   const hintId = `${id}-hint`;
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id} className={labelClassName}>{label}</label>
       <input
         id={id}
         className="input"

@@ -1,22 +1,23 @@
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type LowStockRow, type Me, type Product, type Valuation } from '@/lib/api';
+import { allProducts, api, apiOrNull, type LowStockRow, type Me, type Valuation } from '@/lib/api';
 import { peso, qty, signOf } from '@/lib/format';
 import { variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from './chrome';
-import { ReorderForm } from './forms';
+import { RemoveReorderPoint, ReorderForm } from './forms';
 
 export const metadata = { title: 'Inventory' };
 
 export default async function StockPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t } = await getT();
   const { branches, branch } = await inventoryBranch((await searchParams).branch);
-  const [me, valuation, low, products] = await Promise.all([
+  const [me, valuation, low, points, products] = await Promise.all([
     api<Me>('/me'),
     branch ? apiOrNull<Valuation>(`/reports/inventory-valuation?branchId=${branch.id}`) : null,
     branch ? apiOrNull<{ data: LowStockRow[] }>(`/stock/low?branchId=${branch.id}`) : null,
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    branch ? apiOrNull<{ data: LowStockRow[] }>(`/stock/reorder-points?branchId=${branch.id}`) : null,
+    allProducts(),
   ]);
   const perms = me.activeTenant?.permissions ?? [];
   const canReorder = perms.includes('purchasing.manage') || perms.includes('inventory.adjust');
@@ -97,6 +98,33 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
             />
           ) : (
             <Empty>{low ? t('inv.noLow') : t('common.noAccess')}</Empty>
+          )}
+        </Note>
+      </section>
+
+      <section>
+        <h2 className="section-title mb-3">{t('inv.allReorder')}</h2>
+        <Note denom="gold" className="pr-2">
+          {points && points.data.length > 0 ? (
+            <RecordTable
+              rows={points.data}
+              rowKey={(r) => r.variantId}
+              columns={[
+                { header: t('prod.sku'), cell: (r) => <Serial className="text-ink">{r.sku}</Serial> },
+                { header: t('common.item'), cell: (r) => r.name },
+                { header: t('inv.onHand'), num: true, cell: (r) => qty(r.quantity) },
+                { header: t('inv.reorderPoint'), num: true, cell: (r) => <b>{qty(r.reorderPoint)}</b> },
+                { header: t('inv.reorderQty'), num: true, cell: (r) => (r.reorderQuantity ? qty(r.reorderQuantity) : '—') },
+                ...(canReorder && branch ? [{ header: '', cell: (r: LowStockRow) => <RemoveReorderPoint branchId={branch.id} variantId={r.variantId} name={r.name} /> }] : []),
+              ]}
+              stacked={{
+                title: (r) => r.name,
+                meta: (r) => <Serial>{r.sku} · {t('inv.onHand')} {qty(r.quantity)} · {t('inv.reorderPoint')} {qty(r.reorderPoint)}</Serial>,
+                figure: (r) => (canReorder && branch ? <RemoveReorderPoint branchId={branch.id} variantId={r.variantId} name={r.name} /> : null),
+              }}
+            />
+          ) : (
+            <Empty>{points ? t('inv.noReorder') : t('common.noAccess')}</Empty>
           )}
         </Note>
       </section>

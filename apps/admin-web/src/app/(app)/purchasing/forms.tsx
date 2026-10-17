@@ -7,8 +7,8 @@ import { FormError, SelectField, TextField } from '@/components/fields';
 import { compact, LineItems, readLines, type VariantOption } from '@/components/line-items';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
-import type { Branch, PurchaseOrder, Supplier } from '@/lib/api';
-import { qty, signOf } from '@/lib/format';
+import type { Branch, GoodsReceipt, PurchaseOrder, Supplier } from '@/lib/api';
+import { peso, qty, signOf, subtractQty } from '@/lib/format';
 
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null; submitLabel: string; close: () => void }) {
   const { t } = useT();
@@ -27,32 +27,36 @@ const orNull = (s: string) => (s === '' ? null : s);
 const isZero = (s: string | undefined) => s === undefined || /^0*(\.0*)?$/.test(s);
 
 // ---------------------------------------------------------------- supplier
-function SupplierFields({ close }: { close: () => void }) {
+/** Add a supplier, or edit one (`supplier` given: PATCH with every field, blanks cleared). */
+function SupplierFields({ close, supplier }: { close: () => void; supplier?: Supplier }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const terms = text(f, 'paymentTermsDays');
-    const r = await submit('POST', '/api/v1/suppliers', {
+    const body = {
       code: text(f, 'code'),
       name: text(f, 'name'),
       tin: orNull(text(f, 'tin')),
       phone: orNull(text(f, 'phone')),
       email: orNull(text(f, 'email')),
-      ...(terms ? { paymentTermsDays: Number(terms) } : {}),
-    }, { idempotent: true });
+      ...(terms ? { paymentTermsDays: Number(terms) } : supplier ? { paymentTermsDays: 0 } : {}),
+    };
+    const r = supplier
+      ? await submit('PATCH', `/api/v1/suppliers/${supplier.id}`, body)
+      : await submit('POST', '/api/v1/suppliers', body, { idempotent: true });
     if (r.ok) close();
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
-      <TextField label={t('pur.supplierName')} name="name" required autoFocus error={fieldError('name')} />
-      <TextField label={t('pur.supplierCode')} name="code" required placeholder="SUP-01" error={fieldError('code')} />
-      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" error={fieldError('tin')} />
-      <TextField label={`${t('pur.phone')} (${t('common.optional')})`} name="phone" type="tel" error={fieldError('phone')} />
-      <TextField label={`${t('auth.email')} (${t('common.optional')})`} name="email" type="email" error={fieldError('email')} />
-      <TextField label={t('pur.terms')} name="paymentTermsDays" inputMode="numeric" placeholder="0" error={fieldError('paymentTermsDays')} />
-      <Actions pending={pending} general={general(error)} submitLabel={t('common.create')} close={close} />
+      <TextField label={t('pur.supplierName')} name="name" required autoFocus defaultValue={supplier?.name} error={fieldError('name')} />
+      <TextField label={t('pur.supplierCode')} name="code" required placeholder="SUP-01" defaultValue={supplier?.code} error={fieldError('code')} />
+      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" defaultValue={supplier?.tin ?? ''} error={fieldError('tin')} />
+      <TextField label={`${t('pur.phone')} (${t('common.optional')})`} name="phone" type="tel" defaultValue={supplier?.phone ?? ''} error={fieldError('phone')} />
+      <TextField label={`${t('auth.email')} (${t('common.optional')})`} name="email" type="email" defaultValue={supplier?.email ?? ''} error={fieldError('email')} />
+      <TextField label={t('pur.terms')} name="paymentTermsDays" inputMode="numeric" placeholder="0" defaultValue={supplier ? String(supplier.paymentTermsDays) : undefined} error={fieldError('paymentTermsDays')} />
+      <Actions pending={pending} general={general(error)} submitLabel={supplier ? t('common.save') : t('common.create')} close={close} />
     </form>
   );
 }
@@ -60,6 +64,11 @@ function SupplierFields({ close }: { close: () => void }) {
 export function AddSupplierForm() {
   const { t } = useT();
   return <Disclosure label={t('pur.addSupplier')}>{(close) => <SupplierFields close={close} />}</Disclosure>;
+}
+
+export function EditSupplierForm({ supplier }: { supplier: Supplier }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('pur.editSupplier')}>{(close) => <SupplierFields close={close} supplier={supplier} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- purchase order
@@ -113,6 +122,107 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
 export function NewOrderForm(props: { branches: Branch[]; suppliers: Supplier[]; variants: VariantOption[] }) {
   const { t } = useT();
   return <Disclosure label={t('pur.newOrder')}>{(close) => <OrderFields close={close} {...props} />}</Disclosure>;
+}
+
+/** A draft's supplier, date, reference and lines; the lines sent replace all lines. */
+function DraftFields({ close, order, suppliers, variants }: { close: () => void; order: PurchaseOrder; suppliers: Supplier[]; variants: VariantOption[] }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, error } = useSubmit();
+  // An item no longer in the first page of products still shows on its own line.
+  const options = [...variants, ...order.lines.filter((l) => !variants.some((v) => v.id === l.variantId)).map((l) => ({ id: l.variantId, label: `${l.sku} · ${l.name}` }))];
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('PATCH', `/api/v1/purchase-orders/${order.id}`, {
+      supplierId: f.get('supplierId'),
+      expectedOn: orNull(text(f, 'expectedOn')),
+      supplierRef: orNull(text(f, 'supplierRef')),
+      lines: readLines(f, ['variantId', 'quantity', 'unitCost']),
+    });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+      <SelectField label={t('pur.supplierOne')} name="supplierId" defaultValue={order.supplierId}>
+        {[...suppliers.filter((s) => s.id !== order.supplierId), order.supplier].map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+      </SelectField>
+      <TextField label={`${t('pur.expectedOn')} (${t('common.optional')})`} name="expectedOn" type="date" defaultValue={order.expectedOn ?? ''} error={fieldError('expectedOn')} />
+      <TextField label={`${t('pur.supplierRef')} (${t('common.optional')})`} name="supplierRef" defaultValue={order.supplierRef ?? ''} error={fieldError('supplierRef')} />
+      <LineItems
+        fields={[
+          { name: 'variantId', label: t('common.item'), kind: 'select' },
+          { name: 'quantity', label: t('common.quantity'), kind: 'decimal', placeholder: '0' },
+          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: '0.00' },
+        ]}
+        initial={order.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost }))}
+        options={options}
+        fieldError={fieldError}
+        addLabel={t('common.addLine')}
+        removeLabel={t('common.removeLine')}
+      />
+      <Actions pending={pending} general={general(error) ?? fieldError('lines') ?? null} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditDraftForm(props: { order: PurchaseOrder; suppliers: Supplier[]; variants: VariantOption[] }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('pur.editDraft')}>{(close) => <DraftFields close={close} {...props} />}</Disclosure>;
+}
+
+// ---------------------------------------------------------------- supplier return
+/** Send back part of a delivery: credited at the receipt's cost; at most what is still returnable. */
+function ReturnFields({ close, receipt, names }: { close: () => void; receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }> }) {
+  const { t } = useT();
+  const router = useRouter();
+  const key = useFormKey();
+  const { pending, submit, fieldError, error } = useSubmit();
+  const open = receipt.lines.filter((l) => signOf(subtractQty(l.quantity, l.returnedQuantity)) > 0);
+  const [sent, setSent] = useState<number[]>([]);
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const rows = open.map((l, i) => ({ row: i, line: { goodsReceiptLineId: l.id, variantId: l.variantId, quantity: text(f, `lines.${i}.quantity`) } }));
+    const kept = rows.filter((r) => !isZero(r.line.quantity || undefined));
+    setSent(kept.map((r) => r.row));
+    const r = await submit<{ id: string }>('POST', '/api/v1/supplier-returns', {
+      branchId: receipt.branchId,
+      supplierId: receipt.supplierId,
+      goodsReceiptId: receipt.id,
+      reason: text(f, 'reason'),
+      lines: kept.map((x) => x.line),
+    }, { idempotencyKey: key, refresh: false });
+    if (r.ok) {
+      close();
+      router.push(`/purchasing/returns/${r.data.id}`);
+    }
+  }
+  const lineError = (row: number) => (sent.includes(row) ? fieldError(`lines.${sent.indexOf(row)}.quantity`) : undefined);
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.returnHint')}</p>
+      <TextField label={t('common.reason')} name="reason" required autoFocus error={fieldError('reason')} />
+      <ul className="flex flex-col gap-3">
+        {open.map((l, i) => (
+          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] sm:items-end">
+            <div className="min-w-0">
+              <div className="font-semibold">{names[l.variantId]?.name ?? '—'}</div>
+              <div className="serial text-[0.8125rem] text-muted">
+                {names[l.variantId]?.sku} · {t('pur.returnable')} {qty(subtractQty(l.quantity, l.returnedQuantity))} · {peso(l.unitCost)}
+              </div>
+            </div>
+            <TextField label={t('pur.returnQty')} name={`lines.${i}.quantity`} inputMode="decimal" placeholder="0" error={lineError(i)} />
+          </li>
+        ))}
+      </ul>
+      <Actions pending={pending} general={general(error) ?? fieldError('lines') ?? null} submitLabel={t('pur.returnToSupplier')} close={close} />
+    </form>
+  );
+}
+
+export function ReturnForm(props: { receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }> }) {
+  const { t } = useT();
+  return <Disclosure label={t('pur.returnToSupplier')}>{(close) => <ReturnFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- receiving

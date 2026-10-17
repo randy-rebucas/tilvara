@@ -108,6 +108,22 @@ describe('products', () => {
     expect(wild.body.data).toEqual([]);
   });
 
+  it('names variants by id for document lines, archived ones included', async () => {
+    const p = await shop('lookup');
+    const one = (await http().post('/v1/products').set(p.auth).send(product(p, { name: 'Tide Bar' })).expect(201)).body;
+    const two = (await http().post('/v1/products').set(p.auth).send({ ...product(p, { name: 'Pancit' }), variants: [{ sku: uniq('PC'), name: 'Chili', price: '16.50' }] }).expect(201)).body;
+    await http().post(`/v1/products/${one.id}/archive`).set(p.auth).expect(200);
+    const v1 = one.variants[0].id as string;
+    const v2 = two.variants[0].id as string;
+    const res = (await http().get('/v1/variants').query({ ids: `${v1},${v2},${v1}` }).set(p.auth).expect(200)).body.data;
+    expect(res).toHaveLength(2);
+    expect(res.find((v: { id: string }) => v.id === v1)).toMatchObject({ name: 'Tide Bar', productId: one.id, sku: one.variants[0].sku });
+    expect(res.find((v: { id: string }) => v.id === v1).archivedAt).toBeTruthy();
+    expect(res.find((v: { id: string }) => v.id === v2)).toMatchObject({ name: 'Pancit — Chili', archivedAt: null });
+    await http().get('/v1/variants').query({ ids: 'not-an-id' }).set(p.auth).expect(400);
+    await http().get('/v1/variants').set(p.auth).expect(400);
+  });
+
   it('paginates with a cursor', async () => {
     const p = await shop('paging');
     for (let i = 0; i < 3; i++) await http().post('/v1/products').set(p.auth).send(product(p, { name: `Item ${i}` })).expect(201);
@@ -207,6 +223,10 @@ describe('pricing & POS lookup', () => {
     const mall = await http().post('/v1/price-lists').set(s.auth).send({ name: 'Mall pricing' }).expect(201);
     await http().post(`/v1/price-lists/${mall.body.id}/prices`).set(s.auth).send({ items: [{ variantId, amount: '25.00' }] }).expect(201);
     await http().put(`/v1/branches/${s.branchId}/price-list`).set(s.auth).send({ priceListId: mall.body.id }).expect(200);
+    // The list says which branches use it (the admin shows "Used at").
+    const lists = (await http().get('/v1/price-lists').set(s.auth).expect(200)).body.data as { id: string; isDefault: boolean; branchIds: string[] }[];
+    expect(lists.find((l) => l.id === mall.body.id)!.branchIds).toEqual([s.branchId]);
+    expect(lists.find((l) => l.isDefault)!.branchIds).toEqual([]);
 
     const inMall = await http().get('/v1/catalog/lookup').query({ code: barcode, branchId: s.branchId }).set(s.auth).expect(200);
     expect(inMall.body.price.amount).toBe('25.0000');

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Empty, Note, Serial } from '@/components/note';
-import { apiOrNull, type Product, type RecipeVersion } from '@/lib/api';
+import { allProducts, apiOrNull, type RecipeVersion, type Uom } from '@/lib/api';
 import { formatDateTime, qty } from '@/lib/format';
 import { isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
@@ -17,10 +17,12 @@ export default async function RecipePage({ params }: { params: Promise<{ variant
   const { variantId } = await params;
   if (!isUuid(variantId)) notFound();
   const { t, lang } = await getT();
-  const [history, products] = await Promise.all([
+  const [history, products, uoms] = await Promise.all([
     apiOrNull<{ data: RecipeVersion[] }>(`/variants/${variantId}/recipe`),
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
+    apiOrNull<{ data: Uom[] }>('/uoms'),
   ]);
+  const units = new Map(uoms?.data.map((u) => [u.id, u.code]));
   if (!history) notFound();
   const product = products?.data.find((p) => p.variants.some((v) => v.id === variantId));
   const variant = product?.variants.find((v) => v.id === variantId);
@@ -36,7 +38,7 @@ export default async function RecipePage({ params }: { params: Promise<{ variant
       {product?.trackInventory ? (
         <Note><Empty>{t('rest.tracksStock')}</Empty></Note>
       ) : (
-        <div><RecipeForm variantId={variantId} ingredients={variantOptions(products?.data, { stocked: true })} /></div>
+        <div><RecipeForm variantId={variantId} ingredients={variantOptions(products?.data, { stocked: true, units })} /></div>
       )}
       {history.data.length === 0 ? (
         <Note><Empty>{t('rest.noRecipe')}</Empty></Note>

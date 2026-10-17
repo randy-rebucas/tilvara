@@ -131,6 +131,16 @@ export class SalesController {
     return this.returns.list(auth, saleId);
   }
 
+  @Get('sale-returns/:id')
+  getReturn(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
+    return this.returns.get(auth, returnId);
+  }
+
+  @Get('cash-movements/:id')
+  getCashMovement(@Auth() auth: AuthContext, @Param('id', id) movementId: string) {
+    return this.cash.getMovement(auth, movementId);
+  }
+
   @Get('sales/:id/receipt')
   receipt(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
     return this.sales.receipt(auth, saleId);

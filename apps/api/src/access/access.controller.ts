@@ -19,6 +19,7 @@ export class AccessController {
           userId: users.id,
           email: users.email,
           displayName: users.displayName,
+          roleId: roles.id,
           roleKey: roles.key,
           scopeType: membershipRoles.scopeType,
           scopeId: membershipRoles.scopeId,
@@ -28,12 +29,13 @@ export class AccessController {
         .leftJoin(membershipRoles, eq(membershipRoles.membershipId, tenantMemberships.id))
         .leftJoin(roles, eq(roles.id, membershipRoles.roleId))
         .orderBy(asc(users.displayName));
-      const byId = new Map<string, { membershipId: string; status: string; user: { id: string; email: string; displayName: string }; roles: { roleKey: string; scopeType: string; scopeId: string | null }[] }>();
+      type Assignment = { roleId: string; roleKey: string; scopeType: string; scopeId: string | null };
+      const byId = new Map<string, { membershipId: string; status: string; user: { id: string; email: string; displayName: string }; roles: Assignment[] }>();
       for (const r of rows) {
         const m =
           byId.get(r.membershipId) ??
           { membershipId: r.membershipId, status: r.status, user: { id: r.userId, email: r.email, displayName: r.displayName }, roles: [] };
-        if (r.roleKey && r.scopeType) m.roles.push({ roleKey: r.roleKey, scopeType: r.scopeType, scopeId: r.scopeId });
+        if (r.roleId && r.roleKey && r.scopeType) m.roles.push({ roleId: r.roleId, roleKey: r.roleKey, scopeType: r.scopeType, scopeId: r.scopeId });
         byId.set(r.membershipId, m);
       }
       return { data: [...byId.values()] };
@@ -45,13 +47,13 @@ export class AccessController {
   roles(@Auth() auth: AuthContext) {
     return this.tenantDb.run(auth, async (db) => {
       const rows = await db
-        .select({ id: roles.id, key: roles.key, name: roles.name, isSystem: roles.isSystem, permission: rolePermissions.permissionCode })
+        .select({ id: roles.id, key: roles.key, name: roles.name, isSystem: roles.isSystem, archivedAt: roles.archivedAt, permission: rolePermissions.permissionCode })
         .from(roles)
         .leftJoin(rolePermissions, eq(rolePermissions.roleId, roles.id))
         .orderBy(asc(roles.name));
-      const byId = new Map<string, { id: string; key: string; name: string; isSystem: boolean; permissions: string[] }>();
+      const byId = new Map<string, { id: string; key: string; name: string; isSystem: boolean; archivedAt: Date | null; permissions: string[] }>();
       for (const r of rows) {
-        const role = byId.get(r.id) ?? { id: r.id, key: r.key, name: r.name, isSystem: r.isSystem, permissions: [] };
+        const role = byId.get(r.id) ?? { id: r.id, key: r.key, name: r.name, isSystem: r.isSystem, archivedAt: r.archivedAt, permissions: [] };
         if (r.permission) role.permissions.push(r.permission);
         byId.set(r.id, role);
       }

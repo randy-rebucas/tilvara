@@ -3,7 +3,7 @@ import { RecordTable } from '@/components/record-table';
 import { apiOrNull, type DiningArea, type KitchenStation } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome, restaurantBranch } from './chrome';
-import { AreaForm, RowAction, StationForm, TableForm } from './forms';
+import { AreaForm, EditRecord, EditTablesForm, RowAction, StationForm, TableForm } from './forms';
 
 export const metadata = { title: 'Restaurant' };
 
@@ -40,7 +40,8 @@ export default async function FloorPage({ searchParams }: { searchParams: Promis
                   header: <span className="sr-only">{t('common.actions')}</span>,
                   num: true,
                   cell: (s) => (
-                    <span className="inline-flex gap-2">
+                    <span className="inline-flex flex-wrap justify-end gap-2">
+                      <EditRecord label={t('rest.rename')} url={`/api/v1/kitchen-stations/${s.id}`} fields={[{ name: 'name', label: t('common.name'), value: s.name }]} />
                       {!s.isDefault && <RowAction method="PATCH" url={`/api/v1/kitchen-stations/${s.id}`} body={{ isDefault: true }} label={t('rest.makeDefault')} />}
                       <RowAction url={`/api/v1/kitchen-stations/${s.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: s.name })} />
                     </span>
@@ -50,7 +51,12 @@ export default async function FloorPage({ searchParams }: { searchParams: Promis
               stacked={{
                 title: (s) => <>{s.name} {s.isDefault && <span className="chip ml-1 bg-violet">{t('rest.default')}</span>}</>,
                 meta: (s) => <Serial className="text-violet">{s.code}</Serial>,
-                figure: (s) => <RowAction url={`/api/v1/kitchen-stations/${s.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: s.name })} />,
+                figure: (s) => (
+                  <span className="flex flex-col items-end gap-2">
+                    <EditRecord label={t('rest.rename')} url={`/api/v1/kitchen-stations/${s.id}`} fields={[{ name: 'name', label: t('common.name'), value: s.name }]} />
+                    <RowAction url={`/api/v1/kitchen-stations/${s.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: s.name })} />
+                  </span>
+                ),
               }}
             />
           ) : (
@@ -73,7 +79,10 @@ export default async function FloorPage({ searchParams }: { searchParams: Promis
               <Note key={a.id} denom="violet" className="flex flex-col gap-3 p-4 pr-6">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-[1.0625rem] font-semibold">{a.name} <Serial>· {t('rest.tableCount', { n: a.tables.length })}</Serial></h3>
-                  {a.tables.length === 0 && <RowAction url={`/api/v1/dining-areas/${a.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: a.name })} />}
+                  <span className="flex flex-wrap items-start gap-2">
+                    <EditRecord label={t('rest.rename')} url={`/api/v1/dining-areas/${a.id}`} fields={[{ name: 'name', label: t('rest.areaName'), value: a.name }]} />
+                    {a.tables.length === 0 && <RowAction url={`/api/v1/dining-areas/${a.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: a.name })} />}
+                  </span>
                 </div>
                 {a.tables.length > 0 && (
                   <ul className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2">
@@ -88,7 +97,10 @@ export default async function FloorPage({ searchParams }: { searchParams: Promis
                     ))}
                   </ul>
                 )}
-                <div><TableForm areaId={a.id} /></div>
+                <div className="flex flex-wrap items-start gap-2">
+                  <TableForm areaId={a.id} />
+                  {a.tables.length > 0 && <EditTablesForm tables={a.tables} />}
+                </div>
               </Note>
             ))}
           </div>

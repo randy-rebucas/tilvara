@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type CountRow, type Me, type Product } from '@/lib/api';
+import { allProducts, api, apiOrNull, type CountRow, type Me } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { docNo, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
@@ -16,7 +16,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   const [me, counts, products] = await Promise.all([
     api<Me>('/me'),
     branch ? apiOrNull<{ data: CountRow[] }>(`/stock/counts?branchId=${branch.id}`) : null,
-    apiOrNull<{ data: Product[] }>('/products?limit=200'),
+    allProducts(),
   ]);
   const canCount = me.activeTenant?.permissions.includes('inventory.adjust') ?? false;
   const href = (c: CountRow) => `/inventory/counts/${c.id}?branch=${branch?.id}`;

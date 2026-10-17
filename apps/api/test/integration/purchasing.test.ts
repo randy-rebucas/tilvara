@@ -206,6 +206,10 @@ describe('supplier returns', () => {
 
     const over = await ret({ goodsReceiptId: r2.id, reason: 'x', lines: [{ goodsReceiptLineId: r2.lines[0].id, variantId: s.cola, quantity: '8' }] }).expect(422);
     expect(over.body.error).toMatchObject({ code: 'RETURN_EXCEEDS_RECEIVED', details: { remaining: '7' } });
+    // The receipt shows what already went back, and its returns (the admin offers only the rest).
+    const shown = (await http().get(`/v1/goods-receipts/${r2.id}`).set(s.auth).expect(200)).body;
+    expect(shown.lines[0]).toMatchObject({ quantity: '10', returnedQuantity: '3' });
+    expect(shown.returns).toMatchObject([{ id: doc.id, returnNumber: 1, reason: 'Leaking' }]);
     const loose = (await ret({ reason: 'Short-dated', lines: [{ variantId: s.cola, quantity: '1' }] }).expect(201)).body;
     expect(loose.lines[0]).toMatchObject({ creditUnitCost: '12.0000' });
     await ret({ reason: 'x', lines: [{ variantId: s.cola, quantity: '1' }] }).set(s.manager).expect(403);

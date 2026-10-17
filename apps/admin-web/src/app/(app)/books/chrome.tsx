@@ -20,6 +20,11 @@ export function sourceHref(e: { sourceType: string; sourceId: string | null; rev
   if (!e.sourceId) return null;
   switch (e.sourceType) {
     case 'GOODS_RECEIPT': return `/purchasing/receipts/${e.sourceId}`;
+    case 'SUPPLIER_RETURN': return `/purchasing/returns/${e.sourceId}`;
+    case 'SALE': return `/sales/${e.sourceId}`;
+    case 'SALE_RETURN': return `/sales/returns/${e.sourceId}`;
+    case 'CASH_MOVEMENT': return `/shifts/movements/${e.sourceId}`;
+    case 'CASH_VARIANCE': return `/shifts/${e.sourceId}`;
     case 'TRANSFER_DISPATCH':
     case 'TRANSFER_RECEIPT': return `/inventory/transfers/${e.sourceId}`;
     case 'STOCK_COUNT': return `/inventory/counts/${e.sourceId}`;

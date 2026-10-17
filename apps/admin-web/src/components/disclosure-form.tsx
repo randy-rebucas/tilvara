@@ -1,15 +1,16 @@
 'use client';
 
-import { Plus } from 'lucide-react';
+import { Pencil, Plus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
-/** An inline "add" panel: the task stays in context instead of a modal. */
-export function Disclosure({ label, children }: { label: string; children: (close: () => void) => ReactNode }) {
+/** An inline "add" (or "edit") panel: the task stays in context instead of a modal. */
+export function Disclosure({ label, children, kind = 'add' }: { label: string; children: (close: () => void) => ReactNode; kind?: 'add' | 'edit' }) {
   const [open, setOpen] = useState(false);
   if (!open) {
+    const Icon = kind === 'edit' ? Pencil : Plus;
     return (
       <button type="button" className="btn" onClick={() => setOpen(true)}>
-        <Plus aria-hidden className="size-4" /> {label}
+        <Icon aria-hidden className="size-4" /> {label}
       </button>
     );
   }

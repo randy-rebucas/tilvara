@@ -1,10 +1,11 @@
+import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type Branch, type Invitation, type Me, type Member, type Role } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { en, type MessageKey } from '@/i18n/messages';
 import { RowAction } from '../locations/forms';
-import { InviteForm } from './forms';
+import { InviteForm, NewRoleForm } from './forms';
 
 export const metadata = { title: 'Team' };
 
@@ -21,6 +22,7 @@ export default async function TeamPage() {
   ]);
   const perms = me.activeTenant?.permissions ?? [];
   const canManage = perms.includes('members.manage');
+  const canManageRoles = perms.includes('roles.manage');
   const roleName = new Map(roles?.data.map((r) => [r.key, r.name]));
   const roleById = new Map(roles?.data.map((r) => [r.id, r.name]));
   const branchCode = new Map(branches?.data.map((b) => [b.id, b.code]));
@@ -49,7 +51,7 @@ export default async function TeamPage() {
                   return (
                     <tr key={m.membershipId} className={m.status !== 'ACTIVE' ? 'text-muted' : ''}>
                       <td>
-                        <span className="block font-semibold">{m.user.displayName}{isMe ? ` ${t('team.you')}` : ''}</span>
+                        <Link href={`/team/members/${m.membershipId}`} className="block font-semibold underline">{m.user.displayName}{isMe ? ` ${t('team.you')}` : ''}</Link>
                         <span className="text-[0.8125rem] text-muted">{m.user.email}</span>
                       </td>
                       <td>{m.roles.map((r) => roleName.get(r.roleKey) ?? r.roleKey).join(', ') || '—'}</td>
@@ -107,14 +109,17 @@ export default async function TeamPage() {
         </div>
 
         <div className="min-w-0">
-          <h2 className="section-title mb-3">{t('team.roles')}</h2>
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <h2 className="section-title pt-2">{t('team.roles')}</h2>
+            {canManageRoles && <NewRoleForm />}
+          </div>
           <Note className="overflow-x-auto">
             {roles ? (
               <ul>
-                {roles.data.map((r) => (
+                {roles.data.filter((r) => !r.archivedAt).map((r) => (
                   <li key={r.id} className="flex items-baseline justify-between gap-4 border-b border-hair-soft px-4 py-3 last:border-0">
                     <span>
-                      <span className="font-semibold">{r.name}</span>{' '}
+                      <Link href={`/team/roles/${r.id}`} className="font-semibold underline">{r.name}</Link>{' '}
                       {r.isSystem && <span className="tag ml-1">{t('team.system')}</span>}
                     </span>
                     <Serial>{t('team.perms', { n: r.permissions.length })}</Serial>
