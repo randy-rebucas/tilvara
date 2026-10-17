@@ -140,7 +140,10 @@ describe('sync', () => {
     const prices = (await http().get(`/v1/price-lists`).set(s.auth).expect(200)).body.data;
     const raised = await http().post(`/v1/price-lists/${prices[0].id}/prices`).set(s.auth).send({ items: [{ variantId: s.cola, amount: '25.00' }] });
     expect(raised.status).toBeLessThan(300);
-    const changed = (await sync(s.t1, [sale(s, snap)]).expect(200)).body.results[0];
+    // Sold after the rise by the DB clock: the host clock may run behind the DB's by more than the
+    // moment between the two calls, which would date the sale before the new price (correctly unflagged).
+    const [{ at }] = await sql<{ at: Date }>(s, `SELECT clock_timestamp() + interval '1 millisecond' AS at`);
+    const changed = (await sync(s.t1, [sale(s, snap, { occurredAt: at.toISOString() })]).expect(200)).body.results[0];
     expect([changed.status, changed.flags]).toEqual(['RECORDED', ['PRICE_CHANGED']]);
     expect((await http().get(`/v1/sales/${changed.saleId}`).set(s.cashier).expect(200)).body.amountDue).toBe('44.80'); // what the customer paid
 

@@ -93,7 +93,11 @@ export function usePayment({ shift, due, setNotice }: { shift: Shift; due: strin
    * not recorded (the notice says why). An unanswered request keeps its key; a duplicate transaction
    * resolves to the sale already recorded; TOTAL_CHANGED calls `onTotalChanged` to re-price.
    */
-  async function submit(send: (body: { clientTransactionId: string; tenders: Tender[] }, key: string) => Promise<{ id: string }>, onTotalChanged?: () => void): Promise<string | null> {
+  async function submit(
+    send: (body: { clientTransactionId: string; tenders: Tender[] }, key: string) => Promise<{ id: string }>,
+    onTotalChanged?: () => void,
+    onUnanswered?: () => void,
+  ): Promise<string | null> {
     if (busy.current) return null;
     busy.current = true;
     setSubmitting(true);
@@ -108,8 +112,9 @@ export function usePayment({ shift, due, setNotice }: { shift: Shift; due: strin
     } catch (err) {
       const recorded = err instanceof ApiFailure && err.error.code === 'DUPLICATE_TRANSACTION' ? err.error.details?.saleId : undefined;
       if (unanswered(err)) {
-        // Unknown outcome: keep the same key so retrying cannot create a second sale.
+        // Unknown outcome: keep the same key (and transaction id) so retrying cannot create a second sale.
         setNotice({ kind: 'warn', text: t('pay.unconfirmed') });
+        onUnanswered?.();
       } else if (typeof recorded === 'string') {
         // Already recorded (an earlier answer was lost): that sale is the result.
         setNotice(null);
@@ -141,8 +146,11 @@ export function usePayment({ shift, due, setNotice }: { shift: Shift; due: strin
 
 export type Payment = ReturnType<typeof usePayment>;
 
-/** Card/QR payments taken so far, cash with quick tenders and change, and the submit button. */
-export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit }: { pay: Payment; priced: boolean; submitLabel: string; onSubmit: () => void; canSubmit: boolean }) {
+/**
+ * Card/QR payments taken so far, cash with quick tenders and change, and the submit button.
+ * `cashOnly`: the desktop till is offline, so card and QR are not offered (ADR-0015 §1).
+ */
+export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, cashOnly = false }: { pay: Payment; priced: boolean; submitLabel: string; onSubmit: () => void; canSubmit: boolean; cashOnly?: boolean }) {
   const { t } = useT();
   const { intents, remaining, cashAmount } = pay;
   return (
@@ -203,6 +211,9 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit }: 
               )}
             </p>
           )}
+          {cashOnly ? (
+            <p className="text-[0.875rem] text-muted">{t('till.offlineCard')}</p>
+          ) : (
           <div className="grid grid-cols-2 gap-2">
             {/* No second charge while an earlier one has no answer: check it first. */}
             <button type="button" className="btn" disabled={!priced || pay.pendingIntent} onClick={() => pay.takeElectronic('CARD')}>
@@ -212,9 +223,10 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit }: 
               <QrCode className="size-4" aria-hidden /> {t('pay.qr')}
             </button>
           </div>
+          )}
         </>
       )}
-      {priced && pay.blocker && <p className="text-[0.875rem] text-muted">{t(pay.blocker)}</p>}
+      {priced && pay.blocker && <p className="text-[0.875rem] text-muted">{t(cashOnly && pay.blocker === 'pay.needCash' ? 'till.needCash' : pay.blocker)}</p>}
       <button className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || !pay.covered || pay.pendingIntent || pay.submitting} onClick={onSubmit}>
         {submitLabel}
       </button>

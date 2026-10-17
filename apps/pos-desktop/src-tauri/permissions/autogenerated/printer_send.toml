@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-printer-send"
+description = "Enables the printer_send command without any pre-configured scope."
+commands.allow = ["printer_send"]
+
+[[permission]]
+identifier = "deny-printer-send"
+description = "Denies the printer_send command without any pre-configured scope."
+commands.deny = ["printer_send"]

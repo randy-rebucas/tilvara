@@ -13,7 +13,7 @@ const snapshot: Snapshot = {
   snapshotId: '0199f0a0-0000-7000-8000-000000005a00', asOf: '2026-10-17T00:00:00.000Z', validUntil: '2026-10-18T00:00:00.000Z',
   terminal: { id: '0199f0a0-0000-7000-8000-00000000te01', name: 'Till 1', credentialHint: 'AbCd' },
   register: { id: 'r1', code: 'R1', name: 'Front' }, branch: { id: 'b1', code: 'B1', name: 'Cubao', timezone: 'Asia/Manila' },
-  legalEntity: { id: 'le', registeredName: 'Nena Trading', tradeName: 'Tindahan ni Nena', tin: '123456789' }, currency: 'PHP',
+  legalEntity: { id: 'le', registeredName: 'Nena Trading', tradeName: 'Tindahan ni Nena', tin: '123456789', receiptTin: '123-456-789-00000' }, currency: 'PHP',
   taxProfile: { id: 'tp', effectiveFrom: '2026-01-01T00:00:00.000Z', vatStatus: 'VAT', vatRate: '0.12', roundingMode: 'HALF_UP' },
   openSession: { id: '0199f0a0-0000-7000-8000-0000005e5510', openedBy: CASHIER, cashierName: 'Maria', openedAt: '2026-10-17T00:00:00.000Z' },
   items: [
@@ -78,6 +78,7 @@ describe('ringing up offline', () => {
     });
     // Cola 2 × 22.40 = 44.80 V (40.00 + 4.80 VAT); rice ½ kg × 55 = 27.50 E.
     expect(receipt).toMatchObject({
+      seller: { name: 'Tindahan ni Nena', tin: '123-456-789-00000', vatStatus: 'VAT' }, // the TIN as online receipts print it
       lines: [{ name: 'Cola', amount: '44.80', flag: 'V' }, { name: 'Rice (kg)', quantity: '0.5', amount: '27.50', flag: 'E' }],
       totals: { vatableSales: '40.00', vatAmount: '4.80', vatExemptSales: '27.50', amountDue: '72.30' }, change: '27.70',
     });
@@ -98,6 +99,28 @@ describe('ringing up offline', () => {
     expect(await ring({ tendered: '22.39' })).toBe('INSUFFICIENT_TENDER');
     expect((await engine.status()).pending).toBe(0); // nothing stored, no number used
     expect((await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '22.40' })).sale.deviceSeq).toBe(1);
+  });
+
+  it('keeps the counter’s checkout id: submitting the same checkout again returns the queued sale, not a second one', async () => {
+    const server = fakeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const checkout = '0199f0a0-0000-7000-8000-0000000c4ec0';
+    const once = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50', terminalTxnId: checkout });
+    const twice = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50', terminalTxnId: checkout });
+    expect(once.sale.envelope.terminalTxnId).toBe(checkout);
+    expect(twice.sale.deviceSeq).toBe(once.sale.deviceSeq);
+    expect((await engine.status()).pending).toBe(1);
+  });
+
+  it('looks items up in the snapshot by barcode or SKU', async () => {
+    const server = fakeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await expect(engine.lookup('COLA')).rejects.toMatchObject({ code: 'NO_SNAPSHOT' });
+    await engine.refreshSnapshot();
+    expect((await engine.lookup('cola'))?.variantId).toBe(COLA);
+    expect((await engine.lookup(' RICE '))?.variantId).toBe(RICE);
+    expect(await engine.lookup('4800000000000')).toBeNull();
   });
 });
 

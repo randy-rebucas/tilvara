@@ -21,15 +21,48 @@ export async function openBrowser({ base, out, port = 9333 }) {
     '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), '1pos-e2e-'))}`,
     '--no-first-run', '--disable-gpu', 'about:blank',
   ], { stdio: 'ignore' });
+  return attach({ base, out, port, child: browser, tries: 50 });
+}
 
+/**
+ * The desktop till (Tauri on WebView2) under CDP: WebView2 takes Chromium switches from
+ * WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. `env` adds variables for the app (e.g. its data folder).
+ */
+export async function openDesktop({ exe, out, port = 9334, env = {} }) {
+  mkdirSync(out, { recursive: true });
+  // WebView2's own processes can outlive a killed app for a moment and keep serving its dead page on
+  // the debugging port: wait until nothing answers there before starting a new one.
+  for (let i = 0; i < 100; i++) {
+    const busy = await fetch(`http://127.0.0.1:${port}/json/version`).then(() => true, () => false);
+    if (!busy) break;
+    await sleep(200);
+  }
+  const app = spawn(exe, [], {
+    stdio: 'ignore',
+    env: { ...process.env, ...env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+  });
+  // WebView2 starts on about:blank before it navigates to the app: wait for the app's own page.
+  const page = await attach({ base: '', out, port, child: app, tries: 150, isApp: (t) => t.url.startsWith('http://tauri.localhost') });
+  // Page errors and rejections from here on, readable as window.__errors (the app has no visible
+  // console). Not via a reload: reloading WebView2 during start-up can leave the page blank.
+  await page.waitFor(`document.readyState === 'complete'`);
+  await page.evaluate(`window.__errors = []; addEventListener('error', (e) => __errors.push(String(e.error?.stack ?? e.message))); addEventListener('unhandledrejection', (e) => __errors.push('unhandled: ' + String(e.reason?.stack ?? e.reason)));`);
+  return page;
+}
+
+async function attach({ base, out, port, child, tries, isApp = () => true }) {
   let target;
-  for (let i = 0; i < 50 && !target; i++) {
+  for (let i = 0; i < tries && !target; i++) {
     try {
       const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      target = list.find((t) => t.type === 'page');
+      target = list.find((t) => t.type === 'page' && isApp(t));
+      if (!target) await sleep(200);
     } catch { await sleep(200); }
   }
-  if (!target) throw new Error('browser did not start');
+  if (!target) {
+    child.kill();
+    throw new Error('browser did not start');
+  }
 
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((r) => ws.addEventListener('open', r, { once: true }));
@@ -105,7 +138,8 @@ export async function openBrowser({ base, out, port = 9333 }) {
 
   return {
     send, evaluate, viewport, waitFor, go, fill, clickText, shot, bff, noHorizontalScroll,
-    close() { ws.close(); browser.kill(); },
+    child,
+    close() { ws.close(); child.kill(); },
   };
 }
 

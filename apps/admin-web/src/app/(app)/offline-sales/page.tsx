@@ -11,7 +11,7 @@ export const metadata = { title: 'Offline sales' };
 
 type Tab = 'review' | 'recorded' | 'dismissed';
 const STATUS: Record<Tab, OfflineSale['status']> = { review: 'QUARANTINED', recorded: 'RECORDED', dismissed: 'DISMISSED' };
-const KNOWN = new Set(['TOTAL_MISMATCH', 'SESSION_NOT_OPEN', 'NOT_SESSION_OWNER', 'CASHIER_NOT_AUTHORIZED', 'WRONG_REGISTER', 'UNKNOWN_SNAPSHOT', 'PERIOD_CLOSED', 'FORBIDDEN', 'NOT_FOUND']);
+const KNOWN = new Set(['TOTAL_MISMATCH', 'SESSION_NOT_OPEN', 'NOT_SESSION_OWNER', 'CASHIER_NOT_AUTHORIZED', 'WRONG_REGISTER', 'UNKNOWN_SNAPSHOT', 'PERIOD_CLOSED', 'FORBIDDEN', 'NOT_FOUND', 'DUPLICATE_TRANSACTION']);
 
 /**
  * Offline sales delivered by the tills (ADR-0015 §5): the ones the server could not record wait here
@@ -27,7 +27,10 @@ export default async function OfflineSalesPage({ searchParams }: { searchParams:
   const why = (x: OfflineSale) => {
     if (x.errorCode && KNOWN.has(x.errorCode)) {
       const d = x.errorDetail?.details ?? {};
-      return t(`off.why.${x.errorCode}` as MessageKey, { charged: peso(String(d.charged ?? '')), expected: peso(String(d.expected ?? '')) });
+      return t(`off.why.${x.errorCode}` as MessageKey, {
+        charged: peso(String(d.charged ?? '')), expected: peso(String(d.expected ?? '')),
+        sale: d.saleNumber === undefined ? '' : `#${String(d.saleNumber).padStart(6, '0')}`,
+      });
     }
     return x.errorDetail?.message ?? x.errorCode ?? '';
   };

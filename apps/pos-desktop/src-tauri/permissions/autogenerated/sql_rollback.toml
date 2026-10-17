@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sql-rollback"
+description = "Enables the sql_rollback command without any pre-configured scope."
+commands.allow = ["sql_rollback"]
+
+[[permission]]
+identifier = "deny-sql-rollback"
+description = "Denies the sql_rollback command without any pre-configured scope."
+commands.deny = ["sql_rollback"]

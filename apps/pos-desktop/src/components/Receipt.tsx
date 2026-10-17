@@ -1,7 +1,8 @@
 import { Printer } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT } from '../i18n';
-import { browserPrinter, type ReceiptPrinter } from '../lib/devices';
+import type { ReceiptPrinter } from '../lib/devices';
+import { useTill } from '../lib/till';
 import { receiptToPrintable, SETTLEMENT, signedTotal, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
@@ -10,8 +11,11 @@ import { Callout, Money } from './ui';
  * The server's receipt document, rendered as-is. Its notice (e.g. "THIS IS NOT AN OFFICIAL
  * INVOICE") is always printed; the counter never adds or removes compliance wording.
  */
-export function Receipt({ data, printer = browserPrinter }: { data: ReceiptData; printer?: ReceiptPrinter }) {
+export function Receipt({ data, printer: given }: { data: ReceiptData; printer?: ReceiptPrinter }) {
   const { t } = useT();
+  // The desktop till's thermal printer when one is set up; the browser print dialog otherwise.
+  const till = useTill();
+  const printer = given ?? till.printer;
   const ref = useRef<HTMLDivElement>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const print = async () => {

@@ -4,10 +4,13 @@ import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
 import { isPositive, isZero } from '../lib/money';
+import { useTill } from '../lib/till';
 import type { LookupItem, Quote, Receipt as ReceiptData } from '../types';
-import { errorText, PaymentPanel, usePayment, type Notice } from './Payment';
+import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
+import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './Payment';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
+import { OfflineReceipt } from './Till';
 import { Callout, Field, Money, Note } from './ui';
 
 interface CartLine {
@@ -33,10 +36,19 @@ interface ProductHit {
 
 /**
  * The counter: scan → cart priced by the server (/v1/tax/quote) → tender → POST /v1/sales.
- * The client never computes prices or taxes; it only shows what the server returns.
+ * Online, the client never computes prices or taxes; it only shows what the server returns.
+ *
+ * Desktop till, offline (ADR-0015 §1): cash only, no discounts, on the shift the till last saw open.
+ * Items and prices come from the till's snapshot, priced by the same tax engine the server re-runs
+ * at sync; the sale is kept on the till under this checkout's transaction id.
  */
-export function Sell({ shift, active = true }: { shift: Shift; active?: boolean }) {
+export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; cashierUserId: string; active?: boolean }) {
   const { t } = useT();
+  const till = useTill();
+  const snap = till.status?.snapshot;
+  const canSellOffline = till.mode === 'ready' && till.status?.authState !== 'REVOKED' && snap?.registerId === shift.register.id && snap.openSessionId === shift.sessionId;
+  const offline = canSellOffline && !till.online;
+  const [offlineReceipt, setOfflineReceipt] = useState<OfflineReceiptData | null>(null);
   const scanRef = useRef<HTMLInputElement>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([]);
@@ -54,6 +66,11 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
     if (active) focusScan();
   }, [active]);
 
+  // The till can only sell offline on a shift its snapshot knows: refresh it when this shift starts.
+  useEffect(() => {
+    if (till.mode === 'ready') void till.refreshSnapshot();
+  }, [till.mode, shift.sessionId]);
+
   // Server-authoritative pricing and tax for the current cart.
   useEffect(() => {
     if (cart.length === 0) {
@@ -64,6 +81,15 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
     setQuoting(true);
     const timer = setTimeout(async () => {
       try {
+        if (offline) {
+          if (cart.some((l) => l.statutory)) throw new OfflineRefusal(t('till.offlineSc'));
+          const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity })));
+          if (live) {
+            setQuote(offlineQuote(r, cart));
+            setNotice((n) => (n?.kind === 'error' ? null : n));
+          }
+          return;
+        }
         const q = await api<Quote>('POST', '/v1/tax/quote', {
           branchId: shift.branch.id,
           lines: cart.map((l) => ({ id: l.id, variantId: l.variantId, quantity: l.quantity, ...(l.statutory && { statutory: { scheme: l.statutory.scheme } }) })),
@@ -73,7 +99,8 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
           setNotice((n) => (n?.kind === 'error' ? null : n));
         }
       } catch (err) {
-        if (live) setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+        if (unanswered(err)) till.reportUnreachable();
+        if (live) setNotice({ kind: 'error', text: offlineText(err) ?? errorText(err, t('common.error'), t('common.network')) });
       } finally {
         if (live) setQuoting(false);
       }
@@ -82,7 +109,24 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
       live = false;
       clearTimeout(timer);
     };
-  }, [cart, shift.branch.id]);
+  }, [cart, shift.branch.id, offline]);
+
+  /** Why the till refused offline, in the cashier's words (null when it was not an offline refusal). */
+  function offlineText(err: unknown): string | null {
+    if (err instanceof OfflineRefusal) return err.message;
+    if (err instanceof OfflineSaleError) return t('till.offlineRefused', { reason: err.message });
+    return null;
+  }
+
+  /** Offline: the till's snapshot by barcode or SKU, shaped like the server's lookup. */
+  async function lookupOffline(code: string): Promise<LookupItem | null> {
+    const item = await till.engine!.lookup(code);
+    if (!item) return null;
+    return {
+      variantId: item.variantId, sku: item.sku, name: item.name, price: { amount: item.unitPrice },
+      soldBy: item.wholeUnits ? 'UNIT' : 'WEIGHT', uom: { code: '', allowsFraction: !item.wholeUnits },
+    };
+  }
 
   function addItem(item: LookupItem) {
     if (!item.price) {
@@ -103,11 +147,30 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
     const q = scanRef.current?.value.trim() ?? '';
     if (!q) return;
     setHits(null);
+    const fromSnapshot = async () => {
+      const item = await lookupOffline(q);
+      if (item) {
+        addItem(item);
+        scanRef.current!.value = '';
+      } else setNotice({ kind: 'warn', text: t('till.notFoundOffline', { q }) });
+    };
     try {
-      addItem(await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(q)}&branchId=${shift.branch.id}`));
-      scanRef.current!.value = '';
+      if (offline) await fromSnapshot();
+      else {
+        try {
+          addItem(await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(q)}&branchId=${shift.branch.id}`));
+          scanRef.current!.value = '';
+        } catch (err) {
+          // No answer: the till carries on from its own price list instead of failing this scan.
+          if (!unanswered(err) || !canSellOffline) throw err;
+          till.reportUnreachable();
+          await fromSnapshot();
+        }
+      }
     } catch (err) {
-      if (err instanceof ApiFailure && err.error.status === 404) {
+      if (unanswered(err)) till.reportUnreachable();
+      if (offlineText(err)) setNotice({ kind: 'error', text: offlineText(err)! });
+      else if (err instanceof ApiFailure && err.error.status === 404) {
         const found = await api<{ data: ProductHit[] }>('GET', `/v1/products?q=${encodeURIComponent(q)}&limit=8`).catch(() => ({ data: [] }));
         if (found.data.length) setHits(found.data);
         else setNotice({ kind: 'warn', text: t('sell.notFound', { q }) });
@@ -149,8 +212,24 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
     setCart((c) => c.map((l) => (l.id === lineId ? { id: l.id, variantId: l.variantId, sku: l.sku, name: l.name, quantity: l.quantity, wholeUnits: l.wholeUnits } : l)));
   }
 
+  async function completeOffline() {
+    if (!pay.cashAmount || pay.intents.length > 0) return;
+    try {
+      const { receipt: kept } = await till.engine!.ringUp({
+        cashierUserId, terminalTxnId: pay.txId, tendered: pay.cashAmount,
+        lines: cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
+      });
+      setNotice(null);
+      setOfflineReceipt(kept);
+      void till.refresh();
+    } catch (err) {
+      setNotice({ kind: 'error', text: offlineText(err) ?? errorText(err, t('common.error'), t('common.network')) });
+    }
+  }
+
   async function complete() {
     if (!quote) return;
+    if (offline) return completeOffline();
     const saleId = await pay.submit(
       (body, key) =>
         api<{ id: string }>(
@@ -166,6 +245,7 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
           { 'idempotency-key': key },
         ),
       () => setCart((c) => [...c]),
+      () => till.reportUnreachable(),
     );
     if (!saleId) return;
     try {
@@ -180,14 +260,15 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
     setBeneficiaries([]);
     pay.reset();
     setReceipt(null);
+    setOfflineReceipt(null);
     setNotice(null);
     focusScan();
   }
 
-  if (receipt) {
+  if (receipt || offlineReceipt) {
     return (
       <div className="mx-auto grid max-w-[1100px] gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_360px]">
-        <Receipt data={receipt} />
+        {receipt ? <Receipt data={receipt} /> : <OfflineReceipt data={offlineReceipt!} />}
         <div className="no-print grid content-start gap-3">
           <button className="btn btn-primary w-full" autoFocus onClick={newSale}>
             {t('sell.newSale')}
@@ -277,7 +358,8 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
                             onBlur={(e) => /^\d{1,6}(\.\d{1,4})?$/.test(e.target.value) && toDec(e.target.value).gt(0) && setQty(l.id, e.target.value)}
                           />
                         )}
-                        {!l.statutory && (
+                        {/* Discounts need the server: not offered offline (ADR-0015 §1). */}
+                        {!l.statutory && !offline && (
                           <button className="btn btn-sm" aria-pressed={scDraft === l.id} onClick={() => setScDraft(scDraft === l.id ? null : l.id)}>
                             {t('sell.sc')}
                           </button>
@@ -336,10 +418,33 @@ export function Sell({ shift, active = true }: { shift: Shift; active?: boolean 
           {quote?.requiresProfessionalReview && <div className="mt-3"><Callout kind="warn">{t('sell.pendingReview')}</Callout></div>}
         </Note>
 
-        <PaymentPanel pay={pay} priced={cart.length > 0 && !!quote && !quoting} submitLabel={t('pay.complete')} onSubmit={complete} canSubmit={cart.length > 0} />
+        <PaymentPanel
+          pay={pay}
+          priced={cart.length > 0 && !!quote && !quoting}
+          submitLabel={offline ? t('till.offlineSubmit') : t('pay.complete')}
+          onSubmit={complete}
+          canSubmit={cart.length > 0 && !(offline && cart.some((l) => l.statutory))}
+          cashOnly={offline}
+        />
       </aside>
     </div>
   );
+}
+
+/** A refusal the till makes itself, before pricing (e.g. a discount while offline). */
+class OfflineRefusal extends Error {}
+
+/** The till's offline pricing in the shape of the server's quote (lines matched by position). */
+function offlineQuote(r: Awaited<ReturnType<OfflineEngine['quote']>>, cart: CartLine[]): Quote {
+  return {
+    taxProfile: { vatStatus: r.taxProfile.vatStatus, vatRate: r.taxProfile.vatRate },
+    totals: r.totals,
+    requiresProfessionalReview: false,
+    lines: r.lines.map((l, i) => ({
+      id: cart[i]!.id, variantId: cart[i]!.variantId, sku: r.items[i]!.sku, name: r.items[i]!.name, unitPrice: r.items[i]!.unitPrice,
+      quantity: cart[i]!.quantity, gross: l.gross, statutoryDiscount: l.statutoryDiscount, amountDue: l.amountDue, vatTreatment: r.items[i]!.vatTreatment,
+    })),
+  };
 }
 
 function TotalsBreakdown({ quote }: { quote: Quote }) {

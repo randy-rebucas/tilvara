@@ -141,6 +141,11 @@ export class LocalStore {
     });
   }
 
+  async byTxnId(terminalTxnId: string): Promise<QueuedSale | null> {
+    const [r] = await this.sql.select<OutboxRow>(`SELECT * FROM outbox WHERE terminal_txn_id = ?`, [terminalTxnId]);
+    return r ? toQueued(r) : null;
+  }
+
   async get(deviceSeq: number): Promise<QueuedSale | null> {
     const [r] = await this.sql.select<OutboxRow>(`SELECT * FROM outbox WHERE device_seq = ?`, [deviceSeq]);
     return r ? toQueued(r) : null;

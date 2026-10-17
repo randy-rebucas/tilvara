@@ -1,7 +1,9 @@
+import { apiBase } from './desktop';
+
 /**
- * API client for browser mode. Tokens live in memory only (never localStorage/sessionStorage):
- * a reload signs the cashier out, which suits a shift-based counter and keeps tokens out of reach
- * of injected scripts. The Tauri shell (Phase 5) will authenticate with terminal credentials.
+ * API client (browser mode and the desktop shell). Tokens live in memory only (never
+ * localStorage/sessionStorage): a reload signs the cashier out, which suits a shift-based counter and
+ * keeps tokens out of reach of injected scripts. Offline sync authenticates the terminal instead.
  */
 export interface ApiError {
   status: number;
@@ -42,7 +44,7 @@ export const session = {
 };
 
 async function raw(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
-  return fetch(path, {
+  return fetch(apiBase + path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
@@ -55,7 +57,7 @@ async function raw(method: string, path: string, body?: unknown, headers: Record
 
 async function refresh(): Promise<boolean> {
   if (!tokens) return false;
-  const res = await fetch('/v1/auth/refresh', {
+  const res = await fetch(`${apiBase}/v1/auth/refresh`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken: tokens.refreshToken, ...(activeTenantId ? { tenantId: activeTenantId } : {}) }),
@@ -94,7 +96,7 @@ export interface Membership {
 }
 
 export async function signIn(email: string, password: string, tenantId?: string) {
-  const res = await fetch('/v1/auth/login', {
+  const res = await fetch(`${apiBase}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password, ...(tenantId ? { tenantId } : {}) }),

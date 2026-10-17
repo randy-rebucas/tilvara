@@ -191,6 +191,8 @@ describe('the world moved while the till was offline', () => {
     const t = await till(s, file(), net);
     await t.engine.refreshSnapshot();
     net.state.mode = 'down';
+    // Dated by the server's clock, well before the rise below (the host clock may run ahead of the DB's).
+    t.clock.t = Date.parse((await http().get(`/v1/cashier-sessions/${s.session}`).set(s.cashier).expect(200)).body.openedAt) + 1;
     const before = (await ring(t.engine, s)).sale;
     const lists = (await http().get('/v1/price-lists').set(s.auth).expect(200)).body.data;
     await http().post(`/v1/price-lists/${lists[0].id}/prices`).set(s.auth).send({ items: [{ variantId: s.cola, amount: '25.00' }] });

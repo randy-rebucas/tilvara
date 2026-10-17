@@ -15,8 +15,8 @@ export const serverEnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().min(1).max(90).default(30),
-  /** Comma-separated origins allowed by CORS (admin web, POS browser mode). */
-  CORS_ORIGINS: z.string().default('http://127.0.0.1:3320,http://localhost:3320'),
+  /** Comma-separated origins allowed by CORS (admin web; the desktop till is served from http://tauri.localhost on Windows). */
+  CORS_ORIGINS: z.string().default('http://127.0.0.1:3320,http://localhost:3320,http://tauri.localhost'),
   /** Base URL of the admin web app, used in emailed links (invitations). */
   APP_PUBLIC_URL: z.url().default('http://127.0.0.1:3320'),
   /** Only 'dev' exists so far (stores mail in memory/logs). Refused in production until a real provider is added. */

@@ -175,18 +175,28 @@ Slice 3 — receipt printing (session 7): ✅ done.
 - ✅ `@1pos/escpos` (pure): a neutral `PrintableReceipt`, fixed-width layout for 32/42/48 columns (long names wrap, amounts right-aligned), CP437 with `₱` spelled `PHP`, ESC/POS bytes (init, code page, centre, bold notice, double-height total, SC/PWD signature block, partial cut, optional drawer kick); 5 unit tests with golden text.
 - ✅ POS: `receiptToPrintable` / `offlineReceiptToPrintable` (receipt labels shared with the screen), `escposPrinter` / `escposDrawer` on a byte channel with a timeout; a failed print shows "The sale is recorded; print again" (SPEC: printer failure); 4 unit tests.
 
-Slice 4 — UI (session 7): 🟡 admin done; POS offline screens wait for the shell.
+Slice 4 — UI (session 7–8): ✅ admin (session 7); POS offline screens (session 8, with slice 5).
 - ✅ Admin `/offline-sales` (nav "Offline", needs `cash.reconcile`; BFF allows `sync/transactions` only): to review / recorded / dismissed, each problem in words (EN/FIL), record again (a refused attempt is counted and shown), dismiss with a reason, stacked rows on phones; `test:e2e:web:offline` 12/12.
 - ✅ API list/get carry the cashier's name, register code and sale number.
-- ⬜ POS: outage banner, sync status (pending / needs review / snapshot age), selling through `OfflineEngine` when the API is unreachable, terminal set-up (id + credential) — built with slice 5, since browser mode has no durable SQLite (ADR-0006).
-⬜ Slice 5 — Tauri shell (needs Rust): SQLite via the Tauri SQL plugin as `SqlDriver`, printer and drawer adapters, credential storage.
-⬜ Slice 6 — PayMongo adapter + webhooks (needs sandbox keys); invoice transmission (compliance gate).
+- ✅ POS (desktop only): set-up screen, band status chip + till settings, outage banner, offline cash selling from the snapshot, offline receipt, thermal printing.
+Slice 5 — Tauri shell (session 8): ✅ done (ADR-0015 "As built (slices 4–5)").
+- ✅ Rust toolchain + VS Build Tools installed.
+- ✅ `src-tauri`:
+  - single-connection `rusqlite` store (not the SQL plugin: its pool breaks transactions);
+  - TCP / Windows RAW printer;
+  - Credential Manager secrets;
+  - 10 granted commands, CSP, `ONEPOS_TILL_PROFILE`.
+- ✅ A lost answer then offline → same transaction id → never counted twice.
+- ✅ Snapshot `receiptTin`.
+- ✅ `cargo test` 8; `test:e2e:desktop` 20 (real exe, simulated outage, restart, reconnect).
+⬜ Slice 6 — PayMongo adapter + webhooks (env settings done session 8; waiting for the user's sandbox keys in `.env`); invoice transmission (compliance gate).
 ⬜ Slice 7 — exit review.
 
 ⬜ Phase 5 leftovers so far:
 - recovering a revoked terminal's queue (admin tool);
 - device sequence restarts if the till's file is lost;
-- an integration test for `SNAPSHOT_EXPIRED`;
+- ~~an integration test for `SNAPSHOT_EXPIRED`~~ ✅ session 8;
+- desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier); API URL set at runtime (build-time `VITE_API_URL` today); signed NSIS installer + auto-update; serial/COM printers without a Windows driver; real printer/drawer hardware check;
 - offline SC/PWD and discounts (refused offline today);
 - opening a shift offline;
 - snapshot paging for large catalogues;

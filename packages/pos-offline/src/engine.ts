@@ -43,7 +43,8 @@ export interface EngineStatus {
   oldestPendingAt: number | null;
   lastSyncAt: number | null;
   lastError: string | null;
-  snapshot: { asOf: string; validUntil: string; expired: boolean; fetchedAt: number } | null;
+  /** `registerId` / `openSessionId`: what the till can sell on offline (the shift open when it last synced). */
+  snapshot: { asOf: string; validUntil: string; expired: boolean; fetchedAt: number; registerId: string; openSessionId: string | null } | null;
 }
 
 const NOT_AN_INVOICE = 'THIS IS NOT AN OFFICIAL INVOICE — OFFLINE SALE, RECORDED WHEN THE TILL RECONNECTS';
@@ -93,19 +94,33 @@ export class OfflineEngine {
   }
 
   /** Price a cart offline exactly as the server will re-price it (no discounts offline, ADR-0015 §1). */
-  async quote(lines: { variantId: string; quantity: string }[]): Promise<TaxResult & { items: Snapshot['items'] }> {
+  async quote(lines: { variantId: string; quantity: string }[]): Promise<TaxResult & { items: Snapshot['items']; taxProfile: Snapshot['taxProfile'] }> {
     const stored = await this.store.snapshot();
     if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
-    return price(stored.body, lines);
+    return { ...price(stored.body, lines), taxProfile: stored.body.taxProfile };
+  }
+
+  /** Find an item in the stored snapshot by SKU or barcode (case-insensitive SKU, exact barcode). */
+  async lookup(code: string): Promise<Snapshot['items'][number] | null> {
+    const stored = await this.store.snapshot();
+    if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
+    const c = code.trim();
+    return stored.body.items.find((i) => i.barcodes.includes(c)) ?? stored.body.items.find((i) => i.sku.toLowerCase() === c.toLowerCase()) ?? null;
   }
 
   /**
    * Ring up a cash sale offline. Validates, prices, and writes the sale with its envelope and the next
    * device number in one local transaction; returns the receipt to print. Nothing is sent here.
+   *
+   * `terminalTxnId`: the counter passes the id of the checkout it was trying online. If that attempt
+   * did reach the server, the delivery is refused as a duplicate (quarantined), never recorded twice.
    */
-  ringUp(input: { cashierUserId: string; lines: { variantId: string; quantity: string }[]; tendered: string }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt }> {
+  ringUp(input: { cashierUserId: string; lines: { variantId: string; quantity: string }[]; tendered: string; terminalTxnId?: string }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt }> {
     return this.serial(async () => {
       if ((await this.store.meta('auth_state')) === 'REVOKED') throw new OfflineSaleError('TERMINAL_REVOKED', 'This till was revoked; it cannot record sales');
+      // The same checkout submitted again (double tap, retry after a crash): the sale already queued.
+      const already = input.terminalTxnId ? await this.store.byTxnId(input.terminalTxnId) : null;
+      if (already) return { sale: already, receipt: already.receipt };
       const stored = await this.store.snapshot();
       if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
       const snap = stored.body;
@@ -121,13 +136,17 @@ export class OfflineEngine {
       const queued = await this.store.enqueue((seq) => {
         const localReference = `${snap.register.code}-T${snap.terminal.credentialHint}-${String(seq).padStart(6, '0')}`;
         const envelope: OfflineSale = {
-          terminalTxnId: this.uuid(), deviceSeq: seq, snapshotId: snap.snapshotId, cashierSessionId: shift.id, cashierUserId: input.cashierUserId,
+          terminalTxnId: input.terminalTxnId ?? this.uuid(), deviceSeq: seq, snapshotId: snap.snapshotId, cashierSessionId: shift.id, cashierUserId: input.cashierUserId,
           occurredAt, localReference, lines: input.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
           tenders: [{ method: 'CASH', tendered: tendered.toFixed(2) }], amountDue: due.toFixed(2),
         };
         const receipt: OfflineReceipt = {
           localReference, occurredAt, register: { code: snap.register.code, name: snap.register.name }, branch: { name: snap.branch.name },
-          seller: { name: snap.legalEntity.tradeName ?? snap.legalEntity.registeredName, registeredName: snap.legalEntity.registeredName, tin: snap.legalEntity.tin, vatStatus: snap.taxProfile.vatStatus },
+          seller: {
+            name: snap.legalEntity.tradeName ?? snap.legalEntity.registeredName, registeredName: snap.legalEntity.registeredName,
+            // As online receipts print it; a snapshot from before `receiptTin` existed has only the bare TIN.
+            tin: snap.legalEntity.receiptTin ?? snap.legalEntity.tin, vatStatus: snap.taxProfile.vatStatus,
+          },
           cashierName: shift.cashierName,
           lines: priced.lines.map((l, i) => {
             const item = priced.items[i]!;
@@ -217,7 +236,12 @@ export class OfflineEngine {
         oldestPendingAt: c.oldestPendingAt,
         lastSyncAt: lastSync ? Number(lastSync) : null,
         lastError: await this.store.meta('last_error'),
-        snapshot: snap ? { asOf: snap.body.asOf, validUntil: snap.body.validUntil, expired: this.now() > Date.parse(snap.body.validUntil), fetchedAt: snap.fetchedAt } : null,
+        snapshot: snap
+          ? {
+              asOf: snap.body.asOf, validUntil: snap.body.validUntil, expired: this.now() > Date.parse(snap.body.validUntil), fetchedAt: snap.fetchedAt,
+              registerId: snap.body.register.id, openSessionId: snap.body.openSession?.id ?? null,
+            }
+          : null,
       };
     });
   }

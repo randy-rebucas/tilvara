@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sql-select"
+description = "Enables the sql_select command without any pre-configured scope."
+commands.allow = ["sql_select"]
+
+[[permission]]
+identifier = "deny-sql-select"
+description = "Denies the sql_select command without any pre-configured scope."
+commands.deny = ["sql_select"]

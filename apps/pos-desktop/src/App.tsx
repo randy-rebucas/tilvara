@@ -7,7 +7,9 @@ import { RegisterPicker, type Shift } from './components/Registers';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
 import { Tables } from './components/Tables';
+import { TillSetup } from './components/Till';
 import { useT } from './i18n';
+import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
 import type { Me } from './types';
 
@@ -21,6 +23,20 @@ type Stage =
 type Tab = 'sell' | 'tables' | 'history' | 'close';
 
 export function App() {
+  const till = useTill();
+  const [skippedSetup, setSkippedSetup] = useState(false);
+  if (till.mode === 'loading') return <Shell>{null}</Shell>;
+  if (till.mode === 'unconfigured' && !skippedSetup) {
+    return (
+      <Shell>
+        <TillSetup onSkip={() => setSkippedSetup(true)} />
+      </Shell>
+    );
+  }
+  return <Counter />;
+}
+
+function Counter() {
   const { t } = useT();
   const [stage, setStage] = useState<Stage>({ name: 'signin' });
   const [tab, setTab] = useState<Tab>('sell');
@@ -130,7 +146,7 @@ export function App() {
     >
       {/* Kept mounted: a cart and its authorized card/QR payments survive a look at the shift history. */}
       <div hidden={tab !== 'sell'}>
-        <Sell shift={shift} active={tab === 'sell'} />
+        <Sell shift={shift} cashierUserId={me.userId} active={tab === 'sell'} />
       </div>
       {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
       {tableService && (

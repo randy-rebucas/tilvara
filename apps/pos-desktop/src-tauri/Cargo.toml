@@ -1,0 +1,35 @@
+[package]
+name = "onepos-till"
+version = "0.0.0"
+description = "1POS desktop till (Tauri shell, ADR-0006 / ADR-0015 slice 5)"
+edition = "2021"
+publish = false
+
+[lib]
+name = "onepos_till_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Bundled SQLite: the till never depends on a system library. One connection, WAL + synchronous=FULL.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# The terminal credential lives in the OS credential store (Windows Credential Manager), never in JS storage.
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Printing"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

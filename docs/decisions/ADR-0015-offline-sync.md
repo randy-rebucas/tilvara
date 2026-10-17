@@ -9,7 +9,7 @@ durable queue written before any network call, unique terminal transaction ids, 
 sequence numbers, idempotent sync that returns the original result, retry with backoff, visible conflicts
 and recovery after a restart. Only cash works offline; card and e-wallet are never simulated.
 
-Constraints on this machine: no Rust toolchain yet, so the Tauri shell cannot be built. Everything below
+Constraints on this machine (at the time): no Rust toolchain yet, so the Tauri shell could not be built (installed in session 8). Everything below
 the shell — the protocol, the server side, and the client engine with its SQLite store — is TypeScript and
 can be built and tested now. The shell later only supplies the SQLite driver and device adapters.
 
@@ -152,5 +152,55 @@ configurable BLOCK policy cannot be enforced without connectivity and is not off
     Its envelopes name that terminal's snapshot, so another terminal cannot deliver them.
   - Device sequence numbers restart if the SQLite file is lost or restored from an old backup. The
     server dedupes by transaction id, not by sequence.
-  - `SNAPSHOT_EXPIRED` has no integration test; it needs a snapshot older than the window with prices
-    that existed then.
+  - ~~`SNAPSHOT_EXPIRED` has no integration test~~ — added (session 8): snapshots aged 23 h / 25 h.
+
+## As built (slices 4–5, desktop till, 2026-10-17)
+- **Shell** (`apps/pos-desktop/src-tauri`, Tauri 2): the React POS in WebView2, with three native modules
+  behind ten commands. Each command needs an explicit grant in `capabilities/default.json`, and there
+  are no shell, file-system or HTTP plugins.
+  - `store`: the till database. **Deviation from §8**: not the Tauri SQL plugin, but one `rusqlite`
+    connection behind a mutex. The plugin runs on a connection pool, so a `BEGIN … COMMIT` spread over
+    several IPC calls could land on different connections. One connection makes `transaction()` mean
+    what `SqlDriver` promises. WAL + `synchronous=FULL`, bundled SQLite. A new page first rolls back
+    any transaction a previous page left open (reload or web view crash mid-transaction). That work
+    never committed.
+  - `printer`: raw ESC/POS to a network printer (TCP, usually 9100) or a printer installed in Windows
+    (spooler, RAW datatype), with a deadline; Windows printers are listed for the picker.
+  - `secrets`: the terminal credential in Windows Credential Manager, keys allow-listed (`terminal`).
+  - `ONEPOS_TILL_PROFILE` gives a separate database and credential entry (E2E runs never touch a real
+    till).
+  - CSP: scripts from the app only; `connect-src` the API (https, and loopback for development).
+    `freezePrototype` is off: a bundled library assigns `toString` on its own objects, which throws
+    under a frozen `Object.prototype`.
+- **POS** (`lib/till.tsx`, `components/Till.tsx`)
+  - Set-up on first launch (terminal id + one-time key, checked against the API before they are kept),
+    or "continue online only".
+  - Band chip: online / offline · N to send · N need review, opening the till settings (status, send
+    now, printer, disconnect); an outage banner.
+  - Offline selling in `Sell`:
+    - the scan falls back to the snapshot (barcode or SKU) on the first unanswered lookup;
+    - pricing comes from `engine.quote`, the same tax engine the server re-runs;
+    - cash only, with no SC/PWD or card/QR offered;
+    - only on the shift the snapshot knows (same register, same open session); the counter refreshes
+      the snapshot when it opens on a shift.
+  - **Lost answer, then offline**: the offline envelope reuses the checkout's `clientTransactionId` as
+    its `terminalTxnId`. If the online attempt had reached the server, the delivery is refused as
+    `DUPLICATE_TRANSACTION` and quarantined, so it is never counted twice. A manager dismisses it.
+    Locally, `ringUp` is idempotent on that id.
+  - Receipts print to the configured thermal printer (`Receipt` and `OfflineReceipt`). The snapshot
+    carries `legalEntity.receiptTin`, so offline receipts print the TIN as online ones do.
+  - API base: `VITE_API_URL` at build time (default `http://127.0.0.1:4320`); the API allows
+    `http://tauri.localhost` in its default `CORS_ORIGINS`.
+- **Tests**:
+  - Rust 8: store, printer, secrets;
+  - engine 9 (+ checkout id, lookup);
+  - `test:e2e:desktop` 20 checks: the real exe under CDP behind a proxy the script cuts. It covers
+    set-up, a lost answer then offline (counted once, the copy quarantined as a duplicate), an offline
+    sale, a restart during the outage with the queue intact, and reconnecting (both sent, drawer
+    ₱1,077.80).
+- **Known gaps (desktop)**
+  - After a restart during an outage nobody can sign in (sign-in needs the API), so selling waits for
+    the connection; an offline PIN for the shift's cashier is the candidate.
+  - No serial/COM-port printers except through a Windows driver; no printer status (DLE EOT).
+  - The API URL is fixed at build time; no signed installer or auto-update yet (only `--debug
+    --no-bundle` builds have been made); not yet run against real printer or drawer hardware.

@@ -39,7 +39,8 @@ export interface Snapshot {
   terminal: { id: string; name: string; credentialHint: string };
   register: { id: string; code: string; name: string };
   branch: { id: string; code: string; name: string; timezone: string };
-  legalEntity: { id: string; registeredName: string; tradeName: string | null; tin: string | null };
+  /** `receiptTin`: the TIN as receipts print it (with this branch's BIR branch code), e.g. 123-456-789-00000. */
+  legalEntity: { id: string; registeredName: string; tradeName: string | null; tin: string | null; receiptTin: string | null };
   currency: string;
   /** The tax profile in force (ADR-0008), exactly as `@1pos/tax` takes it. */
   taxProfile: { id: string; effectiveFrom: string; vatStatus: 'VAT' | 'NON_VAT'; vatRate: string; roundingMode: 'HALF_UP' | 'HALF_EVEN' };

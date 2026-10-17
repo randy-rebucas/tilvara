@@ -30,6 +30,7 @@ import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { registerScope } from '../sales/cash.service.js';
+import { formatTin } from '../sales/receipt.js';
 import { SalesService, type OfflineContext } from '../sales/sales.service.js';
 import { profilesInForce } from '../tax/tax-profiles.js';
 
@@ -111,7 +112,10 @@ export class SyncService extends TenantService {
         terminal: row.terminal,
         register: { id: row.register.id, code: row.register.code, name: row.register.name },
         branch: { id: row.branch.id, code: row.branch.code, name: row.branch.name, timezone: row.branch.timezone },
-        legalEntity: { id: row.entity.id, registeredName: row.entity.registeredName, tradeName: row.entity.tradeName, tin: row.entity.tin },
+        legalEntity: {
+          id: row.entity.id, registeredName: row.entity.registeredName, tradeName: row.entity.tradeName, tin: row.entity.tin,
+          receiptTin: formatTin(row.entity.tin, row.branch.birBranchCode),
+        },
         currency: items[0]?.currency ?? 'PHP',
         taxProfile: { id: profile.id, effectiveFrom: profile.effectiveFrom, vatStatus: profile.vatStatus, vatRate: profile.vatRate, roundingMode: profile.roundingMode },
         openSession: open ? { id: open.id, openedBy: open.openedBy, openedAt: open.openedAt.toISOString(), cashierName: open.cashierName } : null,

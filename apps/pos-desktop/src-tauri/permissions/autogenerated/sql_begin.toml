@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sql-begin"
+description = "Enables the sql_begin command without any pre-configured scope."
+commands.allow = ["sql_begin"]
+
+[[permission]]
+identifier = "deny-sql-begin"
+description = "Denies the sql_begin command without any pre-configured scope."
+commands.deny = ["sql_begin"]

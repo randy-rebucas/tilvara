@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The till window: its database, printer and terminal credential. Nothing else.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-sql-execute",
+    "allow-sql-select",
+    "allow-sql-begin",
+    "allow-sql-commit",
+    "allow-sql-rollback",
+    "allow-printer-send",
+    "allow-printer-list",
+    "allow-secret-get",
+    "allow-secret-set",
+    "allow-secret-delete"
+  ]
+}

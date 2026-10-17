@@ -1,9 +1,41 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 7 — Phase 4 exit review; Phase 5 plan (ADR-0015), slices 1–4: offline sync server, client engine, receipt printing, admin review screen)_
+_Last updated: 2026-10-17 (session 8 — Rust toolchain installed; Phase 5 slice 5: the Tauri desktop till, POS offline screens; PayMongo env settings; SNAPSHOT_EXPIRED test)_
 
 ## Current phase
-**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1–3 done, slice 4 done for the admin. Rust is still not installed, so the Tauri shell (slice 5) stays blocked, and with it the POS's offline screens. See "Next task".
+**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1–5 done (slice 5: the desktop till, verified through a simulated outage in the real exe). Next: slice 6 (PayMongo, needs the sandbox keys in `.env`) and slice 7 (exit review). See "Next task".
+
+## Phase 5 slice 5 — the desktop till (session 8)
+- **Toolchain**: Rust 1.99.1 (rustup, stable MSVC) and the VS 2022 Build Tools C++ workload installed with the user's approval. WebView2 was already present. cargo is in `%USERPROFILE%\.cargo\bin`; new shells may need it added to PATH.
+- **Shell** `apps/pos-desktop/src-tauri` (Tauri 2), ADR-0015 "As built (slices 4–5)":
+  - `store`: a single `rusqlite` connection, not the SQL plugin, whose pool would break `transaction()`. WAL + FULL; a new page rolls back what a dead page left open.
+  - `printer`: TCP/9100 or Windows RAW spooler, with a deadline.
+  - `secrets`: terminal credential in Windows Credential Manager.
+  - Ten commands, each granted in `capabilities/default.json`; CSP; `ONEPOS_TILL_PROFILE` for isolated test runs.
+- **POS**:
+  - set-up screen, band status chip + till settings (printer, send now, disconnect), outage banner;
+  - offline cash selling in `Sell` (snapshot lookup and pricing, no SC/PWD or card/QR offline);
+  - the offline receipt with the printed TIN (`legalEntity.receiptTin` added to the snapshot);
+  - thermal printing for every receipt when a printer is set.
+  - A lost checkout answer followed by an offline recording uses the same transaction id → never counted twice (quarantined as `DUPLICATE_TRANSACTION`). The admin `/offline-sales` screen words it: "Already recorded online as sale #000002 … Dismiss this copy". Typechecked only; `test:e2e:web:offline` was not re-run.
+- **Defects found by the E2E and fixed**:
+  - `freezePrototype` blanked the app (a library assigns `toString`);
+  - a reload mid-transaction left the till's connection inside it, so the till never loaded (now rolled back on page start);
+  - SC/PWD buttons and a "take card/QR" hint were still shown offline.
+  - Test-harness traps found on the way:
+    - Chromium silently re-sends a POST whose connection closed before any reply byte (the API's idempotency replayed it), so the lost-answer drill cuts after the reply starts;
+    - WebView2 starts on about:blank, and reloading it during start-up can leave a blank page.
+- **Also this session**:
+  - PayMongo env settings (format-checked, live keys refused outside production; `PAYMENT_PROVIDER` stays `dev` until the adapter exists);
+  - `SNAPSHOT_EXPIRED` integration test (23 h clean / 25 h flagged).
+- **Tests (run this session)**:
+  - `cargo test` 8/8 (in `apps/pos-desktop/src-tauri`);
+  - `@1pos/pos-offline` 9/9; `@1pos/config` 8/8; API unit 35/35; offline integration (`offline-sync` 5 + `offline-engine` 4) 9/9;
+  - `test:e2e:desktop` **20/20**, run twice in a row after the last change (4 consecutive passes on the version before the TIN/SC fixes);
+  - browser-mode regression: `test:e2e:pos` 19/19, `test:e2e:tables` 25/25;
+  - `pnpm build`, `pnpm typecheck`, `pnpm lint` clean;
+  - gate at commit: `turbo run test:integration --concurrency=1 --continue` → database 21/21, workers 8/8, api 253/253.
+- **Test fragility fixed**: two offline price-change tests stamped device times with the host clock, milliseconds away from a price change stamped by the DB clock. After a Docker restart the two clocks differed by ~130 ms and the tests flipped (once one way, once the other). Both now date those sales from the DB clock.
 
 ## Phase 5 slices 3–4 — printing and the review screen (session 7)
 - **`@1pos/escpos`** (new, pure): a neutral `PrintableReceipt` → fixed-width layout (32/42/48 columns; long names wrap with the amount on the last line) and ESC/POS bytes:
@@ -562,10 +594,10 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
 2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
-3. **Phase 5** (ADR-0015): slices 1–3 ✅, slice 4 ✅ for the admin. **Blocked on the user**:
-   - slice 5 (the Tauri shell, which also unblocks the POS offline screens, the SQLite driver and the printer/drawer byte channel) needs `rustup` + MSVC build tools + WebView2 installed — ask before installing;
-   - slice 6 needs PayMongo sandbox keys.
-   Without either, the remaining non-blocked work is the Phase 5 leftovers in BACKLOG, or the carried items below.
+3. **Phase 5** (ADR-0015): slices 1–5 ✅ (session 8: the desktop till).
+   - **Slice 6 — PayMongo**: the user said they will put the sandbox keys in `.env` (`PAYMONGO_SECRET_KEY`, `PAYMONGO_PUBLIC_KEY`, `PAYMONGO_WEBHOOK_SECRET`; never in chat). At session end they were not set yet. Check with `grep -c '^PAYMONGO_SECRET_KEY=sk_test_' .env`. Then build the adapter behind `PaymentProvider` (ADR-0010) with webhooks and card/QR refunds, and add `paymongo` to `PAYMENT_PROVIDER`.
+   - Slice 7: exit review. Run every E2E suite incl. `test:e2e:desktop`, and drill the till on real printer/drawer hardware if the user has it.
+   - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), runtime API URL, signed installer + auto-update.
 4. Decisions for the user:
    - restaurant set-up for branch managers (a "restaurant manager" template, or grant `restaurant.manage` to `branch_manager`) and a built-in "kitchen crew" template;
    - whether a service charge's stored gross should include its VAT (BACKLOG, slice 7 leftovers).
