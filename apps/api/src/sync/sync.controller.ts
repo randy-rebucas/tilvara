@@ -32,6 +32,12 @@ export class SyncController {
   }
 
   @RequireTenant()
+  @Get('sync/terminals')
+  terminals(@Auth() auth: AuthContext) {
+    return this.sync.terminalHealth(auth);
+  }
+
+  @RequireTenant()
   @Get('sync/transactions')
   list(@Auth() auth: AuthContext, @Query(new ZodPipe(offlineListQuerySchema)) q: OfflineListQuery) {
     return this.sync.list(auth, q);

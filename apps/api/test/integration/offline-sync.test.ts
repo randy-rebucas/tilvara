@@ -142,7 +142,7 @@ describe('sync', () => {
     expect(raised.status).toBeLessThan(300);
     // Sold after the rise by the DB clock: the host clock may run behind the DB's by more than the
     // moment between the two calls, which would date the sale before the new price (correctly unflagged).
-    const [{ at }] = await sql<{ at: Date }>(s, `SELECT clock_timestamp() + interval '1 millisecond' AS at`);
+    const at = (await sql<{ at: Date }>(s, `SELECT clock_timestamp() + interval '1 millisecond' AS at`))[0]!.at;
     const changed = (await sync(s.t1, [sale(s, snap, { occurredAt: at.toISOString() })]).expect(200)).body.results[0];
     expect([changed.status, changed.flags]).toEqual(['RECORDED', ['PRICE_CHANGED']]);
     expect((await http().get(`/v1/sales/${changed.saleId}`).set(s.cashier).expect(200)).body.amountDue).toBe('44.80'); // what the customer paid
@@ -156,6 +156,9 @@ describe('sync', () => {
     const [when] = await sql<{ completed_at: Date; opened_at: Date }>(s, `SELECT s.completed_at, c.opened_at FROM sales s JOIN cashier_sessions c ON c.id = s.cashier_session_id WHERE s.id = $1`, [behind.saleId]);
     expect(when!.completed_at.getTime()).toBe(when!.opened_at.getTime()); // never before the shift opened
     expect(await sql(s, `SELECT offline_flags FROM sales ORDER BY sale_number`)).toEqual([{ offline_flags: ['PRICE_CHANGED'] }, { offline_flags: ['CLOCK_ADJUSTED'] }, { offline_flags: ['CLOCK_ADJUSTED', 'PRICE_CHANGED'] }]);
+    // Managers see the flags on the recorded deliveries.
+    const recorded = (await http().get('/v1/sync/transactions?status=RECORDED').set(s.manager).expect(200)).body.data;
+    expect(recorded.map((x: { saleNumber: number; flags: string[] }) => [x.saleNumber, x.flags]).sort()).toEqual([[1, ['PRICE_CHANGED']], [2, ['CLOCK_ADJUSTED']], [3, ['CLOCK_ADJUSTED', 'PRICE_CHANGED']]]);
   });
 
   it('flags, never refuses, a sale priced from a snapshot older than the offline window (24 h)', async () => {
@@ -182,6 +185,42 @@ describe('sync', () => {
     expect((await http().get(`/v1/sales/${res[1].saleId}`).set(s.cashier).expect(200)).body.amountDue).toBe('44.80'); // what the customer paid
     expect(await sql(s, `SELECT offline_flags FROM sales ORDER BY sale_number`)).toEqual([{ offline_flags: [] }, { offline_flags: ['SNAPSHOT_EXPIRED'] }]);
     expect(await audit(s)).toEqual(CLEAN);
+  });
+});
+
+describe('till health', () => {
+  it('managers see when each till was last heard from; a till gone quiet during an open shift is reported silent', async () => {
+    const s = await shop('off-health');
+    const health = async (who: Record<string, string>) => (await http().get('/v1/sync/terminals').set(who).expect(200)).body;
+    await snapshot(s);
+    await sync(s.t1, [sale(s, await snapshot(s), { amountDue: '40.00', tenders: [{ method: 'CASH', tendered: '40.00' }] })]).expect(200); // quarantined
+    const h = await health(s.manager);
+    expect(h.silenceMinutes).toBe(30);
+    const t1 = h.data.find((x: { terminalId: string }) => x.terminalId === s.t1.id);
+    expect(t1).toMatchObject({ register: { id: s.r1, code: 'R1' }, quarantined: 1, silent: false, shiftOpenedAt: expect.any(String) });
+    expect(t1.lastContactAt).toBe(t1.lastDeliveryAt);
+    // R2's till never called and R2 has no shift: unknown, but not silent.
+    expect(h.data.find((x: { terminalId: string }) => x.terminalId === s.t2.id)).toMatchObject({ lastContactAt: null, shiftOpenedAt: null, silent: false });
+    // A cashier (no cash.reconcile) sees no tills.
+    expect((await health(s.cashier)).data).toEqual([]);
+
+    // R1's till goes quiet for 40 minutes during the shift (dated back as if it happened; the shift opened before).
+    await sql(s, `
+      ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
+      ALTER TABLE terminal_transactions DISABLE TRIGGER USER;
+      ALTER TABLE cashier_sessions DISABLE TRIGGER USER;
+      UPDATE terminal_snapshots SET as_of = now() - interval '40 minutes';
+      UPDATE terminal_transactions SET received_at = now() - interval '40 minutes';
+      UPDATE cashier_sessions SET opened_at = now() - interval '2 hours';
+      ALTER TABLE terminal_snapshots ENABLE TRIGGER terminal_snapshots_append_only;
+      ALTER TABLE terminal_transactions ENABLE TRIGGER USER;
+      ALTER TABLE cashier_sessions ENABLE TRIGGER USER;`);
+    expect((await health(s.manager)).data.find((x: { terminalId: string }) => x.terminalId === s.t1.id).silent).toBe(true);
+    // It calls again: no longer silent. A revoked till is no longer listed.
+    await snapshot(s);
+    expect((await health(s.manager)).data.find((x: { terminalId: string }) => x.terminalId === s.t1.id).silent).toBe(false);
+    await http().post(`/v1/terminals/${s.t2.id}/revoke`).set(s.auth).send({ reason: 'Replaced' }).expect(200);
+    expect((await health(s.auth)).data.map((x: { terminalId: string }) => x.terminalId)).toEqual([s.t1.id]);
   });
 });
 

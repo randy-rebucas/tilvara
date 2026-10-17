@@ -521,6 +521,10 @@ export interface OfflineSale {
   registerCode: string;
   cashierName: string | null;
   saleNumber: number | null;
+  /** Flags on the recorded sale (ADR-0015 §5): PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED. */
+  flags: string[];
+  /** When a recorded sale counts as having happened (the till's time, corrected into the shift). */
+  recordedAt: string | null;
   terminalTxnId: string;
   deviceSeq: number;
   status: 'RECORDED' | 'QUARANTINED' | 'DISMISSED';
@@ -535,4 +539,16 @@ export interface OfflineSale {
   localReference: string;
   occurredAt: string;
   amountDue: string;
+}
+
+/** A till's sync health (`GET /v1/sync/terminals`): silent = an open shift and no contact for `silenceMinutes`. */
+export interface TillHealth {
+  terminalId: string;
+  name: string;
+  register: { id: string; code: string };
+  branchName: string;
+  lastContactAt: string | null;
+  quarantined: number;
+  shiftOpenedAt: string | null;
+  silent: boolean;
 }

@@ -201,6 +201,54 @@ configurable BLOCK policy cannot be enforced without connectivity and is not off
     set-up, a lost answer then offline (counted once, the copy quarantined as a duplicate), an offline
     sale, a restart during the outage with the queue intact, and reconnecting (both sent, drawer
     ₱1,077.80).
+## Exit review (slice 7, 2026-10-17)
+SPEC Phase 5 exit criterion: *supported offline workflows recover correctly after restarts, retries and
+network failures*. **Met for offline cash sales.** Two Phase 5 items are deferred by the user's decision
+(2026-10-17, "continue without PayMongo"):
+- payment integration hardening (PayMongo adapter, webhooks, card/QR refunds) waits for sandbox keys;
+- invoice transmission waits for the compliance gate.
+
+**SPEC §11 trace**
+
+| Requirement | Where | Tested by |
+|---|---|---|
+| SQLite local store; local catalog cache | `src-tauri` store; snapshot | cargo store tests; desktop E2E |
+| Versioned price and tax configuration | snapshot `as_of`; re-pricing as of it | offline-sync (flags, expiry) |
+| Local cashier session | shift opened online, sold offline by its opener ★ | engine unit; desktop E2E |
+| Durable queue, written before any network call | `ringUp` → outbox in one local transaction | engine unit; drills |
+| Unique terminal transaction ids; monotonic device numbers | envelope | engine unit; restore drill |
+| Idempotent sync returning the original result | `terminal_transactions` + payload hash | offline-sync; lost-answer drills |
+| Retry with backoff | engine (1 s → 5 min, jitter) | engine unit; drills |
+| Conflict handling | flags; quarantine + retry/dismiss; duplicate of an online sale | offline-sync; desktop E2E; admin E2E |
+| Sync status visibility | till chip + settings; admin review screen | desktop + admin E2E |
+| Recovery after restart | queue in the file; resume on launch | restart drill; desktop E2E restart |
+| **Monitoring for delayed or failed sync** | **added in the exit review**: `GET /v1/sync/terminals` and the admin "Tills" panel (silent = open shift and over 30 min without contact); flags shown on recorded sales | offline-sync "till health"; admin E2E |
+| Do not simulate card/e-wallet offline | cash only offline | desktop E2E |
+| Stale-price policy; offline numbering; stock below cloud | §5–§7 ★ | offline-sync; ADR text |
+
+**Drills added**
+1. Two tills on one register sell offline on the same shift and sync at the same moment. 8 sales, numbers
+   1–8 with no gaps, drawer ₱1,268.80, stock 488, audit clean.
+2. Closing the shift races the till's sync, 4 rounds per run. Each round either records the sale and
+   counts it in the close, or closes and quarantines the sale as `SESSION_NOT_OPEN` (expected cash
+   without it). Both orders were observed across runs, and no sale lands on a closed shift.
+3. A till restored from an old backup. Old envelopes replay ("already recorded"); a new sale reuses a
+   device number under a new transaction id and is recorded; 3 sales, drawer ₱1,089.60, audit clean.
+
+**Defects found and fixed in the review**
+- The till fetched a full snapshot every 30 s even online: about 2,900 snapshot rows per till per day,
+  each carrying the whole catalogue. Now every 10 min online, and every 30 s only while offline.
+- Flags (`PRICE_CHANGED`, `SNAPSHOT_EXPIRED`, `CLOCK_ADJUSTED`) were stored but shown nowhere. The
+  recorded tab now shows them in words.
+- For a sale whose till clock was off, the admin showed the till's (wrong) time as "Rung up". It now
+  shows the recorded time; the flag shows what the till said.
+
+**Not drilled**: a sale falling in a closed accounting month (`PERIOD_CLOSED`). It needs a shift and
+prices dated a month back. It relies on the ledger's closed-period guard (ledger tests) and the generic
+quarantine, retry and dismiss path (offline-sync).
+
+**Runbook**: `docs/operations/offline-terminal-recovery.md` (SPEC §16 "offline terminal recovery").
+
 - **Known gaps (desktop)**
   - After a restart during an outage nobody can sign in (sign-in needs the API), so selling waits for
     the connection; an offline PIN for the shift's cashier is the candidate.

@@ -1,7 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { httpTransport, LocalStore, OfflineEngine } from '@1pos/pos-offline';
 import { nodeSqliteDriver } from '@1pos/pos-offline/node-sqlite';
-import { mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdtempSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,7 +58,7 @@ async function shop(prefix: string) {
   const m = await addMember(owner, t.tenantId, 'branch_manager', { type: 'BRANCH', id: branchId });
   const manager = bearer(await loginToken(app, m.email));
   const session = (await http().post('/v1/cashier-sessions').set(cashier).send({ registerId, openingFloat: '1000.00' }).expect(201)).body.id as string;
-  return { tenantId: t.tenantId, auth, cola, cashier, cashierId: c.userId, manager, session, terminalId: reg.terminal.id as string, credential: reg.credential as string };
+  return { tenantId: t.tenantId, auth, registerId, cola, cashier, cashierId: c.userId, manager, session, terminalId: reg.terminal.id as string, credential: reg.credential as string };
 }
 type S = Awaited<ReturnType<typeof shop>>;
 
@@ -79,12 +79,12 @@ function network() {
 }
 
 /** A till: its own SQLite file, the engine, and a clock that moves only when the drill says so. */
-async function till(s: S, path: string, net: ReturnType<typeof network>, baseUrl = base) {
+async function till(s: S, path: string, net: ReturnType<typeof network>, baseUrl = base, terminal = { id: s.terminalId, credential: s.credential }) {
   const driver = nodeSqliteDriver(path);
   const clock = { t: Date.now() };
   const engine = new OfflineEngine({
     store: new LocalStore(driver),
-    transport: httpTransport({ baseUrl, terminalId: s.terminalId, credential: s.credential, fetch: net.fetch, timeoutMs: 10_000 }),
+    transport: httpTransport({ baseUrl, terminalId: terminal.id, credential: terminal.credential, fetch: net.fetch, timeoutMs: 10_000 }),
     now: () => clock.t,
     baseBackoffMs: 1_000,
   });
@@ -222,6 +222,122 @@ describe('the world moved while the till was offline', () => {
     expect(await t.engine.status()).toMatchObject({ authState: 'REVOKED' });
     await expect(ring(t.engine, s)).rejects.toMatchObject({ code: 'TERMINAL_REVOKED' });
     await t.driver.close();
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+});
+
+/** Phase 5 exit review: the recovery paths the drills above do not reach. */
+describe('exit review drills', () => {
+  /** Device times inside the shift by the server's clock (the host clock may run ahead of the DB's). */
+  const shiftStart = async (s: S, session = s.session) =>
+    Date.parse((await http().get(`/v1/cashier-sessions/${session}`).set(s.cashier).expect(200)).body.openedAt) + 1;
+
+  it('two tills on one register sell offline on the same shift and sync at the same moment: every sale once, numbers gapless', async () => {
+    const s = await shop('drill-twotills');
+    const second = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.registerId, name: 'Till 2' }).expect(201)).body;
+    const net = network();
+    const a = await till(s, file(), net);
+    const b = await till(s, file(), net, base, { id: second.terminal.id, credential: second.credential });
+    await Promise.all([a.engine.refreshSnapshot(), b.engine.refreshSnapshot()]);
+    net.state.mode = 'down';
+    a.clock.t = b.clock.t = await shiftStart(s);
+    for (let i = 0; i < 4; i++) {
+      await ring(a.engine, s);
+      await ring(b.engine, s, '2');
+      a.clock.t += 1;
+      b.clock.t += 1;
+    }
+    net.state.mode = 'up';
+    const [ra, rb] = await Promise.all([a.engine.drain(), b.engine.drain()]);
+    const results = [...ra, ...rb].flatMap((r) => r.results);
+    expect(results).toHaveLength(8);
+    expect(results.every((r) => r.status === 'RECORDED' && !r.replayed)).toBe(true);
+    const numbers = results.map((r) => (r.status === 'RECORDED' ? r.saleNumber : 0)).sort((x, y) => x - y);
+    expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // Float 1000 + 4 × 22.40 + 4 × 44.80; 4 + 8 colas out of stock.
+    expect((await http().get(`/v1/cashier-sessions/${s.session}`).set(s.cashier).expect(200)).body.expectedCash).toBe('1268.80');
+    expect(await sql(s, `SELECT quantity::text AS q FROM stock_balances`)).toEqual([{ q: '488.0000' }]);
+    await Promise.all([a.driver.close(), b.driver.close()]);
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('closing the shift races the till’s sync: a sale is either in the closing count or waiting for a manager, never recorded on a closed shift', async () => {
+    const s = await shop('drill-closerace');
+    const net = network();
+    const t = await till(s, file(), net);
+    const outcomes: string[] = [];
+    let session = s.session;
+    for (let round = 0; round < 4; round++) {
+      await t.engine.refreshSnapshot(); // knows this round's shift
+      net.state.mode = 'down';
+      t.clock.t = await shiftStart(s, session);
+      await ring(t.engine, s);
+      net.state.mode = 'up';
+      t.clock.t += 10 * 60_000; // due now
+      // The cashier counts ₱1,022.40 (float + this sale) while the till delivers it.
+      const [closed, synced] = await Promise.all([
+        http().post(`/v1/cashier-sessions/${session}/close`).set(s.cashier).send({ countedCash: '1022.40' }),
+        t.engine.syncOnce(),
+      ]);
+      const result = synced.results[0]!;
+      const [sale] = await sql<{ status: string }>(s, `SELECT c.status FROM sales x JOIN cashier_sessions c ON c.id = x.cashier_session_id WHERE x.cashier_session_id = $1`, [session]);
+      if (closed.status === 200) {
+        const expected = closed.body.reconciliation.expectedCash;
+        if (result.status === 'RECORDED') {
+          expect(expected).toBe('1022.40'); // the sale is in the count it was closed with
+          outcomes.push('recorded, then closed');
+        } else {
+          expect([result.status, 'code' in result ? result.code : null, expected, sale]).toEqual(['QUARANTINED', 'SESSION_NOT_OPEN', '1000.00', undefined]);
+          outcomes.push('closed, then quarantined');
+        }
+      } else {
+        // The close lost the race to a sale that could not be recorded: the guard asks to resolve it first.
+        expect([closed.status, closed.body.error.code]).toEqual([409, 'OFFLINE_SALES_UNRESOLVED']);
+        outcomes.push('close refused');
+      }
+      // Next round on a fresh shift (a closed one with a variance needs no approval to start another).
+      session = (await http().post('/v1/cashier-sessions').set(s.cashier).send({ registerId: s.registerId, openingFloat: '1000.00' })).body.id ?? session;
+      if (closed.status !== 200) break;
+    }
+    // Both orders occur across runs ("recorded, then closed" / "closed, then quarantined"); each is checked above.
+    expect(outcomes.length).toBeGreaterThan(0);
+    await t.driver.close();
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('a till restored from an old backup (device numbers restart): old envelopes replay, new sales are recorded, nothing twice', async () => {
+    const s = await shop('drill-restore');
+    const net = network();
+    const path = file();
+    let t = await till(s, path, net);
+    await t.engine.refreshSnapshot();
+    net.state.mode = 'down';
+    t.clock.t = await shiftStart(s);
+    const first = (await ring(t.engine, s)).sale;
+    // The nightly backup copies the till's file while sale 1 waits to be sent.
+    await t.driver.close();
+    const backup = file();
+    copyFileSync(path, backup);
+    t = await till(s, path, net);
+    t.clock.t = (await shiftStart(s)) + 10;
+    const second = (await ring(t.engine, s)).sale;
+    net.state.mode = 'up';
+    t.clock.t += 10 * 60_000;
+    expect((await t.engine.drain()).flatMap((r) => r.results).map((r) => r.status)).toEqual(['RECORDED', 'RECORDED']);
+    await t.driver.close();
+
+    // The disk dies; the till comes back from the backup: sale 1 still "pending", and the next device number is 2 again.
+    const restored = await till(s, backup, net);
+    restored.clock.t = (await shiftStart(s)) + 20;
+    const third = (await ring(restored.engine, s, '2')).sale;
+    expect(third.deviceSeq).toBe(second.deviceSeq); // reused number, new transaction id
+    expect(third.terminalTxnId).not.toBe(second.terminalTxnId);
+    restored.clock.t += 10 * 60_000;
+    const after = (await restored.engine.drain()).flatMap((r) => r.results);
+    expect(after.map((r) => [r.terminalTxnId, r.status, r.replayed])).toEqual([[first.terminalTxnId, 'RECORDED', true], [third.terminalTxnId, 'RECORDED', false]]);
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales`)).toEqual([{ n: 3 }]);
+    expect((await http().get(`/v1/cashier-sessions/${s.session}`).set(s.cashier).expect(200)).body.expectedCash).toBe('1089.60'); // 22.40 + 22.40 + 44.80
+    await restored.driver.close();
     expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 });

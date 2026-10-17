@@ -45,7 +45,13 @@ export function useTill(): Till {
 }
 
 const STATUS_MS = 3_000;
-const PROBE_MS = 30_000;
+/**
+ * Snapshots: every fetch is recorded server-side and carries the whole catalogue, so online the till
+ * refreshes prices every 10 minutes (often enough for managers to see it alive: their till-health view
+ * flags 30 minutes of silence during a shift); offline it probes every 30 s for the API coming back.
+ */
+const REFRESH_ONLINE_MS = 10 * 60_000;
+const PROBE_OFFLINE_MS = 30_000;
 
 export function TillProvider({ children }: { children: ReactNode }) {
   const store = useMemo(() => (isDesktop ? new LocalStore(tauriSqlDriver()) : null), []);
@@ -103,15 +109,16 @@ export function TillProvider({ children }: { children: ReactNode }) {
     if (!engine) return;
     void refresh();
     const s = setInterval(() => void refresh(), STATUS_MS);
-    // While offline, probe for the API coming back (a fresh snapshot also refreshes prices).
+    return () => clearInterval(s);
+  }, [engine, refresh]);
+
+  useEffect(() => {
+    if (!engine) return;
     const p = setInterval(() => {
       engine.refreshSnapshot().then(() => setOnline(true), () => setOnline(false));
-    }, PROBE_MS);
-    return () => {
-      clearInterval(s);
-      clearInterval(p);
-    };
-  }, [engine, refresh]);
+    }, online ? REFRESH_ONLINE_MS : PROBE_OFFLINE_MS);
+    return () => clearInterval(p);
+  }, [engine, online]);
 
   // A sync that got no answer means the API is unreachable too.
   useEffect(() => {

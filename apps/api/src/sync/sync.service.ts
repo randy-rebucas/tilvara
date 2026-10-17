@@ -45,6 +45,8 @@ export interface TerminalPrincipal {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unauthenticated = (code = 'UNAUTHENTICATED', message = 'Terminal authentication required') => new AppError(code, message, HttpStatus.UNAUTHORIZED);
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** A till with an open shift on its register that has not been in touch this long is reported silent. */
+const TILL_SILENCE_MINUTES = 30;
 
 type Delivery = typeof terminalTransactions.$inferSelect;
 
@@ -247,6 +249,49 @@ export class SyncService extends TenantService {
   }
 
   // ---------------------------------------------------------------- manager side
+  /**
+   * Till health (SPEC §11, monitoring for delayed or failed sync): every active terminal the caller may
+   * reconcile, when it was last heard from (snapshot or delivery), what waits for review, and whether it is
+   * **silent**: its register has an open shift and the till has not been in touch for
+   * `TILL_SILENCE_MINUTES` since the later of its last contact and the shift's opening. An online till
+   * refreshes its snapshot every few minutes, so a silent one is offline (or off) with sales possibly on board.
+   */
+  terminalHealth(auth: AuthContext) {
+    return this.read(auth, async (db) => {
+      const { rows } = await db.execute<{
+        id: string; name: string; register_id: string; register_code: string; branch_name: string; last_snapshot_at: string | null;
+        last_delivery_at: string | null; quarantined: number; shift_opened_at: string | null; now: string;
+      }>(sql`
+        SELECT t.id, t.name, t.register_id, r.code AS register_code, b.name AS branch_name,
+               (SELECT max(s.as_of) FROM terminal_snapshots s WHERE s.terminal_id = t.id) AS last_snapshot_at,
+               (SELECT max(x.received_at) FROM terminal_transactions x WHERE x.terminal_id = t.id) AS last_delivery_at,
+               (SELECT count(*)::int FROM terminal_transactions x WHERE x.terminal_id = t.id AND x.status = 'QUARANTINED') AS quarantined,
+               (SELECT c.opened_at FROM cashier_sessions c WHERE c.register_id = t.register_id AND c.status = 'OPEN') AS shift_opened_at,
+               now() AS now
+          FROM terminals t
+          JOIN registers r ON r.id = t.register_id
+          JOIN branches b ON b.id = r.branch_id
+         WHERE t.revoked_at IS NULL
+         ORDER BY b.name, r.code, t.name`);
+      const iso = (v: string | null) => (v === null ? null : new Date(v).toISOString());
+      const out = [];
+      for (const r of rows) {
+        if (!this.can(auth, 'cash.reconcile', (await registerScope(db, r.register_id)).scope)) continue;
+        const contact = [r.last_snapshot_at, r.last_delivery_at].filter((v): v is string => v !== null).map((v) => Date.parse(v));
+        const lastContactAt = contact.length ? Math.max(...contact) : null;
+        const since = r.shift_opened_at === null ? null : Math.max(Date.parse(r.shift_opened_at), lastContactAt ?? 0);
+        out.push({
+          terminalId: r.id, name: r.name, register: { id: r.register_id, code: r.register_code }, branchName: r.branch_name,
+          lastContactAt: lastContactAt === null ? null : new Date(lastContactAt).toISOString(),
+          lastSnapshotAt: iso(r.last_snapshot_at), lastDeliveryAt: iso(r.last_delivery_at),
+          quarantined: Number(r.quarantined), shiftOpenedAt: iso(r.shift_opened_at),
+          silent: since !== null && Date.parse(r.now) - since > TILL_SILENCE_MINUTES * 60_000,
+        });
+      }
+      return { data: out, silenceMinutes: TILL_SILENCE_MINUTES };
+    });
+  }
+
   /** Offline deliveries the caller may reconcile (`cash.reconcile` at the terminal's register). */
   list(auth: AuthContext, q: OfflineListQuery) {
     return this.read(auth, async (db) => {
@@ -332,7 +377,7 @@ export class SyncService extends TenantService {
     return db
       .select({
         d: terminalTransactions, registerId: terminals.registerId, terminalName: terminals.name, registerCode: registers.code,
-        cashierName: users.displayName, saleNumber: sales.saleNumber,
+        cashierName: users.displayName, saleNumber: sales.saleNumber, flags: sales.offlineFlags, recordedAt: sales.completedAt,
       })
       .from(terminalTransactions)
       .innerJoin(terminals, eq(terminals.id, terminalTransactions.terminalId))
@@ -342,12 +387,19 @@ export class SyncService extends TenantService {
       .$dynamic();
   }
 
-  private view(r: { d: Delivery; terminalName: string; registerCode: string; cashierName: string | null; saleNumber: number | null }) {
+  /**
+   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED); [] otherwise.
+   * `recordedAt`: when the sale counts as having happened (the device time, clamped into the shift); `occurredAt` is
+   * what the till's clock said.
+   */
+  private view(r: {
+    d: Delivery; terminalName: string; registerCode: string; cashierName: string | null; saleNumber: number | null; flags: string[] | null; recordedAt: Date | null;
+  }) {
     const { d } = r;
     const env = d.payload as OfflineSale;
     return {
       id: d.id, terminalId: d.terminalId, terminalName: r.terminalName, registerCode: r.registerCode, cashierName: r.cashierName,
-      saleNumber: r.saleNumber, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
+      saleNumber: r.saleNumber, flags: r.flags ?? [], recordedAt: r.recordedAt, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
       cashierSessionId: d.cashierSessionId, saleId: d.saleId, errorCode: d.errorCode, errorDetail: d.errorDetail, attempts: d.attempts,
       receivedAt: d.receivedAt, resolvedAt: d.resolvedAt, resolvedBy: d.resolvedBy, resolveReason: d.resolveReason,
       localReference: env.localReference, occurredAt: env.occurredAt, amountDue: env.amountDue, cashierUserId: env.cashierUserId,

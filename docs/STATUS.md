@@ -3,7 +3,35 @@
 _Last updated: 2026-10-17 (session 8 — Rust toolchain installed; Phase 5 slice 5: the Tauri desktop till, POS offline screens; PayMongo env settings; SNAPSHOT_EXPIRED test)_
 
 ## Current phase
-**Phase 5 — Offline & integrations, in progress.** Plan: `docs/decisions/ADR-0015-offline-sync.md` (the starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows). Slices 1–5 done (slice 5: the desktop till, verified through a simulated outage in the real exe). Next: slice 6 (PayMongo, needs the sandbox keys in `.env`) and slice 7 (exit review). See "Next task".
+**Phase 5 — Offline & integrations: exit criterion met for offline cash sales (2026-10-17, session 8)**, with two items deferred by the user's decision ("continue without PayMongo"):
+- payment integration hardening (PayMongo; waits for sandbox keys);
+- invoice transmission (compliance gate).
+
+Plan and exit review: `docs/decisions/ADR-0015-offline-sync.md` ("Exit review"). The starred policies are defaults the user may revisit: cash-only offline on a shift opened online, stale prices flagged not refused, local receipt reference until sync, stock may go below what the cloud knows. **Next: Phase 6** (see "Next task"). PayMongo slots in whenever the keys arrive.
+
+## Phase 5 exit review (session 8)
+- **SPEC §11 traced** requirement by requirement (ADR-0015 table). The one gap, monitoring delayed or failed sync, was built:
+  - `GET /v1/sync/terminals` (till health for `cash.reconcile`: last contact, waiting sales, open shift, **silent** = open shift and over 30 min without contact);
+  - an admin "Tills" panel on `/offline-sales`;
+  - flags shown in words on recorded sales.
+- **Drills added** (`offline-engine.test.ts` "exit review drills"):
+  - two tills, one register, simultaneous sync → gapless 1–8;
+  - shift close racing a sync, 4 rounds → both orders observed, never a sale on a closed shift;
+  - a till restored from an old backup → replays + new sale, nothing twice.
+- **Defects fixed**:
+  - the till fetched a full snapshot every 30 s online (≈2,900 rows/day/till) → every 10 min online, every 30 s only offline;
+  - offline flags were stored but invisible;
+  - a till's wrong clock was shown as "Rung up" → the recorded time is shown, and the flag says what the till said.
+- **Runbook**: `docs/operations/offline-terminal-recovery.md`.
+- **Not drilled**: `PERIOD_CLOSED` for an offline sale (needs month-old fixtures; covered by the ledger guard and the generic quarantine path).
+- **Tests (run this session, final code)**:
+  - unit: `pnpm test` 24/24 tasks; `cargo test` 8/8;
+  - integration: `turbo run test:integration --concurrency=1 --continue` → database 21, workers 8, api **257**;
+  - E2E, all nine suites against a fresh build (API :4321, POS :3331, admin :3322):
+    - admin smoke 42/42, restaurant 22/22, reports 19/19, **offline review 14/14** (re-run after the flag fix);
+    - POS 19/19, tables 25/25, kitchen 13/13, service 22/22;
+    - **desktop 21/21** (re-run after the snapshot-rate change);
+  - dev DB traceability audit (`test/dev-audit.ts`): 166 tenants, 171 sales, 472 movements, 305 entries, **no violations**.
 
 ## Phase 5 slice 5 — the desktop till (session 8)
 - **Toolchain**: Rust 1.99.1 (rustup, stable MSVC) and the VS 2022 Build Tools C++ workload installed with the user's approval. WebView2 was already present. cargo is in `%USERPROFILE%\.cargo\bin`; new shells may need it added to PATH.
@@ -595,7 +623,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
 2. ~~Phase 4 slice 7 — exit review~~ ✅ (session 7, above).
-3. **Phase 5** (ADR-0015): slices 1–5 ✅ (session 8: the desktop till).
+3. **Phase 5** ✅ exit met for offline cash sales (session 8). **Next: Phase 6 — pilot and commercial readiness** (SPEC: performance, security hardening, backup restoration tests, operational monitoring, tenant onboarding, support workflows). Plan it first (ADR), as for earlier phases. Deferred Phase 5 items:
    - **Slice 6 — PayMongo**: the user said they will put the sandbox keys in `.env` (`PAYMONGO_SECRET_KEY`, `PAYMONGO_PUBLIC_KEY`, `PAYMONGO_WEBHOOK_SECRET`; never in chat). At session end they were not set yet. Check with `grep -c '^PAYMONGO_SECRET_KEY=sk_test_' .env`. Then build the adapter behind `PaymentProvider` (ADR-0010) with webhooks and card/QR refunds, and add `paymongo` to `PAYMENT_PROVIDER`.
    - Slice 7: exit review. Run every E2E suite incl. `test:e2e:desktop`, and drill the till on real printer/drawer hardware if the user has it.
    - Desktop leftovers (ADR-0015 "Known gaps (desktop)"): offline sign-in after a restart (PIN), signed installer + auto-update, real printer/drawer check.

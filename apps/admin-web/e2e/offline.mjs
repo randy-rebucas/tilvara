@@ -31,7 +31,8 @@ const sale = (seq, over = {}) => ({
   occurredAt: new Date().toISOString(), localReference: `R1-T${term.terminal.credentialHint}-${String(seq).padStart(6, '0')}`,
   lines: [{ variantId: cola, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '50.00' }], amountDue: '22.40', ...over,
 });
-const synced = await call('POST', '/v1/sync/sales', null, { sales: [sale(1), sale(2, { amountDue: '20.00', tenders: [{ method: 'CASH', tendered: '20.00' }] }), sale(3, { cashierUserId: randomUUID() })] }, terminal);
+// Sale 1's device clock ran an hour ahead: recorded at the server's time and flagged CLOCK_ADJUSTED.
+const synced = await call('POST', '/v1/sync/sales', null, { sales: [sale(1, { occurredAt: new Date(Date.now() + 3_600_000).toISOString() }), sale(2, { amountDue: '20.00', tenders: [{ method: 'CASH', tendered: '20.00' }] }), sale(3, { cashierUserId: randomUUID() })] }, terminal);
 const statuses = synced.results.map((r) => r.status).join();
 if (statuses !== 'RECORDED,QUARANTINED,QUARANTINED') throw new Error(`arrangement: ${statuses}`);
 
@@ -53,6 +54,8 @@ try {
 
   await go('/offline-sales');
   check('two sales wait for review, with the till, cashier and amount', await shown('To review') && (await text()).includes('R1-T') && (await text()).includes('Till 1') && (await text()).includes('₱20.00'));
+  check('tills panel: Till 1 on R1, shift open, 2 waiting for review, not silent',
+    await evaluate(`(() => { const s = document.querySelector('section[aria-labelledby="tills"]'); const x = s?.innerText ?? ''; return x.includes('Till 1') && x.includes('R1') && x.includes('Open since') && x.includes('2 waiting for review') && !x.includes('Silent'); })()`));
   check('the wrong total is explained with both figures', await shown('The till charged a different total than its price list gives (₱20.00 vs ₱22.40)'));
   check('the unknown cashier is explained', (await text()).includes('not an active member of the business'));
   await shot('offline-review.png');
@@ -76,6 +79,8 @@ try {
   check('dismissed tab shows the reason', await shown('Dismissed: Overcharged by mistake'));
   await clickText('Recorded');
   check('recorded tab shows the sale with its register number', await shown('Sale R1-000001'));
+  check('recorded tab shows the flag in words (till clock was off)', await shown('Till clock was off'));
+  await shot('offline-recorded-flags.png');
 
   await viewport(390, 844, true);
   await go('/offline-sales');

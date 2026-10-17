@@ -190,7 +190,14 @@ Slice 5 — Tauri shell (session 8): ✅ done (ADR-0015 "As built (slices 4–5)
 - ✅ Snapshot `receiptTin`.
 - ✅ `cargo test` 8; `test:e2e:desktop` 20 (real exe, simulated outage, restart, reconnect).
 ⬜ Slice 6 — PayMongo adapter + webhooks (env settings done session 8; waiting for the user's sandbox keys in `.env`); invoice transmission (compliance gate).
-⬜ Slice 7 — exit review.
+Slice 7 — exit review (session 8): ✅ done. **Exit: ✅ met 2026-10-17 for offline cash sales**; payment hardening (PayMongo) and invoice transmission deferred by the user's decision.
+- ✅ SPEC §11 traced (ADR-0015 table).
+- ✅ Till health: `GET /v1/sync/terminals` + admin "Tills" panel (silent tills); flags shown on recorded sales.
+- ✅ Drills: two tills one register; close racing sync; restore from an old backup.
+- ✅ Fixes: snapshot every 30 s online → 10 min; invisible flags; wrong till clock shown as "Rung up".
+- ✅ Runbook `docs/operations/offline-terminal-recovery.md`.
+- ✅ All nine E2E suites; integration (api 257); dev audit clean.
+- ⬜ Not drilled: `PERIOD_CLOSED` for an offline sale (needs month-old fixtures).
 
 ⬜ Phase 5 leftovers so far:
 - recovering a revoked terminal's queue (admin tool);
