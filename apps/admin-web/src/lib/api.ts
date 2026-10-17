@@ -524,6 +524,29 @@ export interface RecipeVersion {
 }
 
 // ---- restaurant reports (ADR-0014 §10) ----
+// ---- retail reports (Phase 2 slice 5) ----
+export type SaleBuckets = Record<'gross' | 'discount' | 'statutoryDiscount' | 'vatExemptionAmount' | 'vatableSales' | 'vatAmount' | 'vatExemptSales' | 'zeroRatedSales' | 'percentageTaxSales' | 'amountDue', string>;
+export interface SalesSummary {
+  days: { day: string; salesCount: number; returnsCount: number; voidsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets }[];
+  totals: { salesCount: number; returnsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets };
+}
+export interface ByProduct {
+  data: { variantId: string; sku: string; name: string; quantitySold: string; quantityReturned: string; netQuantity: string; sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string }[];
+  charges: { kind: string; charged: string; returned: string; net: string; netExVat: string }[];
+}
+export interface ByCashier {
+  data: { userId: string; displayName: string | null; salesCount: number; sales: string; returnsProcessed: number; returns: string }[];
+}
+export interface ByTender {
+  data: { method: string; tenders: number; collected: string; refundsCount: number; refunded: string; net: string }[];
+}
+export interface TaxSummary {
+  data: (Omit<SaleBuckets, 'gross' | 'discount'> & { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string })[];
+}
+export interface StatutoryBook {
+  data: { document: 'SALE' | 'RETURN'; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[];
+}
+
 export interface ReportFigures {
   quantitySold: string;
   quantityReturned: string;

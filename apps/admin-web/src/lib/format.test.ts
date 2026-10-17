@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import { duration, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
+import { datePresets, duration, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
+
+describe('datePresets', () => {
+  const at = (today: string) => Object.fromEntries(datePresets(today).map((p) => [p.key, `${p.from}..${p.to}`]));
+  it('weeks start on Monday; months and semi-monthly pay periods', () => {
+    // Saturday 17 October 2026.
+    expect(at('2026-10-17')).toEqual({
+      today: '2026-10-17..2026-10-17',
+      yesterday: '2026-10-16..2026-10-16',
+      thisWeek: '2026-10-12..2026-10-17',
+      lastWeek: '2026-10-05..2026-10-11',
+      thisMonth: '2026-10-01..2026-10-17',
+      lastMonth: '2026-09-01..2026-09-30',
+      payPeriod: '2026-10-16..2026-10-17',
+      lastPayPeriod: '2026-10-01..2026-10-15',
+    });
+  });
+  it('crosses month and year ends, and a Monday is the first day of its week', () => {
+    const jan = at('2027-01-04'); // a Monday, first half
+    expect(jan.yesterday).toBe('2027-01-03..2027-01-03');
+    expect(jan.thisWeek).toBe('2027-01-04..2027-01-04');
+    expect(jan.lastWeek).toBe('2026-12-28..2027-01-03');
+    expect(jan.lastMonth).toBe('2026-12-01..2026-12-31');
+    expect(jan.lastPayPeriod).toBe('2026-12-16..2026-12-31');
+    expect(at('2028-03-10').lastMonth).toBe('2028-02-01..2028-02-29'); // leap year
+  });
+});
 
 describe('duration', () => {
   it('prints m:ss, h:mm:ss from an hour, and a dash when not measured', () => {

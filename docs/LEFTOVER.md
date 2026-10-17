@@ -30,8 +30,7 @@ Slice 4 (voids/returns):
 
 Slice 5 (reports):
 - ⬜ Z-reading with accumulated grand total (fiscal gate G2)
-- ⬜ Exports (CSV/PDF)
-- ⬜ Retail report UI (see Phase 4 6d)
+- ⬜ PDF export of reports (CSV download exists for every report since session 10)
 
 Slice 6 (POS browser checkout):
 - ⬜ CSP response header in production hosting
@@ -85,7 +84,6 @@ Slice 4 (bills + checks + service charge):
 - ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
 
 Slice 5 (restaurant reports):
-- ⬜ CSV export
 - ⬜ Prep times by hour or day part and per item
 - ⬜ Open orders: items as they were at the cutoff (today: as attached now)
 - ⬜ Free modifiers ("no onions") counts in item performance (no sale line today)
@@ -107,9 +105,7 @@ Slice 6 (UI):
   - ⬜ Drag-and-drop ordering (buttons today)
   - ⬜ A plan view of the floor (positions/shapes are stored, tiles today)
 - 6d report screens:
-  - ⬜ The retail reports (summary, by product, cashier, tender, tax, SC/PWD book) on the same `/reports` frame
-  - ⬜ CSV/PDF export
-  - ⬜ Date presets (this week, last month, pay period)
+  - ⬜ PDF export (CSV and date presets are done)
 
 Slice 7 (exit review):
 - ⬜ `sales.gross` counts a service charge ex VAT while item lines count VAT-inclusive; the receipt adds the charge VAT back, but any other consumer of `gross` (exports, a future invoice) must do the same — decide whether to store a charge's gross with VAT

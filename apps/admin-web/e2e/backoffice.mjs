@@ -203,9 +203,28 @@ try {
   check('a scheduled version appears beside the one in force', (await shown('E2E scheduled change')) && (await has('Scheduled')));
   await shot('bo-tax.png');
 
-  // 10. Phone width and Filipino.
+  // 10. Retail reports: summary, by product, by tender, CSV, quick ranges.
+  await go('/');
+  await evaluate(`[...document.querySelectorAll('header nav a')].find((a) => a.textContent === 'Reports').click()`);
+  await waitFor(`location.pathname === '/reports/sales'`);
+  check('Reports opens on the sales summary: ₱49.50 sold, ₱16.50 back, ₱33.00 net', (await shown('Summary')) && (await has('₱49.50', '₱16.50', '₱33.00')));
+  await shot('bo-report-sales.png');
+  await clickText('By product');
+  await waitFor(`location.pathname === '/reports/products'`);
+  check('by product: the canton, 3 sold, 1 returned', (await shown(`PC-${slug}`)) && (await has('Lucky Me Pancit Canton')));
+  await clickText('By tender');
+  await waitFor(`location.pathname === '/reports/tenders'`);
+  check('by tender: cash net ₱33.00', (await shown('CASH')) && (await has('₱33.00')));
+  const csv = await evaluate(`fetch(document.querySelector('a[download]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), name: r.headers.get('content-disposition'), body: await r.text() }))`);
+  check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('1pos-tenders-') && csv.body.includes('CASH,1,49.50,1,16.50,33.00'));
+  await clickText('This month');
+  check('quick range "This month" starts on the 1st', await waitFor(`/from=\\d{4}-\\d{2}-01/.test(location.search)`).then(() => true, () => false));
+  await clickHref('/reports?'); // the Restaurant group (the band also has a Restaurant tab)
+  check('the restaurant group keeps its tabs', await waitFor(`location.pathname === '/reports'`).then(() => true, () => false) && (await shown('Item performance')));
+
+  // 11. Phone width and Filipino.
   await viewport(390, 844, true);
-  const pages = [`/products/${canton.id}`, '/prices', `/purchasing/suppliers/${supplier.id}`, `/sales/${sale.id}`, `/shifts/${shift.id}`, '/team', `/locations/entities/${le.id}`, `/books?entity=${le.id}`];
+  const pages = [`/products/${canton.id}`, '/prices', `/purchasing/suppliers/${supplier.id}`, `/sales/${sale.id}`, `/shifts/${shift.id}`, '/team', `/locations/entities/${le.id}`, `/books?entity=${le.id}`, '/reports/sales', '/reports/products', '/reports/tax'];
   const wide = [];
   for (const p of pages) {
     await go(p);

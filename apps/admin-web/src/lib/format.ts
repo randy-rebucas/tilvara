@@ -115,6 +115,32 @@ export function todayManila(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
 }
 
+export type PresetKey = 'today' | 'yesterday' | 'thisWeek' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'payPeriod' | 'lastPayPeriod';
+
+/**
+ * Report ranges relative to a local business day (YYYY-MM-DD): weeks start on Monday, and pay periods
+ * are the Philippine semi-monthly halves (1–15, 16–end of month). "This …" ranges end today.
+ */
+export function datePresets(today: string): { key: PresetKey; from: string; to: string }[] {
+  const [y, m, d] = today.split('-').map(Number) as [number, number, number];
+  const at = (yy: number, mm: number, dd: number) => new Date(Date.UTC(yy, mm - 1, dd)).toISOString().slice(0, 10);
+  const weekday = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7; // Monday = 0
+  const lastOfPrevMonth = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
+  const firstHalf = d <= 15;
+  return [
+    { key: 'today', from: today, to: today },
+    { key: 'yesterday', from: at(y, m, d - 1), to: at(y, m, d - 1) },
+    { key: 'thisWeek', from: at(y, m, d - weekday), to: today },
+    { key: 'lastWeek', from: at(y, m, d - weekday - 7), to: at(y, m, d - weekday - 1) },
+    { key: 'thisMonth', from: at(y, m, 1), to: today },
+    { key: 'lastMonth', from: at(y, m - 1, 1), to: at(y, m - 1, lastOfPrevMonth) },
+    { key: 'payPeriod', from: at(y, m, firstHalf ? 1 : 16), to: today },
+    firstHalf
+      ? { key: 'lastPayPeriod', from: at(y, m - 1, 16), to: at(y, m - 1, lastOfPrevMonth) }
+      : { key: 'lastPayPeriod', from: at(y, m, 1), to: at(y, m, 15) },
+  ];
+}
+
 export function daysUntil(iso: string | null | undefined): number | null {
   if (!iso) return null;
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));

@@ -1,12 +1,21 @@
+import { Download } from 'lucide-react';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, ApiError, type Branch } from '@/lib/api';
-import { todayManila } from '@/lib/format';
+import { datePresets, todayManila } from '@/lib/format';
+import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 
-export type ReportTab = 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
+export type ReportTab = 'sales' | 'products' | 'cashiers' | 'tenders' | 'tax' | 'statutory' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
 const PATHS: Record<ReportTab, string> = {
+  sales: '/reports/sales',
+  products: '/reports/products',
+  cashiers: '/reports/cashiers',
+  tenders: '/reports/tenders',
+  tax: '/reports/tax',
+  statutory: '/reports/statutory',
   items: '/reports',
   usage: '/reports/ingredient-usage',
   voids: '/reports/kitchen-voids',
@@ -14,6 +23,10 @@ const PATHS: Record<ReportTab, string> = {
   open: '/reports/open-orders',
   charge: '/reports/service-charge',
 };
+const GROUPS = {
+  sales: ['sales', 'products', 'cashiers', 'tenders', 'tax', 'statutory'],
+  restaurant: ['items', 'usage', 'voids', 'prep', 'open', 'charge'],
+} as const satisfies Record<string, readonly ReportTab[]>;
 
 export interface ReportQuery {
   branch?: string;
@@ -50,7 +63,7 @@ export async function loadReport<T>(path: string): Promise<{ data: T; error?: un
   }
 }
 
-/** Header, report tabs, branch picker and the date form shared by the report pages. */
+/** Header, report groups and tabs, branch picker, the date form with quick ranges, and the CSV download. */
 export async function ReportsChrome({ tab, scope, error, children }: {
   tab: ReportTab;
   scope: Awaited<ReturnType<typeof reportScope>>;
@@ -59,35 +72,64 @@ export async function ReportsChrome({ tab, scope, error, children }: {
 }) {
   const { t } = await getT();
   const { branches, branch, from, to, day } = scope;
-  const keep = (k: ReportTab) => `${PATHS[k]}?${new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }) })}`;
+  const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
+  const params = (k: ReportTab, extra: Record<string, string> = {}) =>
+    new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }), ...extra });
+  const keep = (k: ReportTab) => `${PATHS[k]}?${params(k)}`;
+  const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
-      <SubNav label={t('common.sections')} active={tab} items={(Object.keys(PATHS) as ReportTab[]).map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}`) }))} />
+      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : 'rep.lede')} />
+      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
+      <SubNav label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />
       {branch && (
-        // A plain GET form: the range lives in the URL, so a report can be bookmarked or shared.
-        <form method="get" action={PATHS[tab]} className="flex flex-wrap items-end gap-3">
-          <input type="hidden" name="branch" value={branch.id} />
-          {tab === 'open' ? (
-            <div className="field">
-              <label htmlFor="day">{t('rep.closeOf')}</label>
-              <input id="day" name="day" type="date" className="input" defaultValue={day} />
-            </div>
-          ) : (
-            <>
+        <div className="flex flex-col gap-2">
+          {/* A plain GET form: the range lives in the URL, so a report can be bookmarked or shared. */}
+          <form method="get" action={PATHS[tab]} className="flex flex-wrap items-end gap-3">
+            <input type="hidden" name="branch" value={branch.id} />
+            {tab === 'open' ? (
               <div className="field">
-                <label htmlFor="from">{t('common.from')}</label>
-                <input id="from" name="from" type="date" className="input" defaultValue={from} />
+                <label htmlFor="day">{t('rep.closeOf')}</label>
+                <input id="day" name="day" type="date" className="input" defaultValue={day} />
               </div>
-              <div className="field">
-                <label htmlFor="to">{t('common.to')}</label>
-                <input id="to" name="to" type="date" className="input" defaultValue={to} />
-              </div>
-            </>
+            ) : (
+              <>
+                <div className="field">
+                  <label htmlFor="from">{t('common.from')}</label>
+                  <input id="from" name="from" type="date" className="input" defaultValue={from} />
+                </div>
+                <div className="field">
+                  <label htmlFor="to">{t('common.to')}</label>
+                  <input id="to" name="to" type="date" className="input" defaultValue={to} />
+                </div>
+              </>
+            )}
+            <button className="btn">{t('common.show')}</button>
+            {!error && (
+              <a href={`/reports/export?${params(tab, { report: tab })}`} className="btn" download>
+                <Download aria-hidden className="size-4" /> {t('rep.csv')}
+              </a>
+            )}
+          </form>
+          {tab !== 'open' && (
+            <nav aria-label={t('rep.presets')} className="flex flex-wrap gap-1.5">
+              {datePresets(today).map((p) => {
+                const on = p.from === from && p.to === to;
+                return (
+                  <Link
+                    key={p.key}
+                    href={`${PATHS[tab]}?${new URLSearchParams({ branch: branch.id, from: p.from, to: p.to })}`}
+                    aria-current={on ? 'true' : undefined}
+                    className={`tag h-8! px-3! text-[0.8125rem]! ${on ? 'border-blue! text-ink!' : 'hover:text-ink'}`}
+                  >
+                    {t(`rep.preset.${p.key}` as MessageKey)}
+                  </Link>
+                );
+              })}
+            </nav>
           )}
-          <button className="btn">{t('common.show')}</button>
-        </form>
+        </div>
       )}
       {!branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone="error">{error}</Callout> : children}
     </div>
