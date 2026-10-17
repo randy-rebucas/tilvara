@@ -1,8 +1,9 @@
 import { loadWorkerEnv } from '@1pos/config';
-import { createLogger } from '@1pos/observability';
+import { createLogger, startMetricsServer, type MetricsServer } from '@1pos/observability';
 import { hostname } from 'node:os';
 import pg from 'pg';
 import { buildHandlers, DevWorkerMailer } from './handlers.js';
+import { WorkerMonitor } from './monitoring.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
 
 async function main(): Promise<void> {
@@ -24,6 +25,12 @@ async function main(): Promise<void> {
     leaseSeconds: env.OUTBOX_LEASE_SECONDS,
     logger,
   });
+  const monitor = new WorkerMonitor(pool, workerId, process.env.ONEPOS_VERSION ?? 'dev');
+  let metrics: MetricsServer | null = null;
+  if (env.WORKER_METRICS_PORT !== 0) {
+    metrics = await startMetricsServer({ registry: monitor.registry, port: env.WORKER_METRICS_PORT, host: env.METRICS_HOST });
+    logger.info('metrics listening', { host: env.METRICS_HOST, port: metrics.port });
+  }
 
   let stopping = false;
   const stop = () => {
@@ -36,7 +43,9 @@ async function main(): Promise<void> {
   let lastPurge = 0;
   while (!stopping) {
     try {
+      await monitor.beat();
       const r = await processor.runOnce();
+      monitor.recordBatch(r);
       if (r.claimed > 0) logger.info('outbox batch', { ...r });
       if (Date.now() - lastPurge > 3_600_000) {
         const { rows } = await pool.query<{ n: number }>('SELECT platform_purge_expired_idempotency() AS n');
@@ -45,11 +54,14 @@ async function main(): Promise<void> {
       }
       if (r.claimed === 0) await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS));
     } catch (err) {
+      monitor.loopErrors.inc();
       logger.error('worker loop error', { error: err instanceof Error ? err.message.split('\nparams:')[0] : 'unknown' });
       await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS * 5));
     }
   }
   // In-flight events keep their lease; another worker reclaims them after expiry if needed.
+  await monitor.stop();
+  await metrics?.close();
   await pool.end();
   logger.info('worker stopped', { workerId });
 }

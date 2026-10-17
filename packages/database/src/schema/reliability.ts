@@ -57,7 +57,24 @@ export const outboxEvents = pgTable(
   (t) => [
     index('outbox_events_claim_idx').on(t.availableAt).where(sql`${t.status} IN ('PENDING','PROCESSING')`),
     index('outbox_events_tenant_idx').on(t.tenantId, t.createdAt),
+    // Monitoring and the DEAD-letter tool (ADR-0016) without scanning delivered rows.
+    index('outbox_events_dead_idx').on(t.createdAt).where(sql`${t.status} = 'DEAD'`),
     check('outbox_events_status_check', sql`${t.status} IN ('PENDING','PROCESSING','DONE','DEAD')`),
     check('outbox_events_topic_format', sql`${t.topic} ~ '^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$'`),
   ],
+);
+
+/**
+ * One row per running outbox worker (ADR-0016 slice 3), refreshed by `worker_heartbeat()` and read
+ * only through `platform_metrics()`. Platform table: no tenant, no runtime grants.
+ */
+export const workerHeartbeats = pgTable(
+  'worker_heartbeats',
+  {
+    workerId: text('worker_id').primaryKey(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    beatAt: timestamp('beat_at', { withTimezone: true }).notNull(),
+    version: text('version'),
+  },
+  (t) => [check('worker_heartbeats_id_length', sql`length(${t.workerId}) BETWEEN 1 AND 100`)],
 );

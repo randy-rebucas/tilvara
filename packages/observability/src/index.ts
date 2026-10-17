@@ -3,6 +3,7 @@ import { trace } from '@opentelemetry/api';
 import { pino, type DestinationStream, type Logger, type LoggerOptions } from 'pino';
 
 export type { Logger } from 'pino';
+export * from './metrics.js';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];

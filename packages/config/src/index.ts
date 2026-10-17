@@ -14,6 +14,12 @@ export const serverEnvSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4320),
   /** Listen address. 127.0.0.1 locally; 0.0.0.0 inside a container behind the edge proxy. */
   API_HOST: z.string().min(1).default('127.0.0.1'),
+  /**
+   * Internal Prometheus listener (ADR-0016 slice 3): `GET /metrics` only, on its own port so it is
+   * never reachable through the public listener. 0 turns it off (integration tests).
+   */
+  API_METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(4329),
+  METRICS_HOST: z.string().min(1).default('127.0.0.1'),
   JWT_ACCESS_SECRET: z.string().min(32),
   /**
    * 32 random bytes, base64, that encrypt TOTP secrets at rest (ADR-0016). Required in production;
@@ -74,6 +80,9 @@ export const workerEnvSchema = z.object({
   /** The worker's own login (role onepos_worker, ADR-0016); required in production. Falls back to DATABASE_URL elsewhere. */
   WORKER_DATABASE_URL: z.preprocess((v) => (v === '' ? undefined : v), z.url().optional()),
   WORKER_ID: z.string().min(1).max(100).optional(),
+  /** Internal Prometheus listener of the worker (ADR-0016 slice 3); 0 turns it off. */
+  WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(4339),
+  METRICS_HOST: z.string().min(1).default('127.0.0.1'),
   OUTBOX_POLL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
@@ -107,6 +116,9 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
   const issues = isProd(env) ? productionIssues(parsed.data) : nonProductionIssues(parsed.data);
+  if (parsed.data.API_METRICS_PORT !== 0 && parsed.data.API_METRICS_PORT === parsed.data.API_PORT) {
+    issues.push('API_METRICS_PORT: must differ from API_PORT (metrics are never served on the public listener)');
+  }
   if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }

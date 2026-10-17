@@ -1,6 +1,6 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
+_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; pilot-safety leftovers. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -14,7 +14,18 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 8. runbooks and privacy;
 9. UAT, compliance review and pilot.
 
-The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1 and 2 are done** (below).
+The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–3 are done** (below).
+
+## Phase 6 slice 3 — monitoring (session 10)
+As built: ADR-0016 "As built — slice 3" (registry, internal metrics ports, SPEC §16 instruments, `platform_metrics()` business gauges, readiness with migration head + Redis, worker heartbeat, DEAD-letter CLI, 25 alert rules with runbook links in `docs/operations/monitoring.md`). Migrations 0046/0047.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` exit 0;
+  - `pnpm test --force` 24/24 tasks (observability 12, config 12, workers 3, api 47, …);
+  - `turbo run test:integration --concurrency=1 --continue --force` → database **22**, workers **17**, api **292** (all green);
+  - `pnpm db:migrate` on the dev DB (0046, 0047 applied);
+  - live boot (`pnpm --filter @1pos/api start`, `pnpm --filter @1pos/workers start`): `/v1/health/ready` → `{status: ok, checks: {database, migrations, redis: up}}`; `:4329/metrics` shows `onepos_db_up 1`, `onepos_redis_up 1`, `onepos_schema_migrations_behind 0`, outbox 24 PENDING → worker delivered them (`onepos_worker_outbox_events_total{outcome="done"} 24`), then `onepos_workers_alive 1`, heartbeat age 9 s; `/metrics` on the public port 404; `dead-letters list` → 0.
+  - Not re-run: E2E suites (no UI change in this slice).
+- Note: `pnpm dev:api` does not load `.env` (nest watch); use `pnpm --filter @1pos/api start` after a build, or export the env first.
 
 ## Phase 6 slice 2 — platform hardening (session 9)
 - **Rate limits shared through Redis** (ADR-0016 "As built — slice 2"):
@@ -713,14 +724,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–2 are done. **Next: slice 3, monitoring**:
-   - Prometheus metrics on an internal port for the API and the worker (SPEC §16 list, including rate-limit fallbacks and Redis health);
-   - readiness checks Redis and the migration head;
-   - a worker heartbeat;
-   - alert rules with runbook links;
-   - a DEAD-letter replay tool.
-
-   Then slice 4 (backup/restore drill) and slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
+2. **Phase 6** (ADR-0016). Slices 1–3 are done. Session 10 is working through the pilot-safety leftovers (LEFTOVER.md), then **slice 4 (backup/restore drill)** and slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
    - Before any pilot, add support "reset a member's MFA" (slice 6). Otherwise a privileged member who loses their phone and codes is locked out.
    - Decisions for the user (ADR-0016):
      - **D1** hosting provider and region;

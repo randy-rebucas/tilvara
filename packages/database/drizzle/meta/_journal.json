@@ -323,6 +323,20 @@
       "when": 1792231944285,
       "tag": "0045_worker_role",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1792234147312,
+      "tag": "0046_monitoring",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792234203828,
+      "tag": "0047_monitoring_functions",
+      "breakpoints": true
     }
   ]
 }

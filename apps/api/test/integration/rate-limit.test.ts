@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ApiMetrics } from '../../src/infrastructure/metrics.js';
 import { RateLimitStore } from '../../src/infrastructure/rate-limit.store.js';
 import { createApp, PASSWORD, signup } from './helpers.js';
 
@@ -119,6 +120,12 @@ describe('rate limits when Redis is down', () => {
       // One signup already used the allowance above: 4 more pass, the 6th in the window is refused.
       expect(statuses).toEqual([400, 400, 400, 400, 429]);
       expect(store.fallbacks).toBeGreaterThan(0);
+      // Monitoring sees it: the fallback counter, Redis down, and readiness degraded but still serving.
+      const metrics = app.get(ApiMetrics);
+      expect(metrics.rateLimitFallbacks.get()).toBe(store.fallbacks);
+      expect(await metrics.registry.render()).toMatch(/^onepos_redis_up 0$/m);
+      const ready = await request(app.getHttpServer()).get('/v1/health/ready').expect(200);
+      expect(ready.body).toMatchObject({ status: 'degraded', checks: { database: 'up', redis: 'down' } });
     } finally {
       await app.close();
     }

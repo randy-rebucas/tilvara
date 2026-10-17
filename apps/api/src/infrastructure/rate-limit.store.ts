@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnApplicationShutdown, OnModuleInit } from 
 import type { ServerEnv } from '@1pos/config';
 import { Redis } from 'ioredis';
 import { ENV } from './env.provider.js';
+import { ApiMetrics } from './metrics.js';
 
 export interface Hit {
   count: number;
@@ -51,10 +52,13 @@ export class RateLimitStore implements RateLimitCounter, OnModuleInit, OnApplica
   private readonly redis: Redis | null;
   private readonly prefix: string;
   private lastWarnAt = 0;
-  /** Hits counted in memory because Redis failed (monitoring, slice 3). */
+  /** Hits counted in memory because Redis failed (also exported as onepos_rate_limit_fallbacks_total). */
   fallbacks = 0;
 
-  constructor(@Inject(ENV) env: ServerEnv) {
+  constructor(
+    @Inject(ENV) env: ServerEnv,
+    @Inject(ApiMetrics) private readonly metrics: ApiMetrics,
+  ) {
     this.prefix = env.RATE_LIMIT_PREFIX;
     this.redis = env.REDIS_URL
       ? new Redis(env.REDIS_URL, {
@@ -99,6 +103,7 @@ export class RateLimitStore implements RateLimitCounter, OnModuleInit, OnApplica
       return { count, resetInMs: ttl };
     } catch (e) {
       this.fallbacks++;
+      this.metrics.rateLimitFallbacks.inc();
       this.warn(e as Error);
       return this.memory.hit(key, windowMs);
     }

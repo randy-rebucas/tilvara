@@ -6,6 +6,7 @@ import type { CreatePaymentIntentInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { ENV } from '../infrastructure/env.provider.js';
+import { ApiMetrics } from '../infrastructure/metrics.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { loadSession } from '../sales/cash.service.js';
@@ -30,8 +31,13 @@ export class PaymentsService extends TenantService {
     @Inject(TenantDb) tenantDb: TenantDb,
     @Inject(PaymentProvider) private readonly provider: PaymentProvider,
     @Inject(ENV) private readonly env: ServerEnv,
+    @Inject(ApiMetrics) private readonly metrics: ApiMetrics,
   ) {
     super(tenantDb);
+  }
+
+  private count(step: 'authorize' | 'reconcile', outcome: Outcome): void {
+    this.metrics.payments.inc({ provider: this.provider.name, step, outcome: outcome.status.toLowerCase() });
   }
 
   async create(auth: AuthContext, input: CreatePaymentIntentInput, requestKey: string) {
@@ -86,6 +92,7 @@ export class PaymentsService extends TenantService {
       // Timeout or transport failure: the provider may or may not have charged. Never guess.
       outcome = { status: 'UNKNOWN' };
     }
+    this.count('authorize', outcome);
     return this.settle(auth, intent.id, ['PROCESSING'], outcome, outcome.status === 'UNKNOWN' ? 'TIMEOUT' : outcome.status === 'SUCCEEDED' ? 'AUTHORIZED' : 'DECLINED');
   }
 
@@ -101,6 +108,7 @@ export class PaymentsService extends TenantService {
     }
     const found: RetrieveResult = await this.provider.retrieve(intent.id);
     const outcome: Outcome = found.status === 'NOT_FOUND' ? { status: 'FAILED', failureCode: 'not_received_by_provider' } : found;
+    this.count('reconcile', outcome);
     return this.settle(auth, id, ['PROCESSING', 'UNKNOWN'], outcome, 'RECONCILED');
   }
 

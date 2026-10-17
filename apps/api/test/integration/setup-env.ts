@@ -15,6 +15,8 @@ if (!testUrl || !testUrl.includes('onepos_test')) {
 process.env.DATABASE_URL = testUrl;
 process.env.NODE_ENV = 'test';
 process.env.RATE_LIMITS_ENABLED = 'false';
+// Many apps run at once in the suites: none binds the metrics port (monitoring.test.ts uses an ephemeral one).
+process.env.API_METRICS_PORT = '0';
 // Apps under test count rate limits in memory unless a test opts into Redis (with its own prefix),
 // so leftover counters from an earlier run can never change a result.
 if (process.env.REDIS_URL && !process.env.TEST_REDIS_URL) process.env.TEST_REDIS_URL = process.env.REDIS_URL;

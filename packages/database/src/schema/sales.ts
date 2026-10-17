@@ -59,6 +59,8 @@ export const cashierSessions = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
     uniqueIndex('cashier_sessions_one_open_per_register').on(t.tenantId, t.registerId).where(sql`${t.status} = 'OPEN'`),
     index('cashier_sessions_register_idx').on(t.tenantId, t.registerId, t.openedAt.desc()),
+    // Monitoring (ADR-0016): shifts closed with a variance that waits for approval, across tenants.
+    index('cashier_sessions_awaiting_idx').on(t.closedAt).where(sql`${t.status} = 'CLOSED'`),
     check('cashier_sessions_status_check', sql`${t.status} IN ('OPEN','CLOSED','RECONCILED')`),
     check('cashier_sessions_float_check', sql`${t.openingFloat} >= 0`),
     check('cashier_sessions_closed_check', sql`(${t.status} = 'OPEN') = (${t.closedAt} IS NULL)`),
@@ -322,6 +324,8 @@ export const paymentIntents = pgTable(
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     index('payment_intents_session_idx').on(t.tenantId, t.cashierSessionId, t.clientTransactionId),
+    // Monitoring (ADR-0016): payments still waiting for the provider or for reconciliation.
+    index('payment_intents_unresolved_idx').on(t.createdAt).where(sql`${t.status} IN ('PROCESSING','UNKNOWN')`),
     check('payment_intents_status_check', sql`${t.status} IN ('PROCESSING','SUCCEEDED','FAILED','UNKNOWN','CANCELED')`),
     check('payment_intents_method_check', sql`${t.method} IN ('CARD','QR','EWALLET')`),
     check('payment_intents_amount_positive', sql`${t.amount} > 0`),

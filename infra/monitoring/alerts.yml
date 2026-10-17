@@ -1,0 +1,213 @@
+# 1POS alert rules (Prometheus 2.x/3.x rule file), ADR-0016 slice 3.
+# Scrape jobs assumed: job="onepos-api" (API_METRICS_PORT, default 4329) and job="onepos-worker"
+# (WORKER_METRICS_PORT, default 4339), both on the internal network only.
+# Every rule links to its section of docs/operations/monitoring.md (prefix the repo URL once a
+# remote exists, D3). apps/api/test/integration/monitoring.test.ts checks that every metric named
+# here is exported and every runbook section exists. Keep each expr on one line.
+groups:
+  - name: onepos-availability
+    rules:
+      - alert: OneposApiDown
+        expr: up{job="onepos-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: An API instance is not answering scrapes.
+          runbook_url: docs/operations/monitoring.md#oneposapidown
+      - alert: OneposDatabaseUnreachable
+        expr: onepos_db_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The API cannot query the database (checkouts answer 503).
+          runbook_url: docs/operations/monitoring.md#oneposdatabaseunreachable
+      - alert: OneposSchemaBehind
+        expr: onepos_schema_migrations_behind > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: The database lacks migrations this API build needs; the instance is not ready.
+          runbook_url: docs/operations/monitoring.md#oneposschemabehind
+      - alert: OneposDbPoolSaturated
+        expr: max(onepos_db_pool_connections{state="waiting"}) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Requests are waiting for a database connection.
+          runbook_url: docs/operations/monitoring.md#oneposdbpoolsaturated
+      - alert: OneposDbConnectionsLost
+        expr: sum(increase(onepos_db_pool_errors_total[10m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Database connections keep dropping (restart, failover, network).
+          runbook_url: docs/operations/monitoring.md#oneposdbconnectionslost
+      - alert: OneposHttpErrors
+        expr: sum(rate(onepos_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(onepos_http_requests_total[5m])), 0.001) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 2% of API requests fail with 5xx.
+          runbook_url: docs/operations/monitoring.md#oneposhttperrors
+      - alert: OneposEventLoopLag
+        expr: max(nodejs_eventloop_lag_p99_seconds{job="onepos-api"}) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The API event loop is blocked for more than 200 ms (p99).
+          runbook_url: docs/operations/monitoring.md#oneposeventlooplag
+
+  - name: onepos-checkout
+    rules:
+      - alert: OneposCheckoutFailing
+        expr: sum(rate(onepos_checkout_total{outcome="failed"}[5m])) / clamp_min(sum(rate(onepos_checkout_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: More than 5% of online checkouts fail with 5xx; tills keep their keys and retry.
+          runbook_url: docs/operations/monitoring.md#oneposcheckoutfailing
+      - alert: OneposCheckoutSlow
+        expr: histogram_quantile(0.95, sum by (le) (rate(onepos_checkout_duration_seconds_bucket[10m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Checkout p95 is above 500 ms (ADR-0016 target).
+          runbook_url: docs/operations/monitoring.md#oneposcheckoutslow
+      - alert: OneposIdempotencyKeyReuse
+        expr: sum(increase(onepos_idempotency_total{outcome="key_reused"}[15m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Clients reuse Idempotency-Keys for different requests (client defect).
+          runbook_url: docs/operations/monitoring.md#oneposidempotencykeyreuse
+      - alert: OneposPaymentUnresolved
+        expr: onepos_payment_intents_unresolved_oldest_age_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A card/QR payment has waited more than 15 minutes for its outcome.
+          runbook_url: docs/operations/monitoring.md#onepospaymentunresolved
+      - alert: OneposPaymentFailures
+        expr: sum(increase(onepos_payment_outcomes_total{outcome=~"failed|unknown"}[15m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: Many card/QR payments declined or timed out in 15 minutes.
+          runbook_url: docs/operations/monitoring.md#onepospaymentfailures
+
+  - name: onepos-offline
+    rules:
+      - alert: OneposTillSilent
+        expr: onepos_tills_silent > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A till with an open shift has not been in touch for 30+ minutes; sales may be waiting on it.
+          runbook_url: docs/operations/monitoring.md#onepostillsilent
+      - alert: OneposOfflineSalesQuarantined
+        expr: onepos_offline_sales_quarantined_oldest_age_seconds > 14400
+        labels:
+          severity: warning
+        annotations:
+          summary: An offline sale refused at sync has waited more than 4 hours for a manager.
+          runbook_url: docs/operations/monitoring.md#oneposofflinesalesquarantined
+
+  - name: onepos-worker
+    rules:
+      - alert: OneposWorkerDown
+        expr: onepos_worker_heartbeat_age_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: No outbox worker has a heartbeat in 2 minutes; emails and events are not delivered.
+          runbook_url: docs/operations/monitoring.md#oneposworkerdown
+      - alert: OneposOutboxBacklog
+        expr: onepos_outbox_oldest_undelivered_age_seconds > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The oldest undelivered outbox event is more than 10 minutes old.
+          runbook_url: docs/operations/monitoring.md#oneposoutboxbacklog
+      - alert: OneposOutboxDeadLetters
+        expr: onepos_outbox_events{status="DEAD"} > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Outbox events used up their retries (DEAD); they need a fix and a replay.
+          runbook_url: docs/operations/monitoring.md#outbox-dead-letters
+      - alert: OneposWorkerLoopErrors
+        expr: sum(increase(onepos_worker_loop_errors_total[10m])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: The worker loop keeps failing (database unreachable or claim errors).
+          runbook_url: docs/operations/monitoring.md#oneposworkerlooperrors
+
+  - name: onepos-operations
+    rules:
+      - alert: OneposVarianceAwaitingApproval
+        expr: onepos_cashier_sessions_awaiting_approval_oldest_age_seconds > 172800
+        labels:
+          severity: info
+        annotations:
+          summary: A shift closed with a cash variance has waited more than 2 days for approval.
+          runbook_url: docs/operations/monitoring.md#oneposvarianceawaitingapproval
+      - alert: OneposRefundRefusals
+        expr: sum(increase(onepos_refund_refusals_total[1h])) > 20
+        labels:
+          severity: info
+        annotations:
+          summary: Many returns or voids refused in the last hour (training, or someone probing).
+          runbook_url: docs/operations/monitoring.md#oneposrefundrefusals
+      - alert: OneposInventoryConflicts
+        expr: sum(increase(onepos_inventory_conflicts_total[1h])) > 20
+        labels:
+          severity: info
+        annotations:
+          summary: Many stock documents refused (over-receipt, double receive, stale state) in the last hour.
+          runbook_url: docs/operations/monitoring.md#oneposinventoryconflicts
+      - alert: OneposProvisioningFailures
+        expr: sum(increase(onepos_provisioning_total{outcome="failed"}[30m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Business sign-ups failed with a server error.
+          runbook_url: docs/operations/monitoring.md#oneposprovisioningfailures
+
+  - name: onepos-platform
+    rules:
+      - alert: OneposRedisDown
+        expr: min(onepos_redis_up) == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis does not answer; rate limits count per API instance until it is back.
+          runbook_url: docs/operations/monitoring.md#oneposredisdown
+      - alert: OneposRateLimitFallback
+        expr: sum(increase(onepos_rate_limit_fallbacks_total[10m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: Rate-limit hits were counted in-process because Redis failed.
+          runbook_url: docs/operations/monitoring.md#oneposratelimitfallback
+      - alert: OneposBusinessGaugesSlow
+        expr: max(onepos_business_gauges_scrape_seconds) > 2
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: The business-gauge query takes more than 2 s.
+          runbook_url: docs/operations/monitoring.md#oneposbusinessgaugesslow

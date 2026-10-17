@@ -59,6 +59,8 @@ export const terminalTransactions = pgTable(
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
     index('terminal_transactions_status_idx').on(t.tenantId, t.status, t.receivedAt),
     index('terminal_transactions_session_idx').on(t.tenantId, t.cashierSessionId),
+    // Monitoring (ADR-0016): offline sales waiting for a manager, across tenants.
+    index('terminal_transactions_quarantined_idx').on(t.receivedAt).where(sql`${t.status} = 'QUARANTINED'`),
     check('terminal_transactions_kind_check', sql`${t.kind} IN ('SALE')`),
     check('terminal_transactions_status_check', sql`${t.status} IN ('RECORDED','QUARANTINED','DISMISSED')`),
     check('terminal_transactions_recorded_has_sale', sql`(${t.status} = 'RECORDED') = (${t.saleId} IS NOT NULL)`),

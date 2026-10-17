@@ -27,6 +27,7 @@ import { dbNow } from '../common/clock.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
+import { ApiMetrics } from '../infrastructure/metrics.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { registerScope } from '../sales/cash.service.js';
@@ -64,6 +65,7 @@ export class SyncService extends TenantService {
     @Inject(DatabasePool) private readonly database: DatabasePool,
     @Inject(SalesService) private readonly sales: SalesService,
     @Inject(ENV) private readonly env: ServerEnv,
+    @Inject(ApiMetrics) private readonly metrics: ApiMetrics,
   ) {
     super(tenantDb);
   }
@@ -164,7 +166,11 @@ export class SyncService extends TenantService {
   /** Deliver offline sales, oldest first; each result is final for that envelope (replays answer the same). */
   async syncSales(t: TerminalPrincipal, envelopes: OfflineSale[]): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
-    for (const env of [...envelopes].sort((a, b) => a.deviceSeq - b.deviceSeq)) results.push(await this.deliver(t, env));
+    for (const env of [...envelopes].sort((a, b) => a.deviceSeq - b.deviceSeq)) {
+      const r = await this.deliver(t, env);
+      this.metrics.offlineSales.inc({ outcome: r.replayed ? 'replayed' : r.status.toLowerCase() });
+      results.push(r);
+    }
     return results;
   }
 

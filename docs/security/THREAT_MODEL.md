@@ -39,6 +39,7 @@ Sales & invoices (legal records), payment references, cash records, inventory/co
 | T18 | DoS on checkout (D) | Flood API | Rate limiting per terminal/tenant; graceful degradation to offline cash at terminal | Load test (Phase 6) |
 | T19 | Dependency compromise | Malicious package | Lockfile, `pnpm audit`, Renovate review, minimal deps | CI |
 | T20 | Payment data handling (I) | Storing PAN/CVV | Never accept card data; provider-hosted fields/terminals only; store provider tokens/refs only | Code review gate |
+| T22 | Telemetry disclosure (I) | Scraping metrics for tenant data, or a label carrying ids/emails | Metrics on a separate internal listener only (`API_METRICS_PORT` ≠ `API_PORT`, refused at boot); labels from fixed sets (route templates, codes, statuses), never request data; business gauges are counts/ages from a SECURITY DEFINER function returning no tenant rows; series per metric capped | `monitoring.test.ts`, `packages/observability/test/metrics.test.ts`, `packages/config/test/env.test.ts` |
 
 ## Control → test map (security pass, Phase 6 slice 2, 2026-10-17)
 Each control and the automated check that proves it, or the gap. Test files are under `apps/api/test/integration/` unless a path is given.
@@ -66,7 +67,8 @@ Each control and the automated check that proves it, or the gap. Test files are 
 | T19 | 🟡 | `pnpm security:audit` (production dependencies, high or worse fails); `pnpm-lock.yaml` committed. **Gap**: no automation, since there is no CI (D3). Accepted: drizzle-kit's bundled esbuild ≤ 0.24.2 (moderate, dev-server-only advisory; drizzle-kit never runs that server) |
 | T20 | ✅ | By construction: there is no PAN/CVV field in any schema; the card path is provider intents only (ADR-0010). Re-check when the PayMongo adapter lands |
 | T21 | 🟡 | Header checks in `account-security.test.ts` and `test:e2e:web:security`. **Gap**: no nonce CSP |
-| — least privilege | ✅ | `rls-catalog.test.ts`: the app, read-only and worker roles have no superuser or BYPASSRLS; the worker owns nothing and writes no table; outbox functions are worker-only. `apps/workers/test/integration/outbox.test.ts`: the worker role's denials |
+| T22 | ✅ | `monitoring.test.ts` (no `/metrics` on the public listener; the internal port serves only `GET /metrics`; route labels are templates, ids/query/tenant/email never appear; business gauges carry only status labels and equal independent counts; `platform_metrics()` is platform-owned and app-only); `env.test.ts` (same port refused). Limit: the port has no authentication, so it relies on network placement (slice 7) |
+| — least privilege | ✅ | `rls-catalog.test.ts`: the app, read-only and worker roles have no superuser or BYPASSRLS; the worker owns nothing and writes no table; outbox, heartbeat and DEAD-letter functions are worker-only. `apps/workers/test/integration/outbox.test.ts` and `monitoring.test.ts`: the worker role's denials; DEAD replays need an actor and a reason and are audited |
 
 ## Release-blocking classes
 Cross-tenant exposure, duplicate charges, unbalanced journals, untraceable stock movements, secrets in client bundles.

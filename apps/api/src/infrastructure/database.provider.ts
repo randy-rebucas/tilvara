@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnApplicationShutdown } from '@nestjs/commo
 import type { ServerEnv } from '@1pos/config';
 import pg from 'pg';
 import { ENV } from './env.provider.js';
+import { ApiMetrics } from './metrics.js';
 
 /** Runtime pool (role onepos_app, RLS enforced). Use `withTenant()` for tenant data. */
 @Injectable()
@@ -9,7 +10,7 @@ export class DatabasePool implements OnApplicationShutdown {
   readonly pool: pg.Pool;
   private readonly logger = new Logger('DatabasePool');
 
-  constructor(@Inject(ENV) env: ServerEnv) {
+  constructor(@Inject(ENV) env: ServerEnv, @Inject(ApiMetrics) metrics: ApiMetrics) {
     this.pool = new pg.Pool({
       connectionString: env.DATABASE_URL,
       max: 20,
@@ -21,6 +22,7 @@ export class DatabasePool implements OnApplicationShutdown {
     // here; without a listener Node treats it as an unhandled 'error' and the API process exits.
     // The pool already discards that client and opens a new one on the next request.
     this.pool.on('error', (err: Error & { code?: string }) => {
+      metrics.dbPoolErrors.inc();
       this.logger.warn({ msg: 'idle database connection lost', code: err.code, message: err.message.slice(0, 200) });
     });
   }

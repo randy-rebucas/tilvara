@@ -3,4 +3,4 @@ export * from './schema/index.js';
 export { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 export * from './tenant-context.js';
 export * from './platform.js';
-export { runMigrations, MIGRATIONS_FOLDER } from './migrate.js';
+export { runMigrations, expectedMigrationHead, MIGRATIONS_FOLDER, type MigrationHead } from './migrate.js';

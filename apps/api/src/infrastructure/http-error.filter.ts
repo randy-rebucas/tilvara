@@ -54,6 +54,7 @@ export class HttpErrorFilter implements ExceptionFilter {
       const status = exception.getStatus();
       const code = exception instanceof AppError ? exception.code : (DEFAULT_CODES[status] ?? 'ERROR');
       const details = exception instanceof AppError ? exception.details : undefined;
+      res.locals.errorCode = code; // read by the metrics middleware
       res.status(status).json({ error: { code, message: exception.message, details, correlationId } });
       return;
     }
@@ -70,12 +71,14 @@ export class HttpErrorFilter implements ExceptionFilter {
       },
     });
     if (isTransientDbError(exception)) {
+      res.locals.errorCode = 'SERVICE_UNAVAILABLE';
       res
         .status(HttpStatus.SERVICE_UNAVAILABLE)
         .setHeader('Retry-After', '2')
         .json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'The service is temporarily unavailable. Retry the same request.', correlationId } });
       return;
     }
+    res.locals.errorCode = 'INTERNAL';
     res
       .status(HttpStatus.INTERNAL_SERVER_ERROR)
       .json({ error: { code: 'INTERNAL', message: 'An unexpected error occurred.', correlationId } });

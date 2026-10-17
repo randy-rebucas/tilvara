@@ -5,10 +5,17 @@ import type { Logger } from '@1pos/observability';
 import { HttpErrorFilter } from './infrastructure/http-error.filter.js';
 import { correlationIdMiddleware } from './infrastructure/correlation-id.middleware.js';
 import { ENV } from './infrastructure/env.provider.js';
+import { ApiMetrics, httpMetrics } from './infrastructure/metrics.js';
 import { PinoNestLogger, requestLogger } from './infrastructure/logging.js';
 
 /** Shared between main.ts and tests so the test app matches production wiring. */
 export function configureApp(app: INestApplication, logger?: Logger): void {
+  // First, so every request is timed and counted (unit-test modules without ApiMetrics skip it).
+  try {
+    app.use(httpMetrics(app.get(ApiMetrics)));
+  } catch {
+    // no metrics provider
+  }
   // The API serves JSON only: nothing may frame or run it (CSP default-src 'none'), HSTS for a year.
   app.use(
     helmet({

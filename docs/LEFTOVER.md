@@ -9,7 +9,6 @@ Moved out of `docs/BACKLOG.md` on 2026-10-17. BACKLOG keeps the plan (phases, sl
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)
 - ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once restaurant/multi-entity features exist; per-tenant entitlement overrides
-- ⬜ Outbox: ops metrics for queue depth/age and a DEAD-letter admin view (planned in Phase 6 slice 3)
 - ⬜ Audit viewer UI (planned in Phase 6 slice 6)
 - ⬜ Admin web: product edit/variants UI; custom-role editor; member role editing UI; price-list create UI; Filipino copy review by a native speaker (enum labels, e.g. VAT status, still English in FIL)
 - ⏳ OTel SDK + exporter — D1 (hosting)
@@ -170,5 +169,22 @@ Slice 2 (platform hardening):
 - ⬜ Accepted dev-only advisory: esbuild ≤ 0.24.2 in drizzle-kit (re-check when drizzle-kit updates)
 - ⬜ The bundle scan does not cover server-rendered admin pages
 - ⏳ Run the security gates automatically (needs CI, D3)
-- ⬜ Rate-limit fallbacks and Redis health as metrics (slice 3)
 - ⬜ T5 refund approval thresholds / anomaly report (product backlog)
+
+Slice 3 (monitoring):
+- ⬜ Backup-age metric and alert (slice 4)
+- ⬜ Billing failure metrics (no billing integration yet, D6)
+- ⏳ OTel traces/exporter — D1
+- ⬜ No authentication on the metrics port: relies on network placement (slice 7)
+- ⬜ DEAD letters are a CLI only; no admin/support screen (slice 6)
+
+⬜ Slice 4 — backup and restore: encrypted `pg_dump` + manifest, automated restore drill (`pnpm drill:restore`: roles, RLS, counts, audit, API smoke), RTO measured, backup-age metric. PITR waits on D1.
+⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
+⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
+⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
+⬜ Slice 8 — runbooks + privacy pack (drafts for the DPO, not legal advice).
+⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
+Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
+
+## Phase 7 — Differentiation (validated demand only)
+Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

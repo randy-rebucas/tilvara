@@ -24,6 +24,7 @@ const NON_TENANT_TABLES: Record<string, string> = {
   permissions: 'global read-only permission catalog',
   plans: 'global read-only plan catalog',
   discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
+  worker_heartbeats: 'one row per outbox worker; no runtime access, only worker_heartbeat* and platform_metrics()',
 };
 
 /** Tenant tables whose tenant_id may be NULL; such rows match no tenant policy (fail closed). */
@@ -92,9 +93,15 @@ describe('schema isolation catalog', () => {
   it('allow-listed non-tenant tables keep their reviewed posture', async () => {
     const byName = Object.fromEntries((await publicTables()).map((t) => [t.name, t]));
     const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens'];
-    for (const name of ['tenants', 'users', ...credentialTables]) {
+    for (const name of ['tenants', 'users', 'worker_heartbeats', ...credentialTables]) {
       expect([name, byName[name]?.rls, byName[name]?.forced]).toEqual([name, true, true]);
     }
+    // Platform-only tables: reached through SECURITY DEFINER functions, never by a login role.
+    const platformOnly = await q(
+      `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
+        WHERE grantee IN ('onepos_app', 'onepos_readonly', 'onepos_worker') AND table_name = 'worker_heartbeats'`,
+    );
+    expect(platformOnly).toEqual([]);
     // Credential tables: no privilege of any kind for the runtime or read-only roles.
     const credentialAccess = await q(
       `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
@@ -183,6 +190,21 @@ describe('schema isolation catalog', () => {
        has_function_privilege('onepos_app', 'outbox_claim(text, int, int)', 'EXECUTE') AS app,
        has_function_privilege('onepos_worker', 'outbox_claim(text, int, int)', 'EXECUTE') AS worker`);
     expect(claim).toEqual({ app: false, worker: true });
+    // Monitoring (ADR-0016 slice 3): the API reads the gauges; the worker beats and replays DEAD rows.
+    const { rows: monitoring } = await pool.query<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(`
+      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app,
+             has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
+             has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly
+        FROM unnest(ARRAY['platform_metrics()', 'platform_migration_head()', 'worker_heartbeat(text, timestamptz, text)',
+                          'worker_heartbeat_stop(text)', 'outbox_dead_list(int, text)', 'outbox_dead_replay(uuid, text, text)']) AS f`);
+    expect(monitoring).toEqual([
+      { fn: 'platform_metrics()', app: true, worker: false, readonly: false },
+      { fn: 'platform_migration_head()', app: true, worker: false, readonly: false },
+      { fn: 'worker_heartbeat(text, timestamptz, text)', app: false, worker: true, readonly: false },
+      { fn: 'worker_heartbeat_stop(text)', app: false, worker: true, readonly: false },
+      { fn: 'outbox_dead_list(int, text)', app: false, worker: true, readonly: false },
+      { fn: 'outbox_dead_replay(uuid, text, text)', app: false, worker: true, readonly: false },
+    ]);
   });
 
   it('SECURITY DEFINER functions are platform-owned, pin search_path and are not PUBLIC-executable', async () => {

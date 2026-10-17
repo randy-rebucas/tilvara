@@ -20,6 +20,12 @@ describe('loadServerEnv', () => {
     const env = loadServerEnv(base);
     expect(env.API_PORT).toBe(4320);
     expect(env.JWT_ACCESS_TTL_SECONDS).toBe(900);
+    expect([env.API_METRICS_PORT, env.METRICS_HOST]).toEqual([4329, '127.0.0.1']);
+  });
+
+  it('never serves metrics on the public listener', () => {
+    expect(() => loadServerEnv({ ...base, API_PORT: '4320', API_METRICS_PORT: '4320' })).toThrow(/API_METRICS_PORT: must differ/);
+    expect(loadServerEnv({ ...base, API_METRICS_PORT: '0' }).API_METRICS_PORT).toBe(0);
   });
 
   it('lists every invalid variable without echoing secrets', () => {
