@@ -154,6 +154,32 @@ describe('sync', () => {
     expect(when!.completed_at.getTime()).toBe(when!.opened_at.getTime()); // never before the shift opened
     expect(await sql(s, `SELECT offline_flags FROM sales ORDER BY sale_number`)).toEqual([{ offline_flags: ['PRICE_CHANGED'] }, { offline_flags: ['CLOCK_ADJUSTED'] }, { offline_flags: ['CLOCK_ADJUSTED', 'PRICE_CHANGED'] }]);
   });
+
+  it('flags, never refuses, a sale priced from a snapshot older than the offline window (24 h)', async () => {
+    const s = await shop('off-expired');
+    const inside = await snapshot(s);
+    const outside = await snapshot(s);
+    // Age the snapshots without a clock: move the shop's prices and tax profile back two days so they
+    // were already in force, then date the snapshots 23 h and 25 h ago. The append-only triggers are
+    // switched off only inside this transaction (ALTER TABLE holds an exclusive lock until COMMIT).
+    await sql(s, `
+      ALTER TABLE product_prices DISABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
+      UPDATE product_prices SET effective_from = effective_from - interval '2 days';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
+      UPDATE terminal_snapshots SET as_of = now() - interval '23 hours' WHERE id = '${inside.snapshotId}';
+      UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${outside.snapshotId}';
+      ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles ENABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots ENABLE TRIGGER terminal_snapshots_append_only;`);
+
+    const res = (await sync(s.t1, [sale(s, inside), sale(s, outside)]).expect(200)).body.results;
+    expect(res.map((r: { status: string; flags: string[] }) => [r.status, r.flags])).toEqual([['RECORDED', []], ['RECORDED', ['SNAPSHOT_EXPIRED']]]);
+    expect((await http().get(`/v1/sales/${res[1].saleId}`).set(s.cashier).expect(200)).body.amountDue).toBe('44.80'); // what the customer paid
+    expect(await sql(s, `SELECT offline_flags FROM sales ORDER BY sale_number`)).toEqual([{ offline_flags: [] }, { offline_flags: ['SNAPSHOT_EXPIRED'] }]);
+    expect(await audit(s)).toEqual(CLEAN);
+  });
 });
 
 describe('quarantine', () => {

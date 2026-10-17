@@ -41,6 +41,26 @@ describe('loadServerEnv', () => {
     expect(() => loadServerEnv({ ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'x'.repeat(48) })).toThrow(/MAILER_DRIVER/);
   });
 
+  it('treats blank PayMongo keys as unset and checks the format of set ones without echoing them', () => {
+    const env = loadServerEnv({ ...base, PAYMONGO_SECRET_KEY: '', PAYMONGO_PUBLIC_KEY: '', PAYMONGO_WEBHOOK_SECRET: '' });
+    expect(env.PAYMONGO_SECRET_KEY).toBeUndefined();
+    const ok = loadServerEnv({ ...base, PAYMONGO_SECRET_KEY: 'sk_test_abc123', PAYMONGO_WEBHOOK_SECRET: 'whsk_abc123' });
+    expect(ok.PAYMONGO_SECRET_KEY).toBe('sk_test_abc123');
+    try {
+      loadServerEnv({ ...base, PAYMONGO_SECRET_KEY: 'pk_test_swapped', PAYMONGO_WEBHOOK_SECRET: 'nope' });
+      expect.unreachable();
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).toContain('PAYMONGO_SECRET_KEY');
+      expect(msg).toContain('PAYMONGO_WEBHOOK_SECRET');
+      expect(msg).not.toContain('pk_test_swapped');
+    }
+  });
+
+  it('refuses live PayMongo keys outside production', () => {
+    expect(() => loadServerEnv({ ...base, PAYMONGO_SECRET_KEY: 'sk_live_abc123' })).toThrow(/live keys are only allowed in production/);
+  });
+
   it('accepts a real secret with otherwise production-safe settings', () => {
     const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
     expect(productionIssues(env)).toEqual([

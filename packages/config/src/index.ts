@@ -2,6 +2,10 @@ import { z } from 'zod';
 
 const isProd = (env: NodeJS.ProcessEnv) => env.NODE_ENV === 'production';
 
+/** An optional secret: blank counts as unset; when set it must match the provider's key format. */
+const optionalKey = (re: RegExp, message: string) =>
+  z.preprocess((v) => (v === '' ? undefined : v), z.string().regex(re, message).optional());
+
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -22,6 +26,10 @@ export const serverEnvSchema = z.object({
    * provider (user decision 2026-10-15) and is added once sandbox keys are available.
    */
   PAYMENT_PROVIDER: z.enum(['dev']).default('dev'),
+  /** PayMongo credentials (ADR-0010; adapter in Phase 5 slice 6). Empty means not configured. */
+  PAYMONGO_SECRET_KEY: optionalKey(/^sk_(test|live)_\w+$/, 'must be a PayMongo secret key (sk_test_… or sk_live_…)'),
+  PAYMONGO_PUBLIC_KEY: optionalKey(/^pk_(test|live)_\w+$/, 'must be a PayMongo public key (pk_test_… or pk_live_…)'),
+  PAYMONGO_WEBHOOK_SECRET: optionalKey(/^whsk_\w+$/, 'must be a PayMongo webhook signing secret (whsk_…)'),
   /** Provider call timeout; a timed-out authorization is reconciled, never retried blindly. */
   PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
   /** How long a terminal snapshot may price offline sales before they are flagged SNAPSHOT_EXPIRED (ADR-0015). */
@@ -76,10 +84,8 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
   if (!parsed.success) {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
-  if (isProd(env)) {
-    const issues = productionIssues(parsed.data);
-    if (issues.length > 0) throw new EnvValidationError(issues);
-  }
+  const issues = isProd(env) ? productionIssues(parsed.data) : nonProductionIssues(parsed.data);
+  if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
 
@@ -97,4 +103,11 @@ export function productionIssues(cfg: ServerEnv): string[] {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
   return issues;
+}
+
+/** Live PayMongo keys may only be loaded in production; dev and test use sandbox keys. */
+function nonProductionIssues(cfg: ServerEnv): string[] {
+  return (['PAYMONGO_SECRET_KEY', 'PAYMONGO_PUBLIC_KEY'] as const)
+    .filter((k) => cfg[k]?.includes('_live_'))
+    .map((k) => `${k}: live keys are only allowed in production; use the test-mode key`);
 }
