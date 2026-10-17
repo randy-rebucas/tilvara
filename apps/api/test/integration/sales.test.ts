@@ -111,7 +111,7 @@ async function assertReconciles(s: Store, saleId: string) {
 describe('a full cashier shift', () => {
   it('opens, sells (incl. SC), pays out, closes with zero variance and everything reconciles', async () => {
     const s = await store('shift');
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening stock', items: [{ variantId: s.cola, quantity: '24' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening stock', items: [{ variantId: s.cola, quantity: '24' }] }).expect(201);
     const session = await openSession(s);
 
     const first = await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }, { variantId: s.wrap, quantity: '1' }, { variantId: s.rice, quantity: '1' }], '200.00')).expect(201);
@@ -215,7 +215,7 @@ describe('failure leaves no trace', () => {
     ['stale total', (s: Store, id: string) => sale(id, [{ variantId: s.cola, quantity: '1' }], '50.00', { expectedAmountDue: '20.00' }), 409, 'TOTAL_CHANGED'],
   ])('%s', async (_name, build, status, code) => {
     const s = await store('atomic');
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
     const session = await openSession(s);
     const res = await post(s.cashier, build(s, session.id));
     expect([res.status, res.body.error?.code]).toEqual([status, code]);
@@ -313,11 +313,13 @@ describe('cashier session rules', () => {
 });
 
 describe('stock ledger', () => {
-  it('adjustments need inventory.adjust and a reason; selling past zero goes negative and stays visible', async () => {
+  it('adjustments need inventory.adjust, a reason and an Idempotency-Key; selling past zero goes negative and stays visible', async () => {
     const s = await store('stock');
-    await http().post('/v1/stock/adjustments').set(s.cashier).send({ branchId: s.branchId, reason: 'x', items: [{ variantId: s.cola, quantity: '1' }] }).expect(403);
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: ' ', items: [{ variantId: s.cola, quantity: '1' }] }).expect(400);
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Count', items: [{ variantId: s.cola, quantity: '1' }] }).expect(201);
+    const keyless = await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Count', items: [{ variantId: s.cola, quantity: '1' }] }).expect(400);
+    expect(keyless.body.error.code).toBe('IDEMPOTENCY_KEY_REQUIRED');
+    await http().post('/v1/stock/adjustments').set(s.cashier).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'x', items: [{ variantId: s.cola, quantity: '1' }] }).expect(403);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: ' ', items: [{ variantId: s.cola, quantity: '1' }] }).expect(400);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Count', items: [{ variantId: s.cola, quantity: '1' }] }).expect(201);
     const session = await openSession(s);
     await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '3' }], '100.00')).expect(201);
     const bal = (await http().get('/v1/stock/balances').query({ branchId: s.branchId }).set(s.manager).expect(200)).body.data;
@@ -502,7 +504,7 @@ describe('voids and returns (ADR-0011)', () => {
       .send({ name: 'Pancit Canton', taxCategoryId: vat, uomId: pc, variants: [{ sku: uniq('PC'), price: '16.50' }] })
       .expect(201);
     const noodles = created.body.variants[0].id as string;
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: noodles, quantity: '10' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: noodles, quantity: '10' }] }).expect(201);
     const session = await openSession(s);
     const sold = (await post(s.cashier, sale(session.id, [{ variantId: noodles, quantity: '3' }], '50.00')).expect(201)).body;
     expect(sold).toMatchObject({ amountDue: '49.50', vatableSales: '44.20', vatAmount: '5.30' });
@@ -527,7 +529,7 @@ describe('voids and returns (ADR-0011)', () => {
 
   it('damaged goods are refunded but not restocked', async () => {
     const s = await store('ret-damaged');
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
     const session = await openSession(s);
     const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
     await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Dented can', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201);
@@ -550,7 +552,7 @@ describe('voids and returns (ADR-0011)', () => {
 
   it('a void reverses the whole sale in its own session, once', async () => {
     const s = await store('ret-void');
-    await http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
     const session = await openSession(s);
     const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }, { variantId: s.wrap, quantity: '1' }], '100.00')).expect(201)).body;
     const v = (await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'Customer left' }).expect(201)).body;

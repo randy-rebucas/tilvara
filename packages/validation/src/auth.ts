@@ -70,6 +70,10 @@ export const mfaDisableSchema = z.object({
 });
 export type MfaDisableInput = z.infer<typeof mfaDisableSchema>;
 
+/** New recovery codes replace every old one; needs the password and a current code from the app. */
+export const mfaRecoveryCodesSchema = mfaDisableSchema;
+export type MfaRecoveryCodesInput = MfaDisableInput;
+
 export const passwordResetRequestSchema = z.object({ email: emailSchema });
 export type PasswordResetRequestInput = z.infer<typeof passwordResetRequestSchema>;
 

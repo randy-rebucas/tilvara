@@ -34,7 +34,7 @@ export async function arrangeRestaurant(api, prefix) {
   const burger = await product('Burger', 'BRG-1', '150.00', false);
   const tea = await product('Iced tea', 'TEA-1', '45.00', false);
   const cheese = await product('Cheese slice', 'CHZ-1', '20.00', true);
-  await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening', items: [{ variantId: cheese, quantity: '20', unitCost: '3.00' }] });
+  await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening', items: [{ variantId: cheese, quantity: '20', unitCost: '3.00' }] }, { 'idempotency-key': randomUUID() });
   await call('POST', '/v1/kitchen-stations', tk, { branchId: br.id, code: 'GRILL', name: 'Grill', isDefault: true });
   await call('POST', '/v1/kitchen-stations', tk, { branchId: br.id, code: 'BAR', name: 'Bar' });
   const area = await call('POST', '/v1/dining-areas', tk, { branchId: br.id, name: 'Hall' });

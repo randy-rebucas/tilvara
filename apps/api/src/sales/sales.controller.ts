@@ -137,7 +137,8 @@ export class SalesController {
   }
 
   // stock
-  @Idempotent()
+  /** Inventory evidence (and a journal entry): Idempotency-Key is mandatory, like every stock document. */
+  @Idempotent({ required: true })
   @Post('stock/adjustments')
   adjust(@Auth() auth: AuthContext, @Body(new ZodPipe(stockAdjustmentSchema)) body: StockAdjustmentInput) {
     return this.stock.adjust(auth, body);

@@ -46,9 +46,7 @@ Phase-level:
 - ⬜ Negative-stock policy (BLOCK/ALLOW_WITH_FLAG) — today sales may go negative and it stays visible
 - ⬜ POS phone layout: sticky total + Pay bar
 - ⬜ Shift history: tender + voided/returned tags
-- ⬜ Receipt SC block repeats the discount line
 - ⬜ A test for one session spanning local midnight (needs clock control)
-- ⬜ DB-level guard for PAYMENTS_OUTSTANDING (service-level today, race-safe by the session lock)
 
 ## Phase 3 — Inventory, purchasing, accounting
 Slice 5 (admin UI):
@@ -57,7 +55,6 @@ Slice 5 (admin UI):
 - ⬜ Supplier edit/archive UI
 - ⬜ Journal filters by date range / source type
 - ⬜ Admin document pages for sales, returns and cash movements (their entries trace in the API, not yet in the admin UI)
-- ⬜ `POST /v1/stock/adjustments` accepts but does not require an Idempotency-Key (other stock documents require one) — decide and align
 - ⏳ Accountant review answers (ADR-0013 questions 1–10)
 - ⬜ Item names on receipts beyond the first 200 products (needs a variants-by-id lookup)
 - ⬜ Low-stock list shows only items at/below the point — no view of all configured reorder points (no GET)
@@ -160,7 +157,6 @@ Phase-level:
 
 ## Phase 6 — Pilot readiness
 Slice 1 (account security):
-- ⬜ Regenerate recovery codes (today: turn off and on again, impossible for privileged members)
 - ⬜ Support "reset a member's MFA" (slice 6) — needed before the pilot so a lost phone is not a lockout
 - ⬜ Nonce-based CSP for the admin; CSP for POS browser hosting
 - ⬜ WebAuthn/passkeys

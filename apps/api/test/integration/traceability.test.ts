@@ -41,8 +41,8 @@ async function day() {
   const fee = await product('Delivery fee', '0.01', { productType: 'SERVICE', trackInventory: false });
 
   // A multi-item opening adjustment: three movements, one document, one entry.
-  const opening = (await http().post('/v1/stock/adjustments').set(auth).send({ branchId: b1, reason: 'Opening', items: [{ variantId: cola, quantity: '30', unitCost: '11.00' }, { variantId: rice, quantity: '10', unitCost: '41.00' }, { variantId: soap, quantity: '12', unitCost: '20.00' }] }).expect(201)).body;
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId: b1, kind: 'WASTE', reason: 'Rats', items: [{ variantId: rice, quantity: '-1' }, { variantId: soap, quantity: '-2' }] }).expect(201);
+  const opening = (await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b1, reason: 'Opening', items: [{ variantId: cola, quantity: '30', unitCost: '11.00' }, { variantId: rice, quantity: '10', unitCost: '41.00' }, { variantId: soap, quantity: '12', unitCost: '20.00' }] }).expect(201)).body;
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b1, kind: 'WASTE', reason: 'Rats', items: [{ variantId: rice, quantity: '-1' }, { variantId: soap, quantity: '-2' }] }).expect(201);
 
   const supplier = (await http().post('/v1/suppliers').set(auth).send({ code: 'SUP', name: 'Supplier' }).expect(201)).body.id;
   const po = (await http().post('/v1/purchase-orders').set(auth).send({ branchId: b1, supplierId: supplier, lines: [{ variantId: cola, quantity: '24', unitCost: '12.50' }] }).expect(201)).body;

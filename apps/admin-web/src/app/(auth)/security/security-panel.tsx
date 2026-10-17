@@ -104,8 +104,8 @@ export function SecurityPanel({ status }: { status: MfaStatus }) {
     );
   }
 
+  // On: make new recovery codes (old ones stop working), or turn it off when the role allows.
   if (status.enabled) {
-    if (status.required) return <p className="text-[0.9375rem]">{t('mfa.cannotDisable')}</p>;
     return (
       <form
         className="flex flex-col gap-4"
@@ -113,17 +113,33 @@ export function SecurityPanel({ status }: { status: MfaStatus }) {
         onSubmit={async (e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
-          const r = await submit('POST', '/api/auth/mfa-disable', { password: f.get('password'), code: String(f.get('code') ?? '').replace(/\s/g, '') });
-          if (r.ok) router.refresh();
+          const body = { password: f.get('password'), code: String(f.get('code') ?? '').replace(/\s/g, '') };
+          const action = (e.nativeEvent as SubmitEvent).submitter?.getAttribute('value');
+          if (action === 'disable') {
+            const r = await submit('POST', '/api/auth/mfa-disable', body);
+            if (r.ok) router.refresh();
+            return;
+          }
+          const r = await submit<{ recoveryCodes: string[] }>('POST', '/api/auth/mfa-recovery-codes', body, { refresh: false });
+          if (r.ok) setStep({ kind: 'codes', codes: r.data.recoveryCodes });
         }}
       >
         <p className="text-[0.875rem] text-muted">{t('mfa.disableLede')}</p>
         <TextField label={t('auth.password')} name="password" type="password" autoComplete="current-password" required />
         <TextField label={t('auth.mfaCode')} name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} error={fieldError('code')} required />
         <FormError message={message} />
-        <button className="btn btn-danger h-10" disabled={pending}>
-          {pending ? t('auth.working') : t('mfa.disable')}
-        </button>
+        <p className="text-[0.875rem] text-muted">{t('mfa.regenLede')}</p>
+        <div className="flex flex-wrap gap-3">
+          <button className="btn btn-primary h-10" name="action" value="regenerate" disabled={pending}>
+            {pending ? t('auth.working') : t('mfa.regenerate')}
+          </button>
+          {!status.required && (
+            <button className="btn btn-danger h-10" name="action" value="disable" disabled={pending}>
+              {t('mfa.disable')}
+            </button>
+          )}
+        </div>
+        {status.required && <p className="text-[0.875rem] text-muted">{t('mfa.cannotDisable')}</p>}
       </form>
     );
   }

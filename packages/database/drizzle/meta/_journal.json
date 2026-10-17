@@ -337,6 +337,13 @@
       "when": 1792234203828,
       "tag": "0047_monitoring_functions",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1792236658608,
+      "tag": "0048_pilot_safety",
+      "breakpoints": true
     }
   ]
 }

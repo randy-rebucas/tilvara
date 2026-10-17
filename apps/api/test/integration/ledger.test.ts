@@ -99,7 +99,7 @@ describe('a day in the books', () => {
     await http().post(`/v1/cashier-sessions/${session}/movements`).set(s.auth).send({ type: 'PAY_OUT', amount: '50.00', reason: 'Ice' }).expect(201);
 
     // Stock: waste, a count, a transfer received short, a supplier return.
-    await http().post('/v1/stock/adjustments').set(s.auth).send({ branchId: s.b1, kind: 'WASTE', reason: 'Torn bag', items: [{ variantId: rice, quantity: '-1' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.auth).set('Idempotency-Key', randomUUID()).send({ branchId: s.b1, kind: 'WASTE', reason: 'Torn bag', items: [{ variantId: rice, quantity: '-1' }] }).expect(201);
     await idem(s, '/v1/stock/counts', { branchId: s.b1, lines: [{ variantId: cola, countedQuantity: '17' }] }).expect(201);
     const t = (await idem(s, '/v1/stock/transfers', { fromBranchId: s.b1, toBranchId: s.b2, lines: [{ variantId: cola, quantity: '5' }] }).expect(201)).body;
     expect(await gl(s, 'INVENTORY_IN_TRANSIT')).toBe('60.0000');

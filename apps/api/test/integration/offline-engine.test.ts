@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { httpTransport, LocalStore, OfflineEngine } from '@1pos/pos-offline';
 import { nodeSqliteDriver } from '@1pos/pos-offline/node-sqlite';
@@ -51,7 +52,7 @@ async function shop(prefix: string) {
   const vat = ((await http().get('/v1/tax-categories').set(auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
   const pc = ((await http().get('/v1/uoms').set(auth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
   const cola = (await http().post('/v1/products').set(auth).send({ name: 'Cola', uomId: pc, taxCategoryId: vat, variants: [{ sku: uniq('SKU'), price: '22.40' }] }).expect(201)).body.variants[0].id as string;
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '500', unitCost: '15.00' }] }).expect(201);
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '500', unitCost: '15.00' }] }).expect(201);
   const reg = (await http().post('/v1/terminals').set(auth).send({ registerId, name: 'Till 1' }).expect(201)).body;
   const c = await addMember(owner, t.tenantId, 'cashier', { type: 'BRANCH', id: branchId });
   const cashier = bearer(await loginToken(app, c.email));

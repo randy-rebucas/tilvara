@@ -4,6 +4,7 @@ import {
   mfaConfirmSchema,
   mfaDisableSchema,
   mfaEnrollSchema,
+  mfaRecoveryCodesSchema,
   mfaVerifySchema,
   passwordResetConfirmSchema,
   passwordResetRequestSchema,
@@ -14,6 +15,7 @@ import {
   type MfaConfirmInput,
   type MfaDisableInput,
   type MfaEnrollInput,
+  type MfaRecoveryCodesInput,
   type MfaVerifyInput,
   type PasswordResetConfirmInput,
   type PasswordResetRequestInput,
@@ -98,6 +100,13 @@ export class AuthController {
   @Post('auth/mfa/disable')
   async disableMfa(@Auth() auth: AuthContext, @Body(new ZodPipe(mfaDisableSchema)) body: MfaDisableInput): Promise<void> {
     await this.security.disable(auth, body.password, body.code);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(200)
+  @Post('auth/mfa/recovery-codes')
+  regenerateRecoveryCodes(@Auth() auth: AuthContext, @Body(new ZodPipe(mfaRecoveryCodesSchema)) body: MfaRecoveryCodesInput) {
+    return this.security.regenerateRecoveryCodes(auth, body.password, body.code);
   }
 
   @Public()

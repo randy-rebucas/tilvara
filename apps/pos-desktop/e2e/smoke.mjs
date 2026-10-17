@@ -34,7 +34,7 @@ const product = async (name, sku, barcode, price, tax = 'VAT') =>
 const cola = await product('Coke Mismo 290ml', 'CK-290', '4801981116072', '22.40');
 await product('Dinorado Rice 1kg', 'RICE-1', null, '56.00', 'VAT_EXEMPT');
 await product('Pancit Canton Chilimansi', 'PC-CHILI', '4807770270017', '16.50');
-await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening stock', items: [{ variantId: cola, quantity: '24' }] });
+await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening stock', items: [{ variantId: cola, quantity: '24' }] }, { 'idempotency-key': randomUUID() });
 
 // --- drive the counter
 const { check, finish } = checklist();

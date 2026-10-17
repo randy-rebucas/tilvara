@@ -178,6 +178,7 @@ Slice 3 — monitoring (session 10): ✅ done (ADR-0016 "As built — slice 3").
 - ✅ SPEC §16 instruments by route template; business gauges via `platform_metrics()` (migrations 0046/0047); readiness checks database, migration head, Redis (degraded, not 503).
 - ✅ Worker heartbeat (`worker_heartbeat()`), DEAD-letter `list|replay` CLI (audited), 25 alert rules with runbook links (`docs/operations/monitoring.md`).
 - ✅ Tests: API `monitoring.test.ts`, worker monitoring + alerts tests, observability metrics, schema guard.
+Pilot-safety leftovers (session 10): ✅ new MFA recovery codes (API + admin); ✅ DB guard for `PAYMENTS_OUTSTANDING` + intents only on OPEN shifts (migration 0048); ✅ Idempotency-Key required on stock adjustments; ✅ receipt SC/PWD block without the repeated discount.
 ⬜ Slice 4 — backup and restore: encrypted `pg_dump` + manifest, automated restore drill (`pnpm drill:restore`: roles, RLS, counts, audit, API smoke), RTO measured, backup-age metric. PITR waits on D1.
 ⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
 ⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.

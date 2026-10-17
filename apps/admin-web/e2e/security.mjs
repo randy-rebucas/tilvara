@@ -107,6 +107,7 @@ try {
   await clickPrimary();
   check('a wrong code is refused in words', await shown('That code is not right. Try the newest code from your app.'));
   await fill('code', totp(secret, 1));
+  const usedStep = Math.floor(Date.now() / 30_000) + 1;
   await clickPrimary();
   check('the right code opens the back office', await waitFor(`document.body.innerText.includes('Overview')`).then(() => true, () => false));
 
@@ -119,6 +120,19 @@ try {
   check('a recovery code also signs in', await waitFor(`document.body.innerText.includes('Overview')`).then(() => true, () => false));
   await go('/security');
   check('security page: On, nine recovery codes left, cannot be turned off for this role', await shown('Recovery codes left') && (await text()).includes('9') && (await text()).includes('cannot be turned off'));
+  check('a privileged member is offered new recovery codes, not "Turn off"', await shown('New recovery codes') && !(await evaluate(`[...document.querySelectorAll('button')].some((x) => x.textContent === 'Turn off')`)));
+  await shot('security-on.png');
+  // Each time step works once: wait for a step later than the one spent signing in.
+  while (Math.floor(Date.now() / 30_000) + 1 <= usedStep) await sleep(500);
+  await fill('password', PASSWORD);
+  await fill('code', totp(secret, 1));
+  await clickPrimary();
+  check('new recovery codes: ten, none of the old ones', await waitFor(`document.querySelectorAll('[data-testid="recovery-codes"] li').length === 10`).then(() => true, () => false)
+    && !(await evaluate(`[...document.querySelectorAll('[data-testid="recovery-codes"] li')].map((x) => x.textContent)`)).includes(recovery));
+  await clickText('I saved them');
+  await waitFor(`document.body.innerText.includes('Overview')`);
+  await go('/security');
+  check('ten recovery codes left again', await shown('Recovery codes left') && /Recovery codes left\s*10/.test(await text()));
 
   // A session that began before the enrolment is sent to sign in again.
   await signOut();

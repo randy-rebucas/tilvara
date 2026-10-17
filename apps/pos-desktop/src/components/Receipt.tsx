@@ -30,6 +30,8 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
   const entries = Object.entries(data.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
   const totals = entries.filter(([k]) => !SETTLEMENT.includes(k));
   const settlement = SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k));
+  // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
+  const perPersonDiscount = data.statutory.length > 1;
   return (
     <div className="grid content-start gap-3">
       <div ref={ref} className="printable note mx-auto w-full max-w-[420px] p-6 font-[family-name:var(--font-serial)] text-[0.875rem]">
@@ -90,7 +92,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
           <div key={i} className="mt-3 border-t border-dashed border-hair pt-2">
             <p>{s.label}: {s.name}</p>
             <p className="serial">ID {s.idNumber}</p>
-            <p className="flex justify-between"><span>Discount</span><Money value={s.discount} /></p>
+            {perPersonDiscount && <p className="flex justify-between"><span>Discount</span><Money value={signedTotal('statutoryDiscount', s.discount)} /></p>}
             {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{t('receipt.signature')}</p>}
           </div>
         ))}

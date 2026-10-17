@@ -65,6 +65,10 @@ export abstract class TenantService {
       if (conflict) throw new AppError(conflict[0], conflict[1], HttpStatus.CONFLICT);
       // A posting that waited on a month being closed (ADR-0013): same answer as the up-front check.
       if (pg.constraint === 'journal_entries_period_closed') throw new AppError('PERIOD_CLOSED', 'The accounting period is closed', HttpStatus.CONFLICT);
+      // The DB backstop for a shift closing with a charge in no sale (ADR-0010 §6; the service checks first).
+      if (pg.constraint === 'payments_outstanding') {
+        throw new AppError('PAYMENTS_OUTSTANDING', 'Card/QR payments on this shift are not settled; complete the sale, check or cancel them first', HttpStatus.CONFLICT);
+      }
       if (pg.code === '23514' && pg.message) throw new AppError('INVALID_STATE', pg.message, HttpStatus.UNPROCESSABLE_ENTITY);
       throw e;
     }

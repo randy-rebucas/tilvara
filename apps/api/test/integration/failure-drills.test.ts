@@ -49,7 +49,7 @@ async function counter(prefix: string): Promise<Counter> {
   const m = await addMember(owner, t.tenantId, 'branch_manager', { type: 'BRANCH', id: br.body.id });
   const cashier = bearer(await loginToken(app, c.email));
   const manager = bearer(await loginToken(app, m.email));
-  await http().post('/v1/stock/adjustments').set(manager).send({ branchId: br.body.id, reason: 'Opening', items: [{ variantId: cola, quantity: '10' }] }).expect(201);
+  await http().post('/v1/stock/adjustments').set(manager).set('Idempotency-Key', randomUUID()).send({ branchId: br.body.id, reason: 'Opening', items: [{ variantId: cola, quantity: '10' }] }).expect(201);
   const session = await http().post('/v1/cashier-sessions').set(cashier).send({ registerId: reg.body.id, openingFloat: '1000.00' }).expect(201);
   return { tenantId: t.tenantId, branchId: br.body.id, cola, cashier, manager, sessionId: session.body.id };
 }
@@ -204,6 +204,38 @@ describe('payment provider failures during checkout', () => {
     await post(c, { ...body, tenders: [{ method: 'CASH', tendered: '22.40' }] }, randomUUID()).expect(201);
     expect(app.get(DevPaymentProvider).chargeCount(p.id)).toBe(1);
     expect((await closeShift(c, '1022.40').expect(200)).body).toMatchObject({ status: 'RECONCILED' });
+  });
+
+  it('the database itself refuses a close with a charge in no sale, and a new charge on a closed shift', async () => {
+    const c = await counter('drill-dbguard');
+    const p = await intent(c, randomUUID(), '22.52'); // UNKNOWN in the dev simulator
+    // As the runtime role, past the service's check; always rolled back.
+    const asApp = async (sql: string, params: unknown[]) => {
+      const cl = await app.get(DatabasePool).pool.connect();
+      try {
+        await cl.query('BEGIN');
+        await cl.query("SELECT set_config('app.tenant_id', $1, true)", [c.tenantId]);
+        await cl.query(sql, params);
+        return null;
+      } catch (e) {
+        return (e as { constraint?: string }).constraint ?? String(e);
+      } finally {
+        await cl.query('ROLLBACK').catch(() => undefined);
+        cl.release();
+      }
+    };
+    const close = `UPDATE cashier_sessions SET status = 'CLOSED', closed_at = now(), closed_by = opened_by WHERE id = $1`;
+    expect(await asApp(close, [c.sessionId])).toBe('payments_outstanding');
+
+    await http().post(`/v1/payment-intents/${p.id}/reconcile`).set(c.cashier).expect(200);
+    expect(await asApp(close, [c.sessionId])).toBe('payments_outstanding'); // SUCCEEDED, in no sale
+    await http().post(`/v1/payment-intents/${p.id}/cancel`).set(c.cashier).expect(200);
+    expect(await asApp(close, [c.sessionId])).toBeNull();
+
+    expect((await closeShift(c, '1000.00').expect(200)).body).toMatchObject({ status: 'RECONCILED' });
+    const late = `INSERT INTO payment_intents (tenant_id, branch_id, register_id, cashier_session_id, client_transaction_id, request_key, provider, method, amount, currency, created_by)
+                  SELECT tenant_id, branch_id, register_id, cashier_session_id, 'late', uuidv7(), provider, method, amount, currency, created_by FROM payment_intents WHERE id = $1`;
+    expect(await asApp(late, [p.id])).toBe('session_not_open');
   });
 
   it('an authorized card whose sale failed keeps the shift open until the sale is retried', async () => {

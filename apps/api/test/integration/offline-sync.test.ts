@@ -38,7 +38,7 @@ async function shop(prefix: string) {
     (await http().post('/v1/products').set(auth).send({ name, uomId: pc, taxCategoryId: vat, variants: [{ sku: uniq('SKU'), price }] }).expect(201)).body.variants[0].id as string;
   const cola = await product('Cola', '22.40');
   const chips = await product('Chips', '35.00');
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '20', unitCost: '15.00' }, { variantId: chips, quantity: '20', unitCost: '20.00' }] }).expect(201);
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '20', unitCost: '15.00' }, { variantId: chips, quantity: '20', unitCost: '20.00' }] }).expect(201);
   const terminal = async (registerId: string) => {
     const res = (await http().post('/v1/terminals').set(auth).send({ registerId, name: `Till ${registerId.slice(-4)}` }).expect(201)).body;
     return { id: res.terminal.id as string, headers: { 'x-terminal-id': res.terminal.id, Authorization: `Terminal ${res.credential}` } as Headers };

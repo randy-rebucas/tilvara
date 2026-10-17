@@ -38,7 +38,7 @@ async function shop(prefix: string) {
 type Shop = Awaited<ReturnType<typeof shop>>;
 
 const adjust = (s: Shop, items: { variantId: string; quantity: string; unitCost?: string }[], reason = 'Count') =>
-  http().post('/v1/stock/adjustments').set(s.manager).send({ branchId: s.branchId, reason, items });
+  http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason, items });
 const sell = async (s: Shop, lines: { variantId: string; quantity: string }[]) =>
   (await http().post('/v1/sales').set(s.auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: s.session, clientTransactionId: randomUUID(), lines, tenders: [{ method: 'CASH', tendered: '9999.00' }] }).expect(201)).body;
 const balance = async (s: Shop, variantId: string) =>

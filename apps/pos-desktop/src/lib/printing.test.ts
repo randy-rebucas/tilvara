@@ -37,6 +37,22 @@ describe('receipt for a thermal printer', () => {
     expect(at('Senior citizen: Lola Cruz')).toBeGreaterThan(at('Change'));
     expect(text).toContain('Signature of the beneficiary');
     expect(lines.at(-1)!.trim()).toBe('Cashier: Lito Santos - Front');
+    // One beneficiary: the discount prints once, in the totals, not again in the block.
+    expect(lines.filter((l) => l.includes('26.79'))).toHaveLength(1);
+  });
+
+  it('prints each beneficiary’s share only when the discount is split between several', () => {
+    const split: Receipt = {
+      ...receipt,
+      statutory: [
+        { label: 'Senior citizen', name: 'Lola Cruz', idNumber: 'OSCA-123', discount: '16.07', signatureLine: true },
+        { label: 'PWD', name: 'Ben Reyes', idNumber: 'PWD-456', discount: '10.72', signatureLine: true },
+      ],
+    };
+    const text = toText(receiptToPrintable(split), 48);
+    expect(text).toContain(`SC/PWD discount${' '.repeat(23)}-PHP 26.79`);
+    expect(text).toContain(`Discount${' '.repeat(30)}-PHP 16.07`);
+    expect(text).toContain(`Discount${' '.repeat(30)}-PHP 10.72`);
   });
 
   it('prints an offline sale with its local reference and that it is not an invoice', () => {

@@ -64,7 +64,7 @@ describe('a multi-register, multi-session day', () => {
     const b = await addMember(owner, s.t.tenantId, 'cashier', { type: 'BRANCH', id: branchId });
     const m = await addMember(owner, s.t.tenantId, 'branch_manager', { type: 'BRANCH', id: branchId });
     const [ann, ben, mgr] = [bearer(await loginToken(app, a.email)), bearer(await loginToken(app, b.email)), bearer(await loginToken(app, m.email))];
-    await http().post('/v1/stock/adjustments').set(mgr).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '50' }, { variantId: rice, quantity: '10' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(mgr).set('Idempotency-Key', randomUUID()).send({ branchId, reason: 'Opening', items: [{ variantId: cola, quantity: '50' }, { variantId: rice, quantity: '10' }] }).expect(201);
 
     // Morning shift on R1: cash, card-only, QR + cash split.
     const a1 = await open(ann, r1, '1000.00');

@@ -49,7 +49,8 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     ],
     blocks: r.statutory.map((s) => ({
       lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`],
-      pairs: [['Discount', peso(`-${s.discount}`)] as [string, string]],
+      // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
+      pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
     footer: [...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],

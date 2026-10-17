@@ -117,7 +117,7 @@ async function world(prefix: string): Promise<World> {
   );
   const member = await addMember(owner, t.tenantId, 'cashier');
   // Phase 2: stock, a statutory sale on a session that is then counted, and an open session.
-  const adjustment = ok(await http().post('/v1/stock/adjustments').set(auth).send({ branchId: branch.id, reason: 'Opening stock', items: [{ variantId, quantity: '10' }] }));
+  const adjustment = ok(await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch.id, reason: 'Opening stock', items: [{ variantId, quantity: '10' }] }));
   const closedSession = ok(await http().post('/v1/cashier-sessions').set(auth).send({ registerId: register.id, openingFloat: '100.00' }));
   const sold = ok(
     await http()
@@ -460,8 +460,8 @@ function smuggleMatrix(): [string, () => request.Test][] {
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
     ['open orders of the A branch', () => http().get('/v1/reports/open-orders').query({ branchId: a.branchId, day: today() }).set(auth)],
-    ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
-    ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
+    ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
+    ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
     ['read A stock balances', () => http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(auth)],
     ['read A stock movements', () => http().get('/v1/stock/movements').query({ branchId: a.branchId }).set(auth)],
     ['switch into A', () => http().post('/v1/auth/switch-tenant').set(auth).send({ tenantId: a.t.tenantId })],

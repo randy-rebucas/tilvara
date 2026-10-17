@@ -38,7 +38,7 @@ async function shop(prefix: string) {
   const item = async (name: string) =>
     (await http().post('/v1/products').set(auth).send({ name, uomId: pc, taxCategoryId: vat, variants: [{ sku: uniq('SKU'), price: '30.00' }] }).expect(201)).body.variants[0].id as string;
   const [x, y] = [await item('Item X'), await item('Item Y')];
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId: b1, reason: 'Opening', items: [{ variantId: x, quantity: '100', unitCost: '10.00' }, { variantId: y, quantity: '100', unitCost: '20.00' }] }).expect(201);
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b1, reason: 'Opening', items: [{ variantId: x, quantity: '100', unitCost: '10.00' }, { variantId: y, quantity: '100', unitCost: '20.00' }] }).expect(201);
   const supplier = (await http().post('/v1/suppliers').set(auth).send({ code: 'SUP', name: 'Supplier' }).expect(201)).body.id as string;
   return { tenantId: t.tenantId, auth, le, b1, b2, x, y, supplier };
 }
@@ -176,8 +176,8 @@ describe('racing requests', () => {
       () => post(s, '/v1/stock/transfers', { fromBranchId: s.b1, toBranchId: s.b2, lines: [{ variantId: s.y, quantity: '2' }, { variantId: s.x, quantity: '2' }] }),
       () => post(s, '/v1/stock/transfers', { fromBranchId: s.b1, toBranchId: s.b2, lines: [{ variantId: s.x, quantity: '1' }, { variantId: s.y, quantity: '1' }] }),
       () => post(s, '/v1/stock/counts', { branchId: s.b1, lines: [{ variantId: s.y, countedQuantity: '90' }, { variantId: s.x, countedQuantity: '95' }] }),
-      () => http().post('/v1/stock/adjustments').set(s.auth).send({ branchId: s.b1, kind: 'WASTE', reason: 'Spill', items: [{ variantId: s.y, quantity: '-1' }, { variantId: s.x, quantity: '-1' }] }),
-      () => http().post('/v1/stock/adjustments').set(s.auth).send({ branchId: s.b1, reason: 'Found', items: [{ variantId: s.x, quantity: '2' }, { variantId: s.y, quantity: '2' }] }),
+      () => http().post('/v1/stock/adjustments').set(s.auth).set('Idempotency-Key', randomUUID()).send({ branchId: s.b1, kind: 'WASTE', reason: 'Spill', items: [{ variantId: s.y, quantity: '-1' }, { variantId: s.x, quantity: '-1' }] }),
+      () => http().post('/v1/stock/adjustments').set(s.auth).set('Idempotency-Key', randomUUID()).send({ branchId: s.b1, reason: 'Found', items: [{ variantId: s.x, quantity: '2' }, { variantId: s.y, quantity: '2' }] }),
     ];
     const res = await Promise.all(jobs.map((j) => j()));
     expect(res.map((r) => r.status).filter((x) => x >= 300)).toEqual([]);

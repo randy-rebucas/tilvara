@@ -44,7 +44,7 @@ async function restaurant(prefix: string) {
   const cheese = await product('Cheese slice', '20.00', true);
   const burger = await product('Burger', '150.00', false);
   const tea = await product('Iced tea', '45.00', false);
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId, reason: 'Opening', items: [
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId, reason: 'Opening', items: [
     { variantId: bun, quantity: '50', unitCost: '5.00' }, { variantId: beef, quantity: '5', unitCost: '400.00' }, { variantId: cheese, quantity: '40', unitCost: '3.00' },
   ] }).expect(201);
   await http().post(`/v1/variants/${burger}/recipe`).set(auth).send({ ingredients: [{ variantId: bun, quantity: '1' }, { variantId: beef, quantity: '0.15' }] }).expect(201);

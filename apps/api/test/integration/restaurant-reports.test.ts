@@ -46,7 +46,7 @@ async function restaurant(prefix: string) {
   const burger = await product('Burger', '150.00', false);
   const tea = await product('Iced tea', '45.00', false);
   const sticks = await product('Cheese sticks', '90.00', false);
-  await http().post('/v1/stock/adjustments').set(auth).send({ branchId, reason: 'Opening', items: [
+  await http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId, reason: 'Opening', items: [
     { variantId: bun, quantity: '50', unitCost: '5.00' }, { variantId: beef, quantity: '5', unitCost: '400.00' }, { variantId: cheese, quantity: '40', unitCost: '3.00' },
   ] }).expect(201);
   await http().post(`/v1/variants/${burger}/recipe`).set(auth).send({ ingredients: [{ variantId: bun, quantity: '1' }, { variantId: beef, quantity: '0.15' }] }).expect(201);
@@ -164,7 +164,7 @@ async function serviceDay(r: R) {
   await add(r, o4, [{ variantId: r.tea, quantity: '1' }]);
   await http().post(`/v1/restaurant/orders/${o4}/cancel`).set(r.server).send({ reason: 'Left' }).expect(200);
 
-  await http().post('/v1/stock/adjustments').set(r.auth).send({ branchId: r.branchId, kind: 'WASTE', reason: 'Spoiled', items: [{ variantId: r.beef, quantity: '-0.1' }] }).expect(201);
+  await http().post('/v1/stock/adjustments').set(r.auth).set('Idempotency-Key', randomUUID()).send({ branchId: r.branchId, kind: 'WASTE', reason: 'Spoiled', items: [{ variantId: r.beef, quantity: '-0.1' }] }).expect(201);
   const beefNow = (await http().get('/v1/stock/balances').query({ branchId: r.branchId, variantId: r.beef }).set(r.auth).expect(200)).body.data[0].quantity as string;
   expect(beefNow).toBe('4.375'); // 5 − 0.30 (T1) − 0.15 (dropped) − 0.075 (half a takeaway burger) − 0.1 (spoiled)
   await http().post('/v1/stock/counts').set(r.auth).set(key()).send({ branchId: r.branchId, lines: [{ variantId: r.beef, countedQuantity: '4.325' }] }).expect(201);

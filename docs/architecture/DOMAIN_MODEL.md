@@ -27,7 +27,7 @@ Bounded contexts, their aggregates, invariants and state machines. Tables are in
 ## State machines
 
 ### Cashier session (as built, ADR-0009)
-`OPEN → CLOSED (count recorded, variance ≠ 0) → RECONCILED (approved by a different user with cash.reconcile)`; a zero-variance count goes `OPEN → RECONCILED` directly. One `OPEN` session per register (DB index); no sales, payments, pay-ins/outs or refunds on a session that is not `OPEN`. Closing is refused while a card/QR payment of the session is PROCESSING, UNKNOWN or SUCCEEDED-but-unused (`PAYMENTS_OUTSTANDING`).
+`OPEN → CLOSED (count recorded, variance ≠ 0) → RECONCILED (approved by a different user with cash.reconcile)`; a zero-variance count goes `OPEN → RECONCILED` directly. One `OPEN` session per register (DB index); no sales, payments, pay-ins/outs or refunds on a session that is not `OPEN`. Closing is refused while a card/QR payment of the session is PROCESSING, UNKNOWN or SUCCEEDED-but-unused (`PAYMENTS_OUTSTANDING`); since migration 0048 the database enforces this too (trigger `payments_outstanding`), and a payment intent can only be inserted on an OPEN session (share-locking it, so a concurrent close waits and then sees it).
 
 ### Checkout
 No persisted checkout state machine: a sale is one transaction (ARCHITECTURE §6). Before it commits nothing exists except quotes (read-only) and payment intents.

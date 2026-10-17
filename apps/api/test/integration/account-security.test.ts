@@ -166,6 +166,32 @@ describe('two-step sign-in (TOTP)', () => {
     expect(status.body.recoveryCodesLeft).toBe(9);
   });
 
+  it('a privileged member makes new recovery codes with the password and a current code; the old ones stop working', async () => {
+    const t = await signup(app, 'mfaregen');
+    const { secret: sec, recoveryCodes: old } = await enroll(t.access);
+    const regen = (body: object) => http().post('/v1/auth/mfa/recovery-codes').set(bearer(t.access)).send(body);
+
+    expect((await regen({ password: 'not my password', code: code(sec) }).expect(403)).body.error.code).toBe('WRONG_PASSWORD');
+    expect((await regen({ password: PASSWORD, code: code(sec, 7) }).expect(422)).body.error.code).toBe('INVALID_MFA_CODE');
+    await regen({ password: PASSWORD, code: old[0] }).expect(400); // a recovery code cannot mint new ones
+
+    const c = code(sec);
+    const fresh = (await regen({ password: PASSWORD, code: c }).expect(200)).body.recoveryCodes as string[];
+    expect(fresh).toHaveLength(10);
+    expect(fresh.some((r) => old.includes(r))).toBe(false);
+    // The code is spent: the same one again is refused, and nothing changes.
+    expect((await regen({ password: PASSWORD, code: c }).expect(422)).body.error.code).toBe('INVALID_MFA_CODE');
+    expect((await http().get('/v1/auth/mfa').set(bearer(t.access)).expect(200)).body.recoveryCodesLeft).toBe(10);
+
+    const ch = (await login(t.email).expect(200)).body.challengeToken;
+    await http().post('/v1/auth/mfa/verify').send({ challengeToken: ch, recoveryCode: old[1] }).expect(401);
+    const ch2 = (await login(t.email).expect(200)).body.challengeToken;
+    await http().post('/v1/auth/mfa/verify').send({ challengeToken: ch2, recoveryCode: fresh[0] }).expect(200);
+    expect(await platformEvents(t.userId)).toEqual(expect.arrayContaining(['auth.mfa.enabled', 'auth.mfa.recovery_codes_regenerated']));
+    // Only codes are replaced: two-step sign-in stays on.
+    expect((await http().get('/v1/auth/mfa').set(bearer(t.access)).expect(200)).body).toMatchObject({ enabled: true, recoveryCodesLeft: 9 });
+  });
+
   it('wrong codes count towards the lock, and a correct password does not reset the count', async () => {
     const t = await signup(app, 'mfalock');
     const { secret: sec } = await enroll(t.access);

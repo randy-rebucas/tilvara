@@ -87,6 +87,27 @@ export class AccountSecurityService {
   }
 
   /**
+   * Replaces every recovery code (shown this once). Needs the password and a current code: a
+   * recovery code cannot mint new ones, and privileged members cannot turn MFA off and on again.
+   */
+  async regenerateRecoveryCodes(auth: AuthContext, password: string, code: string): Promise<{ recoveryCodes: string[] }> {
+    await this.checkPassword(auth.userId, password);
+    const f = await this.auth.mfaFactor(auth.userId);
+    if (!f?.confirmed || !f.secret_ciphertext) throw new AppError('MFA_NOT_ENABLED', 'Two-step sign-in is not on', HttpStatus.CONFLICT);
+    const step = matchTotp(this.secrets.open(f.secret_ciphertext), code);
+    if (step === null) throw wrongCode();
+    const recoveryCodes = newRecoveryCodes();
+    const done = await this.scalar<boolean>('SELECT auth_mfa_regenerate_recovery($1, $2, $3, $4) AS v', [
+      auth.userId,
+      step,
+      recoveryCodes.map(hashRecoveryCode),
+      auth.correlationId ?? null,
+    ]);
+    if (!done) throw wrongCode();
+    return { recoveryCodes };
+  }
+
+  /**
    * Always answers the same (no account discovery). The mail goes out after the token commits and
    * is not awaited, so the answer time does not tell whether the email exists either.
    */

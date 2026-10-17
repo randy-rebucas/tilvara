@@ -33,7 +33,7 @@ const beef = await product('Ground beef', 'BEEF-1', '500.00', true, 'KG');
 const cheese = await product('Cheese slice', 'CHZ-1', '20.00', true);
 await call('POST', '/v1/stock/adjustments', tk, { branchId, reason: 'Opening', items: [
   { variantId: bun, quantity: '50', unitCost: '5.00' }, { variantId: beef, quantity: '5', unitCost: '400.00' }, { variantId: cheese, quantity: '40', unitCost: '3.00' },
-] });
+] }, { 'idempotency-key': randomUUID() });
 await call('POST', '/v1/kitchen-stations', tk, { branchId, code: 'GRILL', name: 'Grill', isDefault: true });
 await call('POST', '/v1/kitchen-stations', tk, { branchId, code: 'BAR', name: 'Bar' });
 const area = await call('POST', '/v1/dining-areas', tk, { branchId, name: 'Hall' });

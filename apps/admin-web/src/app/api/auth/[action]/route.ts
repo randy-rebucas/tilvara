@@ -89,7 +89,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     case 'mfa-enroll':
     case 'mfa-confirm':
-    case 'mfa-disable': {
+    case 'mfa-disable':
+    case 'mfa-recovery-codes': {
       if (!bearer) return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
       const { res, json } = await callApi(`/auth/mfa/${action.slice('mfa-'.length)}`, input, bearer);
       return res.ok ? NextResponse.json(json ?? { ok: true }) : passError(res, json);

@@ -1,6 +1,6 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; pilot-safety leftovers. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
+_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; pilot-safety leftovers (new recovery codes, DB guard for open charges at close, required key on stock adjustments, receipt SC block). Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening: Redis rate limiter, worker DB role, dependency + bundle gates, Next.js security upgrade)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -15,6 +15,22 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 9. UAT, compliance review and pilot.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–3 are done** (below).
+
+## Pilot-safety leftovers (session 10)
+From `docs/LEFTOVER.md`, picked by the user. Migration **0048** (hand-written).
+- **New recovery codes** (Phase 6 slice 1 gap): `POST /v1/auth/mfa/recovery-codes` `{password, code}` → ten new codes shown once; every old code stops working. Needs the password and a current TOTP code (a recovery code cannot mint new ones; the step is spent). The work happens in `auth_mfa_regenerate_recovery()` (SECURITY DEFINER, `onepos_platform`), which writes a NULL-tenant audit row `auth.mfa.recovery_codes_regenerated`. Admin `/security`: when MFA is on, one form with "New recovery codes" (and "Turn off" only when the role allows), EN/FIL.
+- **DB guard for `PAYMENTS_OUTSTANDING`** (Phase 2 leftover): trigger on `cashier_sessions` refuses leaving OPEN while a card/QR intent is PROCESSING, UNKNOWN or SUCCEEDED in no sale (constraint `payments_outstanding` → 409 `PAYMENTS_OUTSTANDING` in `TenantService.mutate`). New `payment_intents` insert trigger requires an OPEN session with `FOR SHARE`, so a racing close waits for the insert and then sees it.
+- **`POST /v1/stock/adjustments` requires an Idempotency-Key** (Phase 3 leftover), like every other stock document. No UI creates adjustments; 29 test call sites and 3 POS E2E fixtures now send one.
+- **Receipt SC/PWD block** (Phase 2 leftover): the block no longer repeats the discount when there is one beneficiary (the "SC/PWD discount" total already shows it). With several beneficiaries each block shows its share, with a minus like the totals. Screen and thermal print alike.
+- Rate-limit fallbacks and Redis health as metrics: already delivered by slice 3 (`onepos_rate_limit_fallbacks_total`, `onepos_redis_up`).
+- **Tests (run this session, final code)**:
+  - `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` exit 0, `pnpm test --force` 24/24 tasks (POS 8: +1 split-beneficiary receipt, and the single-beneficiary receipt asserts the discount prints once);
+  - integration, full gate `turbo run test:integration --concurrency=1 --continue --force` → database 22, workers 17, api **294**. New tests: `account-security` "new recovery codes"; `failure-drills` "the database itself refuses…" (runtime role: close refused while UNKNOWN and while SUCCEEDED-unused, allowed after cancel; insert on a closed shift refused); `sales` "keyless adjustment → 400 `IDEMPOTENCY_KEY_REQUIRED`";
+  - OpenAPI regenerated (new route; adjustment key now `required`); `pnpm db:migrate` on the dev DB (0048);
+  - E2E on the rebuilt API (:4320, rate limits off), admin `next start` (:3320) and POS preview (:3330):
+    - `test:e2e:web:security` **24/24** (+3: offered new codes and no "Turn off" for the owner, ten new codes none old, ten left). The first run was 22/24: "a wrong password is refused in words" and "forgot password answers the same" failed, both outside this change. The immediate re-run passed 24/24. Not traced; likely cold-start timing on the fresh server.
+    - `test:e2e:web` 42/42, `test:e2e:pos` 19/19, `test:e2e:tables` 25/25, `test:e2e:service` 22/22.
+  - Not re-run: `test:e2e:desktop`, `pos:mfa`, `web:restaurant`, `web:reports`, `web:offline`, `kitchen`.
 
 ## Phase 6 slice 3 — monitoring (session 10)
 As built: ADR-0016 "As built — slice 3" (registry, internal metrics ports, SPEC §16 instruments, `platform_metrics()` business gauges, readiness with migration head + Redis, worker heartbeat, DEAD-letter CLI, 25 alert rules with runbook links in `docs/operations/monitoring.md`). Migrations 0046/0047.
@@ -724,7 +740,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–3 are done. Session 10 is working through the pilot-safety leftovers (LEFTOVER.md), then **slice 4 (backup/restore drill)** and slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
+2. **Phase 6** (ADR-0016). Slices 1–3 are done, and so are the session 10 pilot-safety leftovers. **Next: slice 4 (backup/restore drill)**, then slice 5 (load). Slices 4–5 can run locally and label their numbers as measured on this machine.
    - Before any pilot, add support "reset a member's MFA" (slice 6). Otherwise a privileged member who loses their phone and codes is locked out.
    - Decisions for the user (ADR-0016):
      - **D1** hosting provider and region;
