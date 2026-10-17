@@ -4,6 +4,7 @@ import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
 import { isPositive, isZero } from '../lib/money';
+import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
 import type { LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
@@ -265,13 +266,36 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
     focusScan();
   }
 
+  const goToPayment = () => {
+    document.getElementById('payment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    requestAnimationFrame(() => (document.getElementById('cash') as HTMLInputElement | null)?.focus());
+  };
+  const showingReceipt = Boolean(receipt || offlineReceipt);
+  // Phones: the pay bar steps aside once the payment panel itself is on screen (it would cover it).
+  const [panelInView, setPanelInView] = useState(false);
+  const hasCart = cart.length > 0;
+  useEffect(() => {
+    const el = document.getElementById('payment');
+    if (!el || !hasCart || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([e]) => setPanelInView(Boolean(e?.isIntersecting)), { threshold: 0.25 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasCart, showingReceipt]);
+  // F2 scan (or a new sale from the receipt) · F4 cash · F8 exact cash · F9 complete.
+  useShortcuts(active, showingReceipt ? { F2: newSale } : {
+    F2: focusScan,
+    F4: goToPayment,
+    F8: () => { if (quote && isPositive(pay.remaining)) { pay.setCash(pay.remaining); goToPayment(); } },
+    F9: () => { pressIfEnabled('pay-submit'); },
+  });
+
   if (receipt || offlineReceipt) {
     return (
       <div className="mx-auto grid max-w-[1100px] gap-5 px-4 py-6 sm:px-6 lg:grid-cols-[1fr_360px]">
         {receipt ? <Receipt data={receipt} /> : <OfflineReceipt data={offlineReceipt!} />}
         <div className="no-print grid content-start gap-3">
           <button className="btn btn-primary w-full" autoFocus onClick={newSale}>
-            {t('sell.newSale')}
+            {t('sell.newSale')} <kbd className="kbd">F2</kbd>
           </button>
         </div>
       </div>
@@ -281,7 +305,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
   const quoteLine = (id: string) => quote?.lines.find((l) => l.id === id);
 
   return (
-    <div className="mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px]">
+    <div className={`mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px] ${cart.length > 0 ? 'pb-28 lg:pb-5' : ''}`}>
       <div className="grid content-start gap-4">
         <form onSubmit={scan} className="flex gap-2">
           <label htmlFor="scan" className="sr-only">{t('sell.scan')}</label>
@@ -291,6 +315,12 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
           </div>
           <button className="btn btn-primary">{t('sell.add')}</button>
         </form>
+        <p className="-mt-2 hidden flex-wrap gap-x-4 gap-y-1 text-[0.8125rem] text-muted lg:flex" aria-label={t('keys.title')}>
+          <span><kbd className="kbd">F2</kbd> {t('keys.scan')}</span>
+          <span><kbd className="kbd">F4</kbd> {t('keys.cash')}</span>
+          <span><kbd className="kbd">F8</kbd> {t('keys.exact')}</span>
+          <span><kbd className="kbd">F9</kbd> {t('keys.complete')}</span>
+        </p>
 
         {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
 
@@ -427,6 +457,21 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
           cashOnly={offline}
         />
       </aside>
+
+      {/* Phones: the total and Pay stay in reach while the cart scrolls (the payment panel is below it). */}
+      {cart.length > 0 && !panelInView && (
+        <div className="no-print fixed inset-x-0 bottom-0 z-20 border-t border-hair bg-white/95 px-4 py-3 shadow-[0_-4px_12px_rgb(0_0_0/0.08)] backdrop-blur lg:hidden" data-testid="pay-bar">
+          <div className="mx-auto flex max-w-[640px] items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[0.8125rem] text-muted">{t('totals.title')} · {cart.length === 1 ? t('sell.itemsOne') : t('sell.itemsN', { n: String(cart.length) })}</p>
+              <p className="money text-[1.5rem] font-semibold leading-tight" aria-live="polite"><Money value={due} /></p>
+            </div>
+            <button className="btn btn-primary min-h-12 px-6 text-[1.0625rem]" disabled={!quote || quoting} onClick={goToPayment}>
+              {t('sell.pay')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

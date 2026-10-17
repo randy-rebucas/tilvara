@@ -116,6 +116,13 @@ try {
   await submitVisible();
   check('cash refund for the returned item (₱22.40)', await waitFor(`document.body.innerText.includes('Refund ₱22.40')`).then(() => true, () => false));
   await shot('history-return.png');
+  check('shift history tags: #000001 cash with items returned, #000002 card', await evaluate(`(() => {
+    // innerText follows CSS text-transform (the time line is a serial): compare in lower case.
+    const rows = [...document.querySelectorAll('li button')].filter((b) => b.getClientRects().length).map((b) => b.innerText.toLowerCase());
+    const one = rows.find((r) => r.includes('#000001')) ?? '';
+    const two = rows.find((r) => r.includes('#000002')) ?? '';
+    return one.includes('cash') && one.includes('items returned') && two.includes('card') && !two.includes('items returned');
+  })()`));
 
   // Close: expected = 1000 + 78.40 cash − 22.40 refund (card sale moves no cash)
   await clickText('Close shift');
@@ -164,16 +171,40 @@ try {
   await submitVisible();
   check('after cancelling the card payment the drawer closes balanced (₱22.40)', await shown('Drawer balanced'));
 
-  // Layout at a tablet counter and a phone width
+  // Keyboard: F8 exact cash, F9 complete, F2 a new sale (a scanner-and-keyboard counter needs no mouse).
   await openShift();
+  const key = (k) => evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}', bubbles: true }))`);
   await scan('4801981116072');
+  await totalShows('₱22.40');
+  await key('F8');
+  check('F8 enters the exact cash', await waitFor(`document.getElementById('cash')?.value === '22.40'`).then(() => true, () => false));
+  await key('F9');
+  check('F9 completes the sale', await shown('NOT AN OFFICIAL INVOICE'));
+  await key('F2');
+  check('F2 starts a new sale with the scan field focused', await waitFor(`document.activeElement?.id === 'scan'`).then(() => true, () => false));
+
+  // Layout at a tablet counter and a phone width (three lines push the payment panel below the fold)
+  await scan('4801981116072');
+  await scan('RICE-1');
+  await scan('PC-CHILI');
+  await totalShows('₱94.90');
   for (const [w, h] of [[1024, 768], [390, 844]]) {
     await viewport(w, h, w < 500);
-    await sleep(300);
+    await evaluate('window.scrollTo(0, 0)');
+    await sleep(400);
     check(`no horizontal scroll at ${w}px`, await noHorizontalScroll());
-    await shot(`sell-${w}.png`);
+    await shot(`sell-${w}.png`, false);
   }
+  check('phone: total and Pay stay at the bottom while the cart scrolls', await evaluate(`(() => {
+    const bar = document.querySelector('[data-testid="pay-bar"]');
+    if (!bar || !bar.getClientRects().length) return false;
+    const r = bar.getBoundingClientRect();
+    return getComputedStyle(bar).position === 'fixed' && Math.abs(r.bottom - window.innerHeight) < 2 && bar.innerText.includes('₱94.90') && bar.innerText.includes('3 lines');
+  })()`));
+  await evaluate(`document.querySelector('[data-testid="pay-bar"] button').click()`);
+  check('Pay brings the payment panel up and the bar steps aside', await waitFor(`!document.querySelector('[data-testid="pay-bar"]') && document.activeElement?.id === 'cash'`).then(() => true, () => false));
   await viewport(1440, 900);
+  check('desktop: no pay bar; the shortcut keys are listed', await evaluate(`!document.querySelector('[data-testid="pay-bar"]')?.getClientRects().length && document.body.innerText.includes('exact cash')`));
 
   // Filipino
   await clickText('fil');

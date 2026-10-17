@@ -760,8 +760,19 @@ export class SalesService extends TenantService {
         .limit(q.limit + 1);
       const visible = rows.filter((s) => this.canRead(auth, s));
       const page = visible.slice(0, q.limit);
+      // How each sale was paid and whether it was voided or returned since (a sale row never changes).
+      const ids = page.map((s) => s.id);
+      const [{ rows: tenders }, { rows: backs }] = ids.length
+        ? await Promise.all([
+            db.execute<{ sale_id: string; methods: string[] }>(sql`SELECT sale_id, array_agg(DISTINCT method ORDER BY method) AS methods FROM sale_tenders WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
+            db.execute<{ sale_id: string; voided: boolean; returns: number }>(sql`SELECT sale_id, bool_or(kind = 'VOID') AS voided, count(*)::int AS returns FROM sale_returns WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
+          ])
+        : [{ rows: [] }, { rows: [] }];
       return {
-        data: page.map((s) => this.summary(s)),
+        data: page.map((s) => {
+          const back = backs.find((b) => b.sale_id === s.id);
+          return { ...this.summary(s), tenderMethods: tenders.find((x) => x.sale_id === s.id)?.methods ?? [], voided: back?.voided ?? false, returnCount: back?.returns ?? 0 };
+        }),
         nextCursor: rows.length > q.limit ? rows[q.limit - 1]!.id : null,
       };
     });

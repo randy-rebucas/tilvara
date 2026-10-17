@@ -184,11 +184,13 @@ describe('splitting', () => {
   it('by item and by quantity; never more than what is left; concurrent "pay the rest" settles once', async () => {
     const r = await restaurant('bill-split');
     const orderId = await servedOrder(r, r.t1, [
-      { variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium, r.cheeseOpt] },
+      { variantId: r.burger, quantity: '1', seat: 2, modifierOptionIds: [r.medium, r.cheeseOpt] },
       { variantId: r.tea, quantity: '3' },
     ]);
     const bill = (await billOrder(r, orderId).expect(201)).body;
     const [burgerLine, cheeseLine, teaLine] = bill.lines;
+    // Each line carries its seat (the till's "split by seat" picks seat 2's lines).
+    expect([burgerLine.seat, teaLine.seat]).toEqual([2, null]);
     expect(code(await check(r, bill.id, { allocations: [{ billLineId: cheeseLine.id }] }).expect(422))).toBe('PAY_WHOLE_ITEMS');
     expect(code(await check(r, bill.id, { allocations: [{ billLineId: teaLine.id, quantity: '4' }] }).expect(422))).toBe('ALLOCATION_EXCEEDS_LINE');
     await check(r, bill.id, { allocations: [{ billLineId: randomUUID() }] }).expect(404);

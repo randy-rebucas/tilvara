@@ -7,6 +7,7 @@ import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { Callout, Field, Money, Note } from './ui';
 
+const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr' };
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 
 /** Sales of this shift; managers can void (same shift) or return items with a cash refund. */
@@ -78,10 +79,20 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
               <button className={`flex w-full items-center justify-between px-3 py-3 text-left hover:bg-paper ${selected?.detail.id === s.id ? 'bg-paper' : ''}`} onClick={() => open(s.id)}>
                 <span>
                   <span className="serial block">#{String(s.saleNumber).padStart(6, '0')}</span>
-                  {/* Time tells two similar amounts apart before a void. */}
-                  <span className="serial block text-[0.75rem] text-muted">{timeAt(s.completedAt, shift.branch.timezone)}</span>
+                  {/* Time tells two similar amounts apart before a void; the tender, how it was paid. */}
+                  <span className="serial block text-[0.75rem] text-muted">
+                    {timeAt(s.completedAt, shift.branch.timezone)}
+                    {s.tenderMethods?.length ? ` · ${s.tenderMethods.map((m) => t(METHOD[m] ?? 'pay.cash')).join(' + ')}` : ''}
+                  </span>
                 </span>
-                <Money value={s.amountDue} />
+                <span className="flex flex-col items-end gap-1">
+                  <Money value={s.amountDue} />
+                  {s.voided ? (
+                    <span className="tag tag-bad">{t('history.voidedTag')}</span>
+                  ) : s.returnCount ? (
+                    <span className="tag tag-warn">{t('history.returnedTag')}</span>
+                  ) : null}
+                </span>
               </button>
             </li>
           ))}

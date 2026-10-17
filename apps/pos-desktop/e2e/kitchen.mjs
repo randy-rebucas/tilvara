@@ -55,6 +55,27 @@ try {
   await call('POST', `/v1/order-items/${burger.id}/status`, tk, { status: 'SERVED' });
   check('served food leaves the board', await shown('No tickets', 10000));
 
+  // Done: the served ticket can be looked up again (read-only).
+  await clickText('Done');
+  check('Done lists the served T1 ticket with its burger', await shown('Served') && (await text()).includes('1× Burger') && (await text()).includes('T1'));
+  await shot('kds-done.png', false);
+  await clickText('Open');
+
+  // A new ticket arrives: it chimes once (counted by wrapping Web Audio) and flashes "New ticket".
+  await evaluate(`(() => {
+    window.__tones = 0;
+    const A = window.AudioContext;
+    window.AudioContext = class extends A { createOscillator() { window.__tones++; return super.createOscillator(); } };
+  })()`);
+  await call('POST', `/v1/restaurant/orders/${order.id}/items`, tk, { items: [{ variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium] }] }, { 'idempotency-key': randomUUID() });
+  await call('POST', `/v1/restaurant/orders/${order.id}/fire`, tk, {});
+  check('a newly fired ticket flashes as New ticket', await waitFor(`document.querySelector('[data-fresh]') && document.body.innerText.includes('New ticket')`, 10000).then(() => true, () => false));
+  check('and the kitchen hears it (two tones)', (await evaluate('window.__tones')) === 2);
+  await shot('kds-new-ticket.png', false);
+  await clickText('Sound on');
+  check('sound can be turned off', await shown('Sound off'));
+  await clickText('Sound off');
+
   // All stations: the bar ticket, labelled with its station.
   await clickText('Change station');
   await shown('All stations');

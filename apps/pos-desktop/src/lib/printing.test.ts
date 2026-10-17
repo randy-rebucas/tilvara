@@ -2,7 +2,7 @@ import { encodeEscPos, toText } from '@1pos/escpos';
 import { describe, expect, it } from 'vitest';
 import type { Receipt } from '../types';
 import { escposDrawer, escposPrinter } from './devices';
-import { offlineReceiptToPrintable, receiptToPrintable } from './printing';
+import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable } from './printing';
 
 const receipt: Receipt = {
   notice: 'THIS IS NOT AN OFFICIAL INVOICE',
@@ -53,6 +53,28 @@ describe('receipt for a thermal printer', () => {
     expect(text).toContain(`SC/PWD discount${' '.repeat(23)}-PHP 26.79`);
     expect(text).toContain(`Discount${' '.repeat(30)}-PHP 16.07`);
     expect(text).toContain(`Discount${' '.repeat(30)}-PHP 10.72`);
+  });
+
+  it('prints a bill for the table: lines with choices and seats, the charge, total, paid and left, never as a receipt', () => {
+    const z = { gross: '0', discount: '0', statutoryDiscount: '0', vatExemptionAmount: '0', vatableSales: '0', zeroRatedSales: '0', vatExemptSales: '0', percentageTaxSales: '0' };
+    const doc = billToPrintable({
+      ...z, id: 'b', orderId: 'o', billNumber: 7, status: 'ACTIVE', requiresProfessionalReview: false, vatAmount: '50.68', amountDue: '473.00',
+      lines: [
+        { id: 'l1', parentLineId: null, name: 'Burger', quantity: '2', amountDue: '340.00', statutoryDiscount: '0', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false, seat: 2 },
+        { id: 'l2', parentLineId: 'l1', name: 'Cheese', quantity: '2', amountDue: '40.00', statutoryDiscount: '0', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false },
+      ],
+      charges: [{ id: 'c', kind: 'SERVICE_CHARGE', rate: '0.1', amountDue: '43.00' }],
+      checks: [{ id: 's', saleNumber: 1, amountDue: '236.50', completedAt: '' }], amountPaid: '236.50', amountRemaining: '236.50',
+    }, { branch: 'Kainan ni Lito', where: 'T1', dateTime: '10/17/26, 8:00 PM' });
+    const text = toText(doc, 48);
+    expect(text).toContain('BILL - NOT AN OFFICIAL RECEIPT OR INVOICE');
+    expect(text).not.toMatch(/OFFICIAL RECEIPT\s*$/m);
+    expect(text).toContain('Bill 7 - T1'); // CP437 has no middle dot
+    expect(text).toContain('2 x Burger (seat 2)');
+    expect(text).toContain('+ Cheese');
+    expect(text).toContain('Service charge 10%');
+    expect(text).toContain('PHP 473.00');
+    expect(text).toContain('Left to pay');
   });
 
   it('prints an offline sale with its local reference and that it is not an invoice', () => {

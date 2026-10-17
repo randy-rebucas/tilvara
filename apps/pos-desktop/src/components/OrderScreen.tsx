@@ -13,6 +13,8 @@ interface Compose {
   chosen: string[];
   qty: number;
   course: number;
+  /** Whose item it is at the table (for a split by seat); null = shared. */
+  seat: number | null;
   note: string;
   /** One Idempotency-Key per composed item: a retry after a lost answer cannot add it twice. */
   key: string;
@@ -23,7 +25,15 @@ interface Diner {
   name: string;
   idNumber: string;
 }
-type Panel = { kind: 'void'; item: OrderItem; key: string } | { kind: 'transfer'; free: { id: string; code: string }[] } | { kind: 'cancel' } | { kind: 'bill'; key: string } | null;
+type Place = { id: string; label: string };
+type Panel =
+  | { kind: 'void'; item: OrderItem; key: string }
+  | { kind: 'transfer'; free: { id: string; code: string }[] }
+  | { kind: 'merge'; orders: Place[] }
+  | { kind: 'move'; orders: Place[]; free: { id: string; code: string }[]; chosen: string[] }
+  | { kind: 'cancel' }
+  | { kind: 'bill'; key: string }
+  | null;
 
 const LIVE = (i: { status: string }) => i.status !== 'VOIDED';
 
@@ -112,7 +122,7 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
 
   function startCompose(item: MenuItem) {
     if (!item.available) return;
-    setCompose({ item, chosen: [], qty: 1, course: 1, note: '', key: uuid() });
+    setCompose({ item, chosen: [], qty: 1, course: 1, seat: null, note: '', key: uuid() });
   }
 
   function toggle(groupId: string, optionId: string) {
@@ -138,7 +148,7 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
         return await api<Order>(
           'POST',
           `/v1/restaurant/orders/${orderId}/items`,
-          { items: [{ variantId: c.item.variantId, quantity: String(c.qty), course: c.course, modifierOptionIds: c.chosen, ...(c.note.trim() && { note: c.note.trim() }) }] },
+          { items: [{ variantId: c.item.variantId, quantity: String(c.qty), course: c.course, modifierOptionIds: c.chosen, ...(c.seat && { seat: c.seat }), ...(c.note.trim() && { note: c.note.trim() }) }] },
           { 'idempotency-key': c.key },
         );
       } catch (err) {
@@ -163,17 +173,40 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
     void act(() => api<Order>('POST', `/v1/order-items/${p.item.id}/void`, { reason, wasted: f.get('wasted') === 'on' }, { 'idempotency-key': p.key }), () => setPanel(null));
   }
 
-  async function openTransfer() {
+  /** The floor right now: free tables, and the other open orders (by table code or name). */
+  async function floorNow() {
+    const [areas, live] = await Promise.all([
+      api<{ data: DiningArea[] }>('GET', `/v1/dining-areas?branchId=${shift.branch.id}`),
+      api<{ data: OrderSummary[] }>('GET', `/v1/restaurant/orders?branchId=${shift.branch.id}&status=LIVE`),
+    ]);
+    const tables = areas.data.flatMap((a) => a.tables);
+    const taken = new Set(live.data.map((o) => o.tableId));
+    const others = live.data
+      .filter((o) => o.id !== orderId && o.status === 'OPEN')
+      .map((o) => ({ id: o.id, label: `${o.tableId ? (tables.find((tb) => tb.id === o.tableId)?.code ?? '—') : (o.customerName ?? t('floor.takeaway'))} · #${o.orderNumber}` }));
+    return { free: tables.filter((tb) => !taken.has(tb.id)), others };
+  }
+
+  async function openPanel(kind: 'transfer' | 'merge' | 'move') {
     try {
-      const [areas, live] = await Promise.all([
-        api<{ data: DiningArea[] }>('GET', `/v1/dining-areas?branchId=${shift.branch.id}`),
-        api<{ data: OrderSummary[] }>('GET', `/v1/restaurant/orders?branchId=${shift.branch.id}&status=LIVE`),
-      ]);
-      const taken = new Set(live.data.map((o) => o.tableId));
-      setPanel({ kind: 'transfer', free: areas.data.flatMap((a) => a.tables).filter((tb) => !taken.has(tb.id)) });
+      const { free, others } = await floorNow();
+      if (kind === 'transfer') setPanel({ kind, free });
+      else if (kind === 'merge') setPanel({ kind, orders: others });
+      else setPanel({ kind, orders: others, free, chosen: [] });
     } catch (err) {
       setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
     }
+  }
+  const openTransfer = () => openPanel('transfer');
+
+  /** Merge this order into another open one (this one closes as MERGED); the floor shows the result. */
+  const mergeInto = (intoOrderId: string) => act(async () => (await api('POST', `/v1/restaurant/orders/${orderId}/merge`, { intoOrderId }), null), onBack);
+
+  /** Move the chosen items (with their choices) to another open order or a new order on a free table. */
+  function moveTo(target: { toOrderId: string } | { toTableId: string }) {
+    if (panel?.kind !== 'move' || panel.chosen.length === 0) return;
+    const itemIds = panel.chosen;
+    void act(async () => (await api<{ from: Order }>('POST', `/v1/restaurant/orders/${orderId}/move-items`, { itemIds, ...target })).from, () => setPanel(null));
   }
 
   function cancelOrder(e: FormEvent<HTMLFormElement>) {
@@ -303,6 +336,19 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
                     ))}
                   </div>
                 </div>
+                {order.orderType === 'DINE_IN' && (
+                  <div className="grid gap-1" role="group" aria-label={t('order.seat')}>
+                    <span className="text-[0.8125rem] font-semibold">{t('order.seat')}</span>
+                    <div className="flex flex-wrap gap-1">
+                      <button type="button" className="btn btn-sm" aria-pressed={compose.seat === null} onClick={() => setCompose({ ...compose, seat: null })}>{t('order.seatShared')}</button>
+                      {Array.from({ length: Math.min(Math.max(order.guestCount ?? 4, 1), 12) }, (_, i) => i + 1).map((n) => (
+                        <button key={n} type="button" className="btn btn-sm" aria-label={t('kds.seat', { n: String(n) })} aria-pressed={compose.seat === n} onClick={() => setCompose({ ...compose, seat: n })}>
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <Field id="itemNote" label={t('order.note')} value={compose.note} maxLength={200} onChange={(e) => setCompose({ ...compose, note: e.target.value })} />
               {missing.length > 0 && <p className="text-[0.875rem] text-muted">{t('order.chooseFirst', { groups: missing.map((g) => g.name).join(', ') })}</p>}
@@ -383,6 +429,8 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
             {editable && (
               <div className="flex flex-wrap gap-2">
                 {order.orderType === 'DINE_IN' && <button type="button" className="btn btn-sm" onClick={() => void openTransfer()}>{t('order.transfer')}</button>}
+                {live.length > 0 && <button type="button" className="btn btn-sm" onClick={() => void openPanel('move')}>{t('order.moveItems')}</button>}
+                <button type="button" className="btn btn-sm" onClick={() => void openPanel('merge')}>{t('order.merge')}</button>
                 <button type="button" className="btn btn-sm btn-danger ml-auto" onClick={() => setPanel({ kind: 'cancel' })}>{t('order.cancel')}</button>
               </div>
             )}
@@ -412,6 +460,58 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
                     </button>
                   ))}
                 </div>
+              )}
+              <button type="button" className="btn justify-self-start" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+            </Note>
+          )}
+
+          {panel?.kind === 'merge' && (
+            <Note className="grid gap-3 p-4">
+              <p className="font-semibold">{t('order.mergeInto')}</p>
+              <p className="text-[0.875rem] text-muted">{t('order.mergeHint')}</p>
+              {panel.orders.length === 0 ? (
+                <p className="text-muted">{t('order.noOtherOrders')}</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {panel.orders.map((o) => (
+                    <button key={o.id} type="button" className="btn serial" disabled={working} onClick={() => void mergeInto(o.id)}>{o.label}</button>
+                  ))}
+                </div>
+              )}
+              <button type="button" className="btn justify-self-start" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+            </Note>
+          )}
+
+          {panel?.kind === 'move' && (
+            <Note className="grid gap-3 p-4">
+              <p className="font-semibold">{t('order.moveTitle')}</p>
+              <fieldset className="grid gap-1">
+                <legend className="sr-only">{t('order.moveWhich')}</legend>
+                {live.map((i) => (
+                  <label key={i.id} className="flex min-h-11 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="size-5"
+                      checked={panel.chosen.includes(i.id)}
+                      onChange={(e) => setPanel({ ...panel, chosen: e.target.checked ? [...panel.chosen, i.id] : panel.chosen.filter((x) => x !== i.id) })}
+                    />
+                    <span><span className="money">{i.quantity}×</span> {i.name}{i.seat ? <span className="serial ml-2 text-[0.8125rem] text-muted">{t('kds.seat', { n: String(i.seat) })}</span> : null}</span>
+                  </label>
+                ))}
+              </fieldset>
+              {panel.chosen.length > 0 && (
+                <>
+                  <p className="text-[0.875rem] font-semibold">{t('order.moveToOrder')}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {panel.orders.map((o) => <button key={o.id} type="button" className="btn serial" disabled={working} onClick={() => moveTo({ toOrderId: o.id })}>{o.label}</button>)}
+                    {panel.orders.length === 0 && <span className="text-muted">{t('order.noOtherOrders')}</span>}
+                  </div>
+                  <p className="text-[0.875rem] font-semibold">{t('order.moveToTable')}</p>
+                  <div className="flex flex-wrap gap-2">
+                    {panel.free.map((tb) => <button key={tb.id} type="button" className="btn serial" disabled={working} onClick={() => moveTo({ toTableId: tb.id })}>{tb.code}</button>)}
+                    {panel.free.length === 0 && <span className="text-muted">{t('order.noFreeTables')}</span>}
+                  </div>
+                </>
               )}
               <button type="button" className="btn justify-self-start" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
             </Note>
@@ -462,6 +562,7 @@ function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, on
           <p className="mt-1 flex flex-wrap items-center gap-1">
             <span className={`tag ${STATUS_TONE[i.status] ?? ''}`}>{t(`item.status.${i.status}` as MessageKey)}</span>
             {i.course > 1 && <span className="tag">{t('order.courseN', { n: String(i.course) })}</span>}
+            {i.seat && <span className="tag">{t('kds.seat', { n: String(i.seat) })}</span>}
             {voided && i.voidReason && <span className="text-[0.8125rem] text-muted">{i.voidReason}{i.wasteAdjustmentId ? ` · ${t('order.wastedShort')}` : ''}</span>}
           </p>
         </div>

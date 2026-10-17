@@ -562,6 +562,10 @@ describe('voids and returns (ADR-0011)', () => {
     expect((await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'VOID', reason: 'again' }).expect(409)).body.error.code).toBe('ALREADY_RETURNED');
 
     const other = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    // The shift's sale list says how each was paid and that the first was voided (the POS tags them).
+    const listed = (await http().get('/v1/sales').query({ cashierSessionId: session.id }).set(s.cashier).expect(200)).body.data as { id: string; tenderMethods: string[]; voided: boolean; returnCount: number }[];
+    expect(listed.find((x) => x.id === sold.id)).toMatchObject({ tenderMethods: ['CASH'], voided: true, returnCount: 1 });
+    expect(listed.find((x) => x.id === other.id)).toMatchObject({ tenderMethods: ['CASH'], voided: false, returnCount: 0 });
     await http().post(`/v1/cashier-sessions/${session.id}/close`).set(s.cashier).send({ countedCash: '1022.40' }).expect(200);
     const next = await openSession(s);
     const late = await ret(s.manager, other.id, { cashierSessionId: next.id, kind: 'VOID', reason: 'too late' }).expect(422);

@@ -154,7 +154,7 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
   const { t } = useT();
   const { intents, remaining, cashAmount } = pay;
   return (
-    <Note className="grid gap-3 p-5">
+    <Note className="grid scroll-mt-4 gap-3 p-5" id="payment">
       {intents.map((i) => {
         const charged = i.status !== 'FAILED' && i.status !== 'CANCELED';
         const waiting = i.status === 'UNKNOWN' || i.status === 'PROCESSING';
@@ -227,7 +227,7 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
         </>
       )}
       {priced && pay.blocker && <p className="text-[0.875rem] text-muted">{t(cashOnly && pay.blocker === 'pay.needCash' ? 'till.needCash' : pay.blocker)}</p>}
-      <button className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || !pay.covered || pay.pendingIntent || pay.submitting} onClick={onSubmit}>
+      <button id="pay-submit" className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || !pay.covered || pay.pendingIntent || pay.submitting} onClick={onSubmit}>
         {submitLabel}
       </button>
     </Note>

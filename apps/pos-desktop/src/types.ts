@@ -69,9 +69,13 @@ export interface SaleSummary {
   saleNumber: number;
   amountDue: string;
   completedAt: string;
+  /** How it was paid (CASH, CARD, QR) and what happened since: voided, or items returned. */
+  tenderMethods?: string[];
+  voided?: boolean;
+  returnCount?: number;
 }
 
-export interface SaleDetail extends SaleSummary {
+export interface SaleDetail extends Omit<SaleSummary, 'tenderMethods' | 'voided' | 'returnCount'> {
   lines: { id: string; name: string; sku: string; quantity: string; returnedQuantity: string; amountDue: string }[];
 }
 
@@ -160,6 +164,8 @@ export interface BillLine {
   paidShare: string;
   paidQuantity: string;
   fullyPaid: boolean;
+  /** The seat the item was ordered for (split by seat), when the server took one. */
+  seat?: number | null;
 }
 
 export interface Bill extends Totals {
@@ -180,6 +186,7 @@ export interface KitchenTicket {
   ticketNumber: number;
   course: number;
   firedAt: string;
+  bumpedAt?: string | null;
   station: { id: string; code: string; name: string };
   /** Where the food goes now (the order may have moved tables since firing). */
   order: { id: string; orderNumber: number; orderType: 'DINE_IN' | 'TAKEAWAY'; tableCode: string | null; customerName: string | null } | null;

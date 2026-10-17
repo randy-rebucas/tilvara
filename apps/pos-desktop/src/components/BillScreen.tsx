@@ -1,11 +1,13 @@
 import { toDec } from '@1pos/money';
-import { ArrowLeft, Minus, Plus } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { ArrowLeft, Minus, Plus, Printer } from 'lucide-react';
+import { forwardRef, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
 import { partOfRest } from '../lib/fraction';
 import { isPositive } from '../lib/money';
-import type { Bill, BillLine, CheckPreview, Receipt as ReceiptData } from '../types';
+import { BILL_NOTICE, billToPrintable } from '../lib/printing';
+import { useTill } from '../lib/till';
+import type { Bill, BillLine, CheckPreview, Order, Receipt as ReceiptData } from '../types';
 import { errorText, PaymentPanel, usePayment, type Notice } from './Payment';
 import { Receipt } from './Receipt';
 import type { Shift } from './Registers';
@@ -42,6 +44,41 @@ function allocationsFor(bill: Bill, split: Split): Allocation[] | undefined | 'T
 }
 
 /**
+ * The bill as printed in a browser (off screen; @media print shows only `.printable`). A thermal
+ * printer gets the same content from `billToPrintable`.
+ */
+const BillSlip = forwardRef<HTMLDivElement, { bill: Bill; branch: string; where: string; dateTime: string }>(function BillSlip({ bill, branch, where, dateTime }, ref) {
+  const children = (id: string) => bill.lines.filter((l) => l.parentLineId === id);
+  return (
+    <div ref={ref} className="printable note pointer-events-none fixed -left-[9999px] top-0 w-[80mm] p-4 font-[family-name:var(--font-serial)] text-[0.8125rem]" aria-hidden>
+      <p className="text-center font-semibold">{branch}</p>
+      <p className="mt-1 text-center font-semibold">{BILL_NOTICE}</p>
+      <p className="mt-2 flex justify-between border-y border-dashed border-hair py-1"><span>Bill {bill.billNumber} · {where}</span><span>{dateTime}</span></p>
+      <ul className="mt-2 grid gap-0.5">
+        {bill.lines.filter((l) => !l.parentLineId).map((l) => (
+          <li key={l.id}>
+            <p className="flex justify-between gap-2"><span>{l.quantity} x {l.name}{l.seat ? ` (seat ${l.seat})` : ''}</span><span>{l.amountDue}</span></p>
+            {children(l.id).map((c) => <p key={c.id} className="flex justify-between gap-2 pl-3"><span>+ {c.name}</span><span>{c.amountDue}</span></p>)}
+          </li>
+        ))}
+        {bill.charges.map((c) => <li key={c.id} className="flex justify-between gap-2"><span>Service charge {toDec(c.rate).times(100).toString()}%</span><span>{c.amountDue}</span></li>)}
+      </ul>
+      <dl className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
+        <div className="flex justify-between font-semibold"><dt>TOTAL DUE</dt><dd><Money value={bill.amountDue} /></dd></div>
+        <div className="flex justify-between"><dt>VAT</dt><dd><Money value={bill.vatAmount} /></dd></div>
+        {bill.checks.length > 0 && (
+          <>
+            <div className="flex justify-between"><dt>Paid</dt><dd><Money value={bill.amountPaid} /></dd></div>
+            <div className="flex justify-between"><dt>Left to pay</dt><dd><Money value={bill.amountRemaining} /></dd></div>
+          </>
+        )}
+      </dl>
+      <p className="mt-3 text-center">Please check your bill before paying.</p>
+    </div>
+  );
+});
+
+/**
  * A frozen bill (ADR-0014 §8) paid in one or more checks: the rest, an even split, or by item. The
  * server prices each check (preview) and records it as a sale; the till never prorates money itself.
  */
@@ -54,6 +91,10 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
   const [notice, setNotice] = useState<Notice>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [reopening, setReopening] = useState(false);
+  const [where, setWhere] = useState('');
+  const [printError, setPrintError] = useState<string | null>(null);
+  const slip = useRef<HTMLDivElement>(null);
+  const till = useTill();
   const pay = usePayment({ shift, due: preview?.amountDue ?? '0.00', setNotice });
 
   const load = useCallback(async () => {
@@ -66,6 +107,26 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
   useEffect(() => {
     void load();
   }, [load]);
+  // Where the bill goes (table or takeaway name), for the printed bill.
+  const orderId = bill?.orderId;
+  useEffect(() => {
+    if (!orderId) return;
+    api<Order>('GET', `/v1/restaurant/orders/${orderId}`)
+      .then((o) => setWhere(o.table?.code ?? o.customerName ?? t('floor.takeaway')))
+      .catch(() => setWhere(''));
+  }, [orderId]);
+
+  const dateTime = () => new Intl.DateTimeFormat('en-PH', { timeZone: shift.branch.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date());
+  /** Print (or print again) the bill for the guests; a printer failure never touches the bill. */
+  async function printBill() {
+    if (!bill || !slip.current) return;
+    setPrintError(null);
+    try {
+      await till.printer.print(slip.current, billToPrintable(bill, { branch: shift.branch.name, where, dateTime: dateTime() }));
+    } catch (e) {
+      setPrintError((e as Error).message);
+    }
+  }
 
   const allocations = bill ? allocationsFor(bill, split) : 'NOTHING';
   const allocKey = JSON.stringify(allocations);
@@ -162,6 +223,8 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
   const childrenOf = (id: string) => bill.lines.filter((l) => l.parentLineId === id);
   const locked = pay.intents.length > 0; // a card/QR payment was taken for this amount: keep the split
   const picked = split.kind === 'items' ? split.picked : {};
+  // Seats with something still to pay: one tap picks that seat's lines (each person pays their own).
+  const seats = [...new Set(open.map((l) => l.seat).filter((s): s is number => typeof s === 'number'))].sort((a, b) => a - b);
 
   return (
     <div className="mx-auto grid max-w-[1440px] gap-4 px-4 py-5 sm:px-6">
@@ -169,10 +232,17 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
         <button type="button" className="btn btn-sm" onClick={onBack}>
           <ArrowLeft className="size-4" aria-hidden /> {t('bill.backToOrder')}
         </button>
-        <h1 className="text-[1.25rem] font-semibold">{t('bill.title', { n: String(bill.billNumber) })}</h1>
+        <h1 className="text-[1.25rem] font-semibold">{t('bill.title', { n: String(bill.billNumber) })}{where && <span className="serial ml-2 text-muted">{where}</span>}</h1>
         <span className={`tag ${bill.status === 'ACTIVE' ? 'tag-warn' : ''}`}>{t(`bill.status.${bill.status}` as MessageKey)}</span>
+        {bill.status === 'ACTIVE' && (
+          <button type="button" className="btn btn-sm ml-auto" onClick={() => void printBill()}>
+            <Printer className="size-4" aria-hidden /> {printError ? t('bill.printAgain') : t('bill.printCopy')}
+          </button>
+        )}
       </div>
+      {printError && <Callout kind="error">{t('bill.printFailed')} ({printError})</Callout>}
       {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
+      <BillSlip ref={slip} bill={bill} branch={shift.branch.name} where={where} dateTime={dateTime()} />
       {bill.requiresProfessionalReview && <Callout kind="warn">{t('sell.pendingReview')}</Callout>}
 
       <div className="grid gap-5 lg:grid-cols-[1fr_400px]">
@@ -247,6 +317,21 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
                     ))}
                   </div>
                   <p className="text-[0.875rem] text-muted">{split.ways > 1 ? t('bill.evenHint', { n: String(split.ways) }) : t('bill.lastShare')}</p>
+                </div>
+              )}
+              {split.kind === 'items' && seats.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1" role="group" aria-label={t('bill.bySeat')}>
+                  <span className="text-[0.8125rem] font-semibold">{t('bill.bySeat')}</span>
+                  {seats.map((n) => {
+                    const mine = open.filter((l) => l.seat === n);
+                    const on = mine.length > 0 && mine.every((l) => picked[l.id] !== undefined) && Object.keys(picked).length === mine.length;
+                    return (
+                      <button key={n} type="button" className="btn btn-sm" disabled={locked} aria-pressed={on}
+                        onClick={() => setSplit({ kind: 'items', picked: Object.fromEntries(mine.map((l) => [l.id, wholeLeft(l) ?? 1])) })}>
+                        {t('kds.seat', { n: String(n) })}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
               {split.kind === 'items' && (

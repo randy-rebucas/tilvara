@@ -1,6 +1,7 @@
 import type { PrintableReceipt } from '@1pos/escpos';
+import { toDec } from '@1pos/money';
 import type { OfflineReceipt } from '@1pos/pos-offline';
-import type { Receipt } from '../types';
+import type { Bill, Receipt } from '../types';
 import { isZero, peso } from './money';
 
 /** Receipt wording stays in English, matching BIR document terminology (not UI copy). */
@@ -54,6 +55,37 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
     footer: [...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
+  };
+}
+
+/** The notice on a printed bill: it asks for payment, it is not a receipt or an invoice. */
+export const BILL_NOTICE = 'BILL - NOT AN OFFICIAL RECEIPT OR INVOICE';
+
+/**
+ * A table's bill as handed to the guests before they pay (printed again on request): its lines with
+ * choices, the service charge, the total and VAT, what is already paid and what is left. Wording is
+ * English like the receipt (BIR document terminology).
+ */
+export function billToPrintable(b: Bill, place: { branch: string; where: string; dateTime: string }): PrintableReceipt {
+  const children = (id: string) => b.lines.filter((l) => l.parentLineId === id);
+  return {
+    header: [place.branch],
+    notice: BILL_NOTICE,
+    meta: [[`Bill ${b.billNumber} · ${place.where}`, place.dateTime]],
+    items: [
+      ...b.lines.filter((l) => !l.parentLineId).flatMap((l) => [
+        { name: `${l.quantity} x ${l.name}${l.seat ? ` (seat ${l.seat})` : ''}`, amount: l.amountDue },
+        ...children(l.id).map((c) => ({ name: `  + ${c.name}`, amount: c.amountDue })),
+      ]),
+      ...b.charges.map((c) => ({ name: `Service charge ${toDec(c.rate).times(100).toString()}%`, amount: c.amountDue })),
+    ],
+    totals: [
+      { label: 'TOTAL DUE', amount: peso(b.amountDue), emphasis: true },
+      { label: 'VAT', amount: peso(b.vatAmount) },
+      ...(b.checks.length ? [{ label: 'Paid', amount: peso(b.amountPaid) }, { label: 'Left to pay', amount: peso(b.amountRemaining) }] : []),
+    ],
+    payments: [],
+    footer: ['Please check your bill before paying.'],
   };
 }
 

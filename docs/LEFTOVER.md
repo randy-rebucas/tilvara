@@ -34,7 +34,6 @@ Slice 5 (reports):
 
 Slice 6 (POS browser checkout):
 - ⬜ CSP response header in production hosting
-- ⬜ Keyboard shortcuts (F-keys)
 - ⬜ Customer display
 - ⬜ Barcode scale codes
 
@@ -42,8 +41,6 @@ Phase-level:
 - ⬜ `@1pos/pricing` promotions
 - ⬜ Invoice sequences (dev series only today)
 - ⬜ Negative-stock policy (BLOCK/ALLOW_WITH_FLAG) — today sales may go negative and it stays visible
-- ⬜ POS phone layout: sticky total + Pay bar
-- ⬜ Shift history: tender + voided/returned tags
 - ⬜ A test for one session spanning local midnight (needs clock control)
 
 ## Phase 3 — Inventory, purchasing, accounting
@@ -77,8 +74,7 @@ Slice 3 (orders + kitchen):
 Slice 4 (bills + checks + service charge):
 - ⬜ Card/QR checks use the existing intent flow, but no POS UI yet
 - ⬜ Tips
-- ⬜ A bill print/PDF
-- ⬜ Per-seat split helper (today: allocate the seat's lines)
+- ⬜ A bill as PDF (the till prints and reprints the bill since session 10)
 - ⬜ Adding items after a partial payment (today: a new order once the bill settles)
 - ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
 
@@ -90,14 +86,10 @@ Slice 5 (restaurant reports):
 
 Slice 6 (UI):
 - 6a POS table service:
-  - ⬜ Merge / move items between orders in the UI (API done)
-  - ⬜ Per-seat split helper
-  - ⬜ Reprint a bill
   - ⬜ Servers without a drawer (today the Tables tab lives inside a register shift)
   - ⬜ Floor positions/shapes on a drawn plan (tiles today)
 - 6b KDS:
-  - ⬜ Sound/flash on a new ticket
-  - ⬜ Recall bumped tickets (`status=ALL` exists)
+  - ⬜ Un-bump a ticket (the Done view shows finished tickets read-only since session 10)
   - ⬜ Push (SSE) instead of polling
 - 6c admin set-up:
   - ⬜ Drag-and-drop ordering (buttons today)

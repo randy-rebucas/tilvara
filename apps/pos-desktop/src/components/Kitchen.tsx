@@ -1,7 +1,8 @@
-import { ChefHat } from 'lucide-react';
+import { ChefHat, Volume2, VolumeX } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
+import { chime, soundPreference } from '../lib/chime';
 import { usePoll } from '../lib/poll';
 import type { KitchenTicket } from '../types';
 import { errorText, type Notice } from './Payment';
@@ -12,6 +13,43 @@ export type KitchenPlace = { branch: Place; station: Place | null };
 
 /** Minutes after firing when a ticket is marked late (amber): someone must look at it. */
 const LATE_AFTER_MIN = 10;
+/** How long a newly arrived ticket flashes. */
+const FLASH_MS = 8000;
+
+/** Finished tickets, read-only: what was cooked and served, to answer "did table 4's burger go out?". */
+function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null; showStation: boolean }) {
+  const { t } = useT();
+  if (tickets === null) return <p className="text-muted">{t('floor.loading')}</p>;
+  if (tickets.length === 0) return <p className="py-10 text-center text-muted">{t('kds.noneDone')}</p>;
+  const clock = (iso: string | null | undefined) => (iso ? new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) : '—');
+  return (
+    <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] items-start gap-3" aria-label={t('kds.viewDone')}>
+      {tickets.map((tk) => (
+        <li key={tk.id}>
+          <Note className="grid gap-2 p-4 opacity-90">
+            <div className="flex items-start justify-between gap-2 border-b border-hair-soft pb-2">
+              <div>
+                <p className="serial text-[1.125rem] font-bold">{tk.order ? (tk.order.tableCode ?? tk.order.customerName ?? t('floor.takeaway')) : '—'}</p>
+                <p className="serial text-[0.8125rem] text-muted">
+                  #{tk.order?.orderNumber} · {t('kds.ticket', { n: String(tk.ticketNumber) })}{showStation && <> · <span className="text-violet">{tk.station.code}</span></>}
+                </p>
+              </div>
+              <span className="serial text-[0.8125rem] text-muted">{t('kds.firedAt', { time: clock(tk.firedAt) })}<br />{tk.bumpedAt && t('kds.bumpedAt', { time: clock(tk.bumpedAt) })}</span>
+            </div>
+            <ul className="grid gap-1 text-[0.9375rem]">
+              {tk.items.map((i) => (
+                <li key={i.id} className={`flex justify-between gap-2 ${i.status === 'VOIDED' ? 'text-muted line-through' : ''}`}>
+                  <span><span className="money">{i.quantity}×</span> {i.name}{i.modifiers.length > 0 && <span className="text-muted"> · {i.modifiers.map((m) => m.name).join(', ')}</span>}</span>
+                  <span className="tag">{t(`item.status.${i.status}` as MessageKey)}</span>
+                </li>
+              ))}
+            </ul>
+          </Note>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /** Pick the branch and station this screen shows (kitchen staff see only their own branches). */
 export function KitchenPicker({ onReady, onBack }: { onReady: (p: KitchenPlace) => void; onBack?: () => void }) {
@@ -82,10 +120,18 @@ export function KitchenPicker({ onReady, onBack }: { onReady: (p: KitchenPlace) 
 export function KitchenBoard({ place }: { place: KitchenPlace }) {
   const { t } = useT();
   const [tickets, setTickets] = useState<KitchenTicket[] | null>(null);
+  const [done, setDone] = useState<KitchenTicket[] | null>(null);
+  const [view, setView] = useState<'open' | 'done'>('open');
   const [notice, setNotice] = useState<Notice>(null);
   const [now, setNow] = useState(() => Date.now());
   const busy = useRef(new Set<string>());
   const [, force] = useState(0);
+  // New tickets chime once and flash for a while; the first load is what was already there.
+  const seen = useRef<Set<string> | null>(null);
+  const [fresh, setFresh] = useState<Map<string, number>>(new Map());
+  const [sound, setSound] = useState(soundPreference.get);
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
 
   const load = useCallback(() => {
     const q = new URLSearchParams({ branchId: place.branch.id, status: 'OPEN', ...(place.station && { stationId: place.station.id }) });
@@ -93,14 +139,35 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
       .then(({ data }) => {
         setTickets(data);
         setNotice((n) => (n?.kind === 'warn' ? null : n));
+        const arrived = seen.current ? data.filter((tk) => !seen.current!.has(tk.id)) : [];
+        seen.current = new Set([...(seen.current ?? []), ...data.map((tk) => tk.id)]);
+        if (arrived.length) {
+          if (soundRef.current) chime();
+          setFresh((m) => new Map([...m, ...arrived.map((tk) => [tk.id, Date.now()] as const)]));
+        }
       })
       // Keep showing the last tickets: a kitchen screen must not go blank on a dropped connection.
       .catch(() => setNotice({ kind: 'warn', text: t('kds.offline') }));
   }, [place.branch.id, place.station?.id]);
   usePoll(load, 4000, true);
 
+  /** Recently finished tickets (everything served or voided), newest first, to look one up again. */
+  const loadDone = useCallback(() => {
+    const q = new URLSearchParams({ branchId: place.branch.id, status: 'ALL', ...(place.station && { stationId: place.station.id }) });
+    api<{ data: KitchenTicket[] }>('GET', `/v1/kitchen/tickets?${q}`)
+      .then(({ data }) => setDone(data.filter((tk) => tk.items.every((i) => i.status === 'SERVED' || i.status === 'VOIDED')).slice(0, 30)))
+      .catch(() => setNotice({ kind: 'warn', text: t('kds.offline') }));
+  }, [place.branch.id, place.station?.id]);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    if (view === 'done') loadDone();
+  }, [view, loadDone]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNow(Date.now());
+      // A ticket stops flashing after FLASH_MS.
+      setFresh((m) => (m.size && [...m.values()].some((at) => Date.now() - at > FLASH_MS) ? new Map([...m].filter(([, at]) => Date.now() - at <= FLASH_MS)) : m));
+    }, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -125,8 +192,29 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
 
   return (
     <div className="grid gap-4 px-4 py-5 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex gap-2" role="group" aria-label={t('kds.view')}>
+          <button type="button" className="btn" aria-pressed={view === 'open'} onClick={() => setView('open')}>{t('kds.viewOpen')}{tickets ? ` (${tickets.length})` : ''}</button>
+          <button type="button" className="btn" aria-pressed={view === 'done'} onClick={() => setView('done')}>{t('kds.viewDone')}</button>
+        </div>
+        <button
+          type="button"
+          className="btn"
+          aria-pressed={sound}
+          onClick={() => {
+            const next = !sound;
+            setSound(next);
+            soundPreference.set(next);
+            if (next) chime(); // also unlocks audio in browsers that need a tap first
+          }}
+        >
+          {sound ? <Volume2 className="size-4" aria-hidden /> : <VolumeX className="size-4" aria-hidden />} {sound ? t('kds.soundOn') : t('kds.soundOff')}
+        </button>
+      </div>
       {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
-      {tickets === null ? (
+      {view === 'done' ? (
+        <DoneTickets tickets={done} showStation={!place.station} />
+      ) : tickets === null ? (
         <p className="text-muted">{t('floor.loading')}</p>
       ) : tickets.length === 0 ? (
         <div className="grid min-h-[50vh] place-items-center text-center text-muted">
@@ -142,7 +230,8 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
             const waiting = tk.items.some((i) => i.status === 'FIRED' || i.status === 'IN_PREP');
             return (
               <li key={tk.id}>
-                <Note className={`grid gap-3 p-4 ${late ? 'border-[#e7c27a]' : ''}`} aria-label={t('kds.ticketLabel', { n: String(tk.ticketNumber), where })}>
+                <Note className={`grid gap-3 p-4 ${late ? 'border-[#e7c27a]' : ''} ${fresh.has(tk.id) ? 'kds-fresh' : ''}`} aria-label={t('kds.ticketLabel', { n: String(tk.ticketNumber), where })} data-fresh={fresh.has(tk.id) || undefined}>
+                  {fresh.has(tk.id) && <span className="tag tag-warn justify-self-start">{t('kds.newTicket')}</span>}
                   <header className="flex flex-wrap items-start justify-between gap-2 border-b border-hair-soft pb-2">
                     <div>
                       <p className="serial text-[1.5rem] font-bold leading-tight">{where}</p>

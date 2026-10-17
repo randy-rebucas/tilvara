@@ -2,6 +2,7 @@ import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   asc,
   eq,
+  inArray,
   orderBillAllocations,
   orderBillBeneficiaries,
   orderBillCharges,
@@ -248,6 +249,10 @@ export class BillsService extends TenantService {
     const paidShare = (lineId: string) =>
       allocations.filter((a) => a.a.billLineId === lineId).reduce<Fraction>((acc, a) => addFraction(acc, frac(a.a.shareNum, a.a.shareDen)), ZERO_FRACTION);
     const paidAmount = checks.reduce((a, c) => a.plus(c.amountDue), toDec('0'));
+    // The seat each line was ordered for, so the till can split a check by seat.
+    const seats = lines.length
+      ? await db.select({ id: orderItems.id, seat: orderItems.seat }).from(orderItems).where(inArray(orderItems.id, lines.map((l) => l.orderItemId)))
+      : [];
     return {
       ...money(b),
       discountRate: b.discountRate === null ? null : toDec(b.discountRate).toString(),
@@ -261,6 +266,7 @@ export class BillsService extends TenantService {
           paidShare: `${share.n}/${share.d}`,
           paidQuantity: paidQty.toString(),
           fullyPaid: share.n === share.d,
+          seat: seats.find((s) => s.id === l.orderItemId)?.seat ?? null,
         };
       }),
       charges: charges.map((c) => ({ ...money(c), base: m2(c.base), rate: toDec(c.rate).toString() })),

@@ -9,7 +9,8 @@ const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';
 const API = process.argv[4] ?? 'http://127.0.0.1:4320';
 
-const { call, email, tk } = await arrangeRestaurant(API, 'tbl');
+const r = await arrangeRestaurant(API, 'tbl');
+const { call, email, tk } = r;
 
 // --- drive the floor
 const { check, finish } = checklist();
@@ -158,6 +159,67 @@ try {
   check('order + composer: no horizontal scroll at 390px', await noHorizontalScroll());
   await shot('tables-order-390.png');
   await viewport(1440, 900);
+
+  // T2 (3 guests): a burger for seat 2 and a tea for seat 3, sent.
+  await clickExact('Medium');
+  await clickLabel('Seat 2');
+  await clickText('Add to order');
+  await shown('Seat 2');
+  await clickText('Drinks');
+  await clickText('Iced tea');
+  await waitFor(`document.body.innerText.includes('Add to order')`);
+  await clickLabel('Seat 3');
+  await clickText('Add to order');
+  check('items carry their seats on the ticket', await shown('Seat 3') && (await text()).includes('Seat 2'));
+  await clickText('Send to kitchen');
+  await waitFor(`!document.body.innerText.includes('Not sent')`);
+
+  // Move the tea to a new order on T1 (free again), then merge T2 into it.
+  await clickText('Move items');
+  // The panel opens once the floor is loaded: wait for the item's checkbox, not the button's own text.
+  await waitFor(`[...document.querySelectorAll('label')].some((l) => l.getClientRects().length && l.textContent.includes('Iced tea') && l.querySelector('input[type=checkbox]'))`);
+  await evaluate(`[...document.querySelectorAll('label')].find((l) => l.getClientRects().length && l.textContent.includes('Iced tea')).querySelector('input').click()`);
+  await sleep(200);
+  await evaluate(`[...document.querySelectorAll('button.serial')].find((x) => x.getClientRects().length && x.textContent.trim() === 'T1').click()`);
+  const liveNow = async () => (await call('GET', `/v1/restaurant/orders?branchId=${r.branchId}&status=LIVE`, tk)).data;
+  let onT1;
+  for (let i = 0; i < 25 && !onT1; i++) {
+    onT1 = (await liveNow()).find((o) => o.tableId === r.tables.T1);
+    if (!onT1) await sleep(200);
+  }
+  if (!onT1) console.log((await text()).slice(0, 1500));
+  check('the tea moved to a new order on T1', Boolean(onT1) && await waitFor(`!document.body.innerText.includes('1× Iced tea')`).then(() => true, () => false));
+  await clickText('Merge');
+  await waitFor(`document.body.innerText.includes('Merge this order into')`);
+  await evaluate(`[...document.querySelectorAll('button.serial')].find((x) => x.getClientRects().length && x.textContent.startsWith('T1')).click()`);
+  check('T2 merged into T1: back on the floor, T2 free', await waitFor(`[...document.querySelectorAll('[aria-label^="T2 —"]')].some((x) => x.getAttribute('aria-label').endsWith('Free'))`).then(() => true, () => false));
+  const merged = await call('GET', `/v1/restaurant/orders/${onT1.id}`, tk);
+  check('T1 now has the burger and the tea', merged.items.filter((i) => i.status !== 'VOIDED').map((i) => i.name).sort().join() === 'Burger,Iced tea');
+
+  // T1's bill: split by seat (seat 2 = the burger) and print the bill for the guests.
+  await clickLabel('T1 —');
+  await shown('Mains');
+  await clickText('Print bill');
+  await waitFor(`document.body.innerText.includes('Before printing the bill')`);
+  await clickLast('Print bill');
+  await shown('Bill #3');
+  await clickText('By item');
+  check('split by seat offers seats 2 and 3', await shown('By seat') && await evaluate(`['Seat 2', 'Seat 3'].every((s) => [...document.querySelectorAll('button')].some((x) => x.getClientRects().length && x.textContent.trim() === s))`));
+  await clickExact('Seat 2');
+  check('seat 2 picks the burger only', await evaluate(`(() => {
+    const boxes = [...document.querySelectorAll('ul[aria-label="By item"] label')].filter((l) => l.getClientRects().length);
+    const on = boxes.filter((l) => l.querySelector('input').checked).map((l) => l.textContent.trim());
+    return on.length === 1 && on[0].includes('Burger');
+  })()`));
+  await evaluate('window.__printed = 0; window.print = () => { window.__printed++; }');
+  await clickText('Print the bill');
+  check('the bill prints for the guests (not a receipt)', await waitFor('window.__printed === 1').then(() => true, () => false)
+    && await evaluate(`[...document.querySelectorAll('.printable')].some((p) => p.innerText.includes('BILL - NOT AN OFFICIAL RECEIPT OR INVOICE') && p.innerText.includes('seat 2'))`));
+  await shot('tables-bill-seats.png', false);
+  // Leave the Tables tab on the floor (it keeps its screen across tabs).
+  await clickText('Order');
+  await shown('Go to the bill');
+  await clickText('Floor');
 
   // The drawer took the cash check only: 1000 + 236.50
   await clickText('Close shift');
