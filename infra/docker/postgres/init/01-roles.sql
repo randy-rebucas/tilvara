@@ -5,6 +5,8 @@
 --   onepos_worker   : outbox worker. Claims/completes events and reads what its handlers need, under RLS.
 --   onepos_readonly : reporting / support read access (still subject to RLS).
 --   onepos_platform : NOLOGIN, BYPASSRLS; owner of audited cross-tenant SECURITY DEFINER functions.
+--   onepos_backup   : backups (pg_dump). Reads everything (BYPASSRLS + pg_read_all_data), writes nothing
+--                     except its own run records through platform_record_backup().
 -- Dev passwords only. Production credentials come from the secret manager.
 -- Existing volumes: infra/docker/postgres/upgrade/*.sql adds roles created after the volume.
 
@@ -16,6 +18,9 @@ CREATE ROLE onepos_readonly LOGIN PASSWORD 'onepos_readonly_dev' NOSUPERUSER NOB
 -- act across tenants (e.g. platform_create_tenant). Only role with BYPASSRLS.
 CREATE ROLE onepos_platform NOLOGIN NOSUPERUSER BYPASSRLS;
 GRANT onepos_platform TO onepos_migrator;
+-- A dump must see every tenant's rows (FORCE RLS would otherwise hide them or make pg_dump refuse).
+CREATE ROLE onepos_backup   LOGIN PASSWORD 'onepos_backup_dev'   NOSUPERUSER BYPASSRLS NOCREATEDB NOCREATEROLE;
+GRANT pg_read_all_data TO onepos_backup;
 
 ALTER DATABASE onepos OWNER TO onepos_migrator;
 CREATE DATABASE onepos_test OWNER onepos_migrator;

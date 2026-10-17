@@ -211,3 +211,21 @@ groups:
         annotations:
           summary: The business-gauge query takes more than 2 s.
           runbook_url: docs/operations/monitoring.md#oneposbusinessgaugesslow
+  - name: onepos-backups
+    rules:
+      - alert: OneposBackupMissing
+        expr: time() - max(onepos_backup_last_success_timestamp_seconds) > 26 * 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: No successful encrypted backup in the last 26 hours (or never).
+          runbook_url: docs/operations/monitoring.md#oneposbackupmissing
+      - alert: OneposRestoreDrillOverdue
+        expr: time() - max(onepos_restore_drill_last_success_timestamp_seconds) > 35 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: No restore drill has passed in the last 35 days (or ever).
+          runbook_url: docs/operations/monitoring.md#oneposrestoredrilloverdue

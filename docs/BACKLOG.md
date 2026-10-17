@@ -180,7 +180,13 @@ Slice 3 — monitoring (session 10): ✅ done (ADR-0016 "As built — slice 3").
 - ✅ Tests: API `monitoring.test.ts`, worker monitoring + alerts tests, observability metrics, schema guard.
 Pilot-safety leftovers (session 10): ✅ new MFA recovery codes (API + admin); ✅ DB guard for `PAYMENTS_OUTSTANDING` + intents only on OPEN shifts (migration 0048); ✅ Idempotency-Key required on stock adjustments; ✅ receipt SC/PWD block without the repeated discount.
 Other leftovers (session 10): ✅ admin back office (purchasing, sale/shift pages, team roles/access, products, price lists, tax history, reorder points, restaurant edits, no 200-item limit); ✅ retail report screens, quick ranges, CSV for every report; ✅ Restaurant Manager / Kitchen Crew role templates (migration 0049); ✅ POS shortcuts, phone pay bar, history tags, KDS chime + Done view, seats, move/merge, split by seat, bill print; ✅ pulled from slice 6: MFA reset (owner/admin + support CLI, migration 0050), audit log reader; ✅ journal CSV export; ✅ return/void slips.
-⬜ Slice 4 — backup and restore: encrypted `pg_dump` + manifest, automated restore drill (`pnpm drill:restore`: roles, RLS, counts, audit, API smoke), RTO measured, backup-age metric. PITR waits on D1.
+Slice 4 — backup and restore (session 11): ✅ done (ADR-0016 "As built — slice 4", runbook `docs/operations/backup-restore.md`).
+- ✅ `onepos_backup` login (BYPASSRLS + `pg_read_all_data`, writes nothing); `backup_runs` + `platform_record_backup()` (migrations 0051/0052).
+- ✅ `pnpm backup run|verify|keygen`: snapshot-consistent `pg_dump -Fc`, age-encrypted in stream (no plaintext on disk), manifest (SHA-256, head, row counts, catalog posture), pruning.
+- ✅ `pnpm drill:restore`: file check → decrypt into `pg_restore --single-transaction` → head/counts/posture/isolation → API on the restored DB (RTO) → smoke sale → traceability audit → recorded.
+- ✅ Gauges `backup_last_success_timestamp_seconds`, `restore_drill_last_success_timestamp_seconds`; alerts `OneposBackupMissing`, `OneposRestoreDrillOverdue`.
+- ✅ Tests: `backup.test.ts` (8, incl. tampered file, wrong key, flipped bit, a mutated restore caught item by item), `rls-catalog.test.ts` (+2), unit `backup.test.ts` (6).
+- ⏳ PITR + off-site copy (D1); scheduling on a host (slice 7).
 ⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
 ⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
 ⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.

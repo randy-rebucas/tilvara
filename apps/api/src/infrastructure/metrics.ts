@@ -21,6 +21,8 @@ export const BUSINESS_GAUGES = {
   cashier_sessions_awaiting_approval_oldest_age_seconds: { help: 'Age of the oldest shift awaiting variance approval.' },
   workers_alive: { help: 'Outbox workers with a heartbeat in the last 60 seconds.' },
   worker_heartbeat_age_seconds: { help: 'Seconds since the freshest worker heartbeat (+Inf when none).' },
+  backup_last_success_timestamp_seconds: { help: 'Unix time of the last successful encrypted backup (0 when none).' },
+  restore_drill_last_success_timestamp_seconds: { help: 'Unix time of the last passed restore drill (0 when none).' },
 } as const satisfies Record<string, { help: string; label?: string }>;
 
 export type BusinessGauge = keyof typeof BUSINESS_GAUGES;

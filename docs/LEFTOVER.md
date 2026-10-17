@@ -140,10 +140,17 @@ Slice 2 (platform hardening):
 - ⬜ T5 refund approval thresholds / anomaly report (product backlog)
 
 Slice 3 (monitoring):
-- ⬜ Backup-age metric and alert (slice 4)
+- ✅ Backup-age metric and alert (slice 4, session 11)
 - ⬜ Billing failure metrics (no billing integration yet, D6)
 - ⏳ OTel traces/exporter — D1
 - ⬜ No authentication on the metrics port: relies on network placement (slice 7)
 - ⬜ DEAD letters are a CLI only; no admin/support screen (slice 6)
 
-The remaining Phase 6 slices (4 backup/restore, 5 performance, 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
+Slice 4 (backup and restore):
+- ⏳ Point-in-time recovery (WAL) and the off-site copy with a retention lock: D1. Until then RPO = time since the last daily backup, and online sales after it are lost in a disaster
+- ⏳ Scheduling the daily backup and the monthly drill on a real host (slice 7; the runbook gives the commands)
+- ⬜ Drill against managed Postgres (no superuser; restore a PITR copy): after D1, runbook section ready
+- ⬜ Production RTO: measured on the D1 staging size (only the dev-machine figure exists: 5.6–18.2 s for 2.7 MB)
+- ⬜ The smoke business the drill creates stays in a restored database: archive it after a real restore (runbook step 4)
+
+The remaining Phase 6 slices (5 performance, 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.

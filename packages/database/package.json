@@ -18,9 +18,11 @@
     "db:migrate": "node --env-file=../../.env dist/migrate.js",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "support": "node --env-file=../../.env dist/support-cli.js"
+    "support": "node --env-file=../../.env dist/support-cli.js",
+    "backup": "node --env-file-if-exists=../../.env dist/backup-cli.js"
   },
   "dependencies": {
+    "age-encryption": "0.3.1",
     "drizzle-orm": "^0.45.4",
     "pg": "^8.23.1"
   },

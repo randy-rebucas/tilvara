@@ -236,6 +236,28 @@ Engineering alone cannot meet the exit: it needs D1–D6.
 - **Alerts**: `infra/monitoring/alerts.yml`, 25 rules in 6 groups (critical / warning / info), each with a `runbook_url` into `docs/operations/monitoring.md`. Tests parse the file: every metric a rule names is exported (API test; worker metrics in the worker's unit test), and every runbook link has a section. Mutation-checked: a misspelled metric and a broken anchor both fail.
 - **Not in this slice**: backup age (slice 4); billing failures (no billing integration); OTel traces (D1); authentication on the metrics port (it relies on network placement, slice 7).
 
+## As built — slice 4 (session 11)
+- **Backup login** `onepos_backup`: LOGIN, BYPASSRLS, `pg_read_all_data`, not superuser, no CREATEDB/CREATEROLE. It owns nothing, holds no table grants, and may run only `platform_record_backup()`. BYPASSRLS is required: under FORCE RLS a dump made by any other login holds no tenant rows, or `pg_dump` refuses. The role is cluster-level: `init/01-roles.sql` creates it on new volumes, and `upgrade/2026-10-17-backup-role.sql` on existing clusters. Migration 0052 fails loudly when the role is missing.
+- **`backup_runs`** (migrations 0051 DDL, 0052 hand-written): a platform table, RLS forced, no login-role grants, append-only trigger. It holds one row per successful backup (`BACKUP`) or passed drill (`RESTORE_DRILL`), with file, size, SHA-256, migration count and a `detail` of counts and timings only.
+  - `platform_metrics()` gains `backup_last_success_timestamp_seconds` and `restore_drill_last_success_timestamp_seconds` (0 when none).
+  - Alerts `OneposBackupMissing` (> 26 h, warning) and `OneposRestoreDrillOverdue` (> 35 days, warning) are in a new `onepos-backups` group. The severity definitions put "selling affected now" alone at critical.
+- **Backup** (`@1pos/database` `src/backup/`, CLI `pnpm backup keygen|run|verify`):
+  - a REPEATABLE READ READ ONLY transaction exports its snapshot; the exact row count of every table, the catalog posture and the migration head are read in it; `pg_dump -Fc --snapshot` dumps the same snapshot;
+  - the archive streams through age (the official TypeScript implementation `age-encryption` 0.3.1, typage, by age's author; X25519 recipients, several allowed) into `<file>.partial`, which is renamed only after `pg_dump` exits 0;
+  - then the manifest is written, the run recorded, and local copies pruned (`BACKUP_KEEP_DAYS`, the newest three always kept).
+  - `PG_TOOLS_DOCKER` runs the Postgres tools inside a container (this machine has none). The password goes in `PGPASSWORD`, never argv.
+- **Catalog posture** (`catalogPosture()`): owners and privilege sets of schemas, relations, sequences, columns and functions (grantors left out; NULL ACL compared as the owner's default), RLS flags, policies, SECURITY DEFINER flag, `proconfig` and a body hash of every function, triggers, default privileges, extensions. Restored = backed up is checked by hash, with an item-by-item diff when it differs. The isolation rules (`isolationProblems()`) moved from `rls-catalog.test.ts` into `src/backup/catalog.ts`, so the schema guard and the drill apply the same allow-lists.
+- **Drill** (`pnpm drill:restore`, `infra/backup/drill-restore.mjs`):
+  1. file check;
+  2. the age header is checked before anything is created, then the backup is decrypted straight into `pg_restore --single-transaction` in `onepos_drill_<time>` (only that name pattern is accepted);
+  3. verify head, counts, posture and isolation;
+  4. boot the built API as `onepos_app` and wait for ready (the RTO is taken here);
+  5. smoke sale through the API;
+  6. `dev-audit.ts`;
+  7. record (`--no-record` for a real restore), write the report, drop the scratch database (`--keep`).
+- **Measured on this machine** (dev DB: 2.7 MB encrypted, 92 tables, 57,181 rows): backup 1.3–2.0 s; drill RTO 18.2 s with a cold API boot, 5.6 s warm (restore 2.4–4.7 s). Not a production figure; D1 staging measures that.
+- **Not in this slice**: PITR and off-site storage (D1); scheduling (a cron line in the runbook until slice 7 deploys it); a drill on managed Postgres (described in the runbook).
+
 ## As built — ahead of slice 6 (session 10)
 Pulled forward from slice 6 because a lost phone would otherwise lock a privileged member out during the pilot:
 - **MFA reset by the business** (migration 0050): `POST /v1/members/:id/reset-mfa {reason}` → `auth_mfa_admin_reset()` (SECURITY DEFINER, `onepos_platform`). The business is `app.tenant_id` from `withTenant`, never a parameter; the function re-checks that the actor holds `members.manage` for the whole business and that the target is a member; never oneself; the service also applies the same "could you have granted these roles" rule as suspend/remove. It removes the factor and recovery codes and ends every session; the password stays; a privileged member must enrol again at the next sign-in. Audit: tenant `member.mfa_reset` + platform `auth.mfa.reset` (actor, business, reason). `GET /v1/members/mfa` (`auth_members_mfa()`) tells the member page who has MFA on.

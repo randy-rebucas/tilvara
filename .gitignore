@@ -12,3 +12,5 @@ coverage/
 .DS_Store
 next-env.d.ts
 *.tsbuildinfo
+# Local backups and their keys (ADR-0016 slice 4)
+.backups/

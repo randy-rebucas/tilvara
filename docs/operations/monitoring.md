@@ -196,3 +196,20 @@ blips are harmless. If it repeats, check Redis latency and the network between t
 `platform_metrics()` takes more than 2 s. It counts through partial indexes (migration 0046), so check
 for table bloat (`VACUUM`) or a missing index after a schema change. The query has a 3 s client timeout
 and runs at most every 10 s per replica, so it cannot pile up.
+
+## Backups
+
+### OneposBackupMissing
+No backup has succeeded in 26 hours (`onepos_backup_last_success_timestamp_seconds`; 0 means never).
+Every success is a `backup_runs` row written by `backup run`; failures write nothing and exit non-zero.
+1. Look at the scheduler's last run of `pnpm backup run` and its output. Common causes: the backup login's
+   password rotated, `BACKUP_DIR` full or unmounted, pg_dump older than the server, `BACKUP_AGE_RECIPIENT` unset.
+2. Run it by hand (`pnpm backup run`) and watch it finish; the gauge moves at the next scrape.
+3. If backups cannot be made today, say so in the pilot channel: the recovery point grows until one succeeds.
+Details: [backup-restore.md](backup-restore.md).
+
+### OneposRestoreDrillOverdue
+No restore drill has passed in 35 days (`onepos_restore_drill_last_success_timestamp_seconds`). A backup
+that has never been restored is not known to work. Run `pnpm drill:restore` on the drill host
+([backup-restore.md](backup-restore.md#the-restore-drill)) and file its report; a failed drill is a
+critical defect of the backup, not of the drill.

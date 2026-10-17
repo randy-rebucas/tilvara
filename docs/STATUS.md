@@ -1,6 +1,6 @@
 # 1POS — Status
 
-_Last updated: 2026-10-17 (session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
+_Last updated: 2026-10-18 (session 11 — slice 4 backup and restore drill done; slice 5 performance started. Session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -14,7 +14,37 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 8. runbooks and privacy;
 9. UAT, compliance review and pilot.
 
-The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–3 are done** (below).
+The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–4 are done** (below).
+
+## Phase 6 slice 4 — backup and restore (session 11)
+As built: ADR-0016 "As built — slice 4"; runbook `docs/operations/backup-restore.md`. Migrations 0051/0052; new cluster role `onepos_backup` (dev cluster upgraded with `infra/docker/postgres/upgrade/2026-10-17-backup-role.sql`).
+- **Backups**: `pnpm backup run`. The dump is `pg_dump -Fc` on an exported snapshot, so the manifest's row counts are exactly what the file holds. It streams through age encryption (`age-encryption` 0.3.1, the official TypeScript implementation), so no plaintext reaches the disk. The manifest records SHA-256, migration head, row counts and the catalog posture. Each run writes a `backup_runs` row. Also `backup verify` and `backup keygen`.
+- **Drill**: `pnpm drill:restore`:
+  1. file check;
+  2. decrypt into `pg_restore --single-transaction` in a scratch `onepos_drill_*` database;
+  3. verify head, counts, catalog posture and the tenant-isolation rules (now shared with `rls-catalog.test.ts`);
+  4. boot the API on the restored database (RTO measured here);
+  5. smoke cash sale;
+  6. traceability audit;
+  7. recorded in the source database.
+- **Monitoring**: gauges `onepos_backup_last_success_timestamp_seconds` and `onepos_restore_drill_last_success_timestamp_seconds`; alerts `OneposBackupMissing` (> 26 h) and `OneposRestoreDrillOverdue` (> 35 days), with runbook sections.
+- **Measured on this machine** (dev DB: 2.7 MB encrypted, 92 tables, 57,181 rows):
+  - backup 1.3–2.0 s;
+  - drill 1: RTO **18.2 s** (cold API boot 13.2 s);
+  - drill 2: RTO **5.6 s**, total 8.3 s.
+  Both drills passed, with the audit clean over 232 businesses. This is not a production figure (D1 staging measures that).
+- **Defect in my own test, found by the first run**: it compared live counts to the manifest without allowing for the backup's own `backup_runs` row, which is written after the snapshot. The product was right; the test now allows for that row.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` exit 0, `pnpm test` 24/24 tasks (database unit 6, new);
+  - `turbo run test:integration --concurrency=1 --continue --force` → database **32** (+8 `backup.test.ts`, +2 schema guard), workers 17, api 299;
+  - `pnpm db:migrate` on the dev DB (0051, 0052); `pnpm backup run` and `pnpm drill:restore` twice on the dev DB (both ok).
+- `backup.test.ts` proves the checks can fail:
+  - the archive holds no DDL or table names in clear;
+  - a flipped byte and a truncated file are refused;
+  - the wrong key creates nothing;
+  - a bit flipped inside the payload leaves an empty database;
+  - a restore mutated five ways (RLS off, an extra grant, an extra policy, a dropped trigger, a missing migration) is caught item by item.
+- Not run: E2E suites (no UI change); `test:e2e:desktop`.
 
 ## Session 10 — leftovers worked through (after the pilot-safety batch below)
 The user asked to "proceed all" with LEFTOVER.md. Done in five commits after slice 3 and the pilot-safety batch; what is still open stays in LEFTOVER.md (mostly blocked on D1–D6/reviewers, or larger product features that need decisions: AP/supplier invoices, promotions, UoM/batch/expiry, landed cost, typed OpenAPI responses).
@@ -768,7 +798,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–3 are done, and most unblocked leftovers were worked through in session 10 (see "Session 10 — leftovers worked through"). **Next: slice 4 (backup/restore drill)**, then slice 5 (load: pilot-scale seed, POS menu N+1, snapshot paging). Slices 4–5 can run locally and label their numbers as measured on this machine.
+2. **Phase 6** (ADR-0016). Slices 1–4 are done (slice 4 in session 11). **Next: slice 5** (load: pilot-scale seed, harness, the menu/quote per-item price queries, snapshot paging), numbers labelled as measured on this machine.
    - MFA reset is in place (owner/admin; support CLI for owners). Slice 6 still owes time-limited, tenant-approved support access, tenant data export, offboarding and trial sample data.
    - `test:e2e:desktop` was not run in session 10; run it with the next till change.
    - Decisions for the user (ADR-0016):

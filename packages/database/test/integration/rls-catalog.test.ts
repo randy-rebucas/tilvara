@@ -1,5 +1,6 @@
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
+import { isolationProblems, NON_TENANT_TABLES, NULLABLE_TENANT_TABLES } from '../../src/backup/catalog.js';
 import { TEST_DATABASE_MIGRATOR_URL } from './env.js';
 
 /**
@@ -13,24 +14,8 @@ afterAll(async () => {
   await pool.end();
 });
 
-/** Tables that are deliberately not keyed by tenant_id, with the reason. */
-const NON_TENANT_TABLES: Record<string, string> = {
-  tenants: 'the tenant itself; policy tenant_self (id = current tenant)',
-  users: 'global identities; policies users_visible / users_self_update',
-  user_sessions: 'no runtime access at all; only auth_* SECURITY DEFINER functions',
-  user_mfa_factors: 'per-user TOTP secret (encrypted); no runtime access, only auth_mfa_* functions',
-  user_mfa_recovery_codes: 'per-user recovery code hashes; no runtime access, only auth_mfa_* functions',
-  password_reset_tokens: 'per-user reset token hashes; no runtime access, only auth_password_reset_* functions',
-  permissions: 'global read-only permission catalog',
-  plans: 'global read-only plan catalog',
-  discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
-  worker_heartbeats: 'one row per outbox worker; no runtime access, only worker_heartbeat* and platform_metrics()',
-};
-
-/** Tenant tables whose tenant_id may be NULL; such rows match no tenant policy (fail closed). */
-const NULLABLE_TENANT_TABLES: Record<string, string> = {
-  audit_logs: 'NULL tenant = platform-level event, visible to no tenant',
-};
+// NON_TENANT_TABLES (deliberately not keyed by tenant_id, with the reason) and NULLABLE_TENANT_TABLES
+// live in src/backup/catalog.ts: the restore drill applies the same rules to a restored database.
 
 /**
  * High-write leaf tables that nothing references, so UNIQUE(tenant_id, id) would only add index
@@ -90,16 +75,22 @@ describe('schema isolation catalog', () => {
     expect(problems).toEqual([]);
   });
 
+  it('the shared isolation rules (also run by the restore drill) find nothing', async () => {
+    expect(await isolationProblems(pool)).toEqual([]);
+  });
+
   it('allow-listed non-tenant tables keep their reviewed posture', async () => {
     const byName = Object.fromEntries((await publicTables()).map((t) => [t.name, t]));
     const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens'];
-    for (const name of ['tenants', 'users', 'worker_heartbeats', ...credentialTables]) {
+    for (const name of ['tenants', 'users', 'worker_heartbeats', 'backup_runs', ...credentialTables]) {
       expect([name, byName[name]?.rls, byName[name]?.forced]).toEqual([name, true, true]);
     }
-    // Platform-only tables: reached through SECURITY DEFINER functions, never by a login role.
+    // Platform-only tables: reached through SECURITY DEFINER functions, never by a login role
+    // (the backup login reads everything through pg_read_all_data, asserted below).
     const platformOnly = await q(
       `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
-        WHERE grantee IN ('onepos_app', 'onepos_readonly', 'onepos_worker') AND table_name = 'worker_heartbeats'`,
+        WHERE grantee IN ('onepos_app', 'onepos_readonly', 'onepos_worker', 'onepos_backup')
+          AND table_name IN ('worker_heartbeats', 'backup_runs')`,
     );
     expect(platformOnly).toEqual([]);
     // Credential tables: no privilege of any kind for the runtime or read-only roles.
@@ -204,6 +195,28 @@ describe('schema isolation catalog', () => {
       { fn: 'worker_heartbeat_stop(text)', app: false, worker: true, readonly: false },
       { fn: 'outbox_dead_list(int, text)', app: false, worker: true, readonly: false },
       { fn: 'outbox_dead_replay(uuid, text, text)', app: false, worker: true, readonly: false },
+    ]);
+  });
+
+  it('the backup login (ADR-0016 slice 4) reads every row but owns and writes nothing', async () => {
+    const [role] = await q<{ login: boolean; su: boolean; bypass: boolean; createdb: boolean; createrole: boolean; readall: boolean; writeall: boolean }>(`
+      SELECT rolcanlogin AS login, rolsuper AS su, rolbypassrls AS bypass, rolcreatedb AS createdb, rolcreaterole AS createrole,
+             pg_has_role('onepos_backup', 'pg_read_all_data', 'member') AS readall,
+             pg_has_role('onepos_backup', 'pg_write_all_data', 'member') AS writeall
+        FROM pg_roles WHERE rolname = 'onepos_backup'`);
+    // BYPASSRLS is the point: a dump under FORCE RLS would otherwise hold no tenant rows.
+    expect(role).toEqual({ login: true, su: false, bypass: true, createdb: false, createrole: false, readall: true, writeall: false });
+    const owned = await q(`SELECT relname FROM pg_class WHERE pg_get_userbyid(relowner) = 'onepos_backup'`);
+    expect(owned).toEqual([]);
+    const granted = await q(`SELECT table_name, privilege_type FROM information_schema.table_privileges WHERE grantee = 'onepos_backup'`);
+    expect(granted).toEqual([]);
+    const fns = await q<{ fn: string; app: boolean; worker: boolean; backup: boolean }>(`
+      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
+             has_function_privilege('onepos_backup', f, 'EXECUTE') AS backup
+        FROM unnest(ARRAY['platform_record_backup(text, timestamptz, text, bigint, text, int, jsonb)', 'platform_metrics()']) AS f`);
+    expect(fns).toEqual([
+      { fn: 'platform_record_backup(text, timestamptz, text, bigint, text, int, jsonb)', app: false, worker: false, backup: true },
+      { fn: 'platform_metrics()', app: true, worker: false, backup: false },
     ]);
   });
 

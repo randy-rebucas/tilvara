@@ -32,7 +32,9 @@
     "security:bundles": "node scripts/security/scan-bundles.mjs --self-test && node scripts/security/scan-bundles.mjs",
     "test:e2e:web:security": "node apps/admin-web/e2e/security.mjs",
     "test:e2e:pos:mfa": "node apps/pos-desktop/e2e/mfa.mjs",
-    "test:e2e:web:backoffice": "node apps/admin-web/e2e/backoffice.mjs"
+    "test:e2e:web:backoffice": "node apps/admin-web/e2e/backoffice.mjs",
+    "backup": "pnpm --filter @1pos/database backup",
+    "drill:restore": "node --env-file-if-exists=.env infra/backup/drill-restore.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

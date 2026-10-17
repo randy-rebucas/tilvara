@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { check, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, check, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { tenants } from './platform.js';
 
 /**
@@ -77,4 +77,35 @@ export const workerHeartbeats = pgTable(
     version: text('version'),
   },
   (t) => [check('worker_heartbeats_id_length', sql`length(${t.workerId}) BETWEEN 1 AND 100`)],
+);
+
+export const BACKUP_RUN_KINDS = ['BACKUP', 'RESTORE_DRILL'] as const;
+
+/**
+ * Every successful backup and every passed restore drill (ADR-0016 slice 4), written only by
+ * `platform_record_backup()` (the backup login) and read only through `platform_metrics()`.
+ * Platform table: no tenant, no runtime grants, append-only.
+ */
+export const backupRuns = pgTable(
+  'backup_runs',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    kind: text('kind').$type<(typeof BACKUP_RUN_KINDS)[number]>().notNull(),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }).notNull().defaultNow(),
+    /** File name of the encrypted backup (the drill names the backup it restored). */
+    backupFile: text('backup_file').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    sha256: text('sha256').notNull(),
+    migrations: integer('migrations').notNull(),
+    /** Counts and timings only (tables, rows, RTO phases); never tenant data. */
+    detail: jsonb('detail').$type<Record<string, unknown>>().notNull().default({}),
+  },
+  (t) => [
+    index('backup_runs_kind_finished_idx').on(t.kind, t.finishedAt),
+    check('backup_runs_kind_check', sql`${t.kind} IN ('BACKUP','RESTORE_DRILL')`),
+    check('backup_runs_file_length', sql`length(${t.backupFile}) BETWEEN 1 AND 200`),
+    check('backup_runs_sha256_format', sql`${t.sha256} ~ '^[0-9a-f]{64}$'`),
+    check('backup_runs_order', sql`${t.finishedAt} >= ${t.startedAt}`),
+  ],
 );
