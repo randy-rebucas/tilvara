@@ -63,7 +63,6 @@ Phase-level:
 
 ## Phase 4 — Restaurant
 Slice 2 (menu foundation):
-- ⬜ The built-in `branch_manager` lacks `restaurant.manage` (only owner/admin set up restaurants): add a "restaurant manager" role template or grant it to branch managers
 - ⬜ The POS menu view prices item by item (N queries) — batch it if menus get large (Phase 6 slice 5)
 - ⬜ Modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen)
 
@@ -99,7 +98,6 @@ Slice 6 (UI):
 - 6b KDS:
   - ⬜ Sound/flash on a new ticket
   - ⬜ Recall bumped tickets (`status=ALL` exists)
-  - ⬜ No built-in "kitchen crew" role template (custom role today; decide with the restaurant-manager template question)
   - ⬜ Push (SSE) instead of polling
 - 6c admin set-up:
   - ⬜ Drag-and-drop ordering (buttons today)

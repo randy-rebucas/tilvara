@@ -74,20 +74,22 @@ export interface RoleTemplate {
 
 const all = PERMISSIONS;
 
+const BRANCH_MANAGER: readonly PermissionCode[] = [
+  'members.read', 'org.read', 'catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void',
+  'sales.price_override', 'sales.discount', 'cash.session', 'cash.reconcile', 'inventory.read',
+  'inventory.adjust', 'inventory.transfer', 'restaurant.orders', 'kitchen.operate', 'customers.read',
+  'customers.manage', 'reports.read',
+];
+
 /** System roles seeded into every new tenant. Tenants may add custom roles later. */
 export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   { key: 'owner', name: 'Owner', permissions: all },
   { key: 'admin', name: 'Administrator', permissions: all.filter((p) => p !== 'subscription.manage') },
-  {
-    key: 'branch_manager',
-    name: 'Branch Manager',
-    permissions: [
-      'members.read', 'org.read', 'catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void',
-      'sales.price_override', 'sales.discount', 'cash.session', 'cash.reconcile', 'inventory.read',
-      'inventory.adjust', 'inventory.transfer', 'restaurant.orders', 'kitchen.operate', 'customers.read',
-      'customers.manage', 'reports.read',
-    ],
-  },
+  { key: 'branch_manager', name: 'Branch Manager', permissions: BRANCH_MANAGER },
+  /** A branch manager who also sets up menus, the floor and the kitchen (session 10; backfilled by migration 0049). */
+  { key: 'restaurant_manager', name: 'Restaurant Manager', permissions: [...BRANCH_MANAGER, 'restaurant.manage'] },
+  /** The kitchen display only: start, ready, bump, and marking items sold out (session 10; migration 0049). */
+  { key: 'kitchen_crew', name: 'Kitchen Crew', permissions: ['kitchen.operate'] },
   {
     key: 'cashier',
     name: 'Cashier',
