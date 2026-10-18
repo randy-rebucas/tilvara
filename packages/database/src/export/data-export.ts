@@ -114,7 +114,7 @@ export async function writeDataExport(client: PoolClient, out: Writable, info: D
 
   const zip = new ZipWriter(out, new Date(meta.now));
   const manifest = {
-    format: '1pos-data-export',
+    format: 'tilvara-data-export',
     version: EXPORT_FORMAT_VERSION,
     exportId: info.exportId,
     business: { id: business.id, slug: business.slug, name: business.name, status: business.status, timezone: business.timezone, currency: business.default_currency },
@@ -163,7 +163,7 @@ function readme(
   memberCount: number,
 ): string {
   const lines = [
-    `1POS data export — ${businessName}`,
+    `Tilvara data export — ${businessName}`,
     '',
     `Made ${generatedAt} (UTC) from one consistent snapshot of this business's records.`,
     info.requestedBy ? `Requested by ${info.requestedBy}. Export ${info.exportId}.` : `Export ${info.exportId}.`,
@@ -192,7 +192,7 @@ function readme(
     ...tables.map((t) => `  ${t.name}: ${rowCounts[t.name]}`),
     '',
     'This file holds personal data (names, emails, IDs of SC/PWD customers). Keep it private.',
-    '1POS receipts are not BIR invoices; this export is a copy of records, not a BIR-accredited e-journal.',
+    'Tilvara receipts are not BIR invoices; this export is a copy of records, not a BIR-accredited e-journal.',
     '',
   ];
   return lines.join('\r\n');

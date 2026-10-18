@@ -1,6 +1,6 @@
 // End-to-end test of onboarding and support in the admin (ADR-0016 slice 6): the trial's sample
 // items, the business's copy of its records (needs the worker running against the same database),
-// and support access: the owner gives it, a 1POS staff member opens it read-only, the owner sees
+// and support access: the owner gives it, a Tilvara staff member opens it read-only, the owner sees
 // what was read and ends it. Phone width and Filipino.
 // The staff account is added with the ops CLI (DATABASE_MIGRATOR_URL from .env, the dev database
 // the API under test uses).
@@ -92,7 +92,7 @@ try {
   await go('/subscription/support');
   const tabs = await evaluate(`[...document.querySelectorAll('nav[aria-label="Subscription sections"] a')].map((a) => a.textContent)`);
   check('subscription has Plan · Your records · Support access tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Your records', 'Support access']));
-  check('the page says support cannot see the business unless allowed', await shown('1POS support cannot see your business unless you allow it here.'));
+  check('the page says support cannot see the business unless allowed', await shown('Tilvara support cannot see your business unless you allow it here.'));
   await clickText('Give support access');
   await fill('purpose', 'Please check why the sample coffee price shows twice');
   await evaluate(`(() => { const s = document.querySelector('select[name="hours"]'); s.value = '4'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
@@ -122,7 +122,7 @@ try {
     const bytes = new Uint8Array(await r.arrayBuffer());
     return { status: r.status, type: r.headers.get('content-type'), pk: bytes[0] === 0x50 && bytes[1] === 0x4b, size: bytes.length, expected: exports.data.find((e) => e.id === id).sizeBytes, disposition: r.headers.get('content-disposition') };
   })()`);
-  check('the download through the back office is the exact ZIP (bytes, size, file name)', dl.status === 200 && dl.type === 'application/zip' && dl.pk && dl.size === dl.expected && /attachment; filename="1pos-export-/.test(dl.disposition ?? ''));
+  check('the download through the back office is the exact ZIP (bytes, size, file name)', dl.status === 200 && dl.type === 'application/zip' && dl.pk && dl.size === dl.expected && /attachment; filename="tilvara-export-/.test(dl.disposition ?? ''));
 
   // 4. The staff member opens it, read-only.
   await signOut();
@@ -156,7 +156,7 @@ try {
   await sleep(800);
   check('ending it marks it Ended', (await lower()).includes('ended ·'));
   await go('/audit?action=support');
-  check('the audit log lists support steps by the staff member', await shown('(1POS support)') && (await lower()).includes('support.session_opened'));
+  check('the audit log lists support steps by the staff member', await shown('(Tilvara support)') && (await lower()).includes('support.session_opened'));
   await shot('onboarding-audit.png');
 
   // 6. Sample items removed; phone width; Filipino.
@@ -175,7 +175,7 @@ try {
   await viewport(1440, 900);
   await clickText('FIL');
   await go('/subscription/support');
-  check('Filipino: support access page', await shown('Access ng support') && (await text()).includes('Hindi makikita ng 1POS support'));
+  check('Filipino: support access page', await shown('Access ng support') && (await text()).includes('Hindi makikita ng Tilvara support'));
 } catch (e) {
   check(`unexpected error: ${e.message}`, false);
 } finally {

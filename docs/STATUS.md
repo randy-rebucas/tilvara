@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-18 (session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-18 (session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,19 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 16 — "work on all leftovers"
+The user asked to work through every LEFTOVER item. Items waiting on D1–D6, a reviewer (tax adviser, accountant, DPO, native speaker), provider keys or hardware stay open; the rest are taken in batches, each committed with its own tests.
+
+**Batch 1 — pilot polish** (ADR-0016 "Amendments (session 16)"):
+- **Rename gaps**: the 1POS → Tilvara rename had missed the email-change mails, account/support error messages, the export ZIP name (`tilvara-export-…`), its README and manifest `format`, and the onboarding E2E (which still expected "1POS support" and would have failed).
+- **Wordmark**: at 1440 px with a long business name the last tab was 5 px out of the band again (`Tilvara` is 23 px wider than `1POS`; measured 992 > 987). Band gap 24 → 20 px from lg and the name cap 136 → 128 px. At 390 px the account block wrapped under the wordmark; it now shrinks on the wordmark's line, and the names are clamped to their box (they first overflowed over "FIL", caught by the screenshot; the E2E now checks for it).
+- **Email-change link in someone else's browser**: the confirm answers `{userId}`; the BFF signs out only that account's browser.
+- **References for unanswered requests**: POS and admin mint the correlation id per request; "no connection" messages carry it.
+- **Metrics port**: `METRICS_TOKEN` bearer check; required in production off loopback.
+- **Support reads**: one audit row per route per 15 minutes per grant (refused writes still each logged).
+- **CI workflow** written (`.github/workflows/ci.yml`), not yet run (D3).
+- **Verified (batch 1)**: `pnpm build` 14/14; `pnpm typecheck` 24/24; `pnpm lint` exit 0; `turbo run test --force --concurrency=4` 24/24 tasks (with the default concurrency the database unit suite timed out twice, on different tests that only read files, at 5 s under load: disk contention, not code); integration `account-privacy` + `support-onboarding` 29/29 (mutation: a 0-second window fails the new support check); E2E on the rebuilt API (:4320, rate limits off), worker and admin `next start` (:3320), POS preview (:3330): `web:account` **27/27** (+4: link opened as someone else, same account signed out, 390 band line, 1440 band), `web:onboarding` 23/23, `pos` 27/27; OpenAPI regenerated.
 
 ## Session 15 — LEFTOVER items that need no decision
 Migrations 0058 (`outbox_extend`) and 0059 (un-bump exception in `order_items_transition`), applied to the dev DB.

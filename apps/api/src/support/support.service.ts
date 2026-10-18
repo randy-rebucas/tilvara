@@ -15,7 +15,7 @@ const statusOf = (g: Pick<GrantRow, 'revokedAt' | 'expiresAt'>, now: Date) =>
 
 /**
  * Support access (ADR-0016 slice 6, SPEC §13, THREAT_MODEL T14). The business decides: an owner or
- * admin (tenant.manage) gives 1POS support read-only access for a purpose and 1–72 hours, sees every
+ * admin (tenant.manage) gives Tilvara support read-only access for a purpose and 1–72 hours, sees every
  * use of it, and can end it at once. Staff have no standing access to any business.
  */
 @Injectable()
@@ -197,7 +197,7 @@ export class SupportService extends TenantService {
 
   private async assertStaff(auth: AuthContext): Promise<void> {
     if (!(await this.isStaff(auth.userId))) {
-      throw new AppError('NOT_SUPPORT_STAFF', 'Only 1POS support staff can see support requests', HttpStatus.FORBIDDEN);
+      throw new AppError('NOT_SUPPORT_STAFF', 'Only Tilvara support staff can see support requests', HttpStatus.FORBIDDEN);
     }
     this.assertVerified(auth);
   }

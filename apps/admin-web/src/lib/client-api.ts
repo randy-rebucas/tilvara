@@ -25,7 +25,9 @@ export async function send<T>(
   body?: unknown,
   opts: { idempotent?: boolean; idempotencyKey?: string } = {},
 ): Promise<Result<T>> {
-  const headers: Record<string, string> = { 'content-type': 'application/json', [CSRF_HEADER]: '1' };
+  // Minted here and forwarded by the BFF, so a request whose answer never came still has a reference.
+  const correlationId = crypto.randomUUID();
+  const headers: Record<string, string> = { 'content-type': 'application/json', [CSRF_HEADER]: '1', 'x-correlation-id': correlationId };
   if (opts.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
   else if (opts.idempotent) headers['idempotency-key'] = crypto.randomUUID();
   try {
@@ -33,11 +35,11 @@ export async function send<T>(
     const json = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) {
       const e = (json as { error?: ApiFailure } | null)?.error;
-      const correlationId = e?.correlationId ?? res.headers.get('x-correlation-id') ?? undefined;
-      return { ok: false, error: { status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? 'Request failed', details: e?.details, correlationId } };
+      const reference = e?.correlationId ?? res.headers.get('x-correlation-id') ?? correlationId;
+      return { ok: false, error: { status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? 'Request failed', details: e?.details, correlationId: reference } };
     }
     return { ok: true, data: json as T };
   } catch {
-    return { ok: false, error: { status: 0, code: 'NETWORK', message: 'Network error. Check your connection and try again.' } };
+    return { ok: false, error: { status: 0, code: 'NETWORK', message: 'Network error. Check your connection and try again.', correlationId } };
   }
 }

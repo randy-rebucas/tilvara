@@ -152,10 +152,10 @@ export class AuthController {
 
   @Public()
   @RateLimit(AUTH_LIMIT)
-  @HttpCode(204)
+  @HttpCode(200)
   @Post('auth/email-change/confirm')
-  async confirmEmailChange(@Body(new ZodPipe(emailChangeConfirmSchema)) body: EmailChangeConfirmInput, @Req() req: AuthedRequest): Promise<void> {
-    await this.account.confirmEmailChange(body.token, meta(req));
+  confirmEmailChange(@Body(new ZodPipe(emailChangeConfirmSchema)) body: EmailChangeConfirmInput, @Req() req: AuthedRequest): Promise<{ userId: string }> {
+    return this.account.confirmEmailChange(body.token, meta(req));
   }
 
   @Get('auth/account/closure')

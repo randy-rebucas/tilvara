@@ -49,8 +49,8 @@ export function useSubmit() {
     const r = await send<T>(method, url, body, opts);
     setPending(false);
     if (!r.ok) {
-      // The server failed to finish (5xx): give the person the reference support can look up.
-      const ref = r.error.status >= 500 && r.error.correlationId;
+      // The server failed to finish (5xx) or no answer came: give the person the reference support can look up.
+      const ref = (r.error.status >= 500 || r.error.status === 0) && r.error.correlationId;
       setError(ref ? { ...r.error, message: t('error.reference', { message: r.error.message, ref }) } : r.error);
       if (opts.refreshOnError) router.refresh();
     } else if (opts.refresh !== false) router.refresh();

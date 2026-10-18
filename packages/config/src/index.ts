@@ -18,6 +18,19 @@ const fileStorage = {
   FILE_STORAGE_DIR: z.string().min(1).default(join(tmpdir(), 'onepos-files')),
 };
 
+/**
+ * Bearer token a Prometheus scrape must send to `/metrics` (API and worker). Optional on loopback;
+ * production requires it once METRICS_HOST listens beyond this machine (a container, a private network).
+ */
+const metricsToken = {
+  METRICS_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(32, 'must be at least 32 characters').optional()),
+};
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+const metricsTokenIssue = (cfg: { METRICS_HOST: string; METRICS_TOKEN?: string | undefined }, port: number): string[] =>
+  port !== 0 && !cfg.METRICS_TOKEN && !LOOPBACK_HOSTS.has(cfg.METRICS_HOST)
+    ? [`METRICS_TOKEN: required in production when METRICS_HOST (${cfg.METRICS_HOST}) is not a loopback address`]
+    : [];
+
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
@@ -32,6 +45,7 @@ export const serverEnvSchema = z.object({
    */
   API_METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(4329),
   METRICS_HOST: z.string().min(1).default('127.0.0.1'),
+  ...metricsToken,
   JWT_ACCESS_SECRET: z.string().min(32),
   /**
    * 32 random bytes, base64, that encrypt TOTP secrets at rest (ADR-0016). Required in production;
@@ -109,6 +123,7 @@ export const workerEnvSchema = z.object({
   /** Internal Prometheus listener of the worker (ADR-0016 slice 3); 0 turns it off. */
   WORKER_METRICS_PORT: z.coerce.number().int().min(0).max(65535).default(4339),
   METRICS_HOST: z.string().min(1).default('127.0.0.1'),
+  ...metricsToken,
   OUTBOX_POLL_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
@@ -130,6 +145,7 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');
   }
+  if (isProd(env)) issues.push(...metricsTokenIssue(parsed.data, parsed.data.WORKER_METRICS_PORT));
   if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
@@ -177,6 +193,7 @@ export function productionIssues(cfg: ServerEnv): string[] {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
   if (cfg.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
+  issues.push(...metricsTokenIssue(cfg, cfg.API_METRICS_PORT));
   return issues;
 }
 

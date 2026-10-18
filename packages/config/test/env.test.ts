@@ -28,6 +28,20 @@ describe('loadServerEnv', () => {
     expect(loadServerEnv({ ...base, API_METRICS_PORT: '0' }).API_METRICS_PORT).toBe(0);
   });
 
+  it('requires a metrics token in production once metrics listen beyond loopback (API and worker)', () => {
+    const prod = { ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) };
+    const issue = /METRICS_TOKEN: required in production when METRICS_HOST \(0\.0\.0\.0\) is not a loopback address/;
+    expect(productionIssues(loadServerEnv(prod)).join('\n')).not.toMatch(/METRICS_TOKEN/);
+    expect(productionIssues(loadServerEnv({ ...prod, METRICS_HOST: '0.0.0.0' })).join('\n')).toMatch(issue);
+    expect(productionIssues(loadServerEnv({ ...prod, METRICS_HOST: '0.0.0.0', API_METRICS_PORT: '0' })).join('\n')).not.toMatch(/METRICS_TOKEN/);
+    expect(productionIssues(loadServerEnv({ ...prod, METRICS_HOST: '0.0.0.0', METRICS_TOKEN: 't'.repeat(32) })).join('\n')).not.toMatch(/METRICS_TOKEN/);
+    expect(loadServerEnv({ ...base, METRICS_TOKEN: '' }).METRICS_TOKEN).toBeUndefined();
+    expect(() => loadServerEnv({ ...base, METRICS_TOKEN: 'short-token' })).toThrow(/METRICS_TOKEN: must be at least 32 characters/);
+    const worker = { NODE_ENV: 'production', DATABASE_URL: base.DATABASE_URL, WORKER_DATABASE_URL: base.DATABASE_URL, METRICS_HOST: '0.0.0.0' } as NodeJS.ProcessEnv;
+    expect(() => loadWorkerEnv(worker)).toThrow(issue);
+    expect(() => loadWorkerEnv({ ...worker, METRICS_TOKEN: 't'.repeat(32) })).not.toThrow(/METRICS_TOKEN/);
+  });
+
   it('lists every invalid variable without echoing secrets', () => {
     try {
       loadServerEnv({ NODE_ENV: 'development', JWT_ACCESS_SECRET: 'short-secret-value' } as NodeJS.ProcessEnv);

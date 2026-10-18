@@ -19,7 +19,7 @@ export interface ClosureStatus {
   canClose: boolean;
   /** Businesses the person still belongs to: an owner or admin removes them, or the business is closed. */
   businesses: string[];
-  /** Active 1POS support staff: ops disable that first. */
+  /** Active Tilvara support staff: ops disable that first. */
   staff: boolean;
 }
 
@@ -86,20 +86,23 @@ export class AccountService {
     this.mail({
       to: input.newEmail,
       template: 'auth.email_change.confirm',
-      subject: 'Confirm your new 1POS sign-in email',
-      text: `Use this email to sign in to 1POS: ${this.env.APP_PUBLIC_URL}/confirm-email?token=${token}\nThis link expires in 24 hours. Until you open it, nothing changes. If you did not ask for it, ignore this email.`,
+      subject: 'Confirm your new Tilvara sign-in email',
+      text: `Use this email to sign in to Tilvara: ${this.env.APP_PUBLIC_URL}/confirm-email?token=${token}\nThis link expires in 24 hours. Until you open it, nothing changes. If you did not ask for it, ignore this email.`,
     });
     this.mail({
       to: currentEmail,
       template: 'auth.email_change.requested',
-      subject: 'Your 1POS sign-in email is being changed',
-      text: `Someone signed in to your 1POS account asked to sign in with ${maskEmail(input.newEmail)} instead of this address. It changes only when the link sent there is opened. If this was not you, reset your password now: ${this.env.APP_PUBLIC_URL}/forgot-password`,
+      subject: 'Your Tilvara sign-in email is being changed',
+      text: `Someone signed in to your Tilvara account asked to sign in with ${maskEmail(input.newEmail)} instead of this address. It changes only when the link sent there is opened. If this was not you, reset your password now: ${this.env.APP_PUBLIC_URL}/forgot-password`,
     });
     return { newEmail: input.newEmail, expiresAt: expiresAt.toISOString() };
   }
 
-  /** Applies the change and signs out every session; the old address is told it happened. */
-  async confirmEmailChange(token: string, meta: RequestMeta): Promise<void> {
+  /**
+   * Applies the change and signs out every session; the old address is told it happened. Answers
+   * whose account changed, so a browser signed in as someone else keeps its own session.
+   */
+  async confirmEmailChange(token: string, meta: RequestMeta): Promise<{ userId: string }> {
     const { rows } = await this.database.pool.query<{ outcome: string; user_id: string | null; old_email: string | null }>(
       'SELECT * FROM auth_email_change_confirm($1, $2)',
       [hashToken(token), meta.correlationId ?? null],
@@ -114,9 +117,10 @@ export class AccountService {
     this.mail({
       to: r.old_email!,
       template: 'auth.email_change.completed',
-      subject: 'Your 1POS sign-in email was changed',
-      text: `Your 1POS account no longer signs in with this address. If this was not you, contact 1POS support at once.`,
+      subject: 'Your Tilvara sign-in email was changed',
+      text: `Your Tilvara account no longer signs in with this address. If this was not you, contact Tilvara support at once.`,
     });
+    return { userId: r.user_id! };
   }
 
   async closureStatus(userId: string): Promise<ClosureStatus> {
@@ -149,7 +153,7 @@ export class AccountService {
 function blocked(status: ClosureStatus): AppError {
   return new AppError(
     'ACCOUNT_CLOSURE_BLOCKED',
-    status.staff ? 'This account is 1POS support staff. Ask 1POS to end that first.' : 'You are still a member of a business. Ask its owner to remove you first.',
+    status.staff ? 'This account is Tilvara support staff. Ask Tilvara to end that first.' : 'You are still a member of a business. Ask its owner to remove you first.',
     HttpStatus.CONFLICT,
     { businesses: status.businesses, staff: status.staff },
   );

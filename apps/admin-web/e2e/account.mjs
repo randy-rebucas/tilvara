@@ -1,7 +1,8 @@
 // End-to-end test of a person's own account in the admin (privacy pack, ADR-0016 slice 8 follow-up):
 // the band link, correcting one's name, asking for a new sign-in email (the link itself is mailed by
-// DevMailer inside the API process; confirming it is covered by account-privacy.test.ts), the
-// confirm-email screen, closing the account (refused while still in a business, then done), phone
+// DevMailer inside the API process, so the test plants a known token), the confirm-email screen
+// (a link opened while signed in as someone else keeps that browser signed in; the same account's
+// own browser is signed out), closing the account (refused while still in a business, then done), phone
 // width and Filipino. Last, the error reference: a second `next start` against a stub API that
 // answers 500 shows the API's correlation id on the error page and in a form error.
 // A person who no longer belongs to any business is arranged in the dev database as the migrator
@@ -41,6 +42,24 @@ const leaver = { email: `leave-${stamp}@example.ph` };
   await db.query('SELECT auth_register_user($1, $2, $3)', [leaver.email, 'Ramon Cruz', await new PasswordService().hash(PASSWORD)]);
   await db.end();
 }
+
+// The confirm link is mailed inside the API process: give the newest pending link a token we know.
+const plantEmailLink = async (userId) => {
+  const { createHash, randomBytes } = await import('node:crypto');
+  const token = randomBytes(32).toString('base64url');
+  const db = new pg.Client({ connectionString: process.env.DATABASE_MIGRATOR_URL });
+  await db.connect();
+  try {
+    await db.query('BEGIN');
+    await db.query('SET LOCAL ROLE onepos_platform');
+    const r = await db.query('UPDATE email_change_tokens SET token_hash = $2 WHERE user_id = $1 AND used_at IS NULL', [userId, createHash('sha256').update(token).digest('hex')]);
+    if (r.rowCount !== 1) throw new Error(`expected one pending email link, found ${r.rowCount}`);
+    await db.query('COMMIT');
+  } finally {
+    await db.end();
+  }
+  return token;
+};
 
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9347 });
@@ -108,12 +127,49 @@ try {
   await go('/confirm-email');
   check('a confirm link without its token is explained', await shown('This link is incomplete.'));
 
+  // Lorna's link opened in a browser signed in as Ramon: Lorna's sessions end, Ramon's stays.
+  await bff('POST', '/api/auth/logout');
+  await signIn(leaver.email);
+  await waitFor(`location.pathname === '/select-business'`).catch(() => undefined);
+  await go(`/confirm-email?token=${await plantEmailLink(owner.userId)}`);
+  await clickText('Use this email');
+  check('a link opened while signed in as someone else confirms the change', await shown('Your sign-in email is changed'));
+  await go('/account');
+  check('…and that browser stays signed in as its own account', await shown('Your account') && (await evaluate(`document.querySelector('[data-testid="account-email"]').textContent`)) === leaver.email);
+  // Lorna, now on the new address, moves again and opens the link in her own browser: signed out.
+  await bff('POST', '/api/auth/logout');
+  await signIn(newEmail);
+  await waitFor(`location.pathname === '/'`);
+  await go('/account');
+  await fill('newEmail', `acct-again-${stamp}@example.ph`);
+  await fill('password', PASSWORD);
+  await clickText('Send the link');
+  await shown('Open the link we sent to');
+  await go(`/confirm-email?token=${await plantEmailLink(owner.userId)}`);
+  await clickText('Use this email');
+  await shown('Your sign-in email is changed');
+  await go('/account');
+  check('the same account opening its own link is signed out', await waitFor(`location.pathname === '/sign-in'`).then(() => true, () => false));
+  await signIn(`acct-again-${stamp}@example.ph`);
+  await waitFor(`location.pathname === '/'`);
+
   // Phone width and Filipino.
   await go('/account');
   await viewport(390, 844, true);
   await sleep(300);
   check('390px: the account page has no horizontal scroll', await noHorizontalScroll());
   await shot('account-390.png');
+  await go('/');
+  check('390px with a long business name: the wordmark and the account link share the first line (the name is cut)', await evaluate(`(() => {
+    const row = document.querySelector('header').firstElementChild;
+    const mark = row.querySelector('a[href="/"]').getBoundingClientRect();
+    const link = [...row.querySelectorAll('a')].find((a) => a.getAttribute('href') === '/account');
+    const acct = link.getBoundingClientRect();
+    const lang = Math.max(...[...row.querySelectorAll('button')].filter((x) => ['EN', 'FIL'].includes(x.textContent.trim())).map((x) => x.getBoundingClientRect().right));
+    const names = [...link.querySelectorAll('span')].map((s) => s.getBoundingClientRect());
+    return Math.abs((mark.top + mark.bottom) / 2 - (acct.top + acct.bottom) / 2) < 8 && acct.right <= innerWidth && names.every((n) => n.left >= lang);
+  })()`));
+  await shot('account-band-390.png', false);
   await viewport(1440, 900);
   await bff('POST', '/api/auth/lang', { lang: 'fil' });
   await go('/account');

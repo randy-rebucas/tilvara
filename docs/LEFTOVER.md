@@ -7,10 +7,9 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 - Kept forever, because renaming them breaks data already out there: the JWT `iss`/`aud` (`1pos-api`/`1pos`, would sign everyone out), the recovery-code and MFA-key derivation salts (`1pos-recovery:`, `1pos-mfa`, would invalidate codes and secrets), the till keychain service `"1POS till"` and the Tauri identifier `ph.onepos.till` (tills would lose their saved credential and local SQLite data).
 - Renameable later, as a separate slice: the `@1pos/*` package scope, the `onepos_*` DB roles and DB names (these appear in migrations that are already applied, so this needs new migrations plus `01-roles.sql` and a dev-volume upgrade script), the `x-onepos-request` CSRF header, the `Onepos*` alert names, the compose project, the cargo crate and exe name `onepos-till`, and the localStorage keys.
 - ⏳ Trademark and domain clearance for "Tilvara" (WIPO, IPOPHL classes 9/42, `.com`/`.ph`) before any public launch; `api.1pos.ph` in `desktop.test.ts` is only an example host.
-- ⬜ Check the wordmark visually on the admin header, the sign-in page and the POS shell at phone width (`Tilvara` is longer than `1POS`); re-run `review.mjs` for both apps.
 
 ## Phase 0 — Repository & architecture
-- ⬜ CI pipeline (GitHub Actions: install, lint, typecheck, unit, integration with Postgres service) — needs a remote repo decision (D3)
+- ⏳ CI: `.github/workflows/ci.yml` is written (session 16) but has never run; it needs the remote repository (D3). Expect to adjust it on its first run
 
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
@@ -145,7 +144,6 @@ Slice 3 (monitoring):
 - ✅ Backup-age metric and alert (slice 4, session 11)
 - ⬜ Billing failure metrics (no billing integration yet, D6)
 - ⏳ OTel traces/exporter — D1
-- ⬜ No authentication on the metrics port: relies on network placement (slice 7)
 - ⬜ DEAD letters are a CLI only; no admin/support screen
 
 Slice 4 (backup and restore):
@@ -171,7 +169,6 @@ Slice 6 (onboarding and support):
 - ⏳ Object storage for exports (pre-signed URLs, lifecycle deletion) — D1. Until then `DevFileStorage` in `FILE_STORAGE_DIR` (default: the OS temp folder) and links served by the API
 - ⬜ No ZIP64: an export over 4 GiB or 65,535 files is refused (far beyond pilot sizes)
 - ⬜ Support access: read-only only; any active staff member may use an open grant (the business sees who); no platform screen for staff (CLI)
-- ⬜ A support view writes one audit row per API request; one admin page is about 10 requests, so the business's log fills quickly during a session. Consider one row per page or a per-session summary
 
 Slice 8 (runbooks and privacy pack). The privacy items come from the personal-data inventory (privacy README §3):
 - ⏳ DPO review of the privacy pack (`docs/compliance/privacy/`): the PIC/PIP split, whether SC/PWD records are sensitive, NPC registration, retention periods, the 24-hour notice target, hosting abroad (D1). Release gate G6
@@ -182,8 +179,7 @@ Slice 8 (runbooks and privacy pack). The privacy items come from the personal-da
 - ⏳ Takeaway customer names (`restaurant_orders.customer_name`) are never cleared; period pending the DPO
 - ⬜ Log redaction works on field names; free text in a log *message* string is not caught. Rule: log ids, never names or emails, in messages
 - ⬜ No account page in the POS (a cashier with POS-only habits corrects their name or closes their account in the admin)
-- ⬜ Opening an email-change link signs out the browser that opens it (the BFF clears its cookies, as every session of the changed account ends), even if that browser was signed in as someone else
-- ⬜ Error references: the POS shows the first 8 characters of the correlation id (search logs by prefix); a request that got no answer at all has no reference
+- ⬜ Error references: the POS shows the first 8 characters of the correlation id (search logs by prefix)
 - ⬜ Payment payout posting (Card/QR clearing → bank, fees) and refund/chargeback procedures: with the PayMongo adapter (D6)
 
 The remaining Phase 6 slices (7 deployment, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.

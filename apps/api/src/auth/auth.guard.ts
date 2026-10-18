@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { withTenant } from '@1pos/database';
+import { sql, withTenant } from '@1pos/database';
 import type { Pool } from 'pg';
 import { enrichLogContext } from '@1pos/observability';
 import { isPermissionCode, isPrivilegedSet, SUPPORT_PERMISSIONS, type PermissionCode } from '@1pos/validation';
@@ -21,6 +21,8 @@ const unauthenticated = () => new AppError('UNAUTHENTICATED', 'Authentication re
 const SUPPORT_GRANTS: Grant[] = SUPPORT_PERMISSIONS.map((permission) => ({ permission, scopeType: 'TENANT', scopeId: null }));
 /** The one write a support token may make: ending its own sign-in. */
 const SUPPORT_WRITES = new Set(['/v1/auth/logout']);
+/** A support read is written to the business's audit log once per route in this window. */
+export const SUPPORT_READ_WINDOW_SECONDS = 15 * 60;
 
 /**
  * Global guard. Every non-@Public route: verify JWT → re-validate session, user,
@@ -127,9 +129,10 @@ export class AuthGuard implements CanActivate {
   /**
    * A Tilvara staff member acting under a business's support grant (ADR-0016 slice 6). Every request
    * re-checks the session (two-step sign-in passed), the staff account and the grant, so revoking
-   * the grant or disabling the account ends access at the next request. Every request is written to
-   * the business's audit log (route template only, never ids or query strings), and every write is
-   * refused, even where the read permissions would not have allowed it anyway.
+   * the grant or disabling the account ends access at the next request. What is read goes to the
+   * business's audit log (route template only, never ids or query strings; once per route in each
+   * 15-minute window), and every write is refused and logged, even where the read permissions would
+   * not have allowed it anyway.
    */
   private async supportSession(
     req: AuthedRequest,
@@ -167,8 +170,20 @@ export class AuthGuard implements CanActivate {
     await withTenant(
       this.database.pool,
       claims.tid,
-      (db) =>
-        recordAudit(db, {
+      async (db) => {
+        // One admin page is about ten requests, and pages are reopened: a read is written once per
+        // grant, route and method in each window, so the business's log says what was read and
+        // when without filling up. Every refused write is its own row.
+        if (!write) {
+          const seen = await db.execute(sql`
+            SELECT 1 FROM audit_logs
+             WHERE tenant_id = ${claims.tid} AND resource_type = 'support_grant' AND resource_id = ${claims.sgr}
+               AND action = 'support.request' AND metadata->>'route' = ${route} AND metadata->>'method' = ${req.method}
+               AND occurred_at > now() - make_interval(secs => ${SUPPORT_READ_WINDOW_SECONDS})
+             LIMIT 1`);
+          if (seen.rows.length > 0) return;
+        }
+        await recordAudit(db, {
           tenantId: claims.tid,
           actorType: 'SUPPORT',
           actorUserId: claims.sub,
@@ -177,7 +192,8 @@ export class AuthGuard implements CanActivate {
           resourceId: claims.sgr,
           correlationId: req.correlationId ?? null,
           metadata: { method: req.method, route, staffName: r.staff_name },
-        }),
+        });
+      },
       { userId: claims.sub, correlationId: req.correlationId },
     );
     if (write) throw new AppError('SUPPORT_READ_ONLY', 'Support access is read-only', HttpStatus.FORBIDDEN);

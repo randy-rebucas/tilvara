@@ -51,9 +51,11 @@ What the support view can do:
 - **Not write anything.** Every non-GET request is refused with `403 SUPPORT_READ_ONLY` (only signing out
   is allowed). There is no payment, no change, no export.
 
-Every request, allowed or refused, is written to the business's own audit log as `support.request` or
+What support reads and every refused change go to the business's own audit log as `support.request` or
 `support.write_refused`, with the route template only (never ids or query strings) and the staff member's
-name. Opening a grant writes `support.session_opened` in the business and `platform.support.opened` at
+name. A read is written once per route in each 15-minute window (one back-office page is about ten
+requests, and pages get reopened), so the log shows what was looked at and when without filling up;
+every refused change is its own row. Opening a grant writes `support.session_opened` in the business and `platform.support.opened` at
 platform level.
 
 The view ends by itself when the grant expires, is ended by the business, or the staff account is

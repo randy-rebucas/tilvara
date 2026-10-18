@@ -38,7 +38,7 @@ export class SupportAccessController {
   }
 }
 
-/** 1POS staff's side: no business needed; staff status and two-step sign-in are checked in the service. */
+/** Tilvara staff's side: no business needed; staff status and two-step sign-in are checked in the service. */
 @Controller('support')
 export class SupportStaffController {
   constructor(@Inject(SupportService) private readonly support: SupportService) {}

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 
@@ -253,9 +254,11 @@ export interface MetricsServer {
 
 /**
  * Serve `GET /metrics` on its own listener (an internal port, never the public API listener).
- * `port: 0` picks a free port (tests). Nothing else is served.
+ * `port: 0` picks a free port (tests). Nothing else is served. With `token`, a scrape must send
+ * `Authorization: Bearer <token>` (Prometheus `authorization.credentials`); otherwise 401.
  */
-export function startMetricsServer(o: { registry: MetricsRegistry; port: number; host: string }): Promise<MetricsServer> {
+export function startMetricsServer(o: { registry: MetricsRegistry; port: number; host: string; token?: string }): Promise<MetricsServer> {
+  const expected = o.token ? createHash('sha256').update(`Bearer ${o.token}`).digest() : null;
   const server: Server = createServer((req, res) => {
     const path = (req.url ?? '').split('?')[0];
     if (path !== '/metrics') {
@@ -264,6 +267,11 @@ export function startMetricsServer(o: { registry: MetricsRegistry; port: number;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { allow: 'GET, HEAD', 'content-type': 'text/plain' }).end('method not allowed\n');
+      return;
+    }
+    // Both sides hashed to one length, so the comparison takes the same time whatever was sent.
+    if (expected && !timingSafeEqual(createHash('sha256').update(req.headers.authorization ?? '').digest(), expected)) {
+      res.writeHead(401, { 'www-authenticate': 'Bearer', 'content-type': 'text/plain' }).end('unauthorized\n');
       return;
     }
     o.registry

@@ -8,7 +8,7 @@ import { OpenGrantButton } from './open-grant';
 export const metadata = { title: 'Support requests' };
 
 /**
- * 1POS staff only (ADR-0016 slice 6). Outside the app shell: staff belong to no business. Each row
+ * Tilvara staff only (ADR-0016 slice 6). Outside the app shell: staff belong to no business. Each row
  * is a business that has given read-only access; opening it is recorded on both sides.
  */
 export default async function StaffSupportPage() {

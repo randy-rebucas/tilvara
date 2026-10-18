@@ -130,7 +130,8 @@ describe('own sign-in email', () => {
     await new Promise((r) => setTimeout(r, 50));
     const resetToken = linkToken(mailsTo(s.email).find((m) => m.template === 'auth.password_reset')!.text)!;
 
-    await http().post('/v1/auth/email-change/confirm').send({ token: linkToken(links[1]!.text) }).expect(204);
+    const done = await http().post('/v1/auth/email-change/confirm').send({ token: linkToken(links[1]!.text) }).expect(200);
+    expect(done.body).toEqual({ userId: s.userId }); // the admin drops its cookies only when they are this account's
     await http().get('/v1/me').set(bearer(s.access)).expect(401);
     await http().get('/v1/me').set(bearer(second.body.tokens.accessToken)).expect(401);
     await http().post('/v1/auth/refresh').send({ refreshToken: s.refresh }).expect(401);
@@ -194,7 +195,7 @@ describe('closing one’s own account', () => {
     await http().get('/v1/me').set(bearer(s.access)).expect(200);
   });
 
-  it('is refused for active 1POS support staff', async () => {
+  it('is refused for active Tilvara support staff', async () => {
     const p = await memberOfNobody();
     await asPlatform(`INSERT INTO platform_staff (user_id, status, added_by, added_reason) VALUES ($1, 'ACTIVE', 'test', 'closure test')`, [p.userId]);
     const status = await http().get('/v1/auth/account/closure').set(bearer(p.access)).expect(200);

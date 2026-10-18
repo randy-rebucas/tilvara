@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
-import { api, ApiFailure, uuid } from '../lib/api';
+import { api, ApiFailure, uuid, withReference } from '../lib/api';
 import { peso } from '../lib/money';
 import type { Receipt as ReceiptData, SaleDetail, SaleSummary } from '../types';
 import type { Shift } from './Registers';
@@ -66,7 +66,7 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
       // No answer or a server failure: the refund may have been recorded. Keep the key so
       // submitting again replays it instead of refunding twice.
       if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) {
-        return setMessage({ kind: 'error', text: t('history.unconfirmed') });
+        return setMessage({ kind: 'error', text: withReference(t('history.unconfirmed'), err) });
       }
       setKey(uuid());
       setMessage({ kind: 'error', text: err instanceof ApiFailure ? err.error.message : t('common.error') });

@@ -4,7 +4,7 @@ import { users } from './identity.js';
 import { tenants } from './platform.js';
 
 /**
- * 1POS support staff (ADR-0016 slice 6). A platform table: no runtime grants, managed by the ops
+ * Tilvara support staff (ADR-0016 slice 6). A platform table: no runtime grants, managed by the ops
  * CLI (`support staff-add|staff-disable`) and read only by the `support_*` / `auth_*` functions.
  * Being staff gives no access by itself: a business must grant it (support_grants).
  */
@@ -29,7 +29,7 @@ export const platformStaff = pgTable(
 );
 
 /**
- * Time-limited, purpose-specific access a business gives 1POS support (SPEC §13, THREAT_MODEL T14).
+ * Time-limited, purpose-specific access a business gives Tilvara support (SPEC §13, THREAT_MODEL T14).
  * Read-only is the only access level. At most 72 hours; revoking ends it at once (the API re-checks
  * the grant on every request). Never deleted: the grant and its use stay in the business's records.
  */

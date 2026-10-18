@@ -134,7 +134,7 @@ export class DataExportService extends TenantService {
           resourceType: 'data_export',
           resourceId: e.id,
         });
-        return { e, filename: `1pos-export-${t!.slug}-${t!.day}.zip` };
+        return { e, filename: `tilvara-export-${t!.slug}-${t!.day}.zip` };
       },
       { userId: claims.u },
     );

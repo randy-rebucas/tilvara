@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const monitor = new WorkerMonitor(pool, workerId, process.env.ONEPOS_VERSION ?? 'dev');
   let metrics: MetricsServer | null = null;
   if (env.WORKER_METRICS_PORT !== 0) {
-    metrics = await startMetricsServer({ registry: monitor.registry, port: env.WORKER_METRICS_PORT, host: env.METRICS_HOST });
+    metrics = await startMetricsServer({ registry: monitor.registry, port: env.WORKER_METRICS_PORT, host: env.METRICS_HOST, token: env.METRICS_TOKEN });
     logger.info('metrics listening', { host: env.METRICS_HOST, port: metrics.port });
   }
 

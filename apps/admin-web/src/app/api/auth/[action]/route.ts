@@ -35,6 +35,20 @@ function passError(res: Response, json: unknown) {
   return NextResponse.json(json ?? { error: { code: 'ERROR', message: 'Request failed' } }, { status: res.status });
 }
 
+/**
+ * The user id an access token names. Read without verifying: it only decides whether to drop this
+ * browser's own cookies, and a forged cookie can do no more than sign its own browser out. An
+ * expired access cookie is simply gone; then the refresh fails on the next request instead.
+ */
+function accessSubject(token: string): string | null {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { sub?: unknown };
+    return typeof payload.sub === 'string' ? payload.sub : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Strip tokens before anything reaches the browser. */
 function sessionReply(body: AuthResponse) {
   const reply = NextResponse.json({ activeTenantId: body.activeTenantId, memberships: body.memberships });
@@ -101,16 +115,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return res.ok ? NextResponse.json(json) : passError(res, json);
     }
     // Both end every session of the account at the API: drop this browser's cookies with them.
-    case 'email-change-confirm':
     case 'account-close': {
-      if (action === 'account-close' && !bearer) {
-        return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
-      }
-      const path = action === 'account-close' ? '/auth/account/close' : '/auth/email-change/confirm';
-      const { res, json } = await callApi(path, input, action === 'account-close' ? bearer : undefined);
+      if (!bearer) return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
+      const { res, json } = await callApi('/auth/account/close', input, bearer);
       if (!res.ok) return passError(res, json);
       const reply = NextResponse.json({ ok: true });
       clearAuthCookies(reply);
+      return reply;
+    }
+    // The link may be opened in a browser signed in as someone else: only the changed account's
+    // sessions ended, so this browser keeps its cookies unless they are that account's.
+    case 'email-change-confirm': {
+      const { res, json } = await callApi('/auth/email-change/confirm', input);
+      if (!res.ok) return passError(res, json);
+      const reply = NextResponse.json({ ok: true });
+      if (bearer && accessSubject(bearer) === (json as { userId?: string } | null)?.userId) clearAuthCookies(reply);
       return reply;
     }
     case 'accept-invite': {

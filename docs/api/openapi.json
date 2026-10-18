@@ -877,7 +877,7 @@
           }
         },
         "responses": {
-          "204": {
+          "200": {
             "description": "Success"
           },
           "400": {

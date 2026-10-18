@@ -21,11 +21,14 @@ export class ApiFailure extends Error {
 }
 
 /**
- * The server answered but could not finish (5xx): add the start of its correlation id, enough for
- * support to find the request in the logs. "Ref." reads the same in English and Filipino.
+ * The server could not finish (5xx), or no answer came back (status 0): add the start of the
+ * request's correlation id, enough for support to find it in the logs. The POS mints the id and
+ * sends it, so a request whose answer was lost has one too. "Ref." reads the same in English and Filipino.
  */
 export const withReference = (text: string, err: unknown): string =>
-  err instanceof ApiFailure && err.error.status >= 500 && err.error.correlationId ? `${text} · Ref. ${err.error.correlationId.slice(0, 8)}` : text;
+  err instanceof ApiFailure && (err.error.status >= 500 || err.error.status === 0) && err.error.correlationId
+    ? `${text} · Ref. ${err.error.correlationId.slice(0, 8)}`
+    : text;
 
 interface Tokens {
   accessToken: string;
@@ -52,12 +55,13 @@ export const session = {
   },
 };
 
-async function raw(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> {
+async function raw(method: string, path: string, body: unknown, headers: Record<string, string>, correlationId: string): Promise<Response> {
   return fetch(apiBase() + path, {
     method,
     headers: {
       ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(tokens ? { authorization: `Bearer ${tokens.accessToken}` } : {}),
+      'x-correlation-id': correlationId,
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -78,13 +82,15 @@ async function refresh(): Promise<boolean> {
 }
 
 /** JSON request; one silent refresh on 401, then sign-out. Network failures surface as code NETWORK. */
-export async function api<T>(method: string, path: string, body?: unknown, headers?: Record<string, string>): Promise<T> {
+export async function api<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   let res: Response;
+  let correlationId = crypto.randomUUID();
   try {
-    res = await raw(method, path, body, headers);
-    if (res.status === 401 && (await refresh())) res = await raw(method, path, body, headers);
+    res = await raw(method, path, body, headers, correlationId);
+    if (res.status === 401 && (await refresh())) res = await raw(method, path, body, headers, (correlationId = crypto.randomUUID()));
   } catch {
-    throw new ApiFailure({ status: 0, code: 'NETWORK', message: 'Network error' });
+    // The request may have reached the server (the answer was lost): its id is in the logs then.
+    throw new ApiFailure({ status: 0, code: 'NETWORK', message: 'Network error', correlationId });
   }
   if (res.status === 401) {
     session.clear();

@@ -108,7 +108,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
 
   async onApplicationBootstrap(): Promise<void> {
     if (this.env.API_METRICS_PORT === 0) return;
-    this.server = await startMetricsServer({ registry: this.metrics.registry, port: this.env.API_METRICS_PORT, host: this.env.METRICS_HOST });
+    this.server = await startMetricsServer({ registry: this.metrics.registry, port: this.env.API_METRICS_PORT, host: this.env.METRICS_HOST, token: this.env.METRICS_TOKEN });
     this.logger.log({ msg: 'metrics listening', host: this.env.METRICS_HOST, port: this.server.port });
   }
 

@@ -2,9 +2,9 @@ import { request } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import { MetricsRegistry, registerProcessMetrics, startMetricsServer, type MetricsServer } from '../src/index.js';
 
-const get = (port: number, path: string, method = 'GET') =>
+const get = (port: number, path: string, method = 'GET', headers: Record<string, string> = {}) =>
   new Promise<{ status: number; type: string | undefined; body: string }>((resolve, reject) => {
-    const req = request({ host: '127.0.0.1', port, path, method }, (res) => {
+    const req = request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
       let body = '';
       res.on('data', (c) => (body += c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, type: res.headers['content-type'], body }));
@@ -121,5 +121,21 @@ describe('startMetricsServer', () => {
     expect((await get(server.port, '/')).status).toBe(404);
     expect((await get(server.port, '/v1/health/ready')).status).toBe(404);
     expect((await get(server.port, '/metrics', 'POST')).status).toBe(405);
+  });
+
+  it('with a token, answers only a scrape that sends it', async () => {
+    const r = new MetricsRegistry();
+    r.gauge({ name: 'up_gauge', help: 'Up.' }).set(undefined, 1);
+    const token = 'scrape-token-0123456789abcdef0123456789';
+    server = await startMetricsServer({ registry: r, port: 0, host: '127.0.0.1', token });
+    const none = await get(server.port, '/metrics');
+    expect(none.status).toBe(401);
+    expect(none.body).not.toContain('up_gauge');
+    expect((await get(server.port, '/metrics', 'GET', { authorization: `Bearer ${token}x` })).status).toBe(401);
+    expect((await get(server.port, '/metrics', 'GET', { authorization: token })).status).toBe(401);
+    const ok = await get(server.port, '/metrics', 'GET', { authorization: `Bearer ${token}` });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toContain('up_gauge 1');
+    expect((await get(server.port, '/', 'GET', { authorization: `Bearer ${token}` })).status).toBe(404);
   });
 });

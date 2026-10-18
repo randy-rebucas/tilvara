@@ -12,6 +12,14 @@ For: whoever is on call for Tilvara. Background: ADR-0016 slice 3. The alert rul
 
 - The metrics ports serve only `GET /metrics`. They must stay on the internal network: never route the
   public edge to them. `METRICS_HOST` is the address they bind to; `0` as a port turns one off.
+- **`METRICS_TOKEN`** (API and worker, at least 32 characters): when set, a scrape must send
+  `Authorization: Bearer <token>`; anything else gets 401. Production refuses to boot without it once
+  `METRICS_HOST` is not a loopback address (a container or a private network), so a misplaced port still
+  shows nothing. In Prometheus: `authorization: { type: Bearer, credentials_file: /etc/prometheus/tilvara-metrics-token }`
+  on both jobs. Rotating it: set the new token in the scraper and the services together; a scrape in between
+  fails (`up == 0` for one interval), nothing else does.
+- A wrong or missing token shows as `up == 0`, like a stopped service; Prometheus's targets page then
+  says "server returned HTTP status 401".
 - The **business gauges** (`onepos_outbox_*`, `onepos_payment_intents_*`, `onepos_offline_sales_*`,
   `onepos_tills_*`, `onepos_cashier_sessions_*`, `onepos_worker_heartbeat_age_seconds`, `onepos_workers_alive`)
   come from the database function `platform_metrics()`. They are counts and ages across all businesses, with

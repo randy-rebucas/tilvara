@@ -62,7 +62,7 @@ interface Staff {
   unverifiedToken: string;
 }
 
-/** A 1POS staff account: no business, two-step sign-in on, added by the ops function. */
+/** A Tilvara staff account: no business, two-step sign-in on, added by the ops function. */
 async function makeStaff(): Promise<Staff> {
   const email = `${uniq('staff')}@1pos.example`;
   const hash = await new PasswordService().hash(PASSWORD);
@@ -194,13 +194,21 @@ describe('support access (ADR-0016 slice 6)', () => {
     expect(reads.map((r) => r.metadata.route)).toEqual(expect.arrayContaining(['/v1/me', '/v1/products', '/v1/products/:id', '/v1/audit-logs']));
     // Route templates only: never an id or a query string.
     expect(JSON.stringify(reads)).not.toContain(bProductId);
+    // Reopening a page within the window adds no rows (two reads of /v1/products/:id above, one row);
+    // every refused write is still its own row.
+    expect(reads.filter((r) => r.metadata.route === '/v1/products/:id')).toHaveLength(1);
+    await http().get('/v1/products').set(bearer(supportToken)).expect(200);
+    await http().get('/v1/products').set(bearer(supportToken)).expect(200);
+    expect((await tenantAudit(a.tenantId, 'support.request')).filter((r) => r.metadata.route === '/v1/products')).toHaveLength(1);
+    await http().post('/v1/categories').set(bearer(supportToken)).send({ name: 'Again' }).expect(403);
+    expect((await tenantAudit(a.tenantId, 'support.write_refused')).filter((r) => r.metadata.route === '/v1/categories')).toHaveLength(2);
     const refused = await tenantAudit(a.tenantId, 'support.write_refused');
     expect(refused.map((r) => `${r.metadata.method} ${r.metadata.route}`)).toEqual(
       expect.arrayContaining(['POST /v1/categories', 'POST /v1/support-access', 'POST /v1/data-exports', 'POST /v1/auth/switch-tenant']),
     );
     const listed = (await http().get('/v1/support-access').set(bearer(a.access)).expect(200)).body.data as { id: string; activity: Record<string, unknown> }[];
-    expect(listed.find((g) => g.id === grantId)?.activity).toMatchObject({ sessions: 1, refusedWrites: 4, staff: ['Sam Support'] });
-    expect((listed.find((g) => g.id === grantId)!.activity.requests as number)).toBeGreaterThanOrEqual(6);
+    expect(listed.find((g) => g.id === grantId)?.activity).toMatchObject({ sessions: 1, refusedWrites: 5, staff: ['Sam Support'] });
+    expect(listed.find((g) => g.id === grantId)!.activity.requests).toBe(6); // me, products, products/:id, audit-logs, support-access, subscription
     // And at platform level, outside every business.
     const platform = await asPlatform<{ action: string }>(`SELECT action FROM audit_logs WHERE tenant_id IS NULL AND actor_user_id = $1`, [staff.userId]);
     expect(platform.map((r) => r.action)).toContain('platform.support.opened');
@@ -343,7 +351,7 @@ describe('data export (ADR-0016 slice 6)', () => {
     expect(new Date(link.expiresAt).getTime() - Date.now()).toBeLessThanOrEqual(600_000 + 5_000);
     const file = await http().get(link.url).buffer(true).parse(binary).expect(200);
     expect(file.headers['content-type']).toBe('application/zip');
-    expect(file.headers['content-disposition']).toMatch(/^attachment; filename="1pos-export-exp-a-[\w-]+-\d{4}-\d{2}-\d{2}\.zip"$/);
+    expect(file.headers['content-disposition']).toMatch(/^attachment; filename="tilvara-export-exp-a-[\w-]+-\d{4}-\d{2}-\d{2}\.zip"$/);
     const bytes = file.body as Buffer;
     expect([bytes.length, createHash('sha256').update(bytes).digest('hex')]).toEqual([done.sizeBytes, done.sha256]);
     zip = unzip(bytes);

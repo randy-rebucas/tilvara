@@ -1,0 +1,74 @@
+# Continuous integration (LEFTOVER Phase 0; ADR-0016 slice 7 runs the security gates here too).
+# Not yet run on GitHub: the remote repository is decision D3. Mirrors the local gate in
+# docs/STATUS.md: build, typecheck, lint, unit, integration (one suite at a time), security audit,
+# bundle secret scan. The dev compose file gives Postgres 18 with the cluster roles (init script)
+# and Redis 7 on the same ports as a developer machine, so .env.example works unchanged.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      TURBO_TELEMETRY_DISABLED: '1'
+      # The API integration suites count rate limits in memory (setup-env.ts moves REDIS_URL aside).
+      RATE_LIMITS_ENABLED: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Environment
+        run: cp .env.example .env
+
+      - name: Postgres and Redis
+        run: docker compose up -d --wait postgres redis
+
+      - name: Build
+        run: pnpm build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration tests
+        # One suite at a time: outbox tests claim across tenants in the shared onepos_test.
+        run: pnpm exec turbo run test:integration --concurrency=1 --continue
+
+      - name: Migrate the dev database (as a deployment would)
+        run: pnpm db:migrate
+
+      - name: Dependency audit (production, high and above)
+        run: pnpm security:audit
+
+      - name: Secrets in client bundles
+        run: pnpm security:bundles
+
+      - name: Postgres logs on failure
+        if: failure()
+        run: docker compose logs postgres --tail 200
