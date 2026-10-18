@@ -5,7 +5,7 @@
 > legal reading below must be confirmed by the DPO and, where the DPO decides, by Philippine counsel
 > before the pilot. Text in [square brackets] is for the operator to fill in.
 
-For: 1POS's Data Protection Officer (DPO) and counsel. It describes what personal data 1POS holds, why, for
+For: Tilvara's Data Protection Officer (DPO) and counsel. It describes what personal data Tilvara holds, why, for
 how long, and what happens when something goes wrong, so the DPO can judge it and turn it into the
 company's documents. It answers SPEC "Privacy" and ADR-0016 slice 8, and covers release gate G6
 (`PH_COMPLIANCE_ASSUMPTIONS.md`).
@@ -13,10 +13,10 @@ company's documents. It answers SPEC "Privacy" and ADR-0016 slice 8, and covers 
 | Document | What it is |
 |---|---|
 | [processing-register.md](processing-register.md) | Record of processing activities: each activity, its purpose, data, people, basis, recipients, storage, retention, safeguards |
-| [privacy-notice-draft.md](privacy-notice-draft.md) | A notice for people who use 1POS, and a short template businesses can show their customers |
+| [privacy-notice-draft.md](privacy-notice-draft.md) | A notice for people who use Tilvara, and a short template businesses can show their customers |
 | [retention-schedule.md](retention-schedule.md) | How long each kind of data is kept, the reason, and whether the system enforces it today |
 | [breach-procedure.md](breach-procedure.md) | Personal data breach: assessment, the 72-hour notifications, templates, the register |
-| [data-processing-agreement-outline.md](data-processing-agreement-outline.md) | The clauses the 1POS–business agreement needs, and the sub-processor list |
+| [data-processing-agreement-outline.md](data-processing-agreement-outline.md) | The clauses the Tilvara–business agreement needs, and the sub-processor list |
 | [data-subject-requests.md](data-subject-requests.md) | Handling access, correction, erasure and objection requests with the tools that exist |
 
 ## 1. Who is controller and who is processor
@@ -24,27 +24,27 @@ company's documents. It answers SPEC "Privacy" and ADR-0016 slice 8, and covers 
 Under the Data Privacy Act of 2012 (RA 10173), its IRR and NPC circulars:
 
 - **For a business's own records** (its sales, SC/PWD beneficiaries, takeaway names, suppliers, its staff
-  records), **the business is the personal information controller (PIC)** and **1POS is its personal
-  information processor (PIP)**. 1POS processes these only to run the service the business signed up for.
-- **For 1POS accounts** (everyone who signs in: owners, staff, 1POS support), **1POS is the PIC**: it
+  records), **the business is the personal information controller (PIC)** and **Tilvara is its personal
+  information processor (PIP)**. Tilvara processes these only to run the service the business signed up for.
+- **For Tilvara accounts** (everyone who signs in: owners, staff, Tilvara support), **Tilvara is the PIC**: it
   decides how sign-in, security, audit and support work.
-- 1POS staff who look at a business through support access act for 1POS as processor, inside the
+- Tilvara staff who look at a business through support access act for Tilvara as processor, inside the
   business's grant.
 
-This split drives the notice (two parts), the breach duties (1POS tells the business, which tells the NPC
-and its customers, for business records; 1POS tells the NPC and its users directly for account data) and
+This split drives the notice (two parts), the breach duties (Tilvara tells the business, which tells the NPC
+and its customers, for business records; Tilvara tells the NPC and its users directly for account data) and
 the processing agreement.
 
 ## 2. DPO and NPC registration: engineering's evaluation
 
 SPEC asks for an evaluation of the DPO and registration obligations. The facts the DPO needs:
 
-- **Scale.** 1POS is multi-tenant: every business's records sit in one system. At pilot scale the number
+- **Scale.** Tilvara is multi-tenant: every business's records sit in one system. At pilot scale the number
   of people whose data it holds is small; at commercial scale it is the sum over all businesses.
 - **Sensitive personal information (engineering reading, DPO to confirm).** SC/PWD records hold the
   beneficiary's name, government ID number (OSCA, PWD ID) and TIN when given. Sec. 3(l) of the Act counts
   age, health and government-issued identifiers peculiar to a person as sensitive. A senior citizen
-  record reveals age; a PWD record reveals a disability (though never its type: 1POS stores name and ID
+  record reveals age; a PWD record reveals a disability (though never its type: Tilvara stores name and ID
   number only); the ID numbers and TIN are government-issued identifiers. **Engineering assumes these
   records are sensitive personal information.**
 - **Continuous, not occasional.** Every SC/PWD sale adds a record; processing is the core of the service.
@@ -54,7 +54,7 @@ SPEC asks for an evaluation of the DPO and registration obligations. The facts t
   data subjects, or is not occasional. Registration is renewed yearly; new systems within 20 days of
   starting.
 
-**Recommendation (for the DPO to decide):** appoint a DPO before the pilot and register 1POS as PIC (its
+**Recommendation (for the DPO to decide):** appoint a DPO before the pilot and register Tilvara as PIC (its
 accounts) and PIP (business records) under Circular 2022-04, checking first whether the circular has been
 amended. Businesses that record SC/PWD sales may have their own registration duty; the onboarding
 material should say so without advising them.
@@ -86,12 +86,12 @@ These are gaps in the system, recorded in `docs/LEFTOVER.md` as well:
    names in the API logs. Free text in a message string is still not caught: log ids, never names.
 7. **No customer profiles or marketing consent exist**, so SPEC 6.9's consent separation is not yet
    relevant. When customer profiles come, they need their own entries in the register and the notice.
-8. **Hosting region is open (D1).** If 1POS is hosted outside the Philippines, business records cross the
+8. **Hosting region is open (D1).** If Tilvara is hosted outside the Philippines, business records cross the
    border; the notice and the agreement must say where.
 
 ## 4. Questions for the DPO
 
-1. Confirm the PIC/PIP split above, and whether 1POS support staff need individual confidentiality
+1. Confirm the PIC/PIP split above, and whether Tilvara support staff need individual confidentiality
    undertakings.
 2. Are SC/PWD beneficiary records sensitive personal information? Lawful basis: engineering assumes
    "processing provided for by existing laws" (Sec. 13(b)), since RR 5-2017 and the SC/PWD laws require

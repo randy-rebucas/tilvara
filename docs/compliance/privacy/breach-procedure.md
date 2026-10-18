@@ -4,7 +4,7 @@
 > `../PH_COMPLIANCE_ASSUMPTIONS.md` §9 (partially verified). The DPO confirms the rules, the thresholds and
 > the forms against the current NPC issuances before adopting this.
 
-For: the DPO, the incident lead and 1POS management. It runs **alongside**
+For: the DPO, the incident lead and Tilvara management. It runs **alongside**
 [incident-response.md](../../operations/incident-response.md) and
 [security-incident.md](../../operations/security-incident.md): those contain and fix; this one decides
 who must be told, and records it.
@@ -15,7 +15,7 @@ A **personal data breach** is a security incident that leads to personal data be
 altered, disclosed or accessed without authority, whether by accident or on purpose. It covers
 confidentiality (seen or taken), integrity (changed) and availability (lost).
 
-Examples in 1POS:
+Examples in Tilvara:
 - one business's records shown to another business (cross-tenant exposure);
 - an account, a staff account or an ops credential used by someone else;
 - a backup, export file or database copy reaching someone not allowed (with the key, or unencrypted);
@@ -28,15 +28,15 @@ not a breach, but goes in the incident register (section 7) all the same.
 
 ## 2. The clock
 
-**72 hours** from the moment 1POS **knows, or reasonably believes**, that a breach needing notification
+**72 hours** from the moment Tilvara **knows, or reasonably believes**, that a breach needing notification
 happened. Not from when the investigation ends. The incident log's first entry about personal data
 starts it; write the time.
 
-For business records, 1POS is the processor: **the business is the controller and carries the duty to
-notify the NPC and its customers**. 1POS tells each affected business **without undue delay, target
+For business records, Tilvara is the processor: **the business is the controller and carries the duty to
+notify the NPC and its customers**. Tilvara tells each affected business **without undue delay, target
 24 hours**, so it can meet its own 72 hours, and helps it with the facts.
 
-For 1POS account data (sign-in data of owners, staff, support), 1POS is the controller and notifies the
+For Tilvara account data (sign-in data of owners, staff, support), Tilvara is the controller and notifies the
 NPC and the people itself.
 
 ## 3. Steps
@@ -61,9 +61,9 @@ the scope, prevent further harm, or restore the system's integrity); the DPO rec
 Answer, with evidence, in the breach entry:
 
 1. **Whose data?** Which businesses; which groups (members, SC/PWD beneficiaries, takeaway customers,
-   supplier contacts, 1POS staff); how many people. The processing register names the data in each group;
+   supplier contacts, Tilvara staff); how many people. The processing register names the data in each group;
    security-incident.md §3 has the queries.
-2. **What data?** Name it per category. In 1POS the most serious are:
+2. **What data?** Name it per category. In Tilvara the most serious are:
    - SC/PWD records: name with OSCA/PWD ID number and TIN (engineering treats them as **sensitive**: they
      reveal age or disability and carry government-issued identifiers);
    - account credentials: password hashes, sessions, encrypted MFA secrets (+ whether
@@ -84,7 +84,7 @@ As summarised from Circular 16-03, notification is required when **all three** h
 3. the unauthorised acquisition is **likely to give rise to a real risk of serious harm** to the people
    affected.
 
-Guide for 1POS (the DPO decides each case):
+Guide for Tilvara (the DPO decides each case):
 
 | Situation | Likely outcome |
 |---|---|
@@ -101,9 +101,9 @@ Guide for 1POS (the DPO decides each case):
 Fill in the brackets; keep the language plain. The business may need a Filipino version for its
 customers.
 
-**A. To an affected business (1POS as processor)**
+**A. To an affected business (Tilvara as processor)**
 
-> Subject: Security incident affecting your 1POS records — [date]
+> Subject: Security incident affecting your Tilvara records — [date]
 >
 > On [date and time], we found [what happened, in one or two sentences]. It affected [which of your
 > records: e.g. senior citizen and PWD discount records from [date] to [date], about [number] people].
@@ -130,7 +130,7 @@ portal)**
 **C. To the people affected**
 
 > We are writing to tell you about a security incident involving your information held by [business
-> name / 1POS]. On [date], [what happened]. The information involved was [e.g. your name and senior
+> name / Tilvara]. On [date], [what happened]. The information involved was [e.g. your name and senior
 > citizen ID number, recorded when you received the senior citizen discount].
 >
 > What we have done: [measures]. What you can do: [e.g. watch for anyone using your ID number; nothing
@@ -150,8 +150,8 @@ portal)**
 ## 8. Readiness
 
 - [ ] DPO named and reachable out of hours; deputy named
-- [ ] Contact list of every pilot business's owner (phone, email) kept outside 1POS, so it is reachable
-      when 1POS is down
+- [ ] Contact list of every pilot business's owner (phone, email) kept outside Tilvara, so it is reachable
+      when Tilvara is down
 - [ ] Template A agreed with counsel; Filipino version of template C prepared
 - [ ] NPC breach notification channel and current form checked by the DPO
 - [ ] One tabletop exercise before the pilot (e.g. "a backup file and its key are found on a public

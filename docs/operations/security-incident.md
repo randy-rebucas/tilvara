@@ -48,7 +48,7 @@ and the business on each request.
 4. Anything the attacker created is corrected by the business as new documents (a return, a reversal, a
    price change back), never by editing rows. See [rollback-recovery.md](rollback-recovery.md).
 
-### 2.2 A 1POS staff account is compromised
+### 2.2 A Tilvara staff account is compromised
 `pnpm --filter @1pos/database support staff-disable --email <email> --reason "security incident <ticket>"`
 ends every open support view at the next request. Then 2.1 for the account itself. List the grants it
 used from the NULL-tenant `platform.support.opened` rows; each affected business's audit log shows every
@@ -83,7 +83,7 @@ For a leaked `JWT_ACCESS_SECRET` or a suspected session-store leak:
 | `MFA_ENCRYPTION_KEY` | With a database copy, an attacker can read authenticator secrets | [2.5.1](#251-rotating-the-mfa-key). If a database copy (or a backup and its age key) may have leaked **together with** the old key, rotating does not help those secrets: the people concerned set two-step sign-in up again (owner/admin reset, or [support-mfa-reset.md](support-mfa-reset.md)). Recovery codes are hashed and stay safe |
 | Backup secret key (age) | Every backup made for its public key can be read by whoever also has the files | backup-restore.md "Keys" → rotation. If the files may also be exposed, treat as a breach |
 | PayMongo keys (once D6) | Payments or refunds in our name | Roll the keys in the PayMongo dashboard, update the secret manager, restart; check the provider's log for activity we did not make |
-| Email provider key (once D2) | Mail sent as 1POS (phishing our users) | Roll it with the provider; warn businesses not to follow unexpected mail |
+| Email provider key (once D2) | Mail sent as Tilvara (phishing our users) | Roll it with the provider; warn businesses not to follow unexpected mail |
 
 #### 2.5.1 Rotating the MFA key
 Also the yearly routine rotation. Nobody has to set two-step sign-in up again.

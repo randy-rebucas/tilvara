@@ -54,6 +54,7 @@ interface World {
   branch2Id: string;
   transferId: string;
   countId: string;
+  sheetId: string;
   adjustmentId: string;
   journalEntryId: string;
   cashAccountId: string;
@@ -193,6 +194,10 @@ async function world(prefix: string): Promise<World> {
   ok(await http().post(`/v1/stock/transfers/${transfer.id}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}), 200);
   const count = ok(await http().post('/v1/stock/counts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch2.id, lines: [{ variantId, countedQuantity: '2' }] }));
   ok(await http().put('/v1/stock/reorder-points').set(auth).send({ branchId: branch.id, items: [{ variantId, reorderPoint: '20' }] }), 200);
+  // Session 16: branch inventory settings and an open count sheet with one counted line.
+  ok(await http().put(`/v1/branches/${branch.id}/inventory-settings`).set(auth).send({ negativeStockPolicy: 'ALLOW_WITH_FLAG', lowStockAlerts: true }), 200);
+  const sheet = ok(await http().post('/v1/stock/count-sheets').set(auth).send({ branchId: branch2.id, variantIds: [variantId] }));
+  ok(await http().put(`/v1/stock/count-sheets/${sheet.id}/lines`).set(auth).send({ lines: [{ variantId, countedQuantity: '2' }] }), 200);
   // Phase 3 slice 4: the books every document above posted to (chart seeded with the entity).
   const accounts = ok<{ data: { id: string; systemKey: string }[] }>(await http().get('/v1/accounts').query({ legalEntityId: entity.id }).set(auth), 200).data;
   const entries = ok<{ data: { id: string }[] }>(await http().get('/v1/journal-entries').query({ legalEntityId: entity.id, sourceType: 'SALE' }).set(auth), 200).data;
@@ -280,6 +285,7 @@ async function world(prefix: string): Promise<World> {
     branch2Id: branch2.id,
     transferId: transfer.id,
     countId: count.id,
+    sheetId: sheet.id,
     adjustmentId: adjustment.id,
     journalEntryId: entries[0]!.id,
     cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
@@ -397,6 +403,12 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/stock/transfers/:id': () => http().get(`/v1/stock/transfers/${a.transferId}`).set(auth),
     'POST /v1/stock/transfers/:id/receive': () => http().post(`/v1/stock/transfers/${a.transferId}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
     'GET /v1/stock/counts/:id': () => http().get(`/v1/stock/counts/${a.countId}`).set(auth),
+    'GET /v1/stock/count-sheets/:id': () => http().get(`/v1/stock/count-sheets/${a.sheetId}`).set(auth),
+    'PUT /v1/stock/count-sheets/:id/lines': () => http().put(`/v1/stock/count-sheets/${a.sheetId}/lines`).set(auth).send({ lines: [{ variantId: b.variantId, countedQuantity: '1' }] }),
+    'POST /v1/stock/count-sheets/:id/post': () => http().post(`/v1/stock/count-sheets/${a.sheetId}/post`).set(auth).set('Idempotency-Key', randomUUID()),
+    'POST /v1/stock/count-sheets/:id/cancel': () => http().post(`/v1/stock/count-sheets/${a.sheetId}/cancel`).set(auth).send({ reason: 'sabotage' }),
+    'GET /v1/branches/:id/inventory-settings': () => http().get(`/v1/branches/${a.branchId}/inventory-settings`).set(auth),
+    'PUT /v1/branches/:id/inventory-settings': () => http().put(`/v1/branches/${a.branchId}/inventory-settings`).set(auth).send({ negativeStockPolicy: 'BLOCK', lowStockAlerts: false }),
     'GET /v1/stock/adjustments/:id': () => http().get(`/v1/stock/adjustments/${a.adjustmentId}`).set(auth),
     'GET /v1/journal-entries/:id': () => http().get(`/v1/journal-entries/${a.journalEntryId}`).set(auth),
     'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
@@ -515,6 +527,10 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['reorder points of the A branch', () => http().get('/v1/stock/reorder-points').query({ branchId: a.branchId }).set(auth)],
     ['transfers at the A branch', () => http().get('/v1/stock/transfers').query({ branchId: a.branchId }).set(auth)],
     ['counts at the A branch', () => http().get('/v1/stock/counts').query({ branchId: a.branchId }).set(auth)],
+    ['count sheet at the A branch', () => http().post('/v1/stock/count-sheets').set(auth).send({ branchId: a.branchId, variantIds: [b.variantId] })],
+    ['count sheet of an A variant', () => http().post('/v1/stock/count-sheets').set(auth).send({ branchId: b.branchId, variantIds: [a.variantId] })],
+    ['count an A variant on a B sheet', () => http().put(`/v1/stock/count-sheets/${b.sheetId}/lines`).set(auth).send({ lines: [{ variantId: a.variantId, countedQuantity: '1' }] })],
+    ['count sheets of the A branch', () => http().get('/v1/stock/count-sheets').query({ branchId: a.branchId }).set(auth)],
     ['adjustments at the A branch', () => http().get('/v1/stock/adjustments').query({ branchId: a.branchId }).set(auth)],
     ['valuation of the A branch', () => http().get('/v1/reports/inventory-valuation').query({ branchId: a.branchId }).set(auth)],
     ['stock movements report of the A branch', () => http().get('/v1/reports/stock-movements').query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
@@ -571,7 +587,7 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
    w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
    w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId, w.supportGrantId, w.exportId];
 
@@ -665,7 +681,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
-      `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
+      `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/count-sheets?branchId=${b.branch2Id}`, `/v1/stock/count-sheets/${b.sheetId}`, `/v1/branches/${b.branchId}/inventory-settings`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
       `/v1/stock/low?branchId=${b.branchId}`, `/v1/stock/reorder-points?branchId=${b.branchId}`,`/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-lines?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`, `/v1/journal-entries/${b.journalEntryId}`,
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,

@@ -557,6 +557,8 @@ export const stockMovements = pgTable(
     stockAdjustmentId: uuid('stock_adjustment_id'),
     /** CONSUMPTION: the recipe version the sale line consumed with (ADR-0014 §4). */
     recipeVersionId: uuid('recipe_version_id'),
+    /** Set by the costing trigger: an outbound movement that left the balance below zero (negative-stock policy). */
+    belowZero: boolean('below_zero').notNull().default(false),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

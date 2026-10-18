@@ -1,7 +1,7 @@
 # Runbook: production access
 
-For: 1POS engineering and operations. It says who may reach production, with which credential, and how
-access is given, used, reviewed and taken away. The principle (SPEC §13, THREAT_MODEL T14): **1POS staff
+For: Tilvara engineering and operations. It says who may reach production, with which credential, and how
+access is given, used, reviewed and taken away. The principle (SPEC §13, THREAT_MODEL T14): **Tilvara staff
 have no standing access to any business's records.** Every path into those records is either the
 business's own grant, or an ops credential used for a recorded reason.
 
@@ -19,8 +19,8 @@ the secret manager's policies) is described as requirements; the concrete steps 
 | Database admin login (managed service, D1) | Everything, including roles | Ops only, break-glass | Ops vault, two-person |
 | Backup secret key (age) | Decrypts every backup | Ops, two people can reach it | Ops vault; on the drill host only during a drill |
 | `JWT_ACCESS_SECRET`, `MFA_ENCRYPTION_KEY` | Sign access tokens and export links; decrypt authenticator secrets | The API processes | Secret manager |
-| Provider keys (PayMongo D6, email D2) | Payments; mail as 1POS | The API/worker processes | Secret manager |
-| 1POS staff account (support) | Read-only view of a business **only while that business has an open grant**, every page audited in the business | Support staff, marked by ops | Their own password + authenticator |
+| Provider keys (PayMongo D6, email D2) | Payments; mail as Tilvara | The API/worker processes | Secret manager |
+| Tilvara staff account (support) | Read-only view of a business **only while that business has an open grant**, every page audited in the business | Support staff, marked by ops | Their own password + authenticator |
 | `onepos_readonly` | Reads platform tables (tenants, users' public columns, permissions, memberships, the audit log) for diagnostics | Unused until a reporting need appears | — |
 
 The app, worker and read-only roles are not superusers and cannot bypass RLS; `rls-catalog.test.ts`

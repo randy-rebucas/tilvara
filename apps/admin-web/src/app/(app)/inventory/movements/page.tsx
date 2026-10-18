@@ -29,6 +29,7 @@ export default async function MovementsPage({ searchParams }: { searchParams: Pr
       problem = e.message;
     }
   }
+  const anyBelow = report?.data.some((r) => r.belowZero > 0) ?? false;
   const present = TYPES.filter((type) => report?.data.some((r) => r.movements[type]));
   const sum = (pick: (r: Row) => string) => peso(sumDecimal((report?.data ?? []).map(pick)));
 
@@ -38,6 +39,7 @@ export default async function MovementsPage({ searchParams }: { searchParams: Pr
     { header: t('inv.opening'), num: true, cell: (r) => qty(r.opening.quantity) },
     ...present.map((type) => ({ header: t(`mv.${type}` as MessageKey), num: true, cell: (r: Row) => (r.movements[type] ? signed(r.movements[type]!.quantity) : <span className="text-muted">·</span>) })),
     { header: t('inv.closing'), num: true, cell: (r) => <b>{qty(r.closing.quantity)}</b> },
+    ...(anyBelow ? [{ header: t('inv.belowZero'), num: true, cell: (r: Row) => (r.belowZero ? <span className="font-semibold text-gold">{r.belowZero}×</span> : <span className="text-muted">·</span>) }] : []),
     { header: t('common.value'), num: true, cell: (r) => <span className="money font-semibold">{peso(r.closing.value)}</span> },
   ];
 
@@ -68,12 +70,13 @@ export default async function MovementsPage({ searchParams }: { searchParams: Pr
                 <Serial>
                   {r.sku} · {t('inv.opening')} {qty(r.opening.quantity)}
                   {present.filter((type) => r.movements[type]).map((type) => ` · ${t(`mv.${type}` as MessageKey)} ${signed(r.movements[type]!.quantity)}`)} · {t('inv.closing')} {qty(r.closing.quantity)}
+                  {r.belowZero > 0 && <span className="text-gold"> · {t('inv.belowZero')} {r.belowZero}×</span>}
                 </Serial>
               ),
               figure: (r) => <span className="money font-semibold">{peso(r.closing.value)}</span>,
             }}
             foot={{
-              cells: ['', t('common.total'), '', ...present.map(() => ''), '', <span key="c" className="money">{sum((r) => r.closing.value)}</span>],
+              cells: ['', t('common.total'), '', ...present.map(() => ''), '', ...(anyBelow ? [''] : []), <span key="c" className="money">{sum((r) => r.closing.value)}</span>],
               title: t('common.total'),
               figure: <span className="money">{sum((r) => r.closing.value)}</span>,
             }}

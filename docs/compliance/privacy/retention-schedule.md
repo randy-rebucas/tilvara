@@ -5,7 +5,7 @@
 > the tax adviser.
 
 The rule from the IRR of the Data Privacy Act: keep personal data only as long as needed for its purpose,
-for legal claims, or as a law requires. For 1POS this means two clocks:
+for legal claims, or as a law requires. For Tilvara this means two clocks:
 
 - **Fiscal records** of a business (sales, returns, SC/PWD records, books, stock, purchasing, the audit
   trail around them) are kept for the period tax law requires. They are never deleted early, even when
@@ -38,7 +38,7 @@ period, counted from the end of the taxable year the record belongs to.
 | Memberships, roles | `tenant_memberships`, `membership_roles` | While the person is a member; a removed membership stays as status `REMOVED` for accountability | Access control | ◐ |
 | Invitations | `member_invitations` | *Proposed:* 90 days after expiry or acceptance | Onboarding | ○ |
 | Support grants and support activity | `support_grants`, `audit_logs` | Same as the business's audit log | Accountability to the business | ◐ |
-| 1POS staff records | `platform_staff` | While staff, plus 5 years | Accountability | ○ |
+| Tilvara staff records | `platform_staff` | While staff, plus 5 years | Accountability | ○ |
 | Request replay cache | `idempotency_records` | 24 hours | Safe retries only | ● Hourly purge by the worker |
 | Outbox events | `outbox_events` | *Proposed:* 90 days after delivery (DONE) or replay | Delivery and its troubleshooting | ○ Kept for ever (ids only in payloads today) |
 | Data export files | Private file storage | 7 days (`DATA_EXPORT_RETENTION_DAYS`, 1–30) | Owner's download | ● Hourly sweep deletes the file; the request row stays |

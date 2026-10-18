@@ -115,7 +115,7 @@ For any set of sales and returns (`sales.test.ts`, `reports.test.ts`, `reconcili
 - Movement types (built): `SALE, RETURN, RECEIPT, SUPPLIER_RETURN, TRANSFER_OUT, TRANSFER_IN, COUNT, ADJUSTMENT, WASTE, CONSUMPTION` (Phase 4: ingredients of a sold recipe item, part of the SALE document, ADR-0014 §4). Later: `RESERVATION`/`RESERVATION_RELEASE`.
 - `available = on_hand − reserved − (quarantined/damaged when tracked)`.
 - Weighted average cost: on receipt `new_avg = (on_hand × avg + qty_in × unit_cost) / (on_hand + qty_in)` (when on_hand ≤ 0, avg = unit_cost). Outbound movements carry the current avg as their cost. Transfers move cost at source avg. Returns to stock at the original sale's recorded cost.
-- Negative-stock policy configurable: `BLOCK | ALLOW_WITH_FLAG | ALLOW`.
+- Negative-stock policy per branch (`inventory_settings`): `ALLOW | ALLOW_WITH_FLAG | BLOCK`; BLOCK refuses counter sales only (ADR-0012 amendment, session 16).
 
 ## Philippine-specific domain rules (to verify — see compliance doc)
 

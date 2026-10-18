@@ -44,7 +44,6 @@ Slice 6 (POS browser checkout):
 Phase-level:
 - ⬜ `@1pos/pricing` promotions
 - ⬜ Invoice sequences (dev series only today)
-- ⬜ Negative-stock policy (BLOCK/ALLOW_WITH_FLAG) — today sales may go negative and it stays visible
 - ⬜ A test for one session spanning local midnight (needs clock control)
 
 ## Phase 3 — Inventory, purchasing, accounting
@@ -53,8 +52,6 @@ Slice 5 (admin UI):
 
 Phase-level:
 - ⬜ Supplier invoices + accounts payable (GRNI → AP, input VAT)
-- ⬜ Low-stock push alerts (outbox event when crossing the reorder point)
-- ⬜ Blind counts (freeze + post later)
 - ⬜ UoM conversions and purchase units
 - ⬜ Batch/expiry and serial tracking
 - ⬜ Landed cost
@@ -162,6 +159,7 @@ Slice 5 (performance):
 - ⬜ Once in session 15, `catalog.test.ts` failed in setup ("1 failed | 16 skipped") with unchanged code, just after the concurrent-query guard went in; 9 reruns and two full API runs passed, and the guard never fired. If it recurs, the printed `concurrent query on one pg client` line names the query. The guard covers the API suites only (the worker and database suites have no `Promise.all` over a client today)
 - ⬜ Fewer statements per request: a lookup is 14 (auth context + 5 sequential reads), a 3-line checkout 47. Merge the lookup reads; cache the auth context per token for a few seconds.
 - ⬜ `platform_metrics()` takes ~90 ms on the load DB (100k items, a few thousand sales); watch it as data grows (alert `OneposBusinessGaugesSlow`).
+- ⬜ `offline-engine.test.ts` "answers lost…" failed once in the session-16 gate at its first snapshot fetch (`fetch failed` with the simulated network up; probably a kept-alive socket closed under load); 3/3 alone right after. Watch it.
 - ⬜ `monitoring.test.ts` "is its own listener" failed once right after the offline drills in the same run (`onepos_db_up` not yet 1 on the first scrape); it passed alone and in the final full gate. Watch it.
 
 Slice 6 (onboarding and support):

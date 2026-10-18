@@ -4,19 +4,19 @@
 > 2026-10-18; anything marked [D1], [D2], [D6] depends on a decision not yet made. Publish only after the
 > DPO approves, and keep the published version in step with the processing register.
 
-Two parts: **A** is 1POS's own notice for the people who use 1POS (1POS is controller of account data). **B**
-is a short template a business may adapt for its customers (the business is controller; 1POS is its
+Two parts: **A** is Tilvara's own notice for the people who use Tilvara (Tilvara is controller of account data). **B**
+is a short template a business may adapt for its customers (the business is controller; Tilvara is its
 processor). A Filipino version of each is needed before publication.
 
 ---
 
-## Part A — Privacy notice for 1POS users
+## Part A — Privacy notice for Tilvara users
 
-**Who we are.** 1POS is a point-of-sale and back-office service operated by [legal name], [address]
-("1POS", "we"). Our Data Protection Officer is [name], reachable at [email] and [phone].
+**Who we are.** Tilvara is a point-of-sale and back-office service operated by [legal name], [address]
+("Tilvara", "we"). Our Data Protection Officer is [name], reachable at [email] and [phone].
 
-**Whom this covers.** Anyone with a 1POS account: business owners, managers, cashiers, kitchen staff,
-accountants, and 1POS support staff. Customers of a business are covered by that business's own notice
+**Whom this covers.** Anyone with a Tilvara account: business owners, managers, cashiers, kitchen staff,
+accountants, and Tilvara support staff. Customers of a business are covered by that business's own notice
 (see Part B).
 
 **What we collect and why**
@@ -34,9 +34,9 @@ not use your data for advertising, and we do not sell it.
 
 **Who sees it**
 - People in your business with permission to see the team or the audit log.
-- 1POS support, only when your business gives support access for a stated reason and time (at most 72
+- Tilvara support, only when your business gives support access for a stated reason and time (at most 72
   hours, read-only). Your business can see every page support opened and end the access at any time.
-- Service providers who run parts of 1POS for us, under contract: hosting [D1: provider, country], email
+- Service providers who run parts of Tilvara for us, under contract: hosting [D1: provider, country], email
   delivery [D2]. If our hosting is outside the Philippines, your data is stored there under the same
   protections.
 - Authorities, when the law requires it.
@@ -64,7 +64,7 @@ may complain to the National Privacy Commission (privacy.gov.ph).
 ## Part B — Template for businesses: notice to customers
 
 *For the business to adapt and display at the counter or on its receipts or website. The business is the
-controller; 1POS is its processor. The business decides the final text with its own adviser.*
+controller; Tilvara is its processor. The business decides the final text with its own adviser.*
 
 > **How [business name] uses your information at our counter**
 >
@@ -74,12 +74,12 @@ controller; 1POS is its processor. The business decides the final text with its 
 > detail from your ID. We keep these records for as long as tax law requires (at least 5 years).
 >
 > **Takeaway orders.** If you give a name for your order, we use it only to call your order. [Keep for:
-> the period the business sets; 1POS cannot clear these names automatically yet (retention schedule).]
+> the period the business sets; Tilvara cannot clear these names automatically yet (retention schedule).]
 >
 > **Card and QR payments.** Your card or wallet details are handled by our payment provider; we never see
 > or keep your card number.
 >
-> Our point-of-sale provider, 1POS, stores these records for us and may not use them for anything else.
+> Our point-of-sale provider, Tilvara, stores these records for us and may not use them for anything else.
 >
 > Questions, or to see or correct your information: [business contact / DPO]. You may also contact the
 > National Privacy Commission at privacy.gov.ph.

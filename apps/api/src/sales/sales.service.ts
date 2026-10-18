@@ -47,6 +47,7 @@ import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
 import { planConsumption } from '../restaurant/consumption.js';
+import { assertStockAvailable } from './stock-policy.js';
 import { addFraction, compareFraction, frac, fractionDec, ONE_FRACTION, ratioOf, subFraction, ZERO_FRACTION, type Fraction } from '../common/fraction.js';
 
 type SaleRow = typeof sales.$inferSelect;
@@ -134,6 +135,12 @@ interface PricedSale {
   orderBillId: string | null;
   /** A sale rung up offline and recorded at sync (ADR-0015 §5). */
   offline?: { terminalId: string; reference: string; flags: OfflineFlag[]; completedAt: Date };
+  /**
+   * A counter sale: refused when the branch's negative-stock policy is BLOCK and a tracked item would
+   * go below zero. Checks (food already served) and offline sales (already handed over) are never
+   * refused for stock; the costing trigger flags them instead.
+   */
+  enforceStock?: boolean;
 }
 
 /** What a terminal's offline sale needs besides the envelope: who sent it and what it had been told. */
@@ -220,7 +227,7 @@ export class SalesService extends TenantService {
           ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
         })),
       });
-      const priced = pricedFromCart(cart, input);
+      const priced = { ...pricedFromCart(cart, input), enforceStock: true };
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
     });
@@ -643,6 +650,9 @@ export class SalesService extends TenantService {
     );
     for (const c of consumed) {
       stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });
+    }
+    if (priced.enforceStock) {
+      await assertStockAvailable(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
     }
     // Sorted by variant: concurrent sales lock balance rows in the same order (ADR-0012 §7).
     const moved = stock.length

@@ -1,6 +1,16 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import {
   branchQuerySchema,
+  cancelCountSheetSchema,
+  countSheetLinesSchema,
+  countSheetListQuerySchema,
+  createCountSheetSchema,
+  inventorySettingsSchema,
+  type CancelCountSheetInput,
+  type CountSheetLinesInput,
+  type CountSheetListQuery,
+  type CreateCountSheetInput,
+  type InventorySettingsInput,
   createStockCountSchema,
   createStockTransferSchema,
   idParamSchema,
@@ -65,6 +75,51 @@ export class InventoryController {
   @Get('stock/counts/:id')
   getCount(@Auth() auth: AuthContext, @Param('id', id) countId: string) {
     return this.inventory.getCount(auth, countId);
+  }
+
+  // Count sheets (blind counts): open and freeze, count, post or cancel.
+  @Post('stock/count-sheets')
+  openCountSheet(@Auth() auth: AuthContext, @Body(new ZodPipe(createCountSheetSchema)) body: CreateCountSheetInput) {
+    return this.inventory.openCountSheet(auth, body);
+  }
+
+  @Get('stock/count-sheets')
+  listCountSheets(@Auth() auth: AuthContext, @Query(new ZodPipe(countSheetListQuerySchema)) q: CountSheetListQuery) {
+    return this.inventory.listCountSheets(auth, q);
+  }
+
+  @Get('stock/count-sheets/:id')
+  getCountSheet(@Auth() auth: AuthContext, @Param('id', id) sheetId: string) {
+    return this.inventory.getCountSheet(auth, sheetId);
+  }
+
+  @Put('stock/count-sheets/:id/lines')
+  countSheetLines(@Auth() auth: AuthContext, @Param('id', id) sheetId: string, @Body(new ZodPipe(countSheetLinesSchema)) body: CountSheetLinesInput) {
+    return this.inventory.countSheetLines(auth, sheetId, body);
+  }
+
+  /** Posting moves stock and books: Idempotency-Key is mandatory. */
+  @Idempotent({ required: true })
+  @HttpCode(200)
+  @Post('stock/count-sheets/:id/post')
+  postCountSheet(@Auth() auth: AuthContext, @Param('id', id) sheetId: string) {
+    return this.inventory.postCountSheet(auth, sheetId);
+  }
+
+  @HttpCode(200)
+  @Post('stock/count-sheets/:id/cancel')
+  cancelCountSheet(@Auth() auth: AuthContext, @Param('id', id) sheetId: string, @Body(new ZodPipe(cancelCountSheetSchema)) body: CancelCountSheetInput) {
+    return this.inventory.cancelCountSheet(auth, sheetId, body);
+  }
+
+  @Get('branches/:id/inventory-settings')
+  getSettings(@Auth() auth: AuthContext, @Param('id', id) branchId: string) {
+    return this.inventory.getSettings(auth, branchId);
+  }
+
+  @Put('branches/:id/inventory-settings')
+  setSettings(@Auth() auth: AuthContext, @Param('id', id) branchId: string, @Body(new ZodPipe(inventorySettingsSchema)) body: InventorySettingsInput) {
+    return this.inventory.setSettings(auth, branchId, body);
   }
 
   @Get('stock/reorder-points')

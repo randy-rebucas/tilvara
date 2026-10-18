@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { allProducts, api, apiOrNull, type LowStockRow, type Me, type Valuation } from '@/lib/api';
@@ -11,7 +12,11 @@ export const metadata = { title: 'Inventory' };
 
 export default async function StockPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t } = await getT();
-  const { branches, branch } = await inventoryBranch((await searchParams).branch);
+  const sp = await searchParams;
+  // Someone who may only count stock (inventory.count) lands on the counts they can do.
+  const own = (await api<Me>('/me')).activeTenant?.permissions ?? [];
+  if (!own.includes('inventory.read') && own.includes('inventory.count')) redirect(`/inventory/counts${sp.branch ? `?branch=${sp.branch}` : ''}`);
+  const { branches, branch } = await inventoryBranch(sp.branch);
   const [me, valuation, low, points, products] = await Promise.all([
     api<Me>('/me'),
     branch ? apiOrNull<Valuation>(`/reports/inventory-valuation?branchId=${branch.id}`) : null,

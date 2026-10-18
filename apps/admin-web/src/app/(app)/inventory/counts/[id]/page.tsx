@@ -41,7 +41,7 @@ export default async function CountPage({ params }: { params: Promise<{ id: stri
           columns={[
             { header: t('prod.sku'), cell: (l) => <Serial className="text-ink">{l.sku}</Serial> },
             { header: t('common.item'), cell: (l) => l.name },
-            { header: t('inv.before'), num: true, cell: (l) => qty(l.systemQuantity) },
+            { header: count.lines.some((l) => l.frozen) ? t('sheet.frozen') : t('inv.before'), num: true, cell: (l) => qty(l.systemQuantity) },
             { header: t('inv.counted'), num: true, cell: (l) => <b>{qty(l.countedQuantity)}</b> },
             { header: t('inv.variance'), num: true, cell: (l) => signed(l.varianceQuantity, qty) },
             { header: t('inv.varianceValue'), num: true, cell: (l) => <span className="money font-semibold">{signed(l.varianceValue, peso)}</span> },

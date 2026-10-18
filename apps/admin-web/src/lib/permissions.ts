@@ -8,7 +8,7 @@ export const PERMISSION_GROUPS: readonly { key: string; codes: readonly Permissi
   { key: 'locations', codes: ['org.read', 'org.manage', 'terminals.manage', 'tax.manage'] },
   { key: 'catalog', codes: ['catalog.read', 'catalog.manage', 'prices.manage'] },
   { key: 'selling', codes: ['sales.create', 'sales.read', 'sales.refund', 'sales.void', 'sales.price_override', 'sales.discount', 'cash.session', 'cash.reconcile', 'customers.read', 'customers.manage'] },
-  { key: 'stock', codes: ['inventory.read', 'inventory.adjust', 'inventory.transfer', 'purchasing.manage'] },
+  { key: 'stock', codes: ['inventory.read', 'inventory.adjust', 'inventory.count', 'inventory.transfer', 'purchasing.manage'] },
   { key: 'restaurant', codes: ['restaurant.manage', 'restaurant.orders', 'kitchen.operate'] },
   { key: 'books', codes: ['reports.read', 'accounting.read', 'accounting.post'] },
 ];

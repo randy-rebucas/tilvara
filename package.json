@@ -36,6 +36,7 @@
     "test:e2e:web:backoffice": "node apps/admin-web/e2e/backoffice.mjs",
     "test:e2e:web:onboarding": "node apps/admin-web/e2e/onboarding.mjs",
     "test:e2e:web:account": "node apps/admin-web/e2e/account.mjs",
+    "test:e2e:web:stock": "node apps/admin-web/e2e/stock.mjs",
     "backup": "pnpm --filter @1pos/database backup",
     "test:db:reset": "pnpm --filter @1pos/database build && pnpm --filter @1pos/database test-db-reset",
     "drill:restore": "node --env-file-if-exists=.env infra/backup/drill-restore.mjs",

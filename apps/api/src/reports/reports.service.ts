@@ -257,7 +257,8 @@ export class ReportsService extends TenantService {
                coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_qty,
                coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_value,
                coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_qty,
-               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_value
+               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_value,
+               count(*) FILTER (WHERE m.below_zero AND m.created_at >= ${w.start})::int AS below_zero
           FROM stock_movements m JOIN product_variants v ON v.id = m.variant_id JOIN products p ON p.id = v.product_id
          WHERE m.branch_id = ${w.branchId} AND m.created_at < ${w.end}
          GROUP BY 1, 2, 3 ORDER BY v.sku`);
@@ -274,6 +275,8 @@ export class ReportsService extends TenantService {
             byType.filter((t) => t.variant_id === r.variant_id).map((t) => [t.type as string, { quantity: qty(t.qty as string), value: money(t.value as string) }]),
           ),
           closing: { quantity: qty(r.closing_qty as string), value: money(r.closing_value as string) },
+          /** Movements in the range that left the item below zero (negative-stock policy). */
+          belowZero: r.below_zero as number,
         })),
       };
     });

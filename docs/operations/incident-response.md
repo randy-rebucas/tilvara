@@ -1,6 +1,6 @@
 # Runbook: incident response
 
-For: whoever is on call for 1POS, and whoever they pull in. It covers how to judge an incident, who does
+For: whoever is on call for Tilvara, and whoever they pull in. It covers how to judge an incident, who does
 what, how to keep businesses informed, and how to close it. Security incidents follow this runbook and
 [security-incident.md](security-incident.md) together. Personal data involved: the
 [breach procedure](../compliance/privacy/breach-procedure.md) starts at the same time, because its
@@ -88,9 +88,9 @@ internals.
 
 Message to adapt (English; the support team gives a Filipino version when the owner prefers it):
 
-> 1POS is having a problem: [online checkout is not responding]. Desktop tills keep selling cash and will
+> Tilvara is having a problem: [online checkout is not responding]. Desktop tills keep selling cash and will
 > send their sales when we are back; card and QR payments are not available until then. Please do not
-> ring the same sale twice. Next update by [time]. — 1POS support
+> ring the same sale twice. Next update by [time]. — Tilvara support
 
 Resolved:
 

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, check, foreignKey, index, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
 import { branches } from './organization.js';
 
@@ -90,6 +90,11 @@ export const stockCountLines = pgTable(
     stockCountId: uuid('stock_count_id').notNull(),
     variantId: uuid('variant_id').notNull(),
     countedQuantity: qty('counted_quantity').notNull(),
+    /**
+     * Only for a count posted from a count sheet: on hand when the sheet was frozen. The trigger then
+     * moves counted − expected (stock moved since the freeze stays); without it, counted − on hand now.
+     */
+    expectedQuantity: qty('expected_quantity'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -98,6 +103,96 @@ export const stockCountLines = pgTable(
     foreignKey({ columns: [t.tenantId, t.stockCountId], foreignColumns: [stockCounts.tenantId, stockCounts.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     check('stock_count_lines_quantity_check', sql`${t.countedQuantity} >= 0`),
+  ],
+);
+
+// ------------------------------------------------------------------ count sheets (blind counts)
+
+export const COUNT_SHEET_STATUSES = ['OPEN', 'POSTED', 'CANCELLED'] as const;
+export type CountSheetStatus = (typeof COUNT_SHEET_STATUSES)[number];
+
+/**
+ * A count in progress: on-hand quantities are frozen when it opens, people enter what they find
+ * (blind: without seeing the frozen quantity unless they may adjust stock), and a manager posts it
+ * later as a stock count whose variance is counted − frozen. OPEN → POSTED | CANCELLED, once.
+ */
+export const stockCountSheets = pgTable(
+  'stock_count_sheets',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    blind: boolean('blind').notNull().default(true),
+    status: text('status').$type<CountSheetStatus>().notNull().default('OPEN'),
+    notes: text('notes'),
+    frozenAt: timestamp('frozen_at', { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid('created_by').notNull(),
+    stockCountId: uuid('stock_count_id'),
+    closedBy: uuid('closed_by'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    unique('stock_count_sheets_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('stock_count_sheets_count_unique').on(t.tenantId, t.stockCountId),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.stockCountId], foreignColumns: [stockCounts.tenantId, stockCounts.id] }),
+    check('stock_count_sheets_status_check', sql`${t.status} IN ('OPEN','POSTED','CANCELLED')`),
+    check(
+      'stock_count_sheets_close_check',
+      sql`(${t.status} = 'OPEN') = (${t.closedAt} IS NULL) AND (${t.status} = 'POSTED') = (${t.stockCountId} IS NOT NULL)
+          AND (${t.status} <> 'CANCELLED' OR length(trim(${t.cancelReason})) > 0)`,
+    ),
+    index('stock_count_sheets_branch_idx').on(t.tenantId, t.branchId, t.frozenAt),
+  ],
+);
+
+export const stockCountSheetLines = pgTable(
+  'stock_count_sheet_lines',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    sheetId: uuid('sheet_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    expectedQuantity: qty('expected_quantity').notNull(),
+    countedQuantity: qty('counted_quantity'),
+    countedBy: uuid('counted_by'),
+    countedAt: timestamp('counted_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('stock_count_sheet_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('stock_count_sheet_lines_variant_unique').on(t.tenantId, t.sheetId, t.variantId),
+    foreignKey({ columns: [t.tenantId, t.sheetId], foreignColumns: [stockCountSheets.tenantId, stockCountSheets.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    check('stock_count_sheet_lines_counted_check', sql`${t.countedQuantity} IS NULL OR ${t.countedQuantity} >= 0`),
+    check('stock_count_sheet_lines_by_check', sql`(${t.countedQuantity} IS NULL) = (${t.countedBy} IS NULL) AND (${t.countedBy} IS NULL) = (${t.countedAt} IS NULL)`),
+  ],
+);
+
+// ------------------------------------------------------------------ inventory settings
+
+export const NEGATIVE_STOCK_POLICIES = ['ALLOW', 'ALLOW_WITH_FLAG', 'BLOCK'] as const;
+export type NegativeStockPolicy = (typeof NEGATIVE_STOCK_POLICIES)[number];
+
+/**
+ * Per branch (a missing row = the defaults). Negative stock: ALLOW (sell below zero, visible on the
+ * balance), ALLOW_WITH_FLAG (also mark it and alert), BLOCK (a counter sale that would go below zero
+ * is refused; restaurant checks and offline sales cannot be refused, so they are flagged).
+ */
+export const inventorySettings = pgTable(
+  'inventory_settings',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    negativeStockPolicy: text('negative_stock_policy').$type<NegativeStockPolicy>().notNull().default('ALLOW'),
+    lowStockAlerts: boolean('low_stock_alerts').notNull().default(true),
+    updatedBy: uuid('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tenantId, t.branchId] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    check('inventory_settings_policy_check', sql`${t.negativeStockPolicy} IN ('ALLOW','ALLOW_WITH_FLAG','BLOCK')`),
   ],
 );
 

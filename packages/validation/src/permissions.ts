@@ -26,6 +26,7 @@ export const PERMISSIONS = [
   'cash.reconcile',
   'inventory.read',
   'inventory.adjust',
+  'inventory.count',
   'inventory.transfer',
   'purchasing.manage',
   'restaurant.manage',

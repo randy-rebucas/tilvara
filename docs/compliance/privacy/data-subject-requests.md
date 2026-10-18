@@ -3,14 +3,14 @@
 > **DRAFT, NOT LEGAL ADVICE.** Response times and identity checks are for the DPO to set. It describes
 > what the system can do as built on 2026-10-18.
 
-For: the DPO and 1POS support. How to handle a request from a person to be informed, to access, correct,
+For: the DPO and Tilvara support. How to handle a request from a person to be informed, to access, correct,
 object to, erase or block, or take a copy of their personal data (Data Privacy Act, Secs. 16–18).
 
 ## 1. First: who is the controller?
 
-| Request about | Controller | 1POS does |
+| Request about | Controller | Tilvara does |
 |---|---|---|
-| Their 1POS account (email, name, sign-in, security events) | **1POS** | Answer it (section 3) |
+| Their Tilvara account (email, name, sign-in, security events) | **Tilvara** | Answer it (section 3) |
 | A business's records about them: an SC/PWD discount record, a takeaway name, a supplier record, their work as a cashier | **That business** | Forward it to the business's owner within 2 working days, tell the person it was forwarded, and help the business (section 4). Do not answer it ourselves |
 | Both | Both | Split it |
 
@@ -34,7 +34,7 @@ other than the one on the account.
 | Close (block) an account | **Self-service** on the same page, once the person belongs to no business. Ops: `pnpm --filter @1pos/database support account-disable --email … --reason "data subject request" --ticket …` (audited); `account-enable` undoes either |
 | Erase | Not possible for fiscal records within the retention period. A closed account is blocked now; its anonymisation job is not built (it waits on the retention periods). Block and explain |
 
-## 3. Requests about a 1POS account
+## 3. Requests about a Tilvara account
 
 - **Access / copy**: as `onepos_migrator` with `SET ROLE onepos_platform`, collect the person's `users` row
   (without `password_hash`), their sessions (times, user agent), their NULL-tenant audit rows, and the list
@@ -53,7 +53,7 @@ other than the one on the account.
 
 ## 4. Requests about a business's records (helping the controller)
 
-Tell the business what the person asked, and how 1POS can help:
+Tell the business what the person asked, and how Tilvara can help:
 
 - **Access**: the business finds the records in its admin (for an SC/PWD record: Reports → Sales → SC/PWD
   book for the date range, downloaded as CSV and searched for the name or ID number; the report has no
@@ -63,7 +63,7 @@ Tell the business what the person asked, and how 1POS can help:
   keeps a written note of the correction with its SC/PWD book and the DPO records the limitation.
 - **Erasure / objection**: SC/PWD records are kept because tax rules require them; the business explains
   this to the person and the record is anonymised when the period ends. A takeaway name has no such
-  reason: there is no way to clear it yet (LEFTOVER), so the business notes the request and 1POS clears
+  reason: there is no way to clear it yet (LEFTOVER), so the business notes the request and Tilvara clears
   it when the tool exists.
 
 ## 5. Replies to adapt

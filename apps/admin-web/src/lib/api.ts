@@ -449,7 +449,50 @@ export interface CountRow {
 }
 export interface Count extends CountRow {
   varianceValue: string;
-  lines: { id: string; variantId: string; sku: string; name: string; countedQuantity: string; systemQuantity: string; varianceQuantity: string; varianceValue: string }[];
+  lines: { id: string; variantId: string; sku: string; name: string; countedQuantity: string; systemQuantity: string; varianceQuantity: string; varianceValue: string; frozen: boolean }[];
+}
+export interface CountSheetRow {
+  id: string;
+  status: 'OPEN' | 'POSTED' | 'CANCELLED';
+  blind: boolean;
+  notes: string | null;
+  frozenAt: string;
+  closedAt: string | null;
+  stockCountId: string | null;
+  lines: number;
+  counted: number;
+}
+export interface CountSheet {
+  id: string;
+  branchId: string;
+  status: CountSheetRow['status'];
+  blind: boolean;
+  notes: string | null;
+  frozenAt: string;
+  closedAt: string | null;
+  cancelReason: string | null;
+  stockCountId: string | null;
+  /** False for someone who may only count a blind sheet that is still open. */
+  expectedShown: boolean;
+  lines: {
+    id: string;
+    variantId: string;
+    sku: string;
+    name: string;
+    countedQuantity: string | null;
+    countedBy: string | null;
+    countedAt: string | null;
+    expectedQuantity?: string;
+    varianceQuantity?: string | null;
+    movedSinceFreeze?: string;
+  }[];
+}
+export type NegativeStockPolicy = 'ALLOW' | 'ALLOW_WITH_FLAG' | 'BLOCK';
+export interface InventorySettings {
+  branchId: string;
+  negativeStockPolicy: NegativeStockPolicy;
+  lowStockAlerts: boolean;
+  updatedAt: string | null;
 }
 export interface Adjustment {
   id: string;
@@ -486,6 +529,8 @@ export interface MovementSummary {
     opening: { quantity: string; value: string };
     movements: Record<string, { quantity: string; value: string }>;
     closing: { quantity: string; value: string };
+    /** Movements in the range that left the item below zero. */
+    belowZero: number;
   }[];
 }
 

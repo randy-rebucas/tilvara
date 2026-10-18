@@ -1,6 +1,6 @@
-# Offboarding a business (leaving 1POS)
+# Offboarding a business (leaving Tilvara)
 
-What happens when a business stops using 1POS, step by step. The rule throughout: **records are never
+What happens when a business stops using Tilvara, step by step. The rule throughout: **records are never
 deleted early.** Philippine tax rules require books and records to be kept for at least 5 years (EOPT,
 amended Sec. 235; see `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md`), longer while a protest or refund is
 pending. Personal data is anonymised only after that period ends. This runbook is an operating procedure,

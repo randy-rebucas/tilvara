@@ -3,10 +3,10 @@
 > **DRAFT, NOT LEGAL ADVICE.** Lawful bases are engineering's reading for the DPO to confirm. Facts about
 > the system were checked against the schema and code on 2026-10-18 (migrations 0000–0055).
 
-Controller: **[1POS operator legal name, address]**. DPO: **[name, email]**.
+Controller: **[Tilvara operator legal name, address]**. DPO: **[name, email]**.
 Hosting: **[provider, region]** (decision D1; until then development machines only, no production data).
 
-Roles: **PIC** = 1POS is controller; **PIP** = 1POS processes for the business, which is controller
+Roles: **PIC** = Tilvara is controller; **PIP** = Tilvara processes for the business, which is controller
 (see README §1). Retention details and enforcement status: [retention-schedule.md](retention-schedule.md).
 
 Safeguards that apply to every activity, so they are not repeated in each row:
@@ -25,12 +25,12 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 ### 1. Accounts and sign-in — PIC
 | | |
 |---|---|
-| Purpose | Let people sign in to 1POS securely; protect accounts from takeover |
-| People | Everyone with a 1POS account: owners, managers, cashiers, kitchen staff, accountants, 1POS support staff |
+| Purpose | Let people sign in to Tilvara securely; protect accounts from takeover |
+| People | Everyone with a Tilvara account: owners, managers, cashiers, kitchen staff, accountants, Tilvara support staff |
 | Data | Email, display name, password hash (argon2id), failed sign-in count and lock time, last sign-in time; sessions (refresh-token hash, start/expiry/revocation, **browser user agent**); two-step sign-in secret (encrypted AES-256-GCM, key outside the database) and hashed recovery codes; hashed password-reset tokens (30 minutes); a requested new sign-in email with its hashed confirmation link (24 hours); `closed_at`, when the person closed the account |
 | Source | The person (sign-up, invitation acceptance, Your account page); their browser (user agent) |
 | Basis | Contract (Sec. 12(b)): needed to provide the account. Security measures: legitimate interest (Sec. 12(f)) |
-| Recipients | No one outside 1POS. Email provider for reset and invitation mail (D2) |
+| Recipients | No one outside Tilvara. Email provider for reset and invitation mail (D2) |
 | Tables | `users`, `user_sessions`, `user_mfa_factors`, `user_mfa_recovery_codes`, `password_reset_tokens`, `email_change_tokens` (platform tables; the API reaches the credential tables only through audited database functions) |
 | Retention | Account: while it exists; the person can close it (blocked at once, second factor and pending links removed; anonymisation not built). Sessions, reset and email-change tokens: **no purge yet** (proposed in the schedule) |
 | Notes | IP addresses are used in memory for rate limits and never stored by the application |
@@ -53,7 +53,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | People | Senior citizens and persons with disability who receive the discount; the cashier who rang the sale |
 | Data | Beneficiary **name, OSCA/PWD ID number, TIN if given**, discount scheme; never the disability type. Cashier's account id on each sale, shift, return, payment |
 | Source | The cashier, from the customer's ID at the counter |
-| Basis | For the business: legal obligation (Sec. 12(c)); if sensitive (README §2), processing provided for by law (Sec. 13(b)). 1POS: processing on the business's instructions |
+| Basis | For the business: legal obligation (Sec. 12(c)); if sensitive (README §2), processing provided for by law (Sec. 13(b)). Tilvara: processing on the business's instructions |
 | Recipients | The business's authorised staff; its accountant through reports and exports; the BIR when the business files |
 | Tables | `sale_beneficiaries`, `order_bill_beneficiaries` (append-only); for 24 hours, copies of API answers in `idempotency_records` |
 | Retention | Fiscal records: at least 5 years (schedule), then anonymised (job not built) |
@@ -91,18 +91,18 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | | |
 |---|---|
 | Purpose | Prove who did what; detect and investigate misuse |
-| People | Everyone with an account; 1POS support staff |
+| People | Everyone with an account; Tilvara support staff |
 | Data | Actor, action, resource, time, correlation id, details (e.g. a reset reason, an item name). Account events outside a business (lockouts, refresh-token reuse, MFA changes, resets, staff and support openings) are kept at platform level |
 | Basis | Legitimate interest (Sec. 12(f)); for the business, legal obligation where the audit trail is part of its records |
-| Recipients | The business sees its own log (permission `audit.read`); platform rows are read by 1POS ops only |
+| Recipients | The business sees its own log (permission `audit.read`); platform rows are read by Tilvara ops only |
 | Tables | `audit_logs` (append-only, cannot be truncated) |
 | Notes | Application logs carry account and business ids and route templates, never bodies; their retention depends on the host (D1). Metrics carry no personal data by design (fixed label sets) |
 
 ### 8. Support access — PIP, inside the business's grant
 | | |
 |---|---|
-| Purpose | Let 1POS help a business that asks for it |
-| People | The granting owner/admin; 1POS staff; anyone whose data appears on the pages support reads |
+| Purpose | Let Tilvara help a business that asks for it |
+| People | The granting owner/admin; Tilvara staff; anyone whose data appears on the pages support reads |
 | Data | Grant (purpose, ticket, who gave it, duration ≤ 72 h); every page support read, in the business's audit log |
 | Basis | The business's instruction (its grant). Staff accounts: contract and legitimate interest |
 | Tables | `support_grants`, `platform_staff`, `audit_logs` |
@@ -111,7 +111,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 ### 9. Data export for the business — PIP
 | | |
 |---|---|
-| Purpose | Give the business a copy of all its records (portability; leaving 1POS) |
+| Purpose | Give the business a copy of all its records (portability; leaving Tilvara) |
 | Data | Every table of the business's records, members' emails and names; no credential hashes |
 | Recipients | The owner/admin who downloads it (10-minute links) |
 | Tables | `data_exports`; files in private storage (`DevFileStorage` until D1) |
@@ -136,7 +136,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 ### 12. Transactional email — PIC
 | | |
 |---|---|
-| Purpose | Invitations, password reset, welcome mail, sign-in email change (a link to the new address, a notice to the old one) |
+| Purpose | Invitations, password reset, welcome mail, sign-in email change (a link to the new address, a notice to the old one), stock alerts to members who keep stock at a branch (low stock, sold below zero; item and branch names only) |
 | Data | Recipient email, name, a one-time link. Logs keep only the template and a masked recipient (`m***@example.ph`) |
 | Recipients | The email provider (D2); `DevMailer` (no delivery) until then |
 
@@ -144,7 +144,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | | |
 |---|---|
 | Purpose | Take non-cash payments |
-| Data | Amount, method, outcome, provider reference. **No card number or CVV ever reaches 1POS**; the provider's terminal or page collects them |
+| Data | Amount, method, outcome, provider reference. **No card number or CVV ever reaches Tilvara**; the provider's terminal or page collects them |
 | Recipients | The payment provider (PayMongo, D6; not live yet) |
 | Tables | `payment_intents`, `payment_events` (append-only) |
 

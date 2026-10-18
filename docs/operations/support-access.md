@@ -1,12 +1,12 @@
-# Support access (1POS staff looking at a business)
+# Support access (Tilvara staff looking at a business)
 
-1POS staff have **no standing access** to any business (SPEC §13, THREAT_MODEL T14). A business lets
+Tilvara staff have **no standing access** to any business (SPEC §13, THREAT_MODEL T14). A business lets
 support look, read-only, for a reason it gives and for at most 72 hours. It sees every page support opened
 and can end the access at any moment. Design: ADR-0016 "As built — slice 6".
 
 ## 1. Who can be support staff
 
-A staff account is a normal 1POS account (its own email and password) that ops has marked as staff. It
+A staff account is a normal Tilvara account (its own email and password) that ops has marked as staff. It
 must use two-step sign-in, and every support session needs a sign-in that passed the code step.
 
 Add or remove staff with ops credentials (`DATABASE_MIGRATOR_URL`, never the API's runtime credentials):

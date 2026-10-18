@@ -1,18 +1,18 @@
 # Runbook: payment reconciliation
 
-For: branch managers and the business's accountant (the daily and monthly checks), and 1POS support (the
+For: branch managers and the business's accountant (the daily and monthly checks), and Tilvara support (the
 card/QR intents that need help). Design: ADR-0010 (payment intents), ADR-0009 (cash), ADR-0013 (books).
 
 **Current state.** The only payment provider is `DevPaymentProvider`, and production refuses it. Until
 the PayMongo adapter exists (D6), a production business takes **cash only**, plus card or QR on its own
-separate terminal outside 1POS. Sections 1 and 2 apply now. Section 3 applies the day PayMongo is
+separate terminal outside Tilvara. Sections 1 and 2 apply now. Section 3 applies the day PayMongo is
 connected, and section 4 lists what will be added then.
 
 ## 1. Every shift: the drawer
 
 A shift (cashier session) is the unit of cash reconciliation.
 
-1. **Close the shift** on the POS: the cashier counts the drawer. 1POS computes what the drawer should
+1. **Close the shift** on the POS: the cashier counts the drawer. Tilvara computes what the drawer should
    hold: opening float + cash sales − change given − cash refunds + pay-ins − pay-outs.
 2. **No difference**: the shift is `RECONCILED` at once.
 3. **A difference** (over or short): the variance is posted to the books at the close, as counted. The
@@ -49,7 +49,7 @@ The daily per-branch reconciliation report that puts these checks on one page is
 
 ## 3. Card/QR payments that need attention
 
-A card or QR payment is a **payment intent**. 1POS records the intent first, asks the provider second,
+A card or QR payment is a **payment intent**. Tilvara records the intent first, asks the provider second,
 and records the outcome third, so a lost answer can never charge twice.
 
 | Intent state | Meaning | What to do |
@@ -68,7 +68,7 @@ and records the outcome third, so a lost answer can never charge twice.
 - `OneposPaymentUnresolved` fires when any intent has waited more than 15 minutes for its outcome
   ([monitoring.md](monitoring.md#onepospaymentunresolved)).
 - Every step is in `payment_events` (append-only): requested, authorized, declined, timeout, reconciled,
-  canceled, consumed. 1POS never receives card numbers or CVV.
+  canceled, consumed. Tilvara never receives card numbers or CVV.
 
 **Customer says they were charged but there is no sale**: find the intent by time and amount on the shift
 page. `SUCCEEDED` without a sale → complete the sale or cancel it. `UNKNOWN` → Check payment.

@@ -1,4 +1,4 @@
-import { eq, users, withTenant, writeDataExport, type FileStorage } from '@1pos/database';
+import { eq, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { Logger, OutboxHandler } from './outbox-processor.js';
@@ -41,7 +41,24 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
         text: `Hi ${owner.displayName}, your business is ready. Your 14-day trial has started.`,
       });
     },
+    'stock.low': stockAlertHandler(mailer, 'low'),
+    'stock.below_zero': stockAlertHandler(mailer, 'below_zero'),
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
+  };
+}
+
+/**
+ * Stock alerts written by the costing trigger (session 16): an item fell to its reorder point, or
+ * below zero under a FLAG/BLOCK policy. One mail per keeper per crossing; the numbers are the
+ * balance right after the movement that crossed (the item may have moved again since).
+ */
+function stockAlertHandler(mailer: WorkerMailer, kind: 'low' | 'below_zero'): OutboxHandler {
+  return async (event, _db, { client }) => {
+    const mail = await stockAlertMail(client, `stock.${kind}`, event.payload);
+    if (!mail) throw new Error(`stock alert for an unknown branch or item (event ${event.id})`);
+    for (const k of await stockKeepers(client, String(event.payload.branchId ?? ''))) {
+      await mailer.send({ to: k.email, template: `stock.${kind}`, ...mail });
+    }
   };
 }
 

@@ -4,6 +4,7 @@ import {
   desc,
   eq,
   inArray,
+  inventorySettings,
   or,
   productVariants,
   products,
@@ -11,13 +12,27 @@ import {
   sql,
   stockCountLines,
   stockCounts,
+  stockCountSheetLines,
+  stockCountSheets,
   stockMovements,
   stockTransferLines,
   stockTransfers,
   type Database,
 } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
-import type { BranchQuery, CreateStockCountInput, CreateStockTransferInput, ReceiveStockTransferInput, SetReorderPointsInput, StockTransferListQuery } from '@1pos/validation';
+import type {
+  BranchQuery,
+  CancelCountSheetInput,
+  CountSheetLinesInput,
+  CountSheetListQuery,
+  CreateCountSheetInput,
+  CreateStockCountInput,
+  CreateStockTransferInput,
+  InventorySettingsInput,
+  ReceiveStockTransferInput,
+  SetReorderPointsInput,
+  StockTransferListQuery,
+} from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { nextNumber } from '../common/sequence.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -28,6 +43,10 @@ import { assertVariants, branchScope } from '../purchasing/purchase-orders.servi
 import { unprocessable } from '../tax/tax.service.js';
 import { stockChangePosting, transferDispatchPosting, transferReceiptPosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
+
+const MAX_SHEET_LINES = 5000;
+const sheetClosed = (status: string) =>
+  new AppError('COUNT_SHEET_CLOSED', `This count sheet is ${status.toLowerCase()}`, HttpStatus.CONFLICT, { status });
 
 const byVariant = <T extends { variantId: string }>(a: T, b: T) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
 
@@ -260,33 +279,47 @@ export class InventoryService extends TenantService {
       const ids = input.lines.map((l) => l.variantId);
       await assertVariants(db, ids);
       await assertStocked(db, ids);
-      const tenantId = tenantOf(auth).tenantId;
-      const countNumber = await nextNumber(db, tenantId, branch.id, 'COUNT');
-      const [doc] = await db.insert(stockCounts).values({ tenantId, branchId: branch.id, countNumber, notes: input.notes ?? null, countedBy: auth.userId }).returning();
-      const lines = await db
-        .insert(stockCountLines)
-        .values(input.lines.map((l) => ({ tenantId, stockCountId: doc!.id, variantId: l.variantId, countedQuantity: l.countedQuantity })))
-        .returning();
-      // The ledger trigger turns each line into counted − on hand, under the balance lock; equal → no movement.
-      const moved = await db
-        .insert(stockMovements)
-        .values(lines.map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: '0', type: 'COUNT', stockCountLineId: l.id, createdBy: auth.userId })).sort(byVariant))
-        .returning({ value: stockMovements.value });
-      await post(db, {
-        tenantId,
-        legalEntityId: branch.legalEntityId,
-        branchId: branch.id,
-        sourceType: 'STOCK_COUNT',
-        sourceId: doc!.id,
-        memo: `Stock count #${countNumber}`,
-        lines: stockChangePosting('COUNT', moved.reduce((a, m) => a.plus(m.value), new Dec(0)), branch.id),
-        createdBy: auth.userId,
-      });
-      const view = await this.countView(db, doc!);
-      await this.audit(db, auth, 'stock.counted', 'stock_count', doc!.id, { countNumber, lines: lines.length, varianceValue: view.varianceValue });
-      await emitEvent(db, { tenantId, topic: 'stock.counted', payload: { stockCountId: doc!.id, branchId: branch.id }, correlationId: auth.correlationId });
-      return view;
+      return this.postCount(db, auth, branch, input.lines.map((l) => ({ ...l, expectedQuantity: null })), input.notes ?? null);
     });
+  }
+
+  /**
+   * One stock count document, its lines, the COUNT movements and the entry. The ledger trigger turns
+   * each line into counted − on hand (or counted − expected for a line frozen on a count sheet), under
+   * the balance lock; equal → no movement.
+   */
+  private async postCount(
+    db: Database,
+    auth: AuthContext,
+    branch: { id: string; legalEntityId: string },
+    input: { variantId: string; countedQuantity: string; expectedQuantity: string | null }[],
+    notes: string | null,
+  ) {
+    const tenantId = tenantOf(auth).tenantId;
+    const countNumber = await nextNumber(db, tenantId, branch.id, 'COUNT');
+    const [doc] = await db.insert(stockCounts).values({ tenantId, branchId: branch.id, countNumber, notes, countedBy: auth.userId }).returning();
+    const lines = await db
+      .insert(stockCountLines)
+      .values(input.map((l) => ({ tenantId, stockCountId: doc!.id, variantId: l.variantId, countedQuantity: l.countedQuantity, expectedQuantity: l.expectedQuantity })))
+      .returning();
+    const moved = await db
+      .insert(stockMovements)
+      .values(lines.map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: '0', type: 'COUNT', stockCountLineId: l.id, createdBy: auth.userId })).sort(byVariant))
+      .returning({ value: stockMovements.value });
+    await post(db, {
+      tenantId,
+      legalEntityId: branch.legalEntityId,
+      branchId: branch.id,
+      sourceType: 'STOCK_COUNT',
+      sourceId: doc!.id,
+      memo: `Stock count #${countNumber}`,
+      lines: stockChangePosting('COUNT', moved.reduce((a, m) => a.plus(m.value), new Dec(0)), branch.id),
+      createdBy: auth.userId,
+    });
+    const view = await this.countView(db, doc!);
+    await this.audit(db, auth, 'stock.counted', 'stock_count', doc!.id, { countNumber, lines: lines.length, varianceValue: view.varianceValue });
+    await emitEvent(db, { tenantId, topic: 'stock.counted', payload: { stockCountId: doc!.id, branchId: branch.id }, correlationId: auth.correlationId });
+    return view;
   }
 
   getCount(auth: AuthContext, id: string) {
@@ -308,8 +341,8 @@ export class InventoryService extends TenantService {
   }
 
   private async countView(db: Database, c: typeof stockCounts.$inferSelect) {
-    const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; counted: string; variance: string | null; unit_cost: string | null; value: string | null }>(sql`
-      SELECT l.id, l.variant_id, v.sku, p.name, l.counted_quantity::text AS counted,
+    const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; counted: string; expected: string | null; variance: string | null; unit_cost: string | null; value: string | null }>(sql`
+      SELECT l.id, l.variant_id, v.sku, p.name, l.counted_quantity::text AS counted, l.expected_quantity::text AS expected,
              m.quantity::text AS variance, m.unit_cost::text AS unit_cost, m.value::text AS value
         FROM stock_count_lines l
         JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
@@ -329,12 +362,257 @@ export class InventoryService extends TenantService {
           sku: r.sku,
           name: r.name,
           countedQuantity: toDec(r.counted).toString(),
-          /** On hand when the count was posted. */
+          /** On hand when the count was posted, or when its count sheet was frozen. */
           systemQuantity: toDec(r.counted).minus(variance).toString(),
+          /** From a count sheet: the variance is against this frozen quantity. */
+          frozen: r.expected !== null,
           varianceQuantity: variance.toString(),
           varianceValue: toDec(r.value ?? '0').toFixed(2),
         };
       }),
+    };
+  }
+
+  // ---------------------------------------------------------------- count sheets (blind counts)
+
+  /** Opens a sheet and freezes on hand for its items, in one statement (one consistent snapshot). */
+  openCountSheet(auth: AuthContext, input: CreateCountSheetInput) {
+    return this.mutate(auth, async (db) => {
+      const { branch, scope } = await branchScope(db, input.branchId);
+      this.assertCan(auth, 'inventory.adjust', scope);
+      if (branch.archivedAt) throw archived('Branch');
+      let ids: string[];
+      if (input.variantIds) {
+        ids = [...new Set(input.variantIds)];
+        await assertVariants(db, ids);
+        await assertStocked(db, ids);
+      } else {
+        const { rows } = await db.execute<{ variant_id: string }>(sql`
+          SELECT b.variant_id FROM stock_balances b
+            JOIN product_variants v ON v.tenant_id = b.tenant_id AND v.id = b.variant_id
+            JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
+           WHERE b.branch_id = ${branch.id} AND p.track_inventory AND (b.quantity <> 0 OR v.archived_at IS NULL)
+           ORDER BY b.variant_id LIMIT ${MAX_SHEET_LINES + 1}`);
+        if (rows.length > MAX_SHEET_LINES) throw unprocessable('COUNT_SHEET_TOO_LARGE', `A sheet holds at most ${MAX_SHEET_LINES} items; count this branch by list`);
+        ids = rows.map((r) => r.variant_id);
+      }
+      if (ids.length === 0) throw unprocessable('NOTHING_TO_COUNT', 'This branch has no stock to count yet');
+      const tenantId = tenantOf(auth).tenantId;
+      const [sheet] = await db
+        .insert(stockCountSheets)
+        .values({ tenantId, branchId: branch.id, blind: input.blind, notes: input.notes ?? null, createdBy: auth.userId })
+        .returning();
+      await this.freezeLines(db, tenantId, sheet!.id, branch.id, ids);
+      await this.audit(db, auth, 'stock.count_sheet_opened', 'stock_count_sheet', sheet!.id, { items: ids.length, blind: input.blind });
+      return this.sheetView(db, auth, sheet!, scope);
+    });
+  }
+
+  private async freezeLines(db: Database, tenantId: string, sheetId: string, branchId: string, ids: string[]) {
+    await db.execute(sql`
+      INSERT INTO stock_count_sheet_lines (tenant_id, sheet_id, variant_id, expected_quantity)
+      SELECT ${tenantId}, ${sheetId}, x.id, coalesce(b.quantity, 0)
+        FROM unnest(ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]) AS x(id)
+        LEFT JOIN stock_balances b ON b.tenant_id = ${tenantId} AND b.branch_id = ${branchId} AND b.variant_id = x.id`);
+  }
+
+  listCountSheets(auth: AuthContext, q: CountSheetListQuery) {
+    return this.read(auth, async (db) => {
+      const { scope } = await branchScope(db, q.branchId);
+      this.assertCanSeeSheets(auth, scope);
+      const { rows } = await db.execute<{ id: string; status: string; blind: boolean; notes: string | null; frozen_at: string; closed_at: string | null; stock_count_id: string | null; lines: number; counted: number }>(sql`
+        SELECT s.id, s.status, s.blind, s.notes, s.frozen_at, s.closed_at, s.stock_count_id,
+               count(l.id)::int AS lines, count(l.counted_quantity)::int AS counted
+          FROM stock_count_sheets s LEFT JOIN stock_count_sheet_lines l ON l.tenant_id = s.tenant_id AND l.sheet_id = s.id
+         WHERE s.branch_id = ${q.branchId} ${q.status ? sql`AND s.status = ${q.status}` : sql``}
+         GROUP BY s.id ORDER BY s.frozen_at DESC LIMIT 200`);
+      return {
+        data: rows.map((r) => ({
+          id: r.id, status: r.status, blind: r.blind, notes: r.notes, frozenAt: new Date(r.frozen_at).toISOString(),
+          closedAt: r.closed_at ? new Date(r.closed_at).toISOString() : null, stockCountId: r.stock_count_id, lines: r.lines, counted: r.counted,
+        })),
+      };
+    });
+  }
+
+  getCountSheet(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const sheet = await this.sheetOrThrow(db, id);
+      const { scope } = await branchScope(db, sheet.branchId);
+      this.assertCanSeeSheets(auth, scope);
+      return this.sheetView(db, auth, sheet, scope);
+    });
+  }
+
+  /** Counts entered on an open sheet (blind for those who may only count). An item not on it is added, frozen at on hand now. */
+  countSheetLines(auth: AuthContext, id: string, input: CountSheetLinesInput) {
+    return this.mutate(auth, async (db) => {
+      const sheet = await this.sheetOrThrow(db, id);
+      const { scope } = await branchScope(db, sheet.branchId);
+      if (!this.can(auth, 'inventory.count', scope)) this.assertCan(auth, 'inventory.adjust', scope);
+      if (sheet.status !== 'OPEN') throw sheetClosed(sheet.status);
+      const tenantId = tenantOf(auth).tenantId;
+      const existing = await db.select({ variantId: stockCountSheetLines.variantId }).from(stockCountSheetLines).where(eq(stockCountSheetLines.sheetId, id));
+      const added = input.lines.filter((l) => !existing.some((e) => e.variantId === l.variantId));
+      if (added.some((l) => l.countedQuantity === null)) throw unprocessable('NOT_ON_SHEET', 'Only items on the sheet can be cleared');
+      if (added.length) {
+        await assertVariants(db, added.map((l) => l.variantId));
+        await assertStocked(db, added.map((l) => l.variantId));
+        await this.freezeLines(db, tenantId, id, sheet.branchId, added.map((l) => l.variantId));
+      }
+      for (const l of [...input.lines].sort(byVariant)) {
+        await db
+          .update(stockCountSheetLines)
+          .set(
+            l.countedQuantity === null
+              ? { countedQuantity: null, countedBy: null, countedAt: null }
+              : { countedQuantity: l.countedQuantity, countedBy: auth.userId, countedAt: sql`now()` },
+          )
+          .where(and(eq(stockCountSheetLines.sheetId, id), eq(stockCountSheetLines.variantId, l.variantId)));
+      }
+      await this.audit(db, auth, 'stock.count_sheet_counted', 'stock_count_sheet', id, { lines: input.lines.length, added: added.length });
+      return this.sheetView(db, auth, sheet, scope);
+    });
+  }
+
+  /**
+   * Posts the counted lines as one stock count: variance = counted − frozen, so what sold or arrived
+   * while people counted stays on the books. Lines left uncounted are not posted (and say so).
+   */
+  postCountSheet(auth: AuthContext, id: string) {
+    return this.mutate(auth, async (db) => {
+      const [sheet] = await db.select().from(stockCountSheets).where(eq(stockCountSheets.id, id)).for('update');
+      if (!sheet) throw notFound('Count sheet');
+      const { branch, scope } = await branchScope(db, sheet.branchId);
+      this.assertCan(auth, 'inventory.adjust', scope);
+      if (sheet.status !== 'OPEN') throw sheetClosed(sheet.status);
+      if (branch.archivedAt) throw archived('Branch');
+      const lines = await db.select().from(stockCountSheetLines).where(eq(stockCountSheetLines.sheetId, id));
+      const counted = lines.filter((l) => l.countedQuantity !== null);
+      if (counted.length === 0) throw unprocessable('NOTHING_COUNTED', 'Enter at least one count before posting');
+      const count = await this.postCount(
+        db,
+        auth,
+        branch,
+        counted.map((l) => ({ variantId: l.variantId, countedQuantity: l.countedQuantity!, expectedQuantity: l.expectedQuantity })),
+        sheet.notes,
+      );
+      const [posted] = await db
+        .update(stockCountSheets)
+        .set({ status: 'POSTED', stockCountId: count.id, closedBy: auth.userId, closedAt: sql`now()` })
+        .where(eq(stockCountSheets.id, id))
+        .returning();
+      await this.audit(db, auth, 'stock.count_sheet_posted', 'stock_count_sheet', id, { stockCountId: count.id, posted: counted.length, uncounted: lines.length - counted.length });
+      return { sheet: await this.sheetView(db, auth, posted!, scope), count, uncounted: lines.length - counted.length };
+    });
+  }
+
+  cancelCountSheet(auth: AuthContext, id: string, input: CancelCountSheetInput) {
+    return this.mutate(auth, async (db) => {
+      const [sheet] = await db.select().from(stockCountSheets).where(eq(stockCountSheets.id, id)).for('update');
+      if (!sheet) throw notFound('Count sheet');
+      const { scope } = await branchScope(db, sheet.branchId);
+      this.assertCan(auth, 'inventory.adjust', scope);
+      if (sheet.status !== 'OPEN') throw sheetClosed(sheet.status);
+      const [cancelled] = await db
+        .update(stockCountSheets)
+        .set({ status: 'CANCELLED', closedBy: auth.userId, closedAt: sql`now()`, cancelReason: input.reason })
+        .where(eq(stockCountSheets.id, id))
+        .returning();
+      await this.audit(db, auth, 'stock.count_sheet_cancelled', 'stock_count_sheet', id, { reason: input.reason });
+      return this.sheetView(db, auth, cancelled!, scope);
+    });
+  }
+
+  private assertCanSeeSheets(auth: AuthContext, scope: { branchId: string; legalEntityId: string }) {
+    if (!this.can(auth, 'inventory.count', scope)) this.assertCan(auth, 'inventory.read', scope);
+  }
+
+  private async sheetOrThrow(db: Database, id: string) {
+    const [sheet] = await db.select().from(stockCountSheets).where(eq(stockCountSheets.id, id));
+    if (!sheet) throw notFound('Count sheet');
+    return sheet;
+  }
+
+  /**
+   * Frozen quantities, and what moved since the freeze, are shown to those who may adjust stock, and
+   * to everyone once the sheet is closed or when it is not blind; someone who may only count sees
+   * just what was counted.
+   */
+  private async sheetView(db: Database, auth: AuthContext, sheet: typeof stockCountSheets.$inferSelect, scope: { branchId: string; legalEntityId: string }) {
+    const reveal = !sheet.blind || sheet.status !== 'OPEN' || this.can(auth, 'inventory.adjust', scope);
+    const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; expected: string; counted: string | null; counted_by: string | null; counted_at: string | null; moved: string }>(sql`
+      SELECT l.id, l.variant_id, v.sku, p.name, l.expected_quantity::text AS expected, l.counted_quantity::text AS counted,
+             u.display_name AS counted_by, l.counted_at,
+             coalesce((SELECT sum(m.quantity) FROM stock_movements m
+                        WHERE m.tenant_id = l.tenant_id AND m.branch_id = ${sheet.branchId} AND m.variant_id = l.variant_id
+                          AND m.created_at > ${sheet.frozenAt} ${sheet.closedAt ? sql`AND m.created_at < ${sheet.closedAt}` : sql``}), 0)::text AS moved
+        FROM stock_count_sheet_lines l
+        JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
+        JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
+        LEFT JOIN users u ON u.id = l.counted_by
+       WHERE l.sheet_id = ${sheet.id}
+       ORDER BY v.sku`);
+    return {
+      id: sheet.id,
+      branchId: sheet.branchId,
+      status: sheet.status,
+      blind: sheet.blind,
+      notes: sheet.notes,
+      frozenAt: sheet.frozenAt.toISOString(),
+      closedAt: sheet.closedAt?.toISOString() ?? null,
+      cancelReason: sheet.cancelReason,
+      stockCountId: sheet.stockCountId,
+      expectedShown: reveal,
+      lines: rows.map((r) => ({
+        id: r.id,
+        variantId: r.variant_id,
+        sku: r.sku,
+        name: r.name,
+        countedQuantity: r.counted === null ? null : toDec(r.counted).toString(),
+        countedBy: r.counted_by,
+        countedAt: r.counted_at ? new Date(r.counted_at).toISOString() : null,
+        ...(reveal && {
+          expectedQuantity: toDec(r.expected).toString(),
+          varianceQuantity: r.counted === null ? null : toDec(r.counted).minus(r.expected).toString(),
+          /** Net stock moved since the freeze (sales, receipts…): kept on the books when the sheet posts. */
+          movedSinceFreeze: toDec(r.moved).toString(),
+        }),
+      })),
+    };
+  }
+
+  // ---------------------------------------------------------------- settings
+
+  getSettings(auth: AuthContext, branchId: string) {
+    return this.read(auth, async (db) => {
+      const { scope } = await branchScope(db, branchId);
+      if (!this.can(auth, 'inventory.read', scope)) this.assertCan(auth, 'org.read', scope);
+      return this.settingsView(db, branchId);
+    });
+  }
+
+  /** The owner's call (org.manage): BLOCK makes tills refuse sales. */
+  setSettings(auth: AuthContext, branchId: string, input: InventorySettingsInput) {
+    return this.mutate(auth, async (db) => {
+      const { branch, scope } = await branchScope(db, branchId);
+      this.assertCan(auth, 'org.manage', scope);
+      await db
+        .insert(inventorySettings)
+        .values({ tenantId: tenantOf(auth).tenantId, branchId: branch.id, ...input, updatedBy: auth.userId })
+        .onConflictDoUpdate({ target: [inventorySettings.tenantId, inventorySettings.branchId], set: { ...input, updatedBy: auth.userId, updatedAt: sql`now()` } });
+      await this.audit(db, auth, 'inventory.settings_updated', 'branch', branch.id, { ...input });
+      return this.settingsView(db, branch.id);
+    });
+  }
+
+  private async settingsView(db: Database, branchId: string) {
+    const [row] = await db.select().from(inventorySettings).where(eq(inventorySettings.branchId, branchId));
+    return {
+      branchId,
+      negativeStockPolicy: row?.negativeStockPolicy ?? 'ALLOW',
+      lowStockAlerts: row?.lowStockAlerts ?? true,
+      updatedAt: row?.updatedAt.toISOString() ?? null,
     };
   }
 

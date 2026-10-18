@@ -4,8 +4,14 @@ import { ScopePicker, SubNav } from '@/components/scope';
 import { apiOrNull, type Branch } from '@/lib/api';
 import { getT } from '@/i18n/server';
 
-export type InventoryTab = 'stock' | 'transfers' | 'counts' | 'movements';
-const PATHS: Record<InventoryTab, string> = { stock: '/inventory', transfers: '/inventory/transfers', counts: '/inventory/counts', movements: '/inventory/movements' };
+export type InventoryTab = 'stock' | 'transfers' | 'counts' | 'movements' | 'settings';
+const PATHS: Record<InventoryTab, string> = {
+  stock: '/inventory',
+  transfers: '/inventory/transfers',
+  counts: '/inventory/counts',
+  movements: '/inventory/movements',
+  settings: '/inventory/settings',
+};
 
 /** Active branches, and the one the page works on (?branch=, else the first). */
 export async function inventoryBranch(param: string | undefined) {
@@ -29,6 +35,7 @@ export async function InventoryChrome({ tab, branches, branch, children }: { tab
           { key: 'transfers', href: `${PATHS.transfers}${q}`, label: t('inv.tab.transfers') },
           { key: 'counts', href: `${PATHS.counts}${q}`, label: t('inv.tab.counts') },
           { key: 'movements', href: `${PATHS.movements}${q}`, label: t('inv.tab.movements') },
+          { key: 'settings', href: `${PATHS.settings}${q}`, label: t('inv.tab.settings') },
         ]}
       />
       <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?branch=${id}`} />

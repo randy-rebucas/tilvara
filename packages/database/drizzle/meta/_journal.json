@@ -421,6 +421,20 @@
       "when": 1792314891476,
       "tag": "0059_kitchen_unbump",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1792332179157,
+      "tag": "0060_inventory_policy_counts",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1792332258267,
+      "tag": "0061_inventory_policy_counts_rls",
+      "breakpoints": true
     }
   ]
 }

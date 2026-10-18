@@ -1,6 +1,6 @@
 # Operations runbooks
 
-For: whoever runs 1POS in production or is on call. Each runbook is an operating procedure for the system
+For: whoever runs Tilvara in production or is on call. Each runbook is an operating procedure for the system
 as built. Where a step waits on a decision (hosting D1, email D2, git remote/CI D3, PayMongo D6; see
 ADR-0016), the runbook says so instead of inventing the step.
 
@@ -14,8 +14,8 @@ ADR-0016), the runbook says so instead of inventing the step.
 | A release went wrong, or wrong records were written | [rollback-recovery.md](rollback-recovery.md) |
 | Card/QR payments without an outcome, end-of-day drawer and tender checks | [payment-reconciliation.md](payment-reconciliation.md) |
 | A till lost its connection, broke, or was stolen | [offline-terminal-recovery.md](offline-terminal-recovery.md) |
-| A business leaves 1POS | [tenant-offboarding.md](tenant-offboarding.md) |
-| 1POS support needs to look at a business | [support-access.md](support-access.md) |
+| A business leaves Tilvara | [tenant-offboarding.md](tenant-offboarding.md) |
+| Tilvara support needs to look at a business | [support-access.md](support-access.md) |
 | An owner or member lost their authenticator | [support-mfa-reset.md](support-mfa-reset.md) |
 | Block or unblock one account (incident, data subject request) | [security-incident.md 2.1](security-incident.md#21-one-persons-account-is-compromised): `support account-disable` / `account-enable` |
 | Rotate `MFA_ENCRYPTION_KEY` (yearly, or after a leak) | [security-incident.md 2.5.1](security-incident.md#251-rotating-the-mfa-key) |

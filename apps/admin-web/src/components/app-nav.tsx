@@ -10,7 +10,7 @@ const ITEMS: { href: string; key: MessageKey; needs?: string[]; match?: string }
   { href: '/', key: 'nav.overview' },
   { href: '/products', key: 'nav.products', needs: ['catalog.read'] },
   { href: '/prices', key: 'nav.prices', needs: ['catalog.read'] },
-  { href: '/inventory', key: 'nav.inventory', needs: ['inventory.read'] },
+  { href: '/inventory', key: 'nav.inventory', needs: ['inventory.read', 'inventory.count'] },
   { href: '/purchasing', key: 'nav.purchasing', needs: ['purchasing.manage', 'inventory.read'] },
   { href: '/books', key: 'nav.books', needs: ['accounting.read'] },
   { href: '/restaurant', key: 'nav.restaurant', needs: ['restaurant.manage'] },
