@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { maskEmail } from '@1pos/observability';
 
 export interface MailMessage {
   to: string;
@@ -14,8 +15,8 @@ export abstract class Mailer {
 }
 
 /**
- * Development mailer: keeps messages in memory (tests read them) and logs recipient +
- * template only — never bodies, which may contain one-time tokens. Refused in production
+ * Development mailer: keeps messages in memory (tests read them) and logs the template and a
+ * masked recipient only — never bodies, which may contain one-time tokens. Refused in production
  * by @1pos/config.
  */
 @Injectable()
@@ -26,7 +27,7 @@ export class DevMailer extends Mailer {
   async send(message: MailMessage): Promise<void> {
     this.sent.push(message);
     if (this.sent.length > 500) this.sent.shift();
-    this.logger.log(`[dev mail] ${message.template} → ${message.to}`);
+    this.logger.log(`[dev mail] ${message.template} → ${maskEmail(message.to)}`);
   }
 
   lastTo(email: string): MailMessage | undefined {

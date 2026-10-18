@@ -9,6 +9,7 @@ import {
   registers,
   terminals,
   type Database,
+  inSequence,
 } from '@1pos/database';
 import type {
   PermissionCode,
@@ -37,7 +38,7 @@ const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'invento
 /** Legal entity plus the tax profile in force (and the next scheduled one), ADR-0008. */
 async function withTaxProfiles(db: Database, rows: LegalEntityRow[]) {
   const ids = rows.map((r) => r.id);
-  const [current, next] = await Promise.all([profilesInForce(db, ids), scheduledProfiles(db, ids)]);
+  const [current, next] = await inSequence(() => profilesInForce(db, ids), () => scheduledProfiles(db, ids));
   return rows.map((r) => {
     const taxProfile: TaxProfileView | null = current.get(r.id) ?? null;
     return {

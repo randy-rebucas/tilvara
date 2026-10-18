@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { clearAuthCookies, writeAuthCookies } from './lib/auth-cookies';
+import { clearAuthCookies, openSupport, writeAuthCookies, writeSupportCookies } from './lib/auth-cookies';
 import { API_URL } from './lib/config';
-import { ACCESS_COOKIE, ACCESS_EXP_COOKIE, REFRESH_COOKIE, TENANT_COOKIE } from './lib/cookies';
+import { ACCESS_COOKIE, ACCESS_EXP_COOKIE, REFRESH_COOKIE, SUPPORT_COOKIE, TENANT_COOKIE } from './lib/cookies';
 
-const PUBLIC = ['/sign-in', '/sign-up', '/accept-invite', '/forgot-password', '/reset-password'];
+const PUBLIC = ['/sign-in', '/sign-up', '/accept-invite', '/forgot-password', '/reset-password', '/confirm-email'];
 const REFRESH_MARGIN_MS = 60_000;
 
 /**
@@ -18,7 +18,30 @@ export async function proxy(request: NextRequest) {
   const refresh = request.cookies.get(REFRESH_COOKIE)?.value;
 
   const fresh = access && exp - Date.now() > REFRESH_MARGIN_MS;
-  if (!fresh && refresh) {
+  const supportGrant = request.cookies.get(SUPPORT_COOKIE)?.value;
+  if (!fresh && refresh && supportGrant) {
+    // A staff member's support view: re-open the grant (the API re-checks it every request). Once
+    // it has ended, fall back to the staff member's own session on the support page.
+    const o = await openSupport(API_URL, refresh, supportGrant);
+    if (o.refreshed && o.support) {
+      request.cookies.set(ACCESS_COOKIE, o.support.accessToken);
+      const res = NextResponse.next({ request: { headers: request.headers } });
+      writeSupportCookies(res, o.refreshed, o.support, supportGrant);
+      return res;
+    }
+    if (o.refreshed) {
+      request.cookies.set(ACCESS_COOKIE, o.refreshed.accessToken);
+      const res = pathname.startsWith('/api/') ? NextResponse.next({ request: { headers: request.headers } }) : NextResponse.redirect(new URL('/support', request.url));
+      writeAuthCookies(res, o.refreshed, null);
+      res.cookies.delete(SUPPORT_COOKIE);
+      return res;
+    }
+    if (o.status === 401 || o.status === 403) {
+      const res = isPublic ? NextResponse.next() : NextResponse.redirect(new URL('/sign-in', request.url));
+      clearAuthCookies(res);
+      return res;
+    }
+  } else if (!fresh && refresh) {
     const tenantId = request.cookies.get(TENANT_COOKIE)?.value;
     const r = await fetch(`${API_URL}/auth/refresh`, {
       method: 'POST',

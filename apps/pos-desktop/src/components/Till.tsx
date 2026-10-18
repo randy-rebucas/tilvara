@@ -98,7 +98,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
     setNote(null);
     try {
       await till.printer.print(document.body, {
-        header: ['1POS'], notice: 'TEST PRINT — NOT A RECEIPT', meta: [[till.terminalId ?? '', when(Date.now())]],
+        header: ['Tilvara'], notice: 'TEST PRINT — NOT A RECEIPT', meta: [[till.terminalId ?? '', when(Date.now())]],
         items: [], totals: [], payments: [], footer: [t('till.printerTest')],
       });
     } catch (err) {

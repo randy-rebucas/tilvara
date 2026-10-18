@@ -8,7 +8,7 @@ import { rejectCrossSite } from '@/lib/csrf';
  * forwards to the API. Only an allow-listed set of resources is reachable through it.
  */
 const ALLOWED =
-  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me|suppliers|purchase-orders|goods-receipts|supplier-returns|stock|accounts|journal-entries|accounting|kitchen-stations|dining-areas|restaurant-tables|modifier-groups|modifier-options|menus|menu-versions|sync\/(?:transactions|terminals))(\/|$)/;
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me|suppliers|purchase-orders|goods-receipts|supplier-returns|stock|accounts|journal-entries|accounting|kitchen-stations|dining-areas|restaurant-tables|modifier-groups|modifier-options|menus|menu-versions|sync\/(?:transactions|terminals)|support-access|data-exports|data-export-files|sample-data)(\/|$)/;
 
 async function forward(request: NextRequest, path: string[]) {
   const joined = path.join('/');
@@ -34,11 +34,14 @@ async function forward(request: NextRequest, path: string[]) {
     body: request.method === 'GET' ? undefined : await request.text(),
     cache: 'no-store',
   });
-  const text = await res.text();
-  return new NextResponse(text || null, {
-    status: res.status,
-    headers: { 'content-type': res.headers.get('content-type') ?? 'application/json' },
-  });
+  // Bytes, not text: a data export is a ZIP. Download headers pass through.
+  const headersOut: Record<string, string> = { 'content-type': res.headers.get('content-type') ?? 'application/json' };
+  for (const h of ['content-disposition', 'cache-control', 'content-length']) {
+    const v = res.headers.get(h);
+    if (v) headersOut[h] = v;
+  }
+  const body = res.status === 204 ? null : await res.arrayBuffer();
+  return new NextResponse(body && body.byteLength > 0 ? body : null, { status: res.status, headers: headersOut });
 }
 
 type Ctx = { params: Promise<{ path: string[] }> };

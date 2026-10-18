@@ -46,14 +46,18 @@ export abstract class TenantService {
     return this.tenantDb.run(auth, fn);
   }
 
-  /** Write transaction: refuses suspended tenants and maps unique violations to 409s. */
-  protected async mutate<T>(auth: AuthContext, fn: (db: Database) => Promise<T>): Promise<T> {
-    if (tenantOf(auth).status === 'SUSPENDED') {
+  /**
+   * Write transaction: refuses suspended tenants and maps unique violations to 409s.
+   * `allowReadOnlyBusiness` (with `@AllowReadOnlyBusiness()` on the route) lets a suspended or lapsed
+   * business still take a copy of its records (ADR-0016 slice 6); nothing else may use it.
+   */
+  protected async mutate<T>(auth: AuthContext, fn: (db: Database) => Promise<T>, options: { allowReadOnlyBusiness?: boolean } = {}): Promise<T> {
+    if (tenantOf(auth).status === 'SUSPENDED' && !options.allowReadOnlyBusiness) {
       throw new AppError('TENANT_SUSPENDED', 'This business is suspended; records are read-only', HttpStatus.FORBIDDEN);
     }
     try {
       return await this.tenantDb.run(auth, async (db) => {
-        await assertWritable(db);
+        if (!options.allowReadOnlyBusiness) await assertWritable(db);
         const idem = await claimIdempotency(db);
         const result = await fn(db);
         if (idem) await completeIdempotency(db, idem, result);

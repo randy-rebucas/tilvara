@@ -1,4 +1,4 @@
-//! 1POS desktop till: the Tauri shell around the React POS (ADR-0006, ADR-0015 slice 5).
+//! Tilvara desktop till: the Tauri shell around the React POS (ADR-0006, ADR-0015 slice 5).
 //! The web view gets exactly these commands (see capabilities/default.json): the till database,
 //! the printer byte channel, and the terminal credential. No shell, file-system or HTTP plugins.
 
@@ -97,5 +97,5 @@ pub fn run() {
             secret_delete
         ])
         .run(tauri::generate_context!())
-        .expect("error while running the 1POS till");
+        .expect("error while running the Tilvara till");
 }

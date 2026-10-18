@@ -1,4 +1,4 @@
-# 1POS — Data Model
+# Tilvara — Data Model
 
 Initial logical model. Tables are created per phase (vertical slices), not all up front. **Implemented** tables are marked ✅; everything else is design.
 

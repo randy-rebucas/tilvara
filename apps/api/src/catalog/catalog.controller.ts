@@ -49,6 +49,25 @@ export class CatalogController {
     @Inject(PricingService) private readonly pricing: PricingService,
   ) {}
 
+  // sample items for a trial (ADR-0016 slice 6)
+  @Get('sample-data')
+  sampleData(@Auth() auth: AuthContext) {
+    return this.catalog.sampleData(auth);
+  }
+
+  @Idempotent()
+  @Post('sample-data')
+  loadSampleData(@Auth() auth: AuthContext) {
+    return this.catalog.loadSampleData(auth);
+  }
+
+  @Idempotent()
+  @HttpCode(200)
+  @Post('sample-data/remove')
+  removeSampleData(@Auth() auth: AuthContext) {
+    return this.catalog.removeSampleData(auth);
+  }
+
   // units & tax categories
   @Get('uoms')
   async listUoms(@Auth() auth: AuthContext) {

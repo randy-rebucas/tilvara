@@ -1,4 +1,4 @@
-# 1POS alert rules (Prometheus 2.x/3.x rule file), ADR-0016 slice 3.
+# Tilvara alert rules (Prometheus 2.x/3.x rule file), ADR-0016 slice 3.
 # Scrape jobs assumed: job="onepos-api" (API_METRICS_PORT, default 4329) and job="onepos-worker"
 # (WORKER_METRICS_PORT, default 4339), both on the internal network only.
 # Every rule links to its section of docs/operations/monitoring.md (prefix the repo URL once a

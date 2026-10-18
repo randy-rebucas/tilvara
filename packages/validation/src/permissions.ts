@@ -61,6 +61,23 @@ export const PRIVILEGED_PERMISSIONS: readonly PermissionCode[] = [
   'integrations.manage',
 ];
 
+/**
+ * What a support session may read (ADR-0016 slice 6): the business's read permissions, for the whole
+ * business. Support access is read-only; the API refuses every write made with a support token.
+ */
+export const SUPPORT_PERMISSIONS: readonly PermissionCode[] = [
+  'members.read',
+  'roles.read',
+  'org.read',
+  'catalog.read',
+  'sales.read',
+  'inventory.read',
+  'customers.read',
+  'reports.read',
+  'accounting.read',
+  'audit.read',
+];
+
 export const isPrivilegedSet = (codes: Iterable<string>): boolean => {
   for (const c of codes) if ((PRIVILEGED_PERMISSIONS as readonly string[]).includes(c)) return true;
   return false;

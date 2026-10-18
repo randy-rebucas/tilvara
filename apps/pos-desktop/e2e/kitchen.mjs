@@ -49,6 +49,13 @@ try {
   // The item's own "Ready" button is on screen before the bump: wait for the bump to land instead.
   check('a ticket with nothing left to cook has no bump button', await waitFor(`!document.body.innerText.includes('All ready (bump)')`).then(() => true, () => false));
   check('bump → Ready; the floor sees it', (await items()).find((i) => i.name === 'Burger').status === 'READY' && !(await evaluate(`[...document.querySelectorAll('button')].some((x) => x.getClientRects().length && x.textContent.trim() === 'Ready')`)));
+  // A mistaken bump is undone: back to Cooking, then bumped again.
+  check('a bumped ticket offers Undo bump', await shown('Undo bump'));
+  await shot('kds-unbump.png', false);
+  await clickText('Undo bump');
+  check('Undo bump → Cooking again, on the server too', await waitFor(`document.body.innerText.includes('All ready (bump)')`).then(() => true, () => false) && (await items()).find((i) => i.name === 'Burger').status === 'IN_PREP');
+  await clickText('All ready (bump)');
+  check('bumped again → Ready', await waitFor(`!document.body.innerText.includes('All ready (bump)')`).then(() => true, () => false) && (await items()).find((i) => i.name === 'Burger').status === 'READY');
 
   // The floor serves: the ticket leaves the board on the next poll.
   const burger = (await items()).find((i) => i.name === 'Burger');

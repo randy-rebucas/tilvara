@@ -1,4 +1,4 @@
-# 1POS — API Conventions
+# Tilvara — API Conventions
 
 - Base path: `/v1`. Breaking changes → `/v2`; additive changes stay in `v1`.
 - JSON, `camelCase` fields. Money: `{ "amount": "123.45", "currency": "PHP" }` — amounts are **strings**. Quantities: strings.
@@ -38,7 +38,7 @@
 Clients treat "no response" and any 5xx on a write as *unknown outcome*: keep the Idempotency-Key and retry; for a sale, a later `DUPLICATE_TRANSACTION` points at the recorded sale.
 
 ## Webhooks (outbound, Phase 5+)
-Signed with HMAC-SHA256 over `timestamp.body`, headers `X-1POS-Signature`, `X-1POS-Timestamp`, `X-1POS-Event-Id`; at-least-once delivery; receivers dedupe on event id.
+Signed with HMAC-SHA256 over `timestamp.body`, headers `X-Tilvara-Signature`, `X-Tilvara-Timestamp`, `X-Tilvara-Event-Id`; at-least-once delivery; receivers dedupe on event id.
 
 ## Documentation
 OpenAPI generated from the Nest controllers + zod contracts (Phase 1), published under `docs/api/openapi.json`.

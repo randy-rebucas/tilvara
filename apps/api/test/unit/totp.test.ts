@@ -54,7 +54,7 @@ describe('TOTP (RFC 6238)', () => {
   it('builds an otpauth URI authenticator apps read', () => {
     const uri = otpauthUri(RFC_SECRET, 'owner@shop.ph');
     expect(uri).toBe(
-      'otpauth://totp/1POS%3Aowner%40shop.ph?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=1POS&algorithm=SHA1&digits=6&period=30',
+      'otpauth://totp/Tilvara%3Aowner%40shop.ph?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Tilvara&algorithm=SHA1&digits=6&period=30',
     );
   });
 });
@@ -90,5 +90,22 @@ describe('SecretBox', () => {
     const flipped = Buffer.from(ct!, 'base64url');
     flipped[0]! ^= 1;
     expect(() => box.open([v, iv, tag, flipped.toString('base64url')].join('.'))).toThrow();
+  });
+
+  it('during a rotation opens secrets of the previous key, says which key sealed them, and seals with the new one', () => {
+    const jwt = 'unused-jwt-secret-unused-jwt-secret';
+    const oldKey = Buffer.alloc(32, 1).toString('base64');
+    const newKey = Buffer.alloc(32, 2).toString('base64');
+    const before = new SecretBox(oldKey, jwt).seal(RFC_SECRET);
+    const rotating = new SecretBox(newKey, jwt, oldKey);
+    expect(rotating.openKeyed(before)).toEqual({ plain: RFC_SECRET, current: false });
+    const resealed = rotating.seal(RFC_SECRET);
+    expect(rotating.openKeyed(resealed)).toEqual({ plain: RFC_SECRET, current: true });
+    // After the rotation the old key is gone: only re-sealed secrets open.
+    const after = new SecretBox(newKey, jwt);
+    expect(after.open(resealed)).toEqual(RFC_SECRET);
+    expect(() => after.open(before)).toThrow();
+    // A third key opens with neither.
+    expect(() => rotating.open(new SecretBox(Buffer.alloc(32, 3).toString('base64'), jwt).seal(RFC_SECRET))).toThrow();
   });
 });

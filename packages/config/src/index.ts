@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 
 const isProd = (env: NodeJS.ProcessEnv) => env.NODE_ENV === 'production';
@@ -5,6 +7,16 @@ const isProd = (env: NodeJS.ProcessEnv) => env.NODE_ENV === 'production';
 /** An optional secret: blank counts as unset; when set it must match the provider's key format. */
 const optionalKey = (re: RegExp, message: string) =>
   z.preprocess((v) => (v === '' ? undefined : v), z.string().regex(re, message).optional());
+
+/**
+ * Private file storage for data exports (ADR-0016 slice 6). Only 'dev' (a local folder) exists until
+ * the hosting decision (D1) brings object storage; production refuses it. API and worker must point
+ * at the same place.
+ */
+const fileStorage = {
+  FILE_STORAGE_DRIVER: z.enum(['dev']).default('dev'),
+  FILE_STORAGE_DIR: z.string().min(1).default(join(tmpdir(), 'onepos-files')),
+};
 
 export const serverEnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -26,6 +38,11 @@ export const serverEnvSchema = z.object({
    * elsewhere a key is derived from JWT_ACCESS_SECRET so dev and tests need no extra setting.
    */
   MFA_ENCRYPTION_KEY: optionalKey(/^[A-Za-z0-9+/]{43}=$/, 'must be 32 bytes, base64 (44 characters)'),
+  /**
+   * Only while rotating MFA_ENCRYPTION_KEY: the key it replaces. Secrets sealed with it still open,
+   * and `pnpm --filter @1pos/api mfa-rekey` re-seals them all with the current key; then remove it.
+   */
+  MFA_ENCRYPTION_KEY_PREVIOUS: optionalKey(/^[A-Za-z0-9+/]{43}=$/, 'must be 32 bytes, base64 (44 characters)'),
   /** Days a privileged member may work without two-step sign-in before it is required (ADR-0016). */
   MFA_GRACE_DAYS: z.coerce.number().int().min(0).max(30).default(7),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
@@ -68,6 +85,9 @@ export const serverEnvSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+  ...fileStorage,
+  /** How long a data-export download link works (signed by the API). */
+  DATA_EXPORT_LINK_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -93,6 +113,9 @@ export const workerEnvSchema = z.object({
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
   MAILER_DRIVER: z.enum(['dev']).default('dev'),
+  ...fileStorage,
+  /** Days a finished data export stays downloadable before the worker deletes the file. */
+  DATA_EXPORT_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(7),
 });
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 
@@ -103,12 +126,15 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   }
   const issues: string[] = [];
   if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') issues.push('MAILER_DRIVER: the dev mailer cannot be used in production');
+  if (isProd(env) && parsed.data.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
   if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');
   }
   if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
+
+const DEV_STORAGE_ISSUE = 'FILE_STORAGE_DRIVER: the dev file storage (a local folder) cannot be used in production (object storage waits for D1)';
 
 const DEV_SECRET_MARKERS = ['dev-only', 'change-me', 'changeme'];
 
@@ -122,6 +148,12 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
     throw new EnvValidationError(parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`));
   }
   const issues = isProd(env) ? productionIssues(parsed.data) : nonProductionIssues(parsed.data);
+  if (parsed.data.MFA_ENCRYPTION_KEY_PREVIOUS && !parsed.data.MFA_ENCRYPTION_KEY) {
+    issues.push('MFA_ENCRYPTION_KEY_PREVIOUS: set only while rotating, together with the new MFA_ENCRYPTION_KEY');
+  }
+  if (parsed.data.MFA_ENCRYPTION_KEY_PREVIOUS && parsed.data.MFA_ENCRYPTION_KEY_PREVIOUS === parsed.data.MFA_ENCRYPTION_KEY) {
+    issues.push('MFA_ENCRYPTION_KEY_PREVIOUS: must differ from MFA_ENCRYPTION_KEY');
+  }
   if (parsed.data.API_METRICS_PORT !== 0 && parsed.data.API_METRICS_PORT === parsed.data.API_PORT) {
     issues.push('API_METRICS_PORT: must differ from API_PORT (metrics are never served on the public listener)');
   }
@@ -144,6 +176,7 @@ export function productionIssues(cfg: ServerEnv): string[] {
   if (cfg.PAYMENT_PROVIDER === 'dev') {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
+  if (cfg.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
   return issues;
 }
 

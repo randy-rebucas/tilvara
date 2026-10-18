@@ -107,7 +107,7 @@ Only with the incident lead's go-ahead. Write down the times as you go, because 
    - `/v1/health/ready` must answer ok.
 7. **Tills**: they reconnect by themselves and deliver their queued offline sales (ADR-0015). Re-sends are idempotent: nothing is counted twice, and a till restored from an old copy of its own store replays safely.
    - Watch `/offline-sales` for quarantined sales, for example a shift that the restore no longer shows as open.
-8. **Tell the businesses** the backup time. Sales rung up online between then and the outage must be re-entered from printed receipts, as corrections, under the business's own records process. 1POS never edits restored history.
+8. **Tell the businesses** the backup time. Sales rung up online between then and the outage must be re-entered from printed receipts, as corrections, under the business's own records process. Tilvara never edits restored history.
 9. **Afterwards**: run `dev-audit.ts` against the restored database and keep the broken database until the incident review closes.
 
 ## Managed Postgres (after D1)

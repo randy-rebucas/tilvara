@@ -1,8 +1,9 @@
 import { loadWorkerEnv } from '@1pos/config';
 import { createLogger, startMetricsServer, type MetricsServer } from '@1pos/observability';
 import { hostname } from 'node:os';
+import { DevFileStorage } from '@1pos/database';
 import pg from 'pg';
-import { buildHandlers, DevWorkerMailer } from './handlers.js';
+import { buildHandlers, DevWorkerMailer, expireDataExports } from './handlers.js';
 import { WorkerMonitor } from './monitoring.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
 
@@ -17,10 +18,12 @@ async function main(): Promise<void> {
   const pool = new pg.Pool({ connectionString: env.WORKER_DATABASE_URL ?? env.DATABASE_URL, max: 5 });
   // Idle connections dropped by the server (DB restart) surface here; unhandled, they would exit the worker.
   pool.on('error', (err) => logger.error('idle database connection lost', { error: err.message.slice(0, 200) }));
+  // Only the dev adapter exists until D1 (production refuses FILE_STORAGE_DRIVER=dev at boot).
+  const storage = new DevFileStorage(env.FILE_STORAGE_DIR);
   const processor = new OutboxProcessor({
     pool,
     workerId,
-    handlers: buildHandlers(new DevWorkerMailer(logger)),
+    handlers: buildHandlers(new DevWorkerMailer(logger), { storage, retentionDays: env.DATA_EXPORT_RETENTION_DAYS }),
     batchSize: env.OUTBOX_BATCH,
     leaseSeconds: env.OUTBOX_LEASE_SECONDS,
     logger,
@@ -51,6 +54,8 @@ async function main(): Promise<void> {
         const { rows } = await pool.query<{ n: number }>('SELECT platform_purge_expired_idempotency() AS n');
         lastPurge = Date.now();
         if (rows[0]?.n) logger.info('purged idempotency records', { count: rows[0].n });
+        const expired = await expireDataExports(pool, storage, logger);
+        if (expired) logger.info('expired data exports', { count: expired });
       }
       if (r.claimed === 0) await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS));
     } catch (err) {

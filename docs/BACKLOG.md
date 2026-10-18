@@ -1,4 +1,4 @@
-# 1POS — Prioritized Backlog (dependency order)
+# Tilvara — Prioritized Backlog (dependency order)
 
 Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file at the end of every session.
 Open items left by finished slices and phases live in [LEFTOVER.md](LEFTOVER.md); this file keeps the plan.
@@ -195,9 +195,22 @@ Slice 5 — performance (session 11): ✅ done (ADR-0016 "As built — slice 5")
   - snapshot paging (`?pageSize`, `/terminal/snapshot/:id/items`, index 0053);
   - sync time budget (`SYNC_BATCH_BUDGET_MS`) with the engine draining partial answers at once.
 - ✅ 2 instances at pilot load: lookup p95 52 ms, checkout p95 397 ms, reports < 0.5 s, all tills first try, nothing lost or doubled. ⏳ checkout p99 1.6 s and sync-50 worst 5.9 s miss the targets on this laptop; re-measure on D1 staging.
-⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
+Slice 6 — onboarding and support (session 12): ✅ done (ADR-0016 "As built — slice 6"; audit log reader and MFA resets were pulled forward in session 10).
+- ✅ Support access: business-given, read-only, ≤ 72 h grants (`support_grants`, DB cap + immutable terms), ops-managed staff (`platform_staff`, `support staff-add|disable|list`), support tokens re-checked every request, every write refused, every request in the business's audit log; admin Subscription → Support access, staff `/support` with a read-only banner.
+- ✅ Data export: worker-made ZIP of CSVs from one snapshot (every tenant table, no credential hashes), `DevFileStorage`, 10-minute HMAC links, 7-day files swept hourly, all steps audited; works for read-only businesses; admin Subscription → Your records.
+- ✅ Sample items for trials (8 labelled café items, before the first sale; removable by archiving); overview card and product tag.
+- ✅ Runbooks `docs/operations/tenant-offboarding.md`, `docs/operations/support-access.md`.
+- ✅ Tests: `support-onboarding.test.ts` (17), worker `data-export.test.ts` (3), unit (ZIP vs bsdtar, CSV, storage, links, barcodes), schema guard (worker reads, function grants), isolation (+5 routes, 2 tables), `test:e2e:web:onboarding` (23).
+- ⬜ First-sale walkthrough; anonymisation job (LEFTOVER).
 ⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
-⬜ Slice 8 — runbooks + privacy pack (drafts for the DPO, not legal advice).
+Slice 8 — runbooks and privacy pack (session 13): ✅ done (ADR-0016 "As built — slice 8").
+- ✅ `docs/operations/`: index (`README.md`, maps every SPEC §16 item to its document), `incident-response.md`, `security-incident.md`, `database-migrations.md`, `rollback-recovery.md`, `payment-reconciliation.md`, `production-access.md`; existing runbooks kept (monitoring, backup, offline, offboarding, support access, MFA reset).
+- ✅ `docs/compliance/privacy/` (drafts for the DPO, not legal advice): README (PIC/PIP, DPO and NPC registration evaluation, gaps, questions), processing register, privacy notice draft (users + a customer template for businesses), retention schedule, breach procedure, processing agreement outline, data subject requests.
+- ✅ New guard `packages/database/test/unit/migrations.test.ts` (journal order, files, no statements that cannot run in the migration transaction); mutation-checked.
+- ✅ Ops SQL in the runbooks dry-run on the dev DB in rolled-back transactions; one wrong call found and replaced, plus a wrong route in `monitoring.md`.
+- ⏳ DPO review (G6); gaps found while writing it are in LEFTOVER (purges, anonymisation, corrections, …).
+- ✅ Follow-up (session 14, the gaps that need no decision; ADR-0016 "As built — slice 8 follow-up"): personal-field log redaction with tests; own name and sign-in email (`/account`, `/confirm-email`); account closure (block now; anonymisation waits on the DPO); audited `support account-disable|account-enable`; `MFA_ENCRYPTION_KEY` rotation (`mfa-rekey`); error references on admin and POS error screens. Migrations 0056/0057.
+LEFTOVER items closed in session 15 (no decision needed): one query at a time per transaction (`inSequence`, guarded in the API integration setup); sync budget from request arrival; outbox lease renewal for long handlers (migration 0058); intermittent outbox/reliability tests made order-independent; `pnpm test:db:reset`; KDS un-bump (ADR-0014 amendment, migration 0059); long business names in the band; a "First sale" step on the overview; `pnpm security:pages` (server-rendered admin pages); stale items closed (POS menu pricing already batched, card/QR checks already in the POS).
 ⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
 Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
 

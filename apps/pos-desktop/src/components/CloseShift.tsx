@@ -4,6 +4,7 @@ import { useT } from '../i18n';
 import { api, ApiFailure } from '../lib/api';
 import { parseAmount } from '../lib/money';
 import type { PaymentIntent } from '../types';
+import { errorText } from './Payment';
 import type { Shift } from './Registers';
 import { Callout, Field, methodLabel, Money, Note, PaymentTag } from './ui';
 
@@ -28,8 +29,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
     api<SessionView>('GET', `/v1/cashier-sessions/${shift.sessionId}`).then(setView).catch(() => setError(t('common.error')));
   }, [shift.sessionId]);
 
-  const failure = (err: unknown) =>
-    err instanceof ApiFailure ? (err.error.status === 0 || err.error.status >= 500 ? t('common.network') : err.error.message) : t('common.error');
+  const failure = (err: unknown) => errorText(err, t('common.error'), t('common.network'));
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

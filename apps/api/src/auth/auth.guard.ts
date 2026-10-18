@@ -3,18 +3,24 @@ import { Reflector } from '@nestjs/core';
 import { withTenant } from '@1pos/database';
 import type { Pool } from 'pg';
 import { enrichLogContext } from '@1pos/observability';
-import { isPermissionCode, isPrivilegedSet, type PermissionCode } from '@1pos/validation';
+import { isPermissionCode, isPrivilegedSet, SUPPORT_PERMISSIONS, type PermissionCode } from '@1pos/validation';
 import type { ServerEnv } from '@1pos/config';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
-import { AuthContext, AuthedRequest, IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from './auth-context.js';
+import { recordAudit } from '../audit/audit.js';
+import { ALLOW_READ_ONLY_BUSINESS, AuthContext, AuthedRequest, IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from './auth-context.js';
 import { Grant, hasPermission } from './authorization.js';
 import { InvalidTokenError, TokenService } from './token.service.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 const unauthenticated = () => new AppError('UNAUTHENTICATED', 'Authentication required', HttpStatus.UNAUTHORIZED);
+
+/** A support session reads the whole business; it never writes (ADR-0016 slice 6). */
+const SUPPORT_GRANTS: Grant[] = SUPPORT_PERMISSIONS.map((permission) => ({ permission, scopeType: 'TENANT', scopeId: null }));
+/** The one write a support token may make: ending its own sign-in. */
+const SUPPORT_WRITES = new Set(['/v1/auth/logout']);
 
 /**
  * Global guard. Every non-@Public route: verify JWT → re-validate session, user,
@@ -45,6 +51,7 @@ export class AuthGuard implements CanActivate {
       if (e instanceof InvalidTokenError) throw unauthenticated();
       throw e;
     }
+    if (claims.sgr) return this.supportSession(req, claims as Required<typeof claims> & { tid: string }, targets);
 
     const { rows } = await this.database.pool.query<{
       session_active: boolean;
@@ -91,8 +98,9 @@ export class AuthGuard implements CanActivate {
     if (!auth.tenant) {
       throw new AppError('TENANT_REQUIRED', 'Select a business first', HttpStatus.FORBIDDEN);
     }
-    // Suspended tenants keep read access to their records (legal retention) but cannot write.
-    if (auth.tenant.status === 'SUSPENDED' && !SAFE_METHODS.has(req.method)) {
+    // Suspended tenants keep read access to their records (legal retention) but cannot write,
+    // except to take a copy of them (offboarding).
+    if (auth.tenant.status === 'SUSPENDED' && !SAFE_METHODS.has(req.method) && !this.reflector.getAllAndOverride<boolean>(ALLOW_READ_ONLY_BUSINESS, targets)) {
       throw new AppError('TENANT_SUSPENDED', 'This business is suspended; records are read-only', HttpStatus.FORBIDDEN);
     }
     // Privileged members need a session that passed two-step sign-in: always once they have it
@@ -110,6 +118,72 @@ export class AuthGuard implements CanActivate {
       }
     }
     const missing = required.filter((p) => !hasPermission(auth.tenant!.grants, p));
+    if (missing.length > 0) {
+      throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
+    }
+    return true;
+  }
+
+  /**
+   * A Tilvara staff member acting under a business's support grant (ADR-0016 slice 6). Every request
+   * re-checks the session (two-step sign-in passed), the staff account and the grant, so revoking
+   * the grant or disabling the account ends access at the next request. Every request is written to
+   * the business's audit log (route template only, never ids or query strings), and every write is
+   * refused, even where the read permissions would not have allowed it anyway.
+   */
+  private async supportSession(
+    req: AuthedRequest,
+    claims: { sub: string; sid: string; tid: string; sgr: string },
+    targets: Parameters<Reflector['getAllAndOverride']>[1],
+  ): Promise<boolean> {
+    const { rows } = await this.database.pool.query<{
+      session_active: boolean;
+      session_mfa: boolean;
+      staff_active: boolean;
+      staff_name: string | null;
+      tenant_id: string | null;
+      tenant_status: string | null;
+      grant_open: boolean;
+      expires_at: Date | null;
+    }>('SELECT * FROM auth_resolve_support($1, $2, $3)', [claims.sub, claims.sid, claims.sgr]);
+    const r = rows[0];
+    if (!r?.session_active) throw unauthenticated();
+    if (!r.staff_active || !r.session_mfa || !r.grant_open || r.tenant_id !== claims.tid || !['ACTIVE', 'SUSPENDED'].includes(r.tenant_status ?? '')) {
+      throw new AppError('SUPPORT_ACCESS_ENDED', 'This support access has ended', HttpStatus.FORBIDDEN);
+    }
+    const auth: AuthContext = {
+      userId: claims.sub,
+      sessionId: claims.sid,
+      correlationId: req.correlationId,
+      tenant: { tenantId: claims.tid, membershipId: null, status: r.tenant_status!, grants: SUPPORT_GRANTS },
+      mfa: { enrolled: true, sessionVerified: true, required: false, dueAt: null },
+      support: { grantId: claims.sgr, staffName: r.staff_name ?? '', expiresAt: r.expires_at! },
+    };
+    req.auth = auth;
+    enrichLogContext({ userId: auth.userId, tenantId: claims.tid });
+
+    const route = typeof req.route?.path === 'string' ? req.route.path : 'unmatched';
+    const write = !SAFE_METHODS.has(req.method) && !SUPPORT_WRITES.has(route);
+    await withTenant(
+      this.database.pool,
+      claims.tid,
+      (db) =>
+        recordAudit(db, {
+          tenantId: claims.tid,
+          actorType: 'SUPPORT',
+          actorUserId: claims.sub,
+          action: write ? 'support.write_refused' : 'support.request',
+          resourceType: 'support_grant',
+          resourceId: claims.sgr,
+          correlationId: req.correlationId ?? null,
+          metadata: { method: req.method, route, staffName: r.staff_name },
+        }),
+      { userId: claims.sub, correlationId: req.correlationId },
+    );
+    if (write) throw new AppError('SUPPORT_READ_ONLY', 'Support access is read-only', HttpStatus.FORBIDDEN);
+
+    const required = this.reflector.getAllAndOverride<PermissionCode[]>(REQUIRED_PERMISSIONS, targets) ?? [];
+    const missing = required.filter((p) => !hasPermission(SUPPORT_GRANTS, p));
     if (missing.length > 0) {
       throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
     }

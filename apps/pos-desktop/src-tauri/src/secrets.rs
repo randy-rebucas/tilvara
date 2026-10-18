@@ -4,6 +4,7 @@
 
 use std::sync::OnceLock;
 
+// Kept from the old brand name: tills already in the field saved their credential under it.
 const SERVICE: &str = "1POS till";
 const ALLOWED: &[&str] = &["terminal"];
 static PROFILE: OnceLock<String> = OnceLock::new();

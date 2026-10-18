@@ -73,7 +73,7 @@ export function matchTotp(secret: Buffer, code: string, unixSeconds = Date.now()
 }
 
 /** otpauth:// URI for authenticator apps (Key URI Format). */
-export function otpauthUri(secret: Buffer, account: string, issuer = '1POS'): string {
+export function otpauthUri(secret: Buffer, account: string, issuer = 'Tilvara'): string {
   const label = encodeURIComponent(`${issuer}:${account}`);
   const params = new URLSearchParams({ secret: base32Encode(secret), issuer, algorithm: 'SHA1', digits: String(DIGITS), period: String(TOTP_PERIOD_SECONDS) });
   return `otpauth://totp/${label}?${params.toString()}`;
@@ -98,18 +98,21 @@ export const hashRecoveryCode = (code: string): string =>
 
 // Secret encryption at rest -------------------------------------------------------------------
 /**
- * AES-256-GCM. Format `v1.<iv>.<tag>.<ciphertext>` (base64url), so the key can be rotated later
- * by adding a version. The key is MFA_ENCRYPTION_KEY, or one derived from the JWT secret outside
- * production (config refuses the derived key in production).
+ * AES-256-GCM. Format `v1.<iv>.<tag>.<ciphertext>` (base64url). The key is MFA_ENCRYPTION_KEY, or one
+ * derived from the JWT secret outside production (config refuses the derived key in production).
+ * Rotation: deploy the new key with the old one as MFA_ENCRYPTION_KEY_PREVIOUS (secrets sealed with
+ * it still open; GCM's tag tells the keys apart), re-seal with `mfa-rekey`, then drop the old key.
  */
 export class SecretBox {
   private readonly key: Buffer;
+  private readonly previous: Buffer | null;
 
-  constructor(mfaKeyBase64: string | undefined, jwtSecret: string) {
+  constructor(mfaKeyBase64: string | undefined, jwtSecret: string, previousKeyBase64?: string) {
     this.key = mfaKeyBase64
       ? Buffer.from(mfaKeyBase64, 'base64')
       : Buffer.from(hkdfSync('sha256', jwtSecret, '1pos-mfa', 'totp-secret-dev-key', 32));
-    if (this.key.length !== 32) throw new Error('MFA key must be 32 bytes');
+    this.previous = previousKeyBase64 ? Buffer.from(previousKeyBase64, 'base64') : null;
+    if (this.key.length !== 32 || (this.previous && this.previous.length !== 32)) throw new Error('MFA key must be 32 bytes');
   }
 
   seal(plain: Buffer): string {
@@ -120,10 +123,23 @@ export class SecretBox {
   }
 
   open(sealed: string): Buffer {
+    return this.openKeyed(sealed).plain;
+  }
+
+  /** The secret, and whether the current key sealed it (false: the previous key). Throws when neither did. */
+  openKeyed(sealed: string): { plain: Buffer; current: boolean } {
     const [v, iv, tag, ct] = sealed.split('.');
     if (v !== 'v1' || !iv || !tag || !ct) throw new Error('unknown secret format');
-    const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(iv, 'base64url'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64url'));
-    return Buffer.concat([decipher.update(Buffer.from(ct, 'base64url')), decipher.final()]);
+    const decrypt = (key: Buffer) => {
+      const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
+      decipher.setAuthTag(Buffer.from(tag, 'base64url'));
+      return Buffer.concat([decipher.update(Buffer.from(ct, 'base64url')), decipher.final()]);
+    };
+    try {
+      return { plain: decrypt(this.key), current: true };
+    } catch (e) {
+      if (!this.previous) throw e;
+      return { plain: decrypt(this.previous), current: false };
+    }
   }
 }

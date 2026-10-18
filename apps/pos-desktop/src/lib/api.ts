@@ -10,6 +10,8 @@ export interface ApiError {
   code: string;
   message: string;
   details?: Record<string, unknown>;
+  /** The API's correlation id (in every error body): the reference support looks up in the logs. */
+  correlationId?: string;
 }
 
 export class ApiFailure extends Error {
@@ -17,6 +19,13 @@ export class ApiFailure extends Error {
     super(error.message);
   }
 }
+
+/**
+ * The server answered but could not finish (5xx): add the start of its correlation id, enough for
+ * support to find the request in the logs. "Ref." reads the same in English and Filipino.
+ */
+export const withReference = (text: string, err: unknown): string =>
+  err instanceof ApiFailure && err.error.status >= 500 && err.error.correlationId ? `${text} · Ref. ${err.error.correlationId.slice(0, 8)}` : text;
 
 interface Tokens {
   accessToken: string;
@@ -84,7 +93,7 @@ export async function api<T>(method: string, path: string, body?: unknown, heade
   const data = (await res.json().catch(() => null)) as { error?: Omit<ApiError, 'status'> } | null;
   if (!res.ok) {
     const e = data?.error;
-    throw new ApiFailure({ status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? res.statusText, details: e?.details });
+    throw new ApiFailure({ status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? res.statusText, details: e?.details, correlationId: e?.correlationId });
   }
   return data as T;
 }

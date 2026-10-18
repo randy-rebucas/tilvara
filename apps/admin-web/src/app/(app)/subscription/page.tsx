@@ -3,6 +3,7 @@ import { apiOrNull, type Subscription } from '@/lib/api';
 import { daysUntil, formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import type { MessageKey } from '@/i18n/messages';
+import { SubscriptionTabs } from './tabs';
 
 export const metadata = { title: 'Subscription' };
 
@@ -30,6 +31,7 @@ export default async function SubscriptionPage() {
   return (
     <div className="flex max-w-[960px] flex-col gap-6">
       <PageHeader title={t('sub.title')} />
+      <SubscriptionTabs active="plan" />
       {sub.access === 'READ_ONLY' && <Callout tone="warn">{t('sub.readOnly')}</Callout>}
 
       <Note denom="blue" className="px-6 py-5">

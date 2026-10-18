@@ -127,3 +127,24 @@ export async function withTenant<T>(
     options,
   );
 }
+
+/**
+ * Several queries on one transaction, one after another. A transaction is one connection, and a
+ * connection runs one query at a time: `Promise.all` over its queries only queues them inside pg,
+ * which pg 8 deprecates and pg 9 refuses. Pass thunks (raw `client.query` starts at once when called);
+ * the result keeps each query's type, like `Promise.all`.
+ */
+export async function inSequence<T extends readonly (() => unknown)[]>(
+  ...steps: T
+): Promise<{ -readonly [K in keyof T]: T[K] extends () => infer R ? Awaited<R> : never }> {
+  const out: unknown[] = [];
+  for (const step of steps) out.push(await step());
+  return out as never;
+}
+
+/** `Promise.all(items.map(fn))` for queries on one transaction: one item at a time, results in order. */
+export async function mapInSequence<I, R>(items: readonly I[], fn: (item: I) => Promise<R>): Promise<R[]> {
+  const out: R[] = [];
+  for (const item of items) out.push(await fn(item));
+  return out;
+}

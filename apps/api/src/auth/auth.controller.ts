@@ -1,5 +1,13 @@
-import { Body, Controller, Get, HttpCode, Inject, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Patch, Post, Req } from '@nestjs/common';
 import {
+  accountCloseSchema,
+  emailChangeConfirmSchema,
+  emailChangeRequestSchema,
+  profileUpdateSchema,
+  type AccountCloseInput,
+  type EmailChangeConfirmInput,
+  type EmailChangeRequestInput,
+  type ProfileUpdateInput,
   loginSchema,
   mfaConfirmSchema,
   mfaDisableSchema,
@@ -26,6 +34,7 @@ import {
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { AccountSecurityService, mfaStatus } from './account-security.service.js';
+import { AccountService } from './account.service.js';
 import { Auth, Public, type AuthContext, type AuthedRequest } from './auth-context.js';
 import { permissionCodes } from './authorization.js';
 import { AuthService, type RequestMeta } from './auth.service.js';
@@ -42,6 +51,7 @@ export class AuthController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
     @Inject(AccountSecurityService) private readonly security: AccountSecurityService,
+    @Inject(AccountService) private readonly account: AccountService,
   ) {}
 
   @Public()
@@ -127,6 +137,39 @@ export class AuthController {
     await this.security.confirmReset(body, meta(req));
   }
 
+  // Your own account (privacy pack): name, sign-in email, closing it. ---------------------------
+  @Patch('me')
+  updateProfile(@Auth() auth: AuthContext, @Body(new ZodPipe(profileUpdateSchema)) body: ProfileUpdateInput) {
+    return this.account.updateProfile(auth, body.displayName);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(202)
+  @Post('auth/email-change')
+  requestEmailChange(@Auth() auth: AuthContext, @Body(new ZodPipe(emailChangeRequestSchema)) body: EmailChangeRequestInput) {
+    return this.account.requestEmailChange(auth, body);
+  }
+
+  @Public()
+  @RateLimit(AUTH_LIMIT)
+  @HttpCode(204)
+  @Post('auth/email-change/confirm')
+  async confirmEmailChange(@Body(new ZodPipe(emailChangeConfirmSchema)) body: EmailChangeConfirmInput, @Req() req: AuthedRequest): Promise<void> {
+    await this.account.confirmEmailChange(body.token, meta(req));
+  }
+
+  @Get('auth/account/closure')
+  closureStatus(@Auth() auth: AuthContext) {
+    return this.account.closureStatus(auth.userId);
+  }
+
+  @RateLimit(MFA_LIMIT)
+  @HttpCode(204)
+  @Post('auth/account/close')
+  async closeAccount(@Auth() auth: AuthContext, @Body(new ZodPipe(accountCloseSchema)) body: AccountCloseInput): Promise<void> {
+    await this.account.close(auth, body);
+  }
+
   @HttpCode(204)
   @Post('auth/logout')
   async logout(@Auth() auth: AuthContext): Promise<void> {
@@ -155,6 +198,12 @@ export class AuthController {
         : null,
       memberships: await this.auth.memberships(auth.userId),
       mfa: mfaStatus(auth),
+      // Tilvara support staff (ADR-0016 slice 6): whether this account may use support grants, and the
+      // support session this token is, if any (read-only, until expiresAt at the latest).
+      staff: await this.auth.isStaff(auth.userId),
+      support: auth.support
+        ? { grantId: auth.support.grantId, tenantName: await this.auth.tenantName(auth.tenant!.tenantId, auth), expiresAt: auth.support.expiresAt.toISOString() }
+        : null,
     };
   }
 }

@@ -1,4 +1,4 @@
-# 1POS — Architecture
+# Tilvara — Architecture
 
 Status: Phase 0 baseline (2026-10-15). Living document — update it when the implementation diverges.
 
@@ -162,7 +162,7 @@ Structured JSON logs (pino) with `correlation_id`, `tenant_id`, `user_id` (no PI
 
 ## 11. Known gaps / open decisions
 
-- BIR invoicing route (CAS/CRM-POS registration, EIS, offline numbering) — research in `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md`; production invoice issuance is **disabled** until reviewed. Key constraints from that research: BIR advisory (14 Sep 2026) says no e-invoicing provider is accredited — 1POS must never claim accreditation; RMO 24-2023 requires re-accreditation for "major enhancements", so invoicing (numbering, grand total, e-journal, X/Z readings, invoice rendering) must be a **separately versioned, change-controlled `invoicing` module** with its own release cadence, isolated from fast-moving features.
+- BIR invoicing route (CAS/CRM-POS registration, EIS, offline numbering) — research in `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md`; production invoice issuance is **disabled** until reviewed. Key constraints from that research: BIR advisory (14 Sep 2026) says no e-invoicing provider is accredited — Tilvara must never claim accreditation; RMO 24-2023 requires re-accreditation for "major enhancements", so invoicing (numbering, grand total, e-journal, X/Z readings, invoice rendering) must be a **separately versioned, change-controlled `invoicing` module** with its own release cadence, isolated from fast-moving features.
 - Competitor positioning: `docs/research/COMPETITOR_ANALYSIS.md` (StoreHub is the main PH rival; Square/Toast unavailable in PH).
 - Payment provider: **PayMongo** (decided 2026-10-15); Phase 2 ships `DevPaymentProvider` only until sandbox keys exist. Card/QR refunds wait for that adapter (cash refunds only today).
 - Hosting target (AWS ap-southeast-1 vs GCP asia-southeast1 vs local DC for data residency) — undecided; docker images keep this open.

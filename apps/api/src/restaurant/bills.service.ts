@@ -14,6 +14,7 @@ import {
   sales,
   sql,
   type Database,
+  inSequence,
 } from '@1pos/database';
 import { roundTo, toDec, type RoundingMode } from '@1pos/money';
 import { serviceCharge, TaxError } from '@1pos/tax';
@@ -231,16 +232,16 @@ export class BillsService extends TenantService {
   }
 
   async view(db: Database, b: Bill) {
-    const [lines, charges, beneficiaries, allocations, checks] = await Promise.all([
-      db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, b.id)).orderBy(asc(orderBillLines.lineNo)),
-      db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, b.id)),
-      db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, b.id)),
-      db.select({ a: orderBillAllocations, quantity: saleLines.quantity }).from(orderBillAllocations)
+    const [lines, charges, beneficiaries, allocations, checks] = await inSequence(
+      () => db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, b.id)).orderBy(asc(orderBillLines.lineNo)),
+      () => db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, b.id)),
+      () => db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, b.id)),
+      () => db.select({ a: orderBillAllocations, quantity: saleLines.quantity }).from(orderBillAllocations)
         .innerJoin(saleLines, eq(saleLines.id, orderBillAllocations.saleLineId))
         .where(eq(orderBillAllocations.orderBillId, b.id)),
-      db.select({ id: sales.id, saleNumber: sales.saleNumber, registerId: sales.registerId, amountDue: sales.amountDue, completedAt: sales.completedAt })
+      () => db.select({ id: sales.id, saleNumber: sales.saleNumber, registerId: sales.registerId, amountDue: sales.amountDue, completedAt: sales.completedAt })
         .from(sales).where(eq(sales.orderBillId, b.id)).orderBy(asc(sales.completedAt)),
-    ]);
+    );
     const money = <T extends Record<string, unknown>>(row: T) => {
       const out: Record<string, unknown> = { ...row };
       for (const k of MONEY_FIELDS) if (typeof out[k] === 'string') out[k] = m2(out[k] as string);

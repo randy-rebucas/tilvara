@@ -1,9 +1,9 @@
 # Request for review: default chart of accounts and posting rules
 
 **To:** a Philippine CPA familiar with retail and VAT bookkeeping
-**From:** the 1POS team · **Date:** 2026-10-16 · **Decision record:** ADR-0013 (`docs/decisions/ADR-0013-double-entry-ledger.md`), costing ADR-0012
+**From:** the Tilvara team · **Date:** 2026-10-16 · **Decision record:** ADR-0013 (`docs/decisions/ADR-0013-double-entry-ledger.md`), costing ADR-0012
 
-1POS is a point-of-sale and back-office system for small Philippine shops. Every sale, return, goods receipt, supplier return, stock count, adjustment, transfer and drawer movement posts one balanced journal entry automatically, in the same database transaction as the document. We want an accountant to confirm or correct the default chart and the posting rules before any customer relies on these books. **Nothing here is presented to customers as BIR-compliant**; this review is one step toward that.
+Tilvara is a point-of-sale and back-office system for small Philippine shops. Every sale, return, goods receipt, supplier return, stock count, adjustment, transfer and drawer movement posts one balanced journal entry automatically, in the same database transaction as the document. We want an accountant to confirm or correct the default chart and the posting rules before any customer relies on these books. **Nothing here is presented to customers as BIR-compliant**; this review is one step toward that.
 
 What we ask: for each numbered question, "agree", "change to …", or "needs a decision by the business". Comments on anything else are welcome.
 

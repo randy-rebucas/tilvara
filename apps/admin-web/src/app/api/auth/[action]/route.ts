@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { clearAuthCookies, writeAuthCookies, type TokenSet } from '@/lib/auth-cookies';
+import { clearAuthCookies, openSupport, writeAuthCookies, writeSupportCookies, type TokenSet } from '@/lib/auth-cookies';
 import { API_URL, SECURE_COOKIES } from '@/lib/config';
-import { ACCESS_COOKIE, LANG_COOKIE, MFA_COOKIE } from '@/lib/cookies';
+import { ACCESS_COOKIE, LANG_COOKIE, MFA_COOKIE, REFRESH_COOKIE, SUPPORT_COOKIE } from '@/lib/cookies';
 import { rejectCrossSite } from '@/lib/csrf';
 
 interface AuthResponse {
@@ -95,6 +95,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const { res, json } = await callApi(`/auth/mfa/${action.slice('mfa-'.length)}`, input, bearer);
       return res.ok ? NextResponse.json(json ?? { ok: true }) : passError(res, json);
     }
+    case 'email-change': {
+      if (!bearer) return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
+      const { res, json } = await callApi('/auth/email-change', input, bearer);
+      return res.ok ? NextResponse.json(json) : passError(res, json);
+    }
+    // Both end every session of the account at the API: drop this browser's cookies with them.
+    case 'email-change-confirm':
+    case 'account-close': {
+      if (action === 'account-close' && !bearer) {
+        return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
+      }
+      const path = action === 'account-close' ? '/auth/account/close' : '/auth/email-change/confirm';
+      const { res, json } = await callApi(path, input, action === 'account-close' ? bearer : undefined);
+      if (!res.ok) return passError(res, json);
+      const reply = NextResponse.json({ ok: true });
+      clearAuthCookies(reply);
+      return reply;
+    }
     case 'accept-invite': {
       const { res, json } = await callApi('/invitations/accept', input);
       return res.ok ? sessionReply(json as AuthResponse) : passError(res, json);
@@ -112,6 +130,40 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const tokens = json as { accessToken: string; accessTokenExpiresAt: string };
       const reply = NextResponse.json({ activeTenantId: (input as { tenantId: string }).tenantId });
       writeAuthCookies(reply, tokens, (input as { tenantId: string }).tenantId);
+      return reply;
+    }
+    // Tilvara staff (ADR-0016 slice 6): view a business under its support grant, read-only.
+    case 'support-open': {
+      const refresh = request.cookies.get(REFRESH_COOKIE)?.value;
+      const grantId = String((input as { grantId?: string }).grantId ?? '');
+      if (!refresh) return NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in first' } }, { status: 401 });
+      const o = await openSupport(API_URL, refresh, grantId);
+      if (!o.refreshed) {
+        const reply = NextResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'Sign in again' } }, { status: 401 });
+        clearAuthCookies(reply);
+        return reply;
+      }
+      if (!o.support) {
+        const reply = NextResponse.json(o.error ?? { error: { code: 'ERROR', message: 'Request failed' } }, { status: o.status || 502 });
+        writeAuthCookies(reply, o.refreshed, null);
+        reply.cookies.delete(SUPPORT_COOKIE);
+        return reply;
+      }
+      const reply = NextResponse.json({ ok: true });
+      writeSupportCookies(reply, o.refreshed, o.support, grantId);
+      return reply;
+    }
+    case 'support-leave': {
+      const refresh = request.cookies.get(REFRESH_COOKIE)?.value;
+      const reply = NextResponse.json({ ok: true });
+      reply.cookies.delete(SUPPORT_COOKIE);
+      if (!refresh) {
+        clearAuthCookies(reply);
+        return reply;
+      }
+      const { res, json } = await callApi('/auth/refresh', { refreshToken: refresh });
+      if (!res.ok) clearAuthCookies(reply);
+      else writeAuthCookies(reply, (json as { tokens: TokenSet }).tokens, null);
       return reply;
     }
     case 'logout': {

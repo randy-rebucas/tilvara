@@ -1,6 +1,6 @@
 # Runbook: monitoring and alerts
 
-For: whoever is on call for 1POS. Background: ADR-0016 slice 3. The alert rules are in
+For: whoever is on call for Tilvara. Background: ADR-0016 slice 3. The alert rules are in
 `infra/monitoring/alerts.yml`; each rule links to its section below.
 
 ## What is measured, and where
@@ -103,7 +103,7 @@ defect: a till that reuses keys across sales could have a sale refused. Find the
 ### OneposPaymentUnresolved
 A card/QR payment has waited more than 15 minutes for its outcome (`PROCESSING` or `UNKNOWN`). The customer
 may or may not have been charged. **Never charge again before it is resolved.**
-1. The cashier or a manager presses "Check payment" on the POS (`POST /v1/payments/:id/reconcile`).
+1. The cashier or a manager presses "Check payment" on the POS (`POST /v1/payment-intents/:id/reconcile`).
    It asks the provider and settles the intent.
 2. A shift cannot close while payments are unresolved; that is by design.
 3. If the provider has no record, reconciliation marks it failed and nothing was charged.

@@ -50,7 +50,7 @@ export class SyncController {
   @Post('sync/sales')
   async syncSales(@Req() req: AuthedRequest, @Body(new ZodPipe(syncSalesRequestSchema)) body: SyncSalesRequest) {
     const terminal = await this.sync.authenticate((h) => req.header(h), req.correlationId);
-    return { results: await this.sync.syncSales(terminal, body.sales) };
+    return { results: await this.sync.syncSales(terminal, body.sales, req.receivedAt) };
   }
 
   @RequireTenant()

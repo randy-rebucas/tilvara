@@ -1,5 +1,23 @@
 import { loadEnvFile } from 'node:process';
 import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+
+// One connection runs one query at a time. pg 8 queues a second one (deprecated) and pg 9 refuses it,
+// so any code that issues a query while another is running on the same client (e.g. Promise.all over
+// a transaction's queries; use inSequence) fails here, every time, naming the query.
+const query = pg.Client.prototype.query;
+pg.Client.prototype.query = function guardedQuery(this: pg.Client & { _activeQuery?: unknown; _queryQueue?: unknown[] }, ...args: unknown[]) {
+  if (this._activeQuery || (this._queryQueue?.length ?? 0) > 0) {
+    const first = args[0] as string | { text?: string } | undefined;
+    const text = (typeof first === 'string' ? first : (first?.text ?? '')).replace(/\s+/g, ' ').slice(0, 120);
+    // Rejected like a failed query (not thrown), so the caller's ROLLBACK path runs as it would in pg 9;
+    // printed too, because the API turns it into a plain 500.
+    const err = new Error(`concurrent query on one pg client (pg 9 refuses it): ${text}`);
+    console.error(err.message);
+    return Promise.reject(err);
+  }
+  return (query as (...a: unknown[]) => unknown).apply(this, args);
+} as typeof query;
 
 try {
   loadEnvFile(fileURLToPath(new URL('../../../../.env', import.meta.url)));

@@ -8,7 +8,7 @@ const archivo = Archivo({ subsets: ['latin'], variable: '--font-archivo', displa
 const archivoNarrow = Archivo_Narrow({ subsets: ['latin'], weight: ['500', '600'], variable: '--font-archivo-narrow', display: 'swap' });
 
 export const metadata: Metadata = {
-  title: { default: '1POS back office', template: '%s · 1POS' },
+  title: { default: 'Tilvara back office', template: '%s · Tilvara' },
   robots: { index: false, follow: false },
 };
 

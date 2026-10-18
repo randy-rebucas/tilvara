@@ -1,6 +1,6 @@
-import { withTenant, type Database } from '@1pos/database';
+import { withTenant, type Database, type IsolationLevel } from '@1pos/database';
 import { withLogContext } from '@1pos/observability';
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 export interface OutboxEvent {
   id: string;
@@ -15,7 +15,9 @@ export interface OutboxEvent {
  * Handlers run inside `withTenant(event.tenantId)`: the tenant scope comes from the trusted
  * event row, never from the payload. Delivery is at-least-once, so handlers must be idempotent.
  */
-export type OutboxHandler = (event: OutboxEvent, db: Database) => Promise<void>;
+export type OutboxHandlerFn = (event: OutboxEvent, db: Database, ctx: { client: PoolClient; pool: Pool }) => Promise<void>;
+/** A plain function, or one that needs a stricter transaction (e.g. a data export reads one snapshot). */
+export type OutboxHandler = OutboxHandlerFn | { isolation: IsolationLevel; run: OutboxHandlerFn };
 
 export interface Logger {
   info(msg: string, meta?: Record<string, unknown>): void;
@@ -93,19 +95,40 @@ export class OutboxProcessor {
     return result;
   }
 
+  /** Renew this worker's lease on the event; false when another worker has taken it over. */
+  private async extend(event: OutboxEvent): Promise<boolean> {
+    const { rows } = await this.o.pool.query<{ ok: boolean }>('SELECT outbox_extend($1, $2, $3) AS ok', [event.id, this.o.workerId, this.o.leaseSeconds]);
+    return rows[0]?.ok === true;
+  }
+
   private async process(event: OutboxEvent, result: RunResult): Promise<void> {
     const handler = this.o.handlers[event.topic];
+    // The batch was claimed at once, so a slow event earlier in it may have let this one's lease run
+    // out and another worker claim it: renew first, and leave it alone if that worker holds it now.
+    if (!(await this.extend(event))) {
+      this.o.logger.info('outbox lease lost before start; another worker has the event', { eventId: event.id, topic: event.topic });
+      return;
+    }
+    // While the handler runs, keep renewing (every third of the lease), so a long one (a large data
+    // export) is not claimed and run a second time by another worker.
+    const renew = setInterval(() => {
+      this.extend(event).catch((e: unknown) => this.o.logger.error('outbox lease renewal failed', { eventId: event.id, error: (e as Error).name }));
+    }, Math.max(1000, (this.o.leaseSeconds * 1000) / 3));
     try {
       if (handler) {
-        await withTenant(this.o.pool, event.tenantId, (db) => handler(event, db), {
+        const run = typeof handler === 'function' ? handler : handler.run;
+        await withTenant(this.o.pool, event.tenantId, (db, client) => run(event, db, { client, pool: this.o.pool }), {
           correlationId: event.correlationId ?? undefined,
+          ...(typeof handler === 'function' ? {} : { isolation: handler.isolation }),
         });
       }
+      clearInterval(renew);
       // Events without a consumer yet are acknowledged; they stay in the table for future replay.
       const ok = await this.o.pool.query<{ ok: boolean }>('SELECT outbox_complete($1, $2) AS ok', [event.id, this.o.workerId]);
       if (ok.rows[0]?.ok) result.done++;
       else this.o.logger.error('outbox lease lost before completion', { eventId: event.id, topic: event.topic });
     } catch (err) {
+      clearInterval(renew);
       const message = err instanceof Error ? `${err.name}: ${err.message.split('\nparams:')[0]}` : 'unknown error';
       const { rows: f } = await this.o.pool.query<{ status: string | null }>('SELECT outbox_fail($1, $2, $3, $4) AS status', [
         event.id,

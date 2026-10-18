@@ -11,12 +11,15 @@ import {
   type Member,
   type PriceList,
   type Register,
+  type SampleData,
   type Subscription,
   type Terminal,
 } from '@/lib/api';
+import { POS_URL } from '@/lib/config';
 import { daysUntil, formatDateTime, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import type { MessageKey } from '@/i18n/messages';
+import { SampleCard } from './sample-card';
 
 export const metadata = { title: 'Overview' };
 
@@ -24,7 +27,7 @@ type List<T> = { data: T[] };
 
 export default async function OverviewPage() {
   const { t, lang } = await getT();
-  const [entities, branches, registers, terminals, products, lists, members, invites, sub] = await Promise.all([
+  const [entities, branches, registers, terminals, products, lists, members, invites, sub, sample, sales] = await Promise.all([
     apiOrNull<List<LegalEntity>>('/legal-entities'),
     apiOrNull<List<Branch>>('/branches'),
     apiOrNull<List<Register>>('/registers'),
@@ -34,6 +37,8 @@ export default async function OverviewPage() {
     apiOrNull<List<Member>>('/members'),
     apiOrNull<List<Invitation>>('/invitations'),
     apiOrNull<Subscription>('/subscription'),
+    apiOrNull<SampleData>('/sample-data'),
+    apiOrNull<List<{ id: string }>>('/sales?limit=1'),
   ]);
 
   const defaultList = lists?.data.find((l) => l.isDefault && !l.archivedAt);
@@ -52,6 +57,8 @@ export default async function OverviewPage() {
     { key: 'overview.setup.branch', action: 'overview.do.branch', done: active(branches).length > 0, href: '/locations' },
     { key: 'overview.setup.register', action: 'overview.do.register', done: active(registers).length > 0 && pairedTerminals > 0, href: '/locations' },
     { key: 'overview.setup.products', action: 'overview.do.products', done: activeProducts.length > 0 && unpriced === 0, href: '/prices' },
+    // The point of it all: one sale rung up at the till (with the sample items, or the business's own).
+    { key: 'overview.setup.sale', action: POS_URL ? 'overview.do.saleTill' : 'overview.do.sale', done: (sales?.data.length ?? 0) > 0, href: POS_URL ?? '/reports/sales' },
     { key: 'overview.setup.team', action: 'overview.do.team', done: activeMembers + pendingInvites > 1, href: '/team' },
   ];
   const next = steps.find((s) => !s.done);
@@ -108,6 +115,7 @@ export default async function OverviewPage() {
               </Link>
             )}
           </Note>
+          {sample && lists && <SampleCard state={sample} />}
           <Callout tone="info">{t('loc.invoicingOff')}</Callout>
         </aside>
 

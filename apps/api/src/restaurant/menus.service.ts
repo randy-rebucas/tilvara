@@ -20,6 +20,8 @@ import {
   soldOutItems,
   sql,
   type Database,
+  inSequence,
+  mapInSequence,
 } from '@1pos/database';
 import type {
   BranchMenuQuery,
@@ -196,7 +198,7 @@ export class MenusService extends TenantService {
     this.assertRead(auth);
     return this.read(auth, async (db) => {
       const rows = await db.select().from(menus).where(isNull(menus.archivedAt)).orderBy(asc(menus.name));
-      return { data: await Promise.all(rows.map((m) => this.menuView(db, m))) };
+      return { data: await mapInSequence(rows, (m) => this.menuView(db, m)) };
     });
   }
 
@@ -465,11 +467,11 @@ export class MenusService extends TenantService {
   }
 
   private async content(db: Database, versionId: string) {
-    const [sections, items, groups] = await Promise.all([
-      db.select().from(menuSections).where(eq(menuSections.menuVersionId, versionId)).orderBy(asc(menuSections.sortOrder)),
-      db.select().from(menuItems).where(eq(menuItems.menuVersionId, versionId)).orderBy(asc(menuItems.sortOrder)),
-      db.select().from(menuItemModifierGroups).where(eq(menuItemModifierGroups.menuVersionId, versionId)).orderBy(asc(menuItemModifierGroups.sortOrder)),
-    ]);
+    const [sections, items, groups] = await inSequence(
+      () => db.select().from(menuSections).where(eq(menuSections.menuVersionId, versionId)).orderBy(asc(menuSections.sortOrder)),
+      () => db.select().from(menuItems).where(eq(menuItems.menuVersionId, versionId)).orderBy(asc(menuItems.sortOrder)),
+      () => db.select().from(menuItemModifierGroups).where(eq(menuItemModifierGroups.menuVersionId, versionId)).orderBy(asc(menuItemModifierGroups.sortOrder)),
+    );
     return sections.map((s) => ({
       id: s.id,
       name: s.name,

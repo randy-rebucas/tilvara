@@ -10,7 +10,7 @@ import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 
 /**
  * OpenAPI 3.1 document derived from the same metadata Nest routes with: controller/method
- * paths, the ZodPipe schemas on @Body/@Query (z.toJSONSchema), and the 1POS route decorators.
+ * paths, the ZodPipe schemas on @Body/@Query (z.toJSONSchema), and the Tilvara route decorators.
  * Response bodies are not schema-typed yet (services return Drizzle rows); every operation
  * documents the shared error envelope instead. Regenerate with `pnpm --filter @1pos/api openapi`.
  */
@@ -162,7 +162,7 @@ export function buildOpenApi(version = '0.1.0'): Json {
   return {
     openapi: '3.1.0',
     info: {
-      title: '1POS API',
+      title: 'Tilvara API',
       version,
       description:
         'Multi-tenant retail + restaurant POS API. Generated from route metadata and @1pos/validation schemas; ' +

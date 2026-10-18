@@ -14,10 +14,11 @@ export function UserMenu({ tenantName, userName, multiple }: { tenantName: strin
   }
   return (
     <div className="flex min-w-0 items-center gap-2">
-      {/* The person's own account settings (two-step sign-in); no extra icon, the band has no room left at 1440px. */}
-      <a href="/security" title={t('mfa.title')} className="group flex min-w-0 flex-col items-end leading-tight">
-        <span className="max-w-[44vw] truncate text-[0.875rem] font-semibold text-white sm:max-w-[240px]">{tenantName}</span>
-        <span className="max-w-[44vw] truncate text-[0.75rem] text-blue-ink underline-offset-2 group-hover:underline sm:max-w-[240px]">{userName}</span>
+      {/* The person's own account (name, email, two-step sign-in, closing it); no extra icon, the band has no room left at 1440px.
+          From lg the tabs share this row, so a long business name is cut shorter there (full name in the tooltip). */}
+      <a href="/account" title={`${tenantName} · ${userName} — ${t('account.title')}`} className="group flex min-w-0 flex-col items-end leading-tight">
+        <span className="max-w-[44vw] truncate text-[0.875rem] font-semibold text-white sm:max-w-[240px] lg:max-w-[136px]">{tenantName}</span>
+        <span className="max-w-[44vw] truncate text-[0.75rem] text-blue-ink underline-offset-2 group-hover:underline sm:max-w-[240px] lg:max-w-[136px]">{userName}</span>
       </a>
       {multiple && (
         <button type="button" onClick={() => router.push('/select-business')} title={t('nav.switchBusiness')}

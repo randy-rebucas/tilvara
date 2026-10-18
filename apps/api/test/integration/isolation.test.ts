@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ExportLinks } from '../../src/exports/export-links.js';
 import { addMember, asOwnerInTenant, bearer, createApp, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
 
 /**
@@ -75,6 +76,8 @@ interface World {
   terminalHeaders: Record<string, string>;
   snapshotId: string;
   offlineTxnId: string;
+  supportGrantId: string;
+  exportId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -240,6 +243,9 @@ async function world(prefix: string): Promise<World> {
   if (synced.results.map((r) => r.status).join() !== 'RECORDED,QUARANTINED') throw new Error(`fixture sync → ${JSON.stringify(synced.results)}`);
   const quarantined = ok<{ data: { id: string }[] }>(await http().get('/v1/sync/transactions').query({ status: 'QUARANTINED' }).set(auth), 200).data[0]!;
   const openSessionCash = (await http().get(`/v1/cashier-sessions/${openSession.id}`).set(auth)).body.expectedCash as string;
+  // Phase 6 slice 6: support access and a data export request (the worker does not run here).
+  const grant = ok(await http().post('/v1/support-access').set(auth).send({ purpose: 'Fixture support access', hours: 2 }));
+  const dataExport = ok(await http().post('/v1/data-exports').set(auth), 202);
   return {
     t,
     auth,
@@ -296,6 +302,8 @@ async function world(prefix: string): Promise<World> {
     terminalHeaders,
     snapshotId: snap.snapshotId,
     offlineTxnId: quarantined.id,
+    supportGrantId: grant.id,
+    exportId: dataExport.id,
   };
 }
 
@@ -430,6 +438,7 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/order-items/:id/void': () => http().post(`/v1/order-items/${a.firedItemId}/void`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'sabotage', wasted: true }),
     'POST /v1/order-items/:id/status': () => http().post(`/v1/order-items/${a.firedItemId}/status`).set(auth).send({ status: 'SERVED' }),
     'POST /v1/kitchen/tickets/:id/bump': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/bump`).set(auth),
+    'POST /v1/kitchen/tickets/:id/unbump': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/unbump`).set(auth),
     'POST /v1/restaurant/orders/:id/bill': () => http().post(`/v1/restaurant/orders/${a.orderId}/bill`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
     'GET /v1/restaurant/bills/:id': () => http().get(`/v1/restaurant/bills/${a.billId}`).set(auth),
     'POST /v1/restaurant/bills/:id/void': () => http().post(`/v1/restaurant/bills/${a.billId}/void`).set(auth).send({ reason: 'sabotage' }),
@@ -437,6 +446,14 @@ function attackMatrix(): Record<string, () => request.Test> {
       http().post(`/v1/restaurant/bills/${a.billId}/checks`).set(auth).set('Idempotency-Key', randomUUID())
         .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] }),
     'POST /v1/restaurant/bills/:id/checks/preview': () => http().post(`/v1/restaurant/bills/${a.billId}/checks/preview`).set(auth).send({}),
+    'POST /v1/support-access/:id/revoke': () => http().post(`/v1/support-access/${a.supportGrantId}/revoke`).set(auth).send({ reason: 'sabotage' }),
+    // B's owner is not Tilvara staff: A's grant is as good as absent.
+    'POST /v1/support/grants/:id/open': () => http().post(`/v1/support/grants/${a.supportGrantId}/open`).set(auth),
+    'GET /v1/data-exports/:id': () => http().get(`/v1/data-exports/${a.exportId}`).set(auth),
+    'POST /v1/data-exports/:id/link': () => http().post(`/v1/data-exports/${a.exportId}/link`).set(auth),
+    // A genuine link naming A's export but B's business opens nothing.
+    'GET /v1/data-export-files/:token': () =>
+      http().get(`/v1/data-export-files/${new ExportLinks(process.env.JWT_ACCESS_SECRET!).sign({ e: a.exportId, t: b.t.tenantId, u: b.t.userId, x: Math.floor(Date.now() / 1000) + 600 })}`),
   };
 }
 
@@ -556,7 +573,7 @@ const idsOf = (w: World) =>
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
    w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
    w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
-   w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId];
+   w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId, w.supportGrantId, w.exportId];
 
 describe('Phase 1 cross-tenant sweep', () => {
   it('the attack matrix covers every id-addressed route in the router', () => {
@@ -582,6 +599,8 @@ describe('Phase 1 cross-tenant sweep', () => {
   });
 
   it('A is untouched after the attacks', async () => {
+    const grants = (await http().get('/v1/support-access').set(a.auth).expect(200)).body.data;
+    expect(grants.map((g: { id: string; status: string }) => [g.id, g.status])).toEqual([[a.supportGrantId, 'OPEN']]);
     const p = await http().get(`/v1/products/${a.productId}`).set(a.auth).expect(200);
     expect([p.body.name, p.body.archivedAt, p.body.categoryId]).toEqual(['Cola', null, a.categoryId]);
     const terminals = (await http().get('/v1/terminals').set(a.auth).expect(200)).body.data;
@@ -634,7 +653,7 @@ describe('Phase 1 cross-tenant sweep', () => {
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
     const paths = [
-      '/v1/me', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
+      '/v1/me', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, `/v1/variants/${b.dishId}/recipe`, '/v1/invitations',

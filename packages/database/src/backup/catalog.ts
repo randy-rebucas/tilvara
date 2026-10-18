@@ -15,11 +15,13 @@ export const NON_TENANT_TABLES: Record<string, string> = {
   user_mfa_factors: 'per-user TOTP secret (encrypted); no runtime access, only auth_mfa_* functions',
   user_mfa_recovery_codes: 'per-user recovery code hashes; no runtime access, only auth_mfa_* functions',
   password_reset_tokens: 'per-user reset token hashes; no runtime access, only auth_password_reset_* functions',
+  email_change_tokens: 'per-user email change link hashes and the new address; no runtime access, only auth_email_change_* functions',
   permissions: 'global read-only permission catalog',
   plans: 'global read-only plan catalog',
   discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
   worker_heartbeats: 'one row per outbox worker; no runtime access, only worker_heartbeat* and platform_metrics()',
   backup_runs: 'successful backups and restore drills; no runtime access, only platform_record_backup() and platform_metrics()',
+  platform_staff: 'Tilvara support staff; no runtime access, only the support_* / auth_staff_active / auth_resolve_support functions',
 };
 
 /** Tenant tables whose tenant_id may be NULL; such rows match no tenant policy (fail closed). */
@@ -33,10 +35,12 @@ export const FORCED_NON_TENANT_TABLES = [
   'users',
   'worker_heartbeats',
   'backup_runs',
+  'platform_staff',
   'user_sessions',
   'user_mfa_factors',
   'user_mfa_recovery_codes',
   'password_reset_tokens',
+  'email_change_tokens',
 ] as const;
 
 const CANONICAL_POLICY = '(tenant_id = app_current_tenant_id())';

@@ -36,6 +36,11 @@ export const users = pgTable(
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
     /** First time the guard saw this user hold a privileged permission without MFA: start of the MFA grace period (ADR-0016). */
     privilegedSince: timestamp('privileged_since', { withTimezone: true }),
+    /**
+     * Set when the person closed their own account (status DISABLED from then on). The account is
+     * blocked now and anonymised later, once the retention schedule allows (privacy pack). Platform-only.
+     */
+    closedAt: timestamp('closed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -43,6 +48,7 @@ export const users = pgTable(
     uniqueIndex('users_email_unique').on(sql`lower(${t.email})`),
     check('users_status_check', sql`${t.status} IN ('ACTIVE','DISABLED')`),
     check('users_email_format', sql`${t.email} ~ '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'`),
+    check('users_closed_disabled', sql`${t.closedAt} IS NULL OR ${t.status} = 'DISABLED'`),
   ],
 );
 
@@ -116,6 +122,30 @@ export const passwordResetTokens = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('password_reset_tokens_user_idx').on(t.userId)],
+);
+
+/**
+ * A requested change of sign-in email (SHA-256 of the link token only), 24 hours. The link goes to
+ * the new address, so using it proves the person controls it. Only the newest works. No runtime
+ * access: only auth_email_change_* functions.
+ */
+export const emailChangeTokens = pgTable(
+  'email_change_tokens',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    newEmail: text('new_email').notNull(),
+    tokenHash: text('token_hash').notNull().unique(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('email_change_tokens_user_idx').on(t.userId),
+    check('email_change_tokens_email_format', sql`${t.newEmail} ~ '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'`),
+  ],
 );
 
 /** Global permission catalog, seeded by migration. Codes are referenced by role_permissions. */

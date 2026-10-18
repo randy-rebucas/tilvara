@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { afterAll, describe, expect, it } from 'vitest';
 import { isolationProblems, NON_TENANT_TABLES, NULLABLE_TENANT_TABLES } from '../../src/backup/catalog.js';
+import { EXPORT_EXCLUDED_TABLES, EXPORT_SECRET_COLUMNS } from '../../src/export/data-export.js';
 import { TEST_DATABASE_MIGRATOR_URL } from './env.js';
 
 /**
@@ -81,8 +82,8 @@ describe('schema isolation catalog', () => {
 
   it('allow-listed non-tenant tables keep their reviewed posture', async () => {
     const byName = Object.fromEntries((await publicTables()).map((t) => [t.name, t]));
-    const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens'];
-    for (const name of ['tenants', 'users', 'worker_heartbeats', 'backup_runs', ...credentialTables]) {
+    const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens', 'email_change_tokens'];
+    for (const name of ['tenants', 'users', 'worker_heartbeats', 'backup_runs', 'platform_staff', ...credentialTables]) {
       expect([name, byName[name]?.rls, byName[name]?.forced]).toEqual([name, true, true]);
     }
     // Platform-only tables: reached through SECURITY DEFINER functions, never by a login role
@@ -90,7 +91,7 @@ describe('schema isolation catalog', () => {
     const platformOnly = await q(
       `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
         WHERE grantee IN ('onepos_app', 'onepos_readonly', 'onepos_worker', 'onepos_backup')
-          AND table_name IN ('worker_heartbeats', 'backup_runs')`,
+          AND table_name IN ('worker_heartbeats', 'backup_runs', 'platform_staff')`,
     );
     expect(platformOnly).toEqual([]);
     // Credential tables: no privilege of any kind for the runtime or read-only roles.
@@ -103,7 +104,7 @@ describe('schema isolation catalog', () => {
     const secretColumns = await q(
       `SELECT column_name FROM information_schema.column_privileges
         WHERE grantee IN ('onepos_app', 'onepos_readonly') AND table_name = 'users'
-          AND column_name IN ('password_hash', 'privileged_since', 'failed_login_count', 'locked_until')`,
+          AND column_name IN ('password_hash', 'privileged_since', 'failed_login_count', 'locked_until', 'closed_at')`,
     );
     expect(secretColumns).toEqual([]);
     const writes = await q<{ table: string; priv: string }>(`
@@ -168,19 +169,39 @@ describe('schema isolation catalog', () => {
     const owned = await q(`SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND pg_get_userbyid(relowner) = 'onepos_worker'`);
     expect(owned).toEqual([]);
     const tableWrites = await q(`SELECT table_name, privilege_type FROM information_schema.table_privileges
-       WHERE grantee = 'onepos_worker' AND table_schema = 'public'`);
+       WHERE grantee = 'onepos_worker' AND table_schema = 'public' AND privilege_type <> 'SELECT'`);
     expect(tableWrites).toEqual([]);
-    const columns = await q<{ t: string }>(`SELECT DISTINCT table_name || '.' || privilege_type AS t FROM information_schema.column_privileges
-       WHERE grantee = 'onepos_worker' AND table_schema = 'public' ORDER BY 1`);
-    expect(columns.map((c) => c.t)).toEqual(['tenant_memberships.SELECT', 'tenants.SELECT', 'users.SELECT']);
-    const secret = await q(`SELECT 1 FROM information_schema.column_privileges
+    const columnWrites = await q(`SELECT table_name, column_name FROM information_schema.column_privileges
+       WHERE grantee = 'onepos_worker' AND table_schema = 'public' AND privilege_type <> 'SELECT'`);
+    expect(columnWrites).toEqual([]);
+    // Reads: the welcome mail's users/tenants columns, and every tenant table a data export writes
+    // (ADR-0016 slice 6), always under RLS inside the event's tenant. Nothing internal, nothing platform.
+    const tenantTables = (await publicTables()).filter((t) => t.has_tenant).map((t) => t.name);
+    const readable = await q<{ t: string }>(`SELECT DISTINCT table_name AS t FROM information_schema.column_privileges
+       WHERE grantee = 'onepos_worker' AND table_schema = 'public' AND privilege_type = 'SELECT' ORDER BY 1`);
+    const expected = [...tenantTables.filter((t) => !(t in EXPORT_EXCLUDED_TABLES)), 'tenants', 'users'].sort();
+    expect(readable.map((r) => r.t)).toEqual(expected);
+    // Every exported table is readable in full, except the secret columns, which never are.
+    const { rows: gaps } = await pool.query<{ t: string; c: string }>(`
+      SELECT c.table_name AS t, c.column_name AS c FROM information_schema.columns c
+       WHERE c.table_schema = 'public' AND c.table_name = ANY ($1)
+         AND NOT has_column_privilege('onepos_worker', format('public.%I', c.table_name), c.column_name, 'SELECT')`, [tenantTables.filter((t) => !(t in EXPORT_EXCLUDED_TABLES))]);
+    const byName = (x: { t: string; c: string }, y: { t: string; c: string }) => `${x.t}.${x.c}`.localeCompare(`${y.t}.${y.c}`);
+    const secret = Object.entries(EXPORT_SECRET_COLUMNS).flatMap(([t, cols]) => cols.map((c) => ({ t, c })));
+    expect(gaps.sort(byName)).toEqual(secret.sort(byName));
+    for (const t of Object.keys(EXPORT_EXCLUDED_TABLES)) expect([t, tenantTables.includes(t)]).toEqual([t, true]);
+    const userSecrets = await q(`SELECT 1 FROM information_schema.column_privileges
        WHERE grantee = 'onepos_worker' AND table_name = 'users' AND column_name IN ('password_hash', 'failed_login_count', 'locked_until', 'privileged_since')`);
-    expect(secret).toEqual([]);
+    expect(userSecrets).toEqual([]);
     // Only the worker may drive the outbox.
     const [claim] = await q<{ app: boolean; worker: boolean }>(`SELECT
        has_function_privilege('onepos_app', 'outbox_claim(text, int, int)', 'EXECUTE') AS app,
        has_function_privilege('onepos_worker', 'outbox_claim(text, int, int)', 'EXECUTE') AS worker`);
     expect(claim).toEqual({ app: false, worker: true });
+    const [extend] = await q<{ app: boolean; worker: boolean }>(`SELECT
+       has_function_privilege('onepos_app', 'outbox_extend(uuid, text, int)', 'EXECUTE') AS app,
+       has_function_privilege('onepos_worker', 'outbox_extend(uuid, text, int)', 'EXECUTE') AS worker`);
+    expect(extend).toEqual({ app: false, worker: true });
     // Monitoring (ADR-0016 slice 3): the API reads the gauges; the worker beats and replays DEAD rows.
     const { rows: monitoring } = await pool.query<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(`
       SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app,
@@ -240,6 +261,25 @@ describe('schema isolation catalog', () => {
       SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
              has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly, has_function_privilege('onepos_migrator', f, 'EXECUTE') AS migrator
         FROM unnest(ARRAY['auth_mfa_admin_reset(uuid, uuid, text, text)', 'auth_members_mfa()', 'auth_mfa_support_reset(text, text, text, text)']) AS f`);
+    // Support access and exports (ADR-0016 slice 6): staff are managed with ops credentials; the API
+    // uses grants; only the worker finishes and expires exports.
+    const slice6 = await q<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(`
+      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
+             has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly
+        FROM unnest(ARRAY['support_staff_add(text, text, text)', 'support_staff_disable(text, text, text)', 'support_staff_list()',
+                          'auth_staff_active(uuid)', 'support_list_grants(uuid)', 'support_open_grant(uuid, uuid, uuid, text)', 'auth_resolve_support(uuid, uuid, uuid)',
+                          'data_export_finish(uuid, text, bigint, text, jsonb, timestamptz)', 'data_export_fail(uuid, text)',
+                          'data_export_due_expiry(int)', 'data_export_mark_expired(uuid, uuid)']) AS f`);
+    const none = { app: false, worker: false, readonly: false };
+    const app = { app: true, worker: false, readonly: false };
+    const worker = { app: false, worker: true, readonly: false };
+    expect(slice6.map(({ fn, ...r }) => [fn.split('(')[0], r])).toEqual([
+      ['support_staff_add', none], ['support_staff_disable', none], ['support_staff_list', none],
+      ['auth_staff_active', app], ['support_list_grants', app], ['support_open_grant', app], ['auth_resolve_support', app],
+      ['data_export_finish', worker], ['data_export_fail', worker], ['data_export_due_expiry', worker], ['data_export_mark_expired', worker],
+    ]);
+    const [staffMigrator] = await q<{ ok: boolean }>(`SELECT has_function_privilege('onepos_migrator', 'support_staff_add(text, text, text)', 'EXECUTE') AS ok`);
+    expect(staffMigrator!.ok).toBe(true);
     // (The migrator inherits the runtime role's rights, so only the support reset's "migrator only" is asserted.)
     expect(resets.map(({ migrator, ...r }) => (r.fn.startsWith('auth_mfa_support_reset') ? { ...r, migrator } : r))).toEqual([
       { fn: 'auth_mfa_admin_reset(uuid, uuid, text, text)', app: true, worker: false, readonly: false },

@@ -19,6 +19,8 @@ import {
   stockMovements,
   users,
   type Database,
+  inSequence,
+  mapInSequence,
 } from '@1pos/database';
 import { buildReturnReceipt } from './receipt.js';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
@@ -269,7 +271,7 @@ export class ReturnsService extends TenantService {
       const scope = { legalEntityId: sale.legalEntityId, branchId: sale.branchId, registerId: sale.registerId };
       if (sale.cashierUserId !== auth.userId) this.assertCan(auth, 'sales.read', scope);
       const docs = await db.select().from(saleReturns).where(eq(saleReturns.saleId, saleId)).orderBy(saleReturns.createdAt, saleReturns.id);
-      return { data: await Promise.all(docs.map((d) => this.view(db, d))) };
+      return { data: await mapInSequence(docs, (d) => this.view(db, d)) };
     });
   }
 
@@ -281,17 +283,17 @@ export class ReturnsService extends TenantService {
       const [sale] = await db.select().from(sales).where(eq(sales.id, doc.saleId));
       const scope = { legalEntityId: sale!.legalEntityId, branchId: sale!.branchId, registerId: sale!.registerId };
       if (sale!.cashierUserId !== auth.userId) this.assertCan(auth, 'sales.read', scope);
-      const [[entity], [branch], [register], [person], lines] = await Promise.all([
-        db.select().from(legalEntities).where(eq(legalEntities.id, sale!.legalEntityId)),
-        db.select().from(branches).where(eq(branches.id, sale!.branchId)),
-        db.select().from(registers).where(eq(registers.id, sale!.registerId)),
-        db.select({ displayName: users.displayName }).from(users).where(eq(users.id, doc.processedBy)),
-        db.select({ r: saleReturnLines, name: saleLines.name, unitPrice: saleLines.unitPrice, vatTreatment: saleLines.vatTreatment })
+      const [[entity], [branch], [register], [person], lines] = await inSequence(
+        () => db.select().from(legalEntities).where(eq(legalEntities.id, sale!.legalEntityId)),
+        () => db.select().from(branches).where(eq(branches.id, sale!.branchId)),
+        () => db.select().from(registers).where(eq(registers.id, sale!.registerId)),
+        () => db.select({ displayName: users.displayName }).from(users).where(eq(users.id, doc.processedBy)),
+        () => db.select({ r: saleReturnLines, name: saleLines.name, unitPrice: saleLines.unitPrice, vatTreatment: saleLines.vatTreatment })
           .from(saleReturnLines)
           .innerJoin(saleLines, eq(saleLines.id, saleReturnLines.saleLineId))
           .where(eq(saleReturnLines.saleReturnId, doc.id))
           .orderBy(saleLines.lineNo),
-      ]);
+      );
       const snapshot = sale!.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
       return buildReturnReceipt({
         invoicingMode: entity!.invoicingMode,

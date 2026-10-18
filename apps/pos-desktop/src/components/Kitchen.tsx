@@ -189,6 +189,8 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
   }
   const setStatus = (itemId: string, status: 'IN_PREP' | 'READY') => act(itemId, () => api('POST', `/v1/order-items/${itemId}/status`, { status }));
   const bump = (ticketId: string) => act(ticketId, () => api('POST', `/v1/kitchen/tickets/${ticketId}/bump`));
+  // A mistaken bump: ready items go back to preparation (never served ones; the server refuses those).
+  const unbump = (ticketId: string) => act(ticketId, () => api('POST', `/v1/kitchen/tickets/${ticketId}/unbump`));
 
   return (
     <div className="grid gap-4 px-4 py-5 sm:px-6">
@@ -265,6 +267,11 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                   {waiting && (
                     <button type="button" className="btn btn-primary w-full" disabled={busy.current.has(tk.id)} onClick={() => void bump(tk.id)}>
                       {t('kds.bump')}
+                    </button>
+                  )}
+                  {!waiting && tk.bumpedAt && tk.items.some((i) => i.status === 'READY') && (
+                    <button type="button" className="btn w-full" title={t('kds.unbumpHint')} disabled={busy.current.has(tk.id)} onClick={() => void unbump(tk.id)}>
+                      {t('kds.unbump')}
                     </button>
                   )}
                 </Note>

@@ -1,4 +1,4 @@
-# 1POS — Domain Model
+# Tilvara — Domain Model
 
 Bounded contexts, their aggregates, invariants and state machines. Tables are in `docs/database/DATA_MODEL.md`.
 

@@ -25,7 +25,7 @@ interface AuditRow {
 type Query = { from?: string; to?: string; action?: string; actor?: string; type?: string; record?: string; cursor?: string };
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 /** Action families to narrow by (prefixes; the API matches "starts with"). */
-const FAMILIES = ['sale', 'cash', 'stock', 'goods', 'supplier', 'purchase', 'order', 'member', 'role', 'invitation', 'product', 'price', 'journal', 'period', 'terminal'] as const;
+const FAMILIES = ['sale', 'cash', 'stock', 'goods', 'supplier', 'purchase', 'order', 'member', 'role', 'invitation', 'product', 'price', 'journal', 'period', 'terminal', 'support', 'data_export'] as const;
 
 /** Where a record lives in the admin, when it has a page. */
 function recordHref(type: string, id: string | null): string | null {
@@ -128,7 +128,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
             rowKey={(r) => r.id}
             columns={[
               { header: t('audit.when'), cell: (r) => <span className="whitespace-nowrap text-muted">{formatDateTime(r.occurredAt, lang)}</span> },
-              { header: t('audit.who'), cell: (r) => (r.actorUserId ? <Link href={keep({ actor: r.actorUserId })} className="underline">{r.actorName ?? '—'}</Link> : <span className="text-muted">{t('audit.system')}</span>) },
+              { header: t('audit.who'), cell: (r) => (r.actorType === 'SUPPORT' ? <span className="text-orange">{t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') })}</span> : r.actorUserId ? <Link href={keep({ actor: r.actorUserId })} className="underline">{r.actorName ?? '—'}</Link> : <span className="text-muted">{t('audit.system')}</span>) },
               { header: t('audit.what'), cell: (r) => <Serial className="text-ink">{r.action}</Serial> },
               {
                 header: t('audit.record'),
@@ -146,7 +146,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
             ]}
             stacked={{
               title: (r) => <Serial className="text-ink">{r.action}</Serial>,
-              meta: (r) => <span className="text-[0.8125rem] text-muted">{formatDateTime(r.occurredAt, lang)} · {r.actorName ?? t('audit.system')} · {r.resourceType}</span>,
+              meta: (r) => <span className="text-[0.8125rem] text-muted">{formatDateTime(r.occurredAt, lang)} · {r.actorType === 'SUPPORT' ? t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') }) : (r.actorName ?? t('audit.system'))} · {r.resourceType}</span>,
             }}
           />
         ) : (

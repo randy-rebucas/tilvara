@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream';
 import { context, trace, type Span, type SpanContext } from '@opentelemetry/api';
 import { describe, expect, it } from 'vitest';
-import { createLogger, currentLogContext, enrichLogContext, withLogContext } from '../src/index.js';
+import { createLogger, currentLogContext, enrichLogContext, maskEmail, PERSONAL_KEYS, withLogContext } from '../src/index.js';
 
 function capture() {
   const lines: Record<string, unknown>[] = [];
@@ -53,6 +53,35 @@ describe('createLogger', () => {
     logger.info({ password: 'hunter2', user: { refreshToken: 'r', accessToken: 'a' }, headers: { authorization: 'Bearer x', cookie: 'c' } }, 'x');
     const s = JSON.stringify(lines[0]);
     for (const secret of ['hunter2', '"r"', '"a"', 'Bearer x', '"c"']) expect(s).not.toContain(secret);
+  });
+
+  it('redacts personal data and secrets under every listed key, at the top level and three objects deep', () => {
+    const { lines, logger } = capture();
+    // A literal list: taking a key out of PERSONAL_KEYS must fail here, not shrink the test with it.
+    const personal = ['email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary', 'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient'];
+    expect([...PERSONAL_KEYS].sort()).toEqual([...personal].sort());
+    const keys = [...personal, 'password', 'passwordHash', 'token', 'accessToken', 'refreshToken', 'secret', 'credential', 'apiKey', 'authorization', 'cookie'];
+    for (const key of keys) {
+      const sentinel = `leak-${key}-x9`;
+      logger.info({ [key]: sentinel, a: { [key]: sentinel, b: { [key]: sentinel, c: { [key]: sentinel } } } }, 'payload');
+      const line = lines.at(-1)!;
+      expect(JSON.stringify(line), key).not.toContain(sentinel);
+      expect(line[key], key).toBe('[redacted]');
+    }
+    // A whole beneficiary list goes, not only some of its fields.
+    logger.info({ sale: { beneficiaries: [{ name: 'Juan dela Cruz', idNumber: 'OSCA-123' }] } }, 'sale');
+    expect(JSON.stringify(lines.at(-1))).not.toMatch(/Juan|OSCA-123/);
+  });
+
+  it('keeps ordinary fields such as names of things and error names', () => {
+    const { lines, logger } = capture();
+    logger.info({ route: '/v1/products/:id', name: 'Iced tea', err: { name: 'TypeError' }, count: 3 }, 'ok');
+    expect(lines[0]).toMatchObject({ route: '/v1/products/:id', name: 'Iced tea', err: { name: 'TypeError' }, count: 3 });
+  });
+
+  it('masks an email to its first letter and domain', () => {
+    expect(maskEmail('maria.santos@example.ph')).toBe('m***@example.ph');
+    expect(maskEmail('not-an-email')).toBe('***');
   });
 
   it('adds trace_id/span_id when an OpenTelemetry span is active', () => {

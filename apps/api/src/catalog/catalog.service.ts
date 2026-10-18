@@ -42,6 +42,31 @@ export interface ProductView extends ProductRow {
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
+/** The trial's sample set (ADR-0016 slice 6): a small café counter, VAT-inclusive prices on the default list. */
+const SAMPLE_ITEMS: readonly { name: string; price: string }[] = [
+  { name: 'Iced coffee 16oz', price: '120.00' },
+  { name: 'Hot chocolate', price: '95.00' },
+  { name: 'Ensaymada', price: '45.00' },
+  { name: 'Pandesal (6 pcs)', price: '30.00' },
+  { name: 'Ham and cheese sandwich', price: '135.00' },
+  { name: 'Bottled water 500ml', price: '25.00' },
+  { name: 'Banana cake slice', price: '60.00' },
+  { name: 'Tote bag', price: '250.00' },
+];
+
+const SAMPLE_REFUSALS = {
+  SAMPLE_DATA_LOADED: 'The sample items are already on your list',
+  NOT_TRIAL: 'Sample items are for businesses on a trial',
+  HAS_SALES: 'Sample items can only be added before the first sale',
+} as const;
+
+/** EAN-13 in the in-store range 200…, so a sample code never belongs to a real product. */
+export function inStoreEan13(n: number): string {
+  const body = `200000${String(n).padStart(6, '0')}`;
+  const sum = [...body].reduce((acc, d, i) => acc + Number(d) * (i % 2 === 0 ? 1 : 3), 0);
+  return body + ((10 - (sum % 10)) % 10);
+}
+
 @Injectable()
 export class CatalogService extends TenantService {
   protected readonly conflicts: ConflictMap = {
@@ -344,6 +369,91 @@ export class CatalogService extends TenantService {
       await this.audit(db, auth, 'barcode.archived', 'barcode', id, { code: row.code });
       return updated!;
     });
+  }
+
+  // ---------------------------------------------------------------- sample items (ADR-0016 slice 6)
+  /** Whether this business can load the trial's sample items, and how many are on its list now. */
+  sampleData(auth: AuthContext) {
+    this.assertCan(auth, 'catalog.read');
+    return this.read(auth, async (db) => {
+      const s = await this.sampleState(db);
+      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: SAMPLE_ITEMS.length };
+    });
+  }
+
+  /**
+   * Load a labelled set of sample items into a trial business that has not sold anything yet: a
+   * "Sample items" category and products named "… (sample)", priced on the default list and not
+   * stock-tracked (trying them never touches stock). Barcodes are in the in-store range (200…), so
+   * they never clash with a real product's code.
+   */
+  loadSampleData(auth: AuthContext) {
+    this.assertCan(auth, 'catalog.manage');
+    this.assertCan(auth, 'prices.manage');
+    return this.mutate(auth, async (db) => {
+      const tenantId = tenantOf(auth).tenantId;
+      // One at a time per business, so two clicks cannot load the set twice.
+      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(app_current_tenant_id()::text || ':sample-data'))`);
+      const s = await this.sampleState(db);
+      if (s.refusal) throw new AppError(s.refusal, SAMPLE_REFUSALS[s.refusal], HttpStatus.CONFLICT);
+      const [vat] = await db.select({ id: taxCategories.id }).from(taxCategories).where(and(eq(taxCategories.code, 'VAT'), isNull(taxCategories.archivedAt)));
+      const [pc] = await db.select({ id: unitsOfMeasure.id }).from(unitsOfMeasure).where(and(eq(unitsOfMeasure.code, 'PC'), isNull(unitsOfMeasure.archivedAt)));
+      if (!vat || !pc) throw new AppError('SAMPLE_DATA_UNAVAILABLE', 'The default VAT category or the piece unit is missing', HttpStatus.UNPROCESSABLE_ENTITY);
+      const [category] = await db.insert(categories).values({ tenantId, name: 'Sample items', isSample: true, sortOrder: 999 }).returning();
+      const ids: string[] = [];
+      for (const [i, item] of SAMPLE_ITEMS.entries()) {
+        const [product] = await db
+          .insert(products)
+          .values({ tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true })
+          .returning({ id: products.id });
+        await this.insertVariant(db, auth, product!.id, {
+          sku: `SAMPLE-${String(i + 1).padStart(2, '0')}`,
+          price: item.price,
+          barcodes: [inStoreEan13(i + 1)],
+          attributes: {},
+        } as VariantInput);
+        ids.push(product!.id);
+      }
+      await this.audit(db, auth, 'sample_data.loaded', 'category', category!.id, { products: ids.length });
+      return { loaded: ids.length, categoryId: category!.id, productIds: ids };
+    });
+  }
+
+  /** Archive every sample item (codes freed). Anything already rung up keeps its history. */
+  removeSampleData(auth: AuthContext) {
+    this.assertCan(auth, 'catalog.manage');
+    return this.mutate(auth, async (db) => {
+      const live = await db.select({ id: products.id }).from(products).where(and(eq(products.isSample, true), isNull(products.archivedAt)));
+      const now = new Date();
+      const ids = live.map((p) => p.id);
+      if (ids.length) {
+        await db.update(products).set({ archivedAt: now }).where(inArray(products.id, ids));
+        const variants = await db
+          .update(productVariants)
+          .set({ archivedAt: now })
+          .where(and(inArray(productVariants.productId, ids), isNull(productVariants.archivedAt)))
+          .returning({ id: productVariants.id });
+        if (variants.length) {
+          await db.update(barcodes).set({ archivedAt: now }).where(and(inArray(barcodes.variantId, variants.map((v) => v.id)), isNull(barcodes.archivedAt)));
+        }
+      }
+      const cats = await db
+        .update(categories)
+        .set({ archivedAt: now })
+        .where(and(eq(categories.isSample, true), isNull(categories.archivedAt)))
+        .returning({ id: categories.id });
+      if (ids.length || cats.length) await this.audit(db, auth, 'sample_data.removed', 'category', cats[0]?.id ?? ids[0]!, { products: ids.length });
+      return { removed: ids.length };
+    });
+  }
+
+  private async sampleState(db: Database): Promise<{ loaded: number; refusal: keyof typeof SAMPLE_REFUSALS | null }> {
+    const { rows: [r] } = await db.execute<{ loaded: number; trial: boolean; sold: boolean }>(sql`
+      SELECT (SELECT count(*)::int FROM products WHERE is_sample AND archived_at IS NULL) AS loaded,
+             EXISTS (SELECT 1 FROM subscriptions WHERE status = 'TRIALING') AS trial,
+             EXISTS (SELECT 1 FROM sales) AS sold`);
+    const refusal = r!.loaded > 0 ? 'SAMPLE_DATA_LOADED' : !r!.trial ? 'NOT_TRIAL' : r!.sold ? 'HAS_SALES' : null;
+    return { loaded: r!.loaded, refusal };
   }
 
   // ---------------------------------------------------------------- helpers

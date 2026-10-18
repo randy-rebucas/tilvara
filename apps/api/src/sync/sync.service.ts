@@ -213,12 +213,14 @@ export class SyncService extends TenantService {
 
   /**
    * Deliver offline sales, oldest first; each result is final for that envelope (replays answer the same).
-   * Stops starting new envelopes once SYNC_BATCH_BUDGET_MS has passed (at least one is always
-   * delivered): the till gets its answer before its own timeout and sends the rest again.
+   * Stops starting new envelopes once SYNC_BATCH_BUDGET_MS has passed since the request arrived
+   * (`receivedAt`, so time spent waiting for a pool connection or authenticating counts too; at
+   * least one envelope is always delivered): the till gets its answer before its own timeout and sends
+   * the rest again.
    */
-  async syncSales(t: TerminalPrincipal, envelopes: OfflineSale[]): Promise<SyncResult[]> {
+  async syncSales(t: TerminalPrincipal, envelopes: OfflineSale[], receivedAt = performance.now()): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
-    const stopAt = performance.now() + this.env.SYNC_BATCH_BUDGET_MS;
+    const stopAt = receivedAt + this.env.SYNC_BATCH_BUDGET_MS;
     for (const env of [...envelopes].sort((a, b) => a.deviceSeq - b.deviceSeq)) {
       if (results.length > 0 && performance.now() >= stopAt) break;
       const r = await this.deliver(t, env);

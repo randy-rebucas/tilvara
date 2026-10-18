@@ -379,6 +379,48 @@
       "when": 1792289033422,
       "tag": "0053_snapshot_order_index",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1792294491539,
+      "tag": "0054_onboarding_support",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1792294614464,
+      "tag": "0055_onboarding_support_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1792304528293,
+      "tag": "0056_account_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1792304689276,
+      "tag": "0057_account_privacy_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1792313583022,
+      "tag": "0058_outbox_extend",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1792314891476,
+      "tag": "0059_kitchen_unbump",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
-# 1POS — Status
+# Tilvara — Status
 
-_Last updated: 2026-10-18 (session 11 — slice 4 backup and restore drill; slice 5 performance (load kit, four fixes, pilot-load numbers on this machine). Session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
+_Last updated: 2026-10-18 (session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -14,7 +14,98 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 8. runbooks and privacy;
 9. UAT, compliance review and pilot.
 
-The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–5 are done** (below).
+Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
+
+The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 15 — LEFTOVER items that need no decision
+Migrations 0058 (`outbox_extend`) and 0059 (un-bump exception in `order_items_transition`), applied to the dev DB.
+- **One query at a time per transaction**: 13 `Promise.all` sites over a transaction's client (receipts, bills, menus, price lists, purchase orders, tax profiles, list views) now use `inSequence` / `mapInSequence` (`@1pos/database`). pg 8 only warned; pg 9 refuses. The API integration setup now fails any query issued while another runs on the same client, naming it (seen failing when one site was put back).
+- **Sync budget from request arrival**: `receivedAt` is stamped in the first middleware, so pool waits and terminal authentication count against `SYNC_BATCH_BUDGET_MS`.
+- **Outbox leases**: the worker renews an event's lease before it starts (skipping one another worker took over while earlier events in the batch ran) and every third of the lease while the handler runs. A large export is no longer made twice.
+- **Intermittent tests** made order-independent: the welcome-mail tests wait for their own event; `reliability.test.ts` compares by topic.
+- **`pnpm test:db:reset`**: drops and recreates `onepos_test` (639 MB → 14 MB here; the next suite migrates it).
+- **KDS un-bump** (ADR-0014 amendment): `POST /v1/kitchen/tickets/:id/unbump` and an "Undo bump" button; READY → IN_PREP only, served food never comes back (the trigger still refuses that).
+- **Admin**: a long business name no longer pushes the last tab out of the 1440 px band (the name is cut at 136 px from lg, full name in the tooltip); the overview checklist ends with "First sale" (opens the till when `ONEPOS_POS_URL` is set, else the sales reports).
+- **`pnpm security:pages`**: signs in to a running admin and scans what 15 server-rendered pages send to the browser (the build holds no HTML for them: every page is dynamic).
+- **Closed as already done**: POS menu pricing (batched in slice 5); card/QR on table checks (the bill screen uses the shared payment panel).
+- **Left open on purpose**: free modifiers in item performance (needs a rule for when a free choice counts as sold); the other LEFTOVER items need a decision, a provider, hardware or are larger features.
+- **Defects found in my own new tests and fixed**: both new lease tests first assumed the rival worker claimed nothing or exactly the test's event, but leftovers of earlier tests come due mid-run; and two events emitted together can tie on `available_at`, so the batch order is not fixed. They now check, per event, who ran it. Also a first nav-cap value (150 px) was still 4 px too wide (measured 992 > 988).
+- **Mutation checks**: the guard catches a `Promise.all` put back in price lists; both lease tests fail without renewal; the live page scan fails (exit 1) on a planted value.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14; `pnpm typecheck` 24/24; `pnpm lint` exit 0; `pnpm test --force` 24/24 tasks after regenerating OpenAPI (api 52);
+  - `pnpm test:db:reset`, then `turbo run test:integration --concurrency=1 --continue --force`: database **33/33**, workers **22/22** (+2 lease tests; 8 consecutive passes of the suite before), api **333/333** (+ arrival budget, + un-bump; isolation +1 route);
+  - `pnpm db:migrate` on the dev DB (0056–0059); `pnpm security:bundles` self-test + 51 files clean; `pnpm security:pages` 15 pages clean;
+  - E2E on the rebuilt API (:4320, rate limits off), admin `next start` (:3320) and POS preview (:3330): `test:e2e:kitchen` **20/20** (+3 un-bump), `web:account` **23/23** (+2: long name, First sale), `web:backoffice` **44/44** (+1 First sale done), `web:security` 24/24, `web` 42/42, `service` 22/22, `pos` 27/27.
+  - Not re-run: restaurant admin, reports, offline, onboarding, tables and desktop suites (their paths did not change beyond the shared band and helpers covered above).
+- **Not committed**: sessions 12–15 are uncommitted in the working tree.
+
+## Session 14 — slice 8 follow-up: privacy gaps that need no decision
+As built: ADR-0016 "As built — slice 8 follow-up". Migrations 0056 (DDL) and 0057 (hand-written), applied to the dev DB (58 migrations; no back-fill).
+- **Log redaction of personal fields** (`PERSONAL_KEYS` beside the secrets, three objects deep); dev mailers log a masked recipient.
+- **Your account** (admin `/account`, opened from the name in the band): correct your name; change your sign-in email through a 24-hour link to the new address (password, plus a code when two-step sign-in is on; every session ends when it is confirmed; the old address is told); close your account once you belong to no business (blocked now, second factor and pending links removed; anonymisation waits on the DPO). Public `/confirm-email`. EN/FIL.
+- **Ops**: `support account-disable|account-enable --email … --reason … --ticket …` (audited) replaces the runbook SQL; `pnpm --filter @1pos/api mfa-rekey [--check]` with `MFA_ENCRYPTION_KEY_PREVIOUS` rotates the MFA key without re-enrolment (runbook security-incident.md 2.5.1).
+- **Error references**: the admin error page (new `app/error.tsx`) shows the API correlation id as its reference, and 5xx form errors end "Reference: …"; the POS appends `Ref. <first 8>`.
+- **Docs**: security-incident.md 2.1 and 2.5.1, data-subject-requests.md, processing register, retention schedule (new `email_change_tokens` row), privacy README gaps 2 and 6, THREAT_MODEL T17/T17a, operations index, `.env.example`, CLAUDE.md.
+- **Defects found and fixed** (all in this session's new code or test arrangement):
+  - the error page showed the reference upper-cased (the `serial` style), while log searches are case-sensitive; caught by looking at the screenshot. The E2E now compares the visible text and was seen failing on the old build;
+  - my first E2E arrangement tried to remove an owner from their only business; the database refused it (`a business must keep at least one active owner`), which is right. The E2E now registers an account with no business;
+  - an E2E check looked for the person's name in the band of `/account`, whose layout has no name. The check now looks at the back office band.
+- **Mutation checks** (each made the tests fail, then restored): an email-change confirm that does not end sessions; a closure function without its blocker check (both swapped into `onepos_test` and restored from the migration text); an unmasked dev mail recipient; a personal key dropped from `PERSONAL_KEYS`; the third depth of redaction dropped.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14; `pnpm typecheck` 24/24; `pnpm lint` exit 0; `pnpm test --force` 24/24 tasks (observability 15: +3 redaction; config 14: +1; api 52: +1 key rotation; pos-desktop 11: +2 `withReference`);
+  - integration, `turbo run test:integration --concurrency=1 --continue --force`: database **33/33**, api **331/331** (new `account-privacy.test.ts` 12; `logging.test.ts` +1), workers **18/20**. The two failures were consecutive tests in `outbox.test.ts` "handlers": the first drained the outbox without ever claiming its own just-emitted welcome event, and the next test's processor, milliseconds later, sent exactly one mail. That fits the event's `available_at` being briefly later than the claim's `now()`, i.e. a database clock step like the one suspected in session 12; not proven. The only worker change this session is the masked dev-mail log line. `pnpm --filter @1pos/workers test:integration` right after: **20/20**. LEFTOVER item updated;
+  - OpenAPI regenerated; `pnpm db:migrate` on the dev DB; `mfa-rekey --check` on the dev DB (28 secrets, all on the current key); `support account-disable/enable` on a throwaway dev account (`cli-smoke-…@example.ph`, left in the dev DB) with both audit rows checked, and the refusals (nothing to change: exit 1; no ticket: exit 2);
+  - E2E on the rebuilt API (:4320, rate limits off) and admin `next start` (:3320): **`test:e2e:web:account` 21/21** (new; includes the error reference on a second `next start` against a stub API), `test:e2e:web:security` 24/24, `test:e2e:web` 42/42; POS preview (:3330) `test:e2e:pos` 27/27.
+  - Not re-run: the restaurant, reports, offline, back-office, onboarding and desktop suites (their paths did not change; the POS change is the error helper the POS suite covers).
+- **Not committed**: sessions 12–14 are still uncommitted in the working tree.
+
+## Phase 6 slice 8 — runbooks and privacy pack (session 13)
+As built: ADR-0016 "As built — slice 8". Documentation, plus one test. No migration, no API change.
+- **Runbooks** `docs/operations/`: new `README.md` (index; each SPEC §16 item → its document), `incident-response.md`, `security-incident.md`, `database-migrations.md`, `rollback-recovery.md`, `payment-reconciliation.md`, `production-access.md`.
+- **Privacy pack** `docs/compliance/privacy/` (drafts for the DPO, **not legal advice**): README (controller/processor split, DPO and NPC registration evaluation, gaps, questions), `processing-register.md`, `privacy-notice-draft.md`, `retention-schedule.md`, `breach-procedure.md`, `data-processing-agreement-outline.md`, `data-subject-requests.md`. The personal-data inventory behind them was taken from migrations 0000–0055, and its key claims were spot-checked in the code.
+- **New guard** `packages/database/test/unit/migrations.test.ts`. drizzle runs all pending migrations in one transaction and silently skips a file whose journal `when` is not newer than the last applied one. The test checks journal order, one file per entry, and no `CONCURRENTLY`/`VACUUM`. Mutation check: an out-of-order `when` fails it; the journal was restored byte for byte, and it had uncommitted session-12 entries.
+- **Defects found**:
+  - `monitoring.md` named a non-existent route, `/v1/payments/:id/reconcile` (now `/v1/payment-intents/…`).
+  - My first draft of the account-disable SQL called `auth_record_event`, which accepts only `auth.*` actions. The dry-run caught it before the runbook was finished.
+- **Privacy gaps found** (LEFTOVER):
+  - no purge of sessions (with user agent), reset tokens, invitations, outbox events or till-local sales;
+  - no account closure or self-service profile edit;
+  - no correction of recorded SC/PWD details;
+  - takeaway names never cleared;
+  - log redaction covers secrets only;
+  - no `MFA_ENCRYPTION_KEY` re-encryption;
+  - correlation id not shown on error screens.
+- **Verified this session**:
+  - every ops SQL block in the new runbooks dry-run on the dev DB inside rolled-back transactions, as `onepos_migrator`: disable an account, end its sessions and write the platform audit row; revoke every session (377 rows, rolled back); suspend a business; the SC/PWD extent query; `platform_migration_head()`;
+  - links: all relative links and anchors in `docs/operations/` and `docs/compliance/privacy/` resolve (20 files, 0 problems), and every backticked file path exists;
+  - `pnpm --filter @1pos/database test` **16/16** (+4); `pnpm --filter @1pos/database typecheck` ok; `pnpm exec oxlint apps packages` exit 0.
+  - Not run: the integration gate and E2E suites (no product code changed).
+
+## Phase 6 slice 6 — onboarding and support (session 12)
+As built: ADR-0016 "As built — slice 6". Migrations 0054 (DDL) and 0055 (hand-written), applied to the dev DB. Runbooks `docs/operations/support-access.md` and `docs/operations/tenant-offboarding.md`. (The audit log reader and the MFA resets were pulled forward in session 10.)
+- **Support access** (T14 now ●): an owner/admin gives Tilvara support read-only access for a stated purpose, 1–72 hours (cap also a DB check; a grant's terms never change, it can only be ended). Staff are accounts marked by ops (`support staff-add|staff-disable|staff-list`, migrator only, two-step sign-in required). A staff member opens a grant from `/support` and gets a token for that business only. `AuthGuard` re-checks the grant, the staff account and the MFA session on **every request**, refuses every write (`SUPPORT_READ_ONLY`) and writes every request to the business's audit log. Revoking, expiry or disabling the staff account end access at the next request. Admin: Subscription → Support access (use counts, staff names, end now, audit trail); staff banner "Support view of …" with Leave.
+- **Data export**: Subscription → Your records → Prepare a copy. The worker writes a ZIP of CSVs from one REPEATABLE READ snapshot: README, manifest, members, and every tenant table except internal queues; no credential hashes. Files go to `DevFileStorage` (`FILE_STORAGE_DIR`; production refuses it until D1). Downloads use 10-minute HMAC links (404 when forged, altered, expired or crossed to another business). Files are deleted after 7 days by the worker's hourly sweep. At most 5 a day, one at a time; FAILED after 3 tries. Every step is audited. It works for a suspended or lapsed business (`@AllowReadOnlyBusiness()`).
+- **Trial sample items**: 8 labelled café items ("… (sample)", priced, not stock-tracked, in-store barcodes 200…), offered only to a trial business before its first sale. Removing them archives them; sales keep their lines. Admin: an overview card and a "Sample" tag on products.
+- **Worker role**: may now read every exported tenant table, under RLS inside the event's tenant (secret columns excluded); it still writes no table. New rule in CLAUDE.md: a new tenant table needs a worker grant or an export exclusion (the schema guard enforces it).
+- **Defects found and fixed during the slice** (all in my own new code, before it was ever committed):
+  - two test assertions were wrong: an unsorted expected list, and E2E text checks that missed CSS-uppercased status words;
+  - a test type error, found by the gate's typecheck;
+  - the E2E's CLI call split its `--reason` argument under `shell: true`.
+- **Mutation check**: removing the guard's grant re-check makes "revoking ends access at the next request" fail; restored.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14; `pnpm typecheck` 24/24 (after fixing a test type error the gate found); `pnpm exec oxlint apps packages` exit 0;
+  - `pnpm test --force` 24/24 tasks: database 12 (+6: ZIP vs bsdtar, CSV, storage), config 13 (+1), api 51 (+3: links, barcodes), admin-web 19, …;
+  - `turbo run test:integration --concurrency=1 --continue --force`:
+    - database **33** (schema guard: worker reads, slice-6 function grants, `platform_staff`);
+    - workers **20** (+3 `data-export.test.ts`);
+    - api **317/318**. New `support-onboarding.test.ts` 17/17; isolation +5 routes and 2 tables, 10/10.
+    - The one failure: `reliability.test.ts` "records domain events in the same transaction…". Its two outbox events came back in reverse `created_at` order. This change does not touch signup or event emission, and the file passed 3/3 alone right after. It looks like an intermittent ordering problem (LEFTOVER), most likely a VM clock step. The full API re-run (`pnpm --filter @1pos/api test:integration`) then passed **318/318**.
+  - OpenAPI regenerated; `pnpm db:migrate` on the dev DB (0054, 0055); dev traceability audit: no violations;
+  - E2E on the rebuilt API (:4320, rate limits off), the worker and admin `next start` (:3320):
+    - **`test:e2e:web:onboarding` 23/23** (new);
+    - `test:e2e:web` 42/42, `web:security` 24/24, `web:backoffice` 43/43 (BFF proxy, session refresh and layout changed).
+  - Not re-run: POS, restaurant, offline and desktop suites (no change in their paths; `/me` gained two fields).
 
 ## Phase 6 slice 5 — performance (session 11)
 As built: ADR-0016 "As built — slice 5". Migration 0053 (index). All numbers are **this machine's**: a 12-thread laptop with Postgres 18 in Docker Desktop, fsync 2–15 ms. They are not a production claim.
@@ -833,9 +924,12 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–5 are done (4 and 5 in session 11). **Next: slice 6** (onboarding and support: time-limited, tenant-approved support access; tenant data export; offboarding runbook; trial sample data). Slices 7–9 need D1/D3/D4–D6. Slice 5 left re-measurement on D1 staging and a few performance items in LEFTOVER.md (the pg concurrent-query deprecation, statements per request, the sync budget counted from arrival).
-   - MFA reset is in place (owner/admin; support CLI for owners). Slice 6 still owes time-limited, tenant-approved support access, tenant data export, offboarding and trial sample data.
-   - `test:e2e:desktop` was not run in session 10; run it with the next till change.
+2. **Phase 6** (ADR-0016). Slices 1–6 and 8 are done (8 in session 13). Slice 7 (deployment) needs D1/D3; slice 9 needs D4–D6. With no decision made, the next work needing none is in LEFTOVER.md:
+   - slice 8 privacy gaps: purge jobs (sessions, reset tokens, invitations, outbox) once the DPO confirms the periods, log redaction of personal fields with a test, account closure, profile edit, an audited account-disable command;
+   - slice 5 performance items.
+   - The privacy pack (`docs/compliance/privacy/`) needs the user's DPO to review it (release gate G6).
+   - Slice 6 leftovers (LEFTOVER.md): first-sale walkthrough, anonymisation job, object storage (D1), per-request support audit volume, the long-business-name band clip, the flaky `reliability.test.ts` outbox ordering.
+   - `test:e2e:desktop` was not run in sessions 10–13; run it with the next till change.
    - Decisions for the user (ADR-0016):
      - **D1** hosting provider and region;
      - **D2** email provider (password reset, invitations and the production boot wait on it);

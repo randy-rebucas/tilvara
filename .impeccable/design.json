@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-10-15T00:00:00Z",
-  "title": "Design System: 1POS Admin",
+  "title": "Design System: Tilvara Admin",
   "extensions": {
     "colorMeta": {
       "paper": { "role": "neutral", "displayName": "Note Paper", "canonical": "#f4f1e8", "tonalRamp": ["#2b2920", "#4a463a", "#6e6957", "#948d77", "#b8b19a", "#d6d0bb", "#ebe6d6", "#f4f1e8"] },
@@ -93,7 +93,7 @@
       "kind": "nav",
       "refersTo": "band",
       "description": "Header band with diagonal security lines, wordmark and permission-filtered tabs.",
-      "html": "<header class=\"ds-band\"><span class=\"ds-mark\">1POS</span><nav class=\"ds-tabs\"><a href=\"#\" aria-current=\"page\">Overview</a><a href=\"#\">Products</a><a href=\"#\">Prices</a><a href=\"#\">Locations</a><a href=\"#\">Team</a></nav></header>",
+      "html": "<header class=\"ds-band\"><span class=\"ds-mark\">Tilvara</span><nav class=\"ds-tabs\"><a href=\"#\" aria-current=\"page\">Overview</a><a href=\"#\">Products</a><a href=\"#\">Prices</a><a href=\"#\">Locations</a><a href=\"#\">Team</a></nav></header>",
       "css": ".ds-band { display: flex; align-items: center; gap: 1.5rem; height: 64px; padding: 0 28px; color: #fff; font-family: Archivo, system-ui, sans-serif; background-color: #2a5da8; background-image: repeating-linear-gradient(115deg, rgb(255 255 255 / 0.055) 0 1px, transparent 1px 7px); } .ds-mark { font-size: 1.5rem; font-weight: 700; letter-spacing: 0.04em; } .ds-tabs { display: flex; gap: 4px; } .ds-tabs a { padding: 6px 12px; border-radius: 4px; font-size: 0.9375rem; color: #dce6f5; text-decoration: none; transition: background-color 120ms ease-out; } .ds-tabs a:hover { background: rgb(255 255 255 / 0.1); color: #fff; } .ds-tabs a[aria-current=\"page\"] { background: rgb(255 255 255 / 0.18); color: #fff; font-weight: 600; } .ds-tabs a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }"
     },
     {
@@ -130,7 +130,7 @@
   ],
   "narrative": {
     "northStar": "Salapi (Peso Notes)",
-    "overview": "The admin reads like Philippine currency. On a banknote, the colour tells you the denomination at a glance and the serial number tells you exactly which note you're holding. Here, a record's denomination colour shows what kind of record it is (catalog, location, register, team), and a tracked, tabular serial line shows which one it is (SKU, branch code, TIN, count). An owner should be able to tell what kind of record a panel holds, and which one, before reading its title.\n\nThe surface is warm note-paper. Records sit on it as pure white \"notes\". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and inline forms that keep a task on the page instead of moving it into a modal. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.\n\nThis identity is provisional. 1POS has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.",
+    "overview": "The admin reads like Philippine currency. On a banknote, the colour tells you the denomination at a glance and the serial number tells you exactly which note you're holding. Here, a record's denomination colour shows what kind of record it is (catalog, location, register, team), and a tracked, tabular serial line shows which one it is (SKU, branch code, TIN, count). An owner should be able to tell what kind of record a panel holds, and which one, before reading its title.\n\nThe surface is warm note-paper. Records sit on it as pure white \"notes\". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and inline forms that keep a task on the page instead of moving it into a modal. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.\n\nThis identity is provisional. Tilvara has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.",
     "keyCharacteristics": [
       "Warm paper ground (paper) with pure white record notes (note). The two whites never trade places.",
       "Denomination colour always means the kind of record, and nothing else.",
@@ -169,7 +169,7 @@
       "Don't hard-code UI copy in components, or ship a string in only one language.",
       "Don't tint panels or float them with hard or offset shadows.",
       "Don't fall back to a grey sidebar with a generic blue button.",
-      "Don't treat Salapi as final brand. It is provisional until 1POS has a real identity."
+      "Don't treat Salapi as final brand. It is provisional until Tilvara has a real identity."
     ]
   }
 }

@@ -5,7 +5,7 @@ primary_target: "apps/admin-web"
 related_targets: []
 ---
 
-# Surface brief — 1POS admin web
+# Surface brief — Tilvara admin web
 
 Scope: `apps/admin-web` (all back-office routes). Mode: **Operate**.
 Audience/job: PH SMB owners on laptops set up the business (entity → branch → register), manage team/roles, catalog & prices, and check subscription. Bilingual EN/FIL.

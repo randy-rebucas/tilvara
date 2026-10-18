@@ -104,7 +104,7 @@ export class TeamService extends TenantService {
     await this.mailer.send({
       to: input.email,
       template: 'member.invitation',
-      subject: 'You have been invited to a business on 1POS',
+      subject: 'You have been invited to a business on Tilvara',
       text: `Accept your invitation: ${this.env.APP_PUBLIC_URL}/accept-invite?token=${token}\nThis link expires in 7 days.`,
     });
     return this.present(invitation);

@@ -1,8 +1,8 @@
-# 1POS — Philippine Compliance Assumptions
+# Tilvara — Philippine Compliance Assumptions
 
-> **NOT LEGAL OR TAX ADVICE.** This is an engineering research summary compiled on **2026-10-15** from public sources, many of them secondary (law/accounting firm commentary, vendor help pages). Every rule below must be confirmed by a Philippine CPA/tax lawyer and, where noted, directly with the BIR before 1POS is released to paying PH merchants.
+> **NOT LEGAL OR TAX ADVICE.** This is an engineering research summary compiled on **2026-10-15** from public sources, many of them secondary (law/accounting firm commentary, vendor help pages). Every rule below must be confirmed by a Philippine CPA/tax lawyer and, where noted, directly with the BIR before Tilvara is released to paying PH merchants.
 >
-> **1POS must not claim to be "BIR-accredited", "BIR-certified", "BIR-compliant" or "BIR-authorized" in any medium until accreditation is actually granted and verified.** The BIR issued a Public Advisory on **14 Sept 2026** stating it has not accredited, certified, or endorsed *any* e-invoicing service provider (ESP), and that no entity may represent itself as such (see §4.3). Marketing copy must say something like "designed to support BIR invoicing requirements; accreditation pending".
+> **Tilvara must not claim to be "BIR-accredited", "BIR-certified", "BIR-compliant" or "BIR-authorized" in any medium until accreditation is actually granted and verified.** The BIR issued a Public Advisory on **14 Sept 2026** stating it has not accredited, certified, or endorsed *any* e-invoicing service provider (ESP), and that no entity may represent itself as such (see §4.3). Marketing copy must say something like "designed to support BIR invoicing requirements; accreditation pending".
 
 Confidence legend: **Verified** = read in primary/official text or an official-agency copy. **Partially verified** = consistent across multiple reputable secondary sources, primary text not read. **Unverified** = single/vendor source, conflicting sources, or inference.
 
@@ -20,7 +20,7 @@ Design principle used throughout: **every tax rate, threshold, discount rule, do
 | Records retention | Books/records: **5 years** (EOPT amended Sec. 235) from the day after the filing deadline (or actual filing date if late). Extends while a protest/refund is pending. |
 | Sources | Grant Thornton on RMC 77-2024; MTF Counsel (May 2025); KPMG; PwC EOPT alert (pwc.com/ph/en/tax/tax-alerts/2024/pwc-ph-ease-of-paying-taxes-2024.pdf) |
 | Confidence | **Partially verified** (RR 7-2024 primary text not read). |
-| 1POS implication | Document types are configurable labels: `SALES_INVOICE` (principal), `SUPPLEMENTARY` (order slip, void slip, return/refund slip, acknowledgment, billing statement) — supplementary docs must print "THIS DOCUMENT IS NOT VALID FOR CLAIM OF INPUT TAX" in bold. Never print "Official Receipt" as a principal document. Non-VAT invoice threshold and the "aggregate at end of day" rule must be config, with a daily job that flags/issues an aggregate invoice if required. Data retention ≥ 5 years (we recommend 10 years configurable, since other laws/LGUs/malls may require longer — confirm). |
+| Tilvara implication | Document types are configurable labels: `SALES_INVOICE` (principal), `SUPPLEMENTARY` (order slip, void slip, return/refund slip, acknowledgment, billing statement) — supplementary docs must print "THIS DOCUMENT IS NOT VALID FOR CLAIM OF INPUT TAX" in bold. Never print "Official Receipt" as a principal document. Non-VAT invoice threshold and the "aggregate at end of day" rule must be config, with a daily job that flags/issues an aggregate invoice if required. Data retention ≥ 5 years (we recommend 10 years configurable, since other laws/LGUs/malls may require longer — confirm). |
 
 ## 2. Required invoice contents (machine-generated invoice from a POS)
 
@@ -52,7 +52,7 @@ Primary source: **RMO 24-2023 digest (bir.gov.ph)** listing what accredited sale
 
 **If the POS cannot capture buyer details** for a VAT-registered buyer, the seller must issue a manual ATP invoice and attach the tape to the duplicate; those sales are then deducted from eSales reporting (RMO 24-2023).
 
-**1POS implication:** Receipt templates are data-driven per branch/terminal with required-field validation that blocks going live if MIN, serial, PTU, accreditation fields are missing. Buyer-info capture is prompted automatically when `total >= buyer_info_threshold (config, default ₱1,000)` and the customer is flagged VAT-registered. Keep invoice # series and internal transaction/order # series separate.
+**Tilvara implication:** Receipt templates are data-driven per branch/terminal with required-field validation that blocks going live if MIN, serial, PTU, accreditation fields are missing. Buyer-info capture is prompted automatically when `total >= buyer_info_threshold (config, default ₱1,000)` and the customer is flagged VAT-registered. Keep invoice # series and internal transaction/order # series separate.
 
 ## 3. Serial numbering, Z/X readings, eJournal, audit trail (sales-machine technical requirements)
 
@@ -80,7 +80,7 @@ Other rules:
 - Accreditation can be revoked for sales suppression, tampering of sales data, or misrepresentation in the sworn statement. **Verified.**
 - eSales monthly reporting of CRM/POS sales (RR 16-2018 / RMO 12-2012 framework); amendments to reported eSales need written justification and adjusting entries (RMC 56-2015). **Partially verified.**
 
-**1POS implication:**
+**Tilvara implication:**
 - Invoice numbers allocated **per terminal (MIN)** from a gapless counter; offline terminals must hold their own counter locally — **never** a cloud-allocated sequence that breaks offline. No deletion of invoices; voids/returns are new documents in their own series referencing the original.
 - Append-only, hash-chained event log (each record includes prev-hash) for the e-journal; grand total stored and verified against the chain.
 - Z-reading is a terminal-level, idempotent, once-per-business-day operation; X-readings unlimited.
@@ -88,9 +88,9 @@ Other rules:
 
 ## 4. Registration: supplier accreditation, PTU, CAS ACK, ORUS
 
-### 4.1 Software supplier (1POS as vendor)
+### 4.1 Software supplier (Tilvara as vendor)
 - Under **RMO 24-2023**, POS software (bundled or software-only), CRMs, **e-invoicing/e-receipting systems used under subscription-based agreements**, and handheld/mobile devices linked to a server **must be accredited** via the **Enhanced eAccReg System**. Steps: enroll (sworn declaration to LT Office/RDO of the supplier's head office) → online application + manual documentary submission → system demo to TWG (scheduled within 3 working days of complete docs) → Certificate of Accreditation within 20 working days. Accreditation is **free**. Accreditation number is tied to a **brand/model/system/software version**. A "pseudo supplier" (taxpayer developing its own) also needs accreditation. **Verified (official digest).**
-- Note the digest says subscription-based e-invoicing will use an **Authority to Generate (ATG)** under a separate issuance. 1POS is a SaaS subscription — **which track applies (POS accreditation vs. subscription e-invoicing ATG vs. EIS certification) is a key open question.** **Unverified.**
+- Note the digest says subscription-based e-invoicing will use an **Authority to Generate (ATG)** under a separate issuance. Tilvara is a SaaS subscription — **which track applies (POS accreditation vs. subscription e-invoicing ATG vs. EIS certification) is a key open question.** **Unverified.**
 - **RMC 72-2025 (14 Jul 2025)**: CRM/POS accreditation certificates expiring 31 Jul 2025 — suppliers must apply for new accreditation under RMO 24-2023; existing taxpayer PTUs do **not** lapse merely because the supplier certificate expired. **Partially verified** (PwC summary via search; page 403).
 - A list of accredited sales machines/software is supposed to be posted on bir.gov.ph. Current list not located. **Unverified.**
 
@@ -99,9 +99,9 @@ Other rules:
 - **CAS / CBA** (computerized accounting systems): RMC 5-2021 / RMO 9-2021 replaced PTU with an **Acknowledgement Certificate (ACK/AC)** issued within ~3 working days on a documentary checklist + post-audit. A vendor guide (Orkids, Jun 2026) claims PTU was removed for POS too — this **conflicts** with RMO 24-2023 (2023, later) and StoreHub's 2026 PTU-per-register guidance. Treat "POS uses PTU via eAccReg; CAS uses ACK" as the working assumption. **Unverified — confirm with BIR.**
 - **ORUS** (Online Registration and Update System) is the BIR's general online registration portal (RMC 153-2022 etc.); EIS enrolment is reportedly done via ORUS. Exact flow of CRM/POS registration through ORUS vs eAccReg in 2026: **Unverified.**
 - Revocation of a supplier's accreditation does not automatically revoke the user's PTU; user violations do. **Verified.**
-- Machines used only for ordering (e.g., kiosks that don't issue invoices) are "Special Purpose Machines": no accreditation, but still need a PTU. **Verified.** → A 1POS self-order kiosk or QR ordering that does not issue invoices still has a registration obligation.
+- Machines used only for ordering (e.g., kiosks that don't issue invoices) are "Special Purpose Machines": no accreditation, but still need a PTU. **Verified.** → A Tilvara self-order kiosk or QR ordering that does not issue invoices still has a registration obligation.
 
-**1POS implication:** Model `Terminal` with `min`, `ptu_number`, `ptu_date`, `serial/license_no`, `bir_status` (unregistered/pending/registered/revoked). A terminal cannot issue *invoices* until registered; before registration it can only run in "training/non-fiscal" mode that prints "NOT AN INVOICE". Device replacement = new terminal record, old one closed with final Z-reading. Provide merchant a PTU application document pack (sworn statements, sample receipts, Z-reading samples, terminal list).
+**Tilvara implication:** Model `Terminal` with `min`, `ptu_number`, `ptu_date`, `serial/license_no`, `bir_status` (unregistered/pending/registered/revoked). A terminal cannot issue *invoices* until registered; before registration it can only run in "training/non-fiscal" mode that prints "NOT AN INVOICE". Device replacement = new terminal record, old one closed with final Z-reading. Provide merchant a PTU application document pack (sworn statements, sample receipts, Z-reading samples, terminal list).
 
 ### 4.3 BIR Public Advisory, 14 Sept 2026 — **Verified** (read the signed scan)
 "…as of the date of this Advisory, it has not accredited, authorized, certified, recognized, or endorsed any entity as an official BIR ESP, partner, representative, or solution provider of electronic invoicing and sales reporting systems. Accordingly, no person or entity may represent … that it is accredited, authorized, recognized, endorsed by, or officially affiliated with the BIR as an ESP." BIR has temporarily suspended meetings/demos/consultations with ESPs pending the e-invoicing framework. Signed by Commissioner Charlito Martin R. Mendoza. (Copy hosted by KPMG PH.)
@@ -117,7 +117,7 @@ Other rules:
 | RMC 98-2026 (2026) | Reportedly: covered taxpayers need a **Permit to Issue Electronic Invoice (PTI)** (head office + each branch; shared PTI number if same system; new/amended PTI on system change); separate **Permit to Transmit (PTT)** for sales reporting; **EIS Certification within 6 months after PTI**; during downtime issue BIR-authorized **manual invoices** then replace with e-invoice referencing the manual number; issued e-invoices cannot be edited — reductions via **credit note**, increases via new invoice; POS-printed invoices are **not** e-invoices unless the system can electronically issue/transmit to buyer and report to BIR. | **Unverified** (single secondary source: Taxumo, Sept/Oct 2026) |
 | BIR ESP advisory | See §4.3 — no ESP accredited as of 14 Sep 2026. | Verified |
 
-**1POS implication:** 1POS's typical merchant (POS user, small/medium) is probably *not yet* mandated, but merchants who also sell online (e-commerce) or are CAS users may be covered by 31 Dec 2026. Build an `EInvoiceAdapter` interface now (structured JSON invoice model, transmission queue with retries, 3-day SLA monitor, credit-note/debit flows, downtime manual-invoice reconciliation), but **do not** build to a specific BIR API spec until the final technical specs are published. Keep invoice data model structured from day one so EIS export is a serializer, not a refactor.
+**Tilvara implication:** Tilvara's typical merchant (POS user, small/medium) is probably *not yet* mandated, but merchants who also sell online (e-commerce) or are CAS users may be covered by 31 Dec 2026. Build an `EInvoiceAdapter` interface now (structured JSON invoice model, transmission queue with retries, 3-day SLA monitor, credit-note/debit flows, downtime manual-invoice reconciliation), but **do not** build to a specific BIR API spec until the final technical specs are published. Keep invoice data model structured from day one so EIS export is a serializer, not a refactor.
 
 ## 6. VAT, VAT-exempt, zero-rated, percentage tax
 
@@ -128,7 +128,7 @@ Other rules:
 | Exempt / zero-rated | Must be labelled and broken out on invoice (mixed transactions). SC/PWD sales are VAT-exempt sales. | Verified (RMO 24-2023 list) |
 | Percentage tax and SC/PWD | SC/PWD VAT exemption does **not** extend to percentage tax; for non-VAT sellers the 20% applies to the full price (RMC 38-2012; RR 5-2017 §5.1, §7.5). | Verified (NCDA copy of RR 5-2017) |
 
-**1POS implication:** Tax engine with per-tenant registration type (VAT / NON-VAT), per-item tax class (VATable, exempt, zero-rated), VAT-inclusive pricing as default, effective-dated rates. All reports split VATable / exempt / zero-rated / VAT amount.
+**Tilvara implication:** Tax engine with per-tenant registration type (VAT / NON-VAT), per-item tax class (VATable, exempt, zero-rated), VAT-inclusive pricing as default, effective-dated rates. All reports split VATable / exempt / zero-rated / VAT amount.
 
 ## 7. Senior Citizen (RA 9994) and PWD (RA 10754) — 20% discount + VAT exemption  ⚠ CRITICAL
 
@@ -170,7 +170,7 @@ percentage tax computed on 896.00 (3%) = 26.88
 ### 7.4 National Athletes & Coaches (NAAC, RA 10699) — **Partially verified**
 20% discount on transportation, hotels, **restaurants**, recreation, sports equipment, medicine for actual and exclusive use; ID = PNSTM/National Sports Team Member card (+ PSC booklet). RMO 24-2023 lists NAAC fields on invoices. Whether NAAC purchases are **VAT-exempt** and the exact computation: **Unverified** — do not assume VAT exemption; make it a config flag defaulting to "confirm with tax adviser".
 
-### 7.5 1POS implementation implications
+### 7.5 Tilvara implementation implications
 - `DiscountScheme` table (effective-dated): `code` (SC, PWD, NAAC, SOLO_PARENT, SC_5PCT_BNPC), `rate`, `vat_exempt` (bool), `base` (`VAT_EXCLUSIVE` | `GROSS`), `eligible_item_categories`, `weekly_cap`, `requires_id`, `requires_signature` (in-store yes, online no), `requires_tin_if_any`, `stackable_with_promo` (default false, "choose higher").
 - Line-level allocation: the cashier selects which lines (or which share for group meals) belong to each discount holder; supports modes `ITEMIZED`, `PRORATED_BY_HEADCOUNT`, `MEMC_BASE_VALUE`.
 - Compute in integer centavos; rounding rule **configurable** (per line vs per invoice; half-up) — **rounding is unverified, needs tax adviser.**
@@ -181,23 +181,23 @@ percentage tax computed on 896.00 (3%) = 26.88
 ## 8. Service charge — RA 11360 (2019) — **Partially verified**
 - Service charges collected by hotels, restaurants, and similar establishments must be distributed **100%** **equally** among covered (non-managerial) employees (previously 85/15). DOLE **DO 242-2024** (effective 1 Feb 2024) replaced DO 206-2019: distribution at least twice a month, no more than 16 days apart; reportedly covers agency/contractual workers and distribution by actual hours/days worked.
 - Tips/gratuities voluntarily given are separate (not "service charge") — treatment **unverified**.
-- **1POS implication:** service charge is a separate, configurable charge line (rate, applies to dine-in/takeout, taxable VAT status configurable — VAT on service charge commonly applied; **confirm**), never merged into item price; report "service charge collected per period" to support DOLE distribution; optional per-employee hours import for distribution calculation (P2).
+- **Tilvara implication:** service charge is a separate, configurable charge line (rate, applies to dine-in/takeout, taxable VAT status configurable — VAT on service charge commonly applied; **confirm**), never merged into item price; report "service charge collected per period" to support DOLE distribution; optional per-employee hours import for distribution calculation (P2).
 
 ## 9. Data Privacy Act of 2012 (RA 10173) and NPC rules — **Partially verified**
-- 1POS is a **Personal Information Processor (PIP)** for merchants' customer data (and a Personal Information Controller for its own users/billing data). Merchants are PICs. SC/PWD ID numbers, names, signatures, and **PWD disability info** — PWD status may be **sensitive personal information** (health-related) → minimize: store ID number + name only, never disability type.
-- **NPC Circular 2022-04** (effective 11 Jan 2023): registration of DPO and data processing systems via online portal; mandatory if ≥250 employees, **or** processing is likely to pose risk, is not occasional, or involves sensitive personal info of ≥1,000 individuals; otherwise file a sworn declaration (Annex 1). Registration valid 1 year (renew). New systems registered within 20 days of commencement. 1POS as a multi-tenant SaaS processing data for many merchants should assume it **must register** and appoint a DPO. Check whether Circular 2022-04 has since been amended.
-- **NPC Circular 16-03**: breach notification to NPC and affected data subjects within **72 hours** of knowledge/reasonable belief; obligation stays with the PIC even if outsourced → 1POS must notify merchants fast enough for them to meet 72h (contract: "without undue delay, target ≤24h").
+- Tilvara is a **Personal Information Processor (PIP)** for merchants' customer data (and a Personal Information Controller for its own users/billing data). Merchants are PICs. SC/PWD ID numbers, names, signatures, and **PWD disability info** — PWD status may be **sensitive personal information** (health-related) → minimize: store ID number + name only, never disability type.
+- **NPC Circular 2022-04** (effective 11 Jan 2023): registration of DPO and data processing systems via online portal; mandatory if ≥250 employees, **or** processing is likely to pose risk, is not occasional, or involves sensitive personal info of ≥1,000 individuals; otherwise file a sworn declaration (Annex 1). Registration valid 1 year (renew). New systems registered within 20 days of commencement. Tilvara as a multi-tenant SaaS processing data for many merchants should assume it **must register** and appoint a DPO. Check whether Circular 2022-04 has since been amended.
+- **NPC Circular 16-03**: breach notification to NPC and affected data subjects within **72 hours** of knowledge/reasonable belief; obligation stays with the PIC even if outsourced → Tilvara must notify merchants fast enough for them to meet 72h (contract: "without undue delay, target ≤24h").
 - Need: Data Processing Agreement (PIC–PIP outsourcing agreement) template, privacy notice, data subject rights tooling (access, correction, erasure — but erasure conflicts with BIR 5-year retention: retain fiscal records, pseudonymize elsewhere), security measures (encryption at rest/in transit, access logs).
 - Sources: privacy.gov.ph Circular 2022-04 PDF; NPC resolutions quoting Circular 16-03; law-firm summaries.
 
 ## 10. PCI DSS — **Partially verified**
 - PCI DSS **v4.0.1** is current; the 51 "future-dated" requirements became mandatory **31 Mar 2025** (PCI SSC). E-commerce payment-page script requirements 6.4.3 / 11.6.1 affect web checkout.
-- **1POS implication:** Never touch raw PAN. Use PH acquirers/terminals with semi-integrated or P2PE terminals (card data stays on the terminal) and hosted/redirect payment pages for online ordering (target SAQ A / SAQ P2PE scope for merchants; 1POS as a service provider minimizes scope). QR Ph / GCash / Maya flows are not card data but still need secure webhook handling and reconciliation.
+- **Tilvara implication:** Never touch raw PAN. Use PH acquirers/terminals with semi-integrated or P2PE terminals (card data stays on the terminal) and hosted/redirect payment pages for online ordering (target SAQ A / SAQ P2PE scope for merchants; Tilvara as a service provider minimizes scope). QR Ph / GCash / Maya flows are not card data but still need secure webhook handling and reconciliation.
 
 ## 11. Other items to watch (not researched in depth)
 - **Mall sales reporting**: lease contracts at SM, Ayala, Robinsons, Megaworld etc. commonly require POS sales files sent to the mall daily (Mosaic advertises "mall accredited"). Not a law, but a hard commercial requirement for mall tenants. **Unverified specifics.**
-- LGU business permits, DTI price tag law (RA 71), Consumer Act; Internet Transactions Act (RA 11967) if 1POS offers online ordering; FDA for pharmacies.
-- Withholding tax on payments to 1POS (merchant side) — not POS logic.
+- LGU business permits, DTI price tag law (RA 71), Consumer Act; Internet Transactions Act (RA 11967) if Tilvara offers online ordering; FDA for pharmacies.
+- Withholding tax on payments to Tilvara (merchant side) — not POS logic.
 
 ---
 
@@ -213,12 +213,12 @@ percentage tax computed on 896.00 (3%) = 26.88
 8. NAAC: VAT-exempt or not? Computation base?
 9. Current **5% BNPC** cap and covered item list for SC/PWD (post JAO 24-02).
 10. Is the ₱500 non-VAT invoice threshold "more than ₱500" or "₱500 or more", and has the CPI adjustment been applied (next ~Jan 2027)?
-11. When POS users become EIS-mandated, what will be the transmission spec; and are tenants who also sell online through 1POS (e-commerce) already covered by the 31 Dec 2026 deadline?
+11. When POS users become EIS-mandated, what will be the transmission spec; and are tenants who also sell online through Tilvara (e-commerce) already covered by the 31 Dec 2026 deadline?
 12. Is RMC 98-2026 (PTI/PTT/downtime rules) authentic and what does it say verbatim?
 13. Retention: 5 years (EOPT) vs any longer requirement for e-journals or sales machines?
 14. Offline operation: is issuing invoices from a disconnected terminal (later sync) acceptable for accredited POS? (We believe yes since non-volatile local storage is required, but confirm.)
 15. VAT treatment of service charge; tips.
-16. NPC: does 1POS need DPS registration as a PIP, and are merchants required to register because of SC/PWD data?
+16. NPC: does Tilvara need DPS registration as a PIP, and are merchants required to register because of SC/PWD data?
 
 ## Release gates (must all pass before selling to PH merchants as an invoicing POS)
 
@@ -229,7 +229,7 @@ percentage tax computed on 896.00 (3%) = 26.88
 - **G4 — Accreditation:** BIR Certificate of Accreditation (or applicable equivalent) for the exact software version obtained; fiscal core version pinned.
 - **G5 — Merchant onboarding:** PTU/MIN capture flow; terminals blocked from issuing invoices until registered; training mode prints "NOT AN INVOICE".
 - **G6 — Privacy:** NPC registration/DPO decision documented; DPA template; privacy notice; 72h breach runbook; PWD data minimization.
-- **G7 — Payments:** card data never stored/processed by 1POS servers; PCI scope documented with payment partner.
+- **G7 — Payments:** card data never stored/processed by Tilvara servers; PCI scope documented with payment partner.
 - **G8 — Change control:** any change to fiscal core requires compliance sign-off and an assessment of "major vs minor enhancement".
 
 ---

@@ -83,6 +83,33 @@ export const passwordResetConfirmSchema = z.object({
 });
 export type PasswordResetConfirmInput = z.infer<typeof passwordResetConfirmSchema>;
 
+// Your own account (privacy pack: correction and erasure by the person) ---------------------
+const mfaCodeIfOn = z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code').optional();
+
+export const profileUpdateSchema = z.object({ displayName: z.string().trim().min(1).max(200) });
+export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;
+
+/**
+ * A new sign-in email takes the password and, when two-step sign-in is on, a current code: a stolen
+ * session alone cannot move the account to another inbox. The change waits for the link sent there.
+ */
+export const emailChangeRequestSchema = z.object({
+  newEmail: emailSchema,
+  password: z.string().min(1).max(128),
+  code: mfaCodeIfOn,
+});
+export type EmailChangeRequestInput = z.infer<typeof emailChangeRequestSchema>;
+
+export const emailChangeConfirmSchema = z.object({ token: z.string().min(32).max(256) });
+export type EmailChangeConfirmInput = z.infer<typeof emailChangeConfirmSchema>;
+
+/** Closing your account: the password and, when two-step sign-in is on, a current code. */
+export const accountCloseSchema = z.object({
+  password: z.string().min(1).max(128),
+  code: mfaCodeIfOn,
+});
+export type AccountCloseInput = z.infer<typeof accountCloseSchema>;
+
 /** Login answer for an account with two-step sign-in: no session yet, only a 5-minute challenge. */
 export interface MfaChallenge {
   mfaRequired: true;

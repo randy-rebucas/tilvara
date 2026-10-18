@@ -16,6 +16,7 @@ import {
   taxCategories,
   unitsOfMeasure,
   type Database,
+  inSequence,
 } from '@1pos/database';
 import type { AssignPriceListInput, CreatePriceListInput, SetPricesInput, UpdatePriceListInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -51,10 +52,10 @@ export class PricingService extends TenantService {
   listPriceLists(auth: AuthContext) {
     this.assertCan(auth, 'catalog.read');
     return this.read(auth, async (db) => {
-      const [lists, assigned] = await Promise.all([
-        db.select().from(priceLists).orderBy(asc(priceLists.name)),
-        db.select({ branchId: branchPriceLists.branchId, priceListId: branchPriceLists.priceListId }).from(branchPriceLists),
-      ]);
+      const [lists, assigned] = await inSequence(
+        () => db.select().from(priceLists).orderBy(asc(priceLists.name)),
+        () => db.select({ branchId: branchPriceLists.branchId, priceListId: branchPriceLists.priceListId }).from(branchPriceLists),
+      );
       // Which branches use each list explicitly (a branch with none uses the default list).
       return lists.map((l) => ({ ...l, branchIds: assigned.filter((a) => a.priceListId === l.id).map((a) => a.branchId) }));
     });

@@ -161,4 +161,10 @@ export class OrdersController {
   bump(@Auth() auth: AuthContext, @Param('id', id) ticketId: string) {
     return this.kitchen.bump(auth, ticketId);
   }
+
+  @HttpCode(200)
+  @Post('kitchen/tickets/:id/unbump')
+  unbump(@Auth() auth: AuthContext, @Param('id', id) ticketId: string) {
+    return this.kitchen.unbump(auth, ticketId);
+  }
 }

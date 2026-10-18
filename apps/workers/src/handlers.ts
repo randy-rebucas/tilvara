@@ -1,21 +1,33 @@
-import { eq, users } from '@1pos/database';
+import { eq, users, withTenant, writeDataExport, type FileStorage } from '@1pos/database';
+import { maskEmail } from '@1pos/observability';
+import type { Pool } from 'pg';
 import type { Logger, OutboxHandler } from './outbox-processor.js';
 
 export interface WorkerMailer {
   send(message: { to: string; subject: string; text: string; template: string }): Promise<void>;
 }
 
-/** Dev mailer for workers: logs recipient + template only. Refused in production by @1pos/config. */
+/** Dev mailer for workers: logs the template and a masked recipient only. Refused in production by @1pos/config. */
 export class DevWorkerMailer implements WorkerMailer {
   readonly sent: { to: string; subject: string; text: string; template: string }[] = [];
   constructor(private readonly logger: Logger) {}
   async send(message: { to: string; subject: string; text: string; template: string }): Promise<void> {
     this.sent.push(message);
-    this.logger.info('[dev mail]', { template: message.template, to: message.to });
+    this.logger.info('[dev mail]', { template: message.template, to: maskEmail(message.to) });
   }
 }
 
-export function buildHandlers(mailer: WorkerMailer): Record<string, OutboxHandler> {
+export interface ExportOptions {
+  storage: FileStorage;
+  /** Days a finished export stays downloadable. */
+  retentionDays: number;
+  /** After this many tries the export is marked FAILED (the owner can ask again) instead of retried. */
+  maxAttempts?: number;
+}
+
+export const exportKey = (tenantId: string, exportId: string) => `exports/${tenantId}/${exportId}.zip`;
+
+export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Record<string, OutboxHandler> {
   return {
     /** Welcome email to the owner. RLS guarantees we can only read users of this event's tenant. */
     'tenant.onboarded': async (event, db) => {
@@ -25,9 +37,72 @@ export function buildHandlers(mailer: WorkerMailer): Record<string, OutboxHandle
       await mailer.send({
         to: owner.email,
         template: 'tenant.welcome',
-        subject: 'Welcome to 1POS',
+        subject: 'Welcome to Tilvara',
         text: `Hi ${owner.displayName}, your business is ready. Your 14-day trial has started.`,
       });
     },
+    ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
   };
+}
+
+/**
+ * A business's data export (ADR-0016 slice 6): one REPEATABLE READ snapshot inside the event's
+ * tenant, written as a ZIP into private storage, then marked READY by data_export_finish() in the
+ * same transaction. Idempotent: an export that is no longer REQUESTED is left alone, and a retry
+ * rewrites the same file (it only appears once complete).
+ */
+function dataExportHandler(o: ExportOptions): OutboxHandler {
+  const maxAttempts = o.maxAttempts ?? 3;
+  return {
+    isolation: 'REPEATABLE READ',
+    run: async (event, _db, { client, pool }) => {
+      const exportId = String(event.payload.exportId ?? '');
+      const { rows: [row] } = await client.query<{ status: string; requested_by_name: string | null }>(
+        `SELECT e.status, u.display_name AS requested_by_name FROM data_exports e LEFT JOIN users u ON u.id = e.requested_by WHERE e.id = $1`,
+        [exportId],
+      );
+      if (!row || row.status !== 'REQUESTED') return;
+      try {
+        let rowCounts: Record<string, number> = {};
+        const key = exportKey(event.tenantId, exportId);
+        const file = await o.storage.put(key, async (out) => {
+          rowCounts = (await writeDataExport(client, out, { exportId, requestedBy: row.requested_by_name })).rowCounts;
+        });
+        await client.query(`SELECT data_export_finish($1, $2, $3, $4, $5, now() + make_interval(days => $6))`, [
+          exportId,
+          key,
+          file.sizeBytes,
+          file.sha256,
+          JSON.stringify(rowCounts),
+          o.retentionDays,
+        ]);
+      } catch (e) {
+        if (event.attempts < maxAttempts) throw e;
+        // Out of tries: say so to the business (this transaction may be aborted, so use a new one).
+        const message = e instanceof Error ? e.message.split('\nparams:')[0]!.slice(0, 300) : 'unknown error';
+        await withTenant(pool, event.tenantId, async (_d, c) => {
+          await c.query('SELECT data_export_fail($1, $2)', [exportId, message]);
+        });
+      }
+    },
+  };
+}
+
+/**
+ * Delete export files past their date, then mark them EXPIRED (file first: a failed delete leaves
+ * the row READY, so the next sweep tries again; the API already refuses links once the date passed).
+ */
+export async function expireDataExports(pool: Pool, storage: FileStorage, logger: Logger): Promise<number> {
+  const { rows } = await pool.query<{ tenant_id: string; id: string; file_key: string | null }>('SELECT * FROM data_export_due_expiry(200)');
+  let n = 0;
+  for (const r of rows) {
+    try {
+      if (r.file_key) await storage.remove(r.file_key);
+      const { rows: [m] } = await pool.query<{ ok: boolean }>('SELECT data_export_mark_expired($1, $2) AS ok', [r.tenant_id, r.id]);
+      if (m?.ok) n++;
+    } catch (e) {
+      logger.error('could not expire a data export', { exportId: r.id, error: e instanceof Error ? e.message.slice(0, 200) : 'unknown' });
+    }
+  }
+  return n;
 }

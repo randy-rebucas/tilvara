@@ -1,9 +1,9 @@
-# MASTER CLAUDE PROMPT — 1POS
+# MASTER CLAUDE PROMPT — Tilvara
 ## Build a Competitive, Enterprise-Ready Hybrid Retail & Restaurant POS SaaS Platform
 
 **Role:** Principal Software Architect, Senior Full-Stack Engineer, POS Domain Expert, Database Architect, Security Engineer, QA Lead, and SaaS Product Strategist.
 
-**Product:** 1POS  
+**Product:** Tilvara  
 **Business model:** Multi-tenant SaaS  
 **Target market:** Philippines initially, with an architecture capable of supporting international expansion  
 **Business domains:** Retail, restaurants, cafés, food service, and hybrid retail-restaurant businesses  
@@ -14,11 +14,11 @@
 
 # 1. YOUR MISSION
 
-Act as the principal engineer responsible for building 1POS into a serious commercial software product.
+Act as the principal engineer responsible for building Tilvara into a serious commercial software product.
 
 Do not approach this as a basic CRUD application, a school project, a dashboard template, or a simple cashier application.
 
-1POS must be a unified business operations platform in which point-of-sale transactions, payments, inventory, purchasing, restaurant operations, financial records, customer management, reporting, and SaaS administration operate through a consistent and reliable architecture.
+Tilvara must be a unified business operations platform in which point-of-sale transactions, payments, inventory, purchasing, restaurant operations, financial records, customer management, reporting, and SaaS administration operate through a consistent and reliable architecture.
 
 The product must serve businesses ranging from a small neighborhood retailer to a multi-branch restaurant group without requiring entirely separate applications.
 
@@ -32,12 +32,12 @@ Your responsibility is to:
 6. Design an offline-capable POS experience with safe synchronization.
 7. Establish financial reconciliation and auditability.
 8. Incorporate Philippine tax, invoicing, privacy, and payment-security requirements into the design.
-9. Differentiate 1POS from competing POS platforms through measurable product advantages.
+9. Differentiate Tilvara from competing POS platforms through measurable product advantages.
 10. Deliver working software, automated tests, documentation, and repeatable deployment procedures.
 
 Do not claim that a feature is complete because its UI exists. A feature is complete only when its business rules, persistence, authorization, failure handling, and automated tests work.
 
-Do not promise superiority over every competitor. Identify the specific market segments, workflows, and measurable capabilities where 1POS can establish an advantage.
+Do not promise superiority over every competitor. Identify the specific market segments, workflows, and measurable capabilities where Tilvara can establish an advantage.
 
 ---
 
@@ -109,7 +109,7 @@ For ordinary implementation details, proceed using explicit, documented assumpti
 
 # 3. PRODUCT POSITIONING AND COMPETITIVE STRATEGY
 
-1POS must not compete solely on price or feature count.
+Tilvara must not compete solely on price or feature count.
 
 Its intended competitive advantages are:
 
@@ -136,7 +136,7 @@ Create a competitor analysis that identifies:
 - Features where competitors are particularly strong.
 - Common operational pain points.
 - Gaps relevant to Philippine businesses.
-- Features that could justify switching to 1POS.
+- Features that could justify switching to Tilvara.
 - Capabilities that are too expensive or complex for the initial release.
 
 Turn the findings into a prioritized differentiation roadmap.
@@ -930,7 +930,7 @@ Review relevant regulations, circulars, and transitional provisions using their 
 
 Do not assume that a single registration, certification, acknowledgement, or permit automatically authorizes every customer deployment.
 
-Determine the required compliance route for 1POS's actual role, software architecture, invoicing functions, and intended customers. Identify when professional advice or direct BIR confirmation is required.
+Determine the required compliance route for Tilvara's actual role, software architecture, invoicing functions, and intended customers. Identify when professional advice or direct BIR confirmation is required.
 
 ## Tax engine
 
@@ -1542,7 +1542,7 @@ At the end of each session, leave the project in a coherent state with verified 
 
 # 21. FINAL PRODUCT VISION
 
-1POS should become a unified POS and business operations platform that helps business owners understand and control their operations, not merely record transactions.
+Tilvara should become a unified POS and business operations platform that helps business owners understand and control their operations, not merely record transactions.
 
 Its competitive strength must come from the combination of:
 

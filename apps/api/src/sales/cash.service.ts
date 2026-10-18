@@ -15,6 +15,7 @@ import {
   sql,
   terminalTransactions,
   type Database,
+  mapInSequence,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
 import { cashMovementPosting, cashVariancePosting } from '@1pos/accounting';
@@ -137,7 +138,7 @@ export class CashService extends TenantService {
         const scope = { legalEntityId, branchId: session.branchId, registerId: session.registerId };
         return this.can(auth, 'cash.reconcile', scope) || (this.can(auth, 'cash.session', scope) && session.openedBy === auth.userId);
       });
-      return { data: await Promise.all(visible.map((r) => this.view(db, r.session))) };
+      return { data: await mapInSequence(visible, (r) => this.view(db, r.session)) };
     });
   }
 

@@ -1,6 +1,13 @@
-# 1POS — Leftovers (open items from finished slices and phases)
+# Tilvara — Leftovers (open items from finished slices and phases)
 
 Moved out of `docs/BACKLOG.md` on 2026-10-17. BACKLOG keeps the plan (phases, slices, exits); this file keeps what each finished slice left open. Legend: ⬜ open · ⏳ waiting on a user decision (D1–D6) or an outside reviewer. Remove an item when it is done, or move it back into a BACKLOG slice when it is scheduled.
+
+## Brand: renamed 1POS → Tilvara (2026-10-18)
+Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, the TOTP issuer, the OpenAPI title, the Tauri product name, CSV filenames, and the docs. These were kept on purpose:
+- Kept forever, because renaming them breaks data already out there: the JWT `iss`/`aud` (`1pos-api`/`1pos`, would sign everyone out), the recovery-code and MFA-key derivation salts (`1pos-recovery:`, `1pos-mfa`, would invalidate codes and secrets), the till keychain service `"1POS till"` and the Tauri identifier `ph.onepos.till` (tills would lose their saved credential and local SQLite data).
+- Renameable later, as a separate slice: the `@1pos/*` package scope, the `onepos_*` DB roles and DB names (these appear in migrations that are already applied, so this needs new migrations plus `01-roles.sql` and a dev-volume upgrade script), the `x-onepos-request` CSRF header, the `Onepos*` alert names, the compose project, the cargo crate and exe name `onepos-till`, and the localStorage keys.
+- ⏳ Trademark and domain clearance for "Tilvara" (WIPO, IPOPHL classes 9/42, `.com`/`.ph`) before any public launch; `api.1pos.ph` in `desktop.test.ts` is only an example host.
+- ⬜ Check the wordmark visually on the admin header, the sign-in page and the POS shell at phone width (`Tilvara` is longer than `1POS`); re-run `review.mjs` for both apps.
 
 ## Phase 0 — Repository & architecture
 - ⬜ CI pipeline (GitHub Actions: install, lint, typecheck, unit, integration with Postgres service) — needs a remote repo decision (D3)
@@ -57,7 +64,6 @@ Phase-level:
 
 ## Phase 4 — Restaurant
 Slice 2 (menu foundation):
-- ⬜ The POS menu view prices item by item (N queries) — batch it if menus get large (Phase 6 slice 5)
 - ⬜ Modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen)
 
 Slice 3 (orders + kitchen):
@@ -65,11 +71,10 @@ Slice 3 (orders + kitchen):
 - ⬜ Per-seat views and "fire course N" reminders/timers
 - ⬜ Kitchen printers (device adapters)
 - ⬜ Voiding a modifier alone (today: void the item and re-add)
-- ⬜ Reprint/recall a ticket
+- ⬜ Reprint a ticket (needs kitchen printers; recalling finished tickets is the KDS Done view since session 10)
 - ⬜ Order notes per course
 
 Slice 4 (bills + checks + service charge):
-- ⬜ Card/QR checks use the existing intent flow, but no POS UI yet
 - ⬜ Tips
 - ⬜ A bill as PDF (the till prints and reprints the bill since session 10)
 - ⬜ Adding items after a partial payment (today: a new order once the bill settles)
@@ -78,7 +83,7 @@ Slice 4 (bills + checks + service charge):
 Slice 5 (restaurant reports):
 - ⬜ Prep times by hour or day part and per item
 - ⬜ Open orders: items as they were at the cutoff (today: as attached now)
-- ⬜ Free modifiers ("no onions") counts in item performance (no sale line today)
+- ⬜ Free modifiers ("no onions") counts in item performance (no sale line today). Needs a rule for when a free choice counts as sold (fired, billed or paid), so it is left for the restaurant reporting review
 - ⏳ The DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9)
 
 Slice 6 (UI):
@@ -86,7 +91,6 @@ Slice 6 (UI):
   - ⬜ Servers without a drawer (today the Tables tab lives inside a register shift)
   - ⬜ Floor positions/shapes on a drawn plan (tiles today)
 - 6b KDS:
-  - ⬜ Un-bump a ticket (the Done view shows finished tickets read-only since session 10)
   - ⬜ Push (SSE) instead of polling
 - 6c admin set-up:
   - ⬜ Drag-and-drop ordering (buttons today)
@@ -129,13 +133,11 @@ Phase-level:
 
 ## Phase 6 — Pilot readiness
 Slice 1 (account security):
-- ⬜ Time-limited, tenant-approved support access (slice 6); MFA reset itself is done (owner/admin on the member page; owners by the support CLI with a ticket)
 - ⬜ Nonce-based CSP for the admin; CSP for POS browser hosting
 - ⬜ WebAuthn/passkeys
 
 Slice 2 (platform hardening):
 - ⬜ Accepted dev-only advisory: esbuild ≤ 0.24.2 in drizzle-kit (re-check when drizzle-kit updates)
-- ⬜ The bundle scan does not cover server-rendered admin pages
 - ⏳ Run the security gates automatically (needs CI, D3)
 - ⬜ T5 refund approval thresholds / anomaly report (product backlog)
 
@@ -144,7 +146,7 @@ Slice 3 (monitoring):
 - ⬜ Billing failure metrics (no billing integration yet, D6)
 - ⏳ OTel traces/exporter — D1
 - ⬜ No authentication on the metrics port: relies on network placement (slice 7)
-- ⬜ DEAD letters are a CLI only; no admin/support screen (slice 6)
+- ⬜ DEAD letters are a CLI only; no admin/support screen
 
 Slice 4 (backup and restore):
 - ⏳ Point-in-time recovery (WAL) and the off-site copy with a retention lock: D1. Until then RPO = time since the last daily backup, and online sales after it are lost in a disaster
@@ -159,11 +161,29 @@ Slice 5 (performance):
   - sync of 50: 4.4 s typical, 5.9 s worst, against 5 s.
   The tails cluster in 1–2 s windows while both event loops stay calm (DB/disk side; Docker Desktop fsync 2–15 ms).
 - ⬜ Slice 7 sizing: at least 2 API instances. One instance is CPU-bound at pilot load: ~29 checkouts/s, with p95 targets missed.
-- ⬜ With one saturated instance a till's sync still got no answer 3 times: the request can wait up to 5 s for a pool connection before the 8 s budget starts. Count the budget from request arrival, or make sync a priority queue.
-- ⬜ `pg` deprecation: "client.query() when the client is already executing a query". Some code runs queries concurrently on one transaction's client (`Promise.all` inside `withTenant`); pg@9 will refuse it. Find and serialize.
+- ⬜ Once in session 15, `catalog.test.ts` failed in setup ("1 failed | 16 skipped") with unchanged code, just after the concurrent-query guard went in; 9 reruns and two full API runs passed, and the guard never fired. If it recurs, the printed `concurrent query on one pg client` line names the query. The guard covers the API suites only (the worker and database suites have no `Promise.all` over a client today)
 - ⬜ Fewer statements per request: a lookup is 14 (auth context + 5 sequential reads), a 3-line checkout 47. Merge the lookup reads; cache the auth context per token for a few seconds.
 - ⬜ `platform_metrics()` takes ~90 ms on the load DB (100k items, a few thousand sales); watch it as data grows (alert `OneposBusinessGaugesSlow`).
 - ⬜ `monitoring.test.ts` "is its own listener" failed once right after the offline drills in the same run (`onepos_db_up` not yet 1 on the first scrape); it passed alone and in the final full gate. Watch it.
-- ⬜ `onepos_test` grows with every integration run (564 MB on 2026-10-18), and the suites slow down with it. Consider dropping and recreating it at the start of the gate (it is migrated automatically).
 
-The remaining Phase 6 slices ( 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
+Slice 6 (onboarding and support):
+- ⏳ Anonymisation job for a business whose retention period has ended (offboarding runbook step 5); until then businesses stay on hold, read-only. Periods pending the DPO
+- ⏳ Object storage for exports (pre-signed URLs, lifecycle deletion) — D1. Until then `DevFileStorage` in `FILE_STORAGE_DIR` (default: the OS temp folder) and links served by the API
+- ⬜ No ZIP64: an export over 4 GiB or 65,535 files is refused (far beyond pilot sizes)
+- ⬜ Support access: read-only only; any active staff member may use an open grant (the business sees who); no platform screen for staff (CLI)
+- ⬜ A support view writes one audit row per API request; one admin page is about 10 requests, so the business's log fills quickly during a session. Consider one row per page or a per-session summary
+
+Slice 8 (runbooks and privacy pack). The privacy items come from the personal-data inventory (privacy README §3):
+- ⏳ DPO review of the privacy pack (`docs/compliance/privacy/`): the PIC/PIP split, whether SC/PWD records are sensitive, NPC registration, retention periods, the 24-hour notice target, hosting abroad (D1). Release gate G6
+- ⏳ Purge jobs in the worker for `user_sessions` (incl. user agent), `password_reset_tokens`, `email_change_tokens` (holds unconfirmed addresses), `member_invitations` and delivered `outbox_events`; today all are kept for ever. Periods proposed in the retention schedule, pending the DPO
+- ⏳ Till: no local purge of offline sales once recorded in the cloud (`till.sqlite` keeps them for ever); period pending the DPO
+- ⏳ Anonymisation job for closed accounts (`users.closed_at`) once no business's records within their retention period name the person; pending the DPO's periods. Until then a closed account's email stays taken (signing up again with it answers `EMAIL_UNAVAILABLE`; ops can `account-enable` it)
+- ⬜ No correction document for SC/PWD beneficiary name or ID number on a recorded sale (append-only); needs the tax adviser's view of what a correction must show
+- ⏳ Takeaway customer names (`restaurant_orders.customer_name`) are never cleared; period pending the DPO
+- ⬜ Log redaction works on field names; free text in a log *message* string is not caught. Rule: log ids, never names or emails, in messages
+- ⬜ No account page in the POS (a cashier with POS-only habits corrects their name or closes their account in the admin)
+- ⬜ Opening an email-change link signs out the browser that opens it (the BFF clears its cookies, as every session of the changed account ends), even if that browser was signed in as someone else
+- ⬜ Error references: the POS shows the first 8 characters of the correlation id (search logs by prefix); a request that got no answer at all has no reference
+- ⬜ Payment payout posting (Card/QR clearing → bank, fees) and refund/chargeback procedures: with the PayMongo adapter (D6)
+
+The remaining Phase 6 slices (7 deployment, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.

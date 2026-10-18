@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse(csv, {
     headers: {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="1pos-${report}-${span}.csv"`,
+      'content-disposition': `attachment; filename="tilvara-${report}-${span}.csv"`,
       'cache-control': 'no-store',
     },
   });

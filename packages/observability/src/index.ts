@@ -35,17 +35,34 @@ export function currentLogContext(): Readonly<LogContext> | undefined {
 
 const SNAKE: Record<string, string> = { correlationId: 'correlation_id', tenantId: 'tenant_id', userId: 'user_id' };
 
+/** Credentials: never logged. */
+const SECRET_KEYS = ['password', 'passwordHash', 'token', 'accessToken', 'refreshToken', 'secret', 'credential', 'apiKey', 'authorization', 'cookie'];
+
 /**
- * Secrets and credentials never reach log sinks, whatever a call site passes. Request bodies are
- * not logged at all (they may carry PII); these paths are the safety net for metadata objects.
+ * Personal data (privacy pack, processing register): the field names it travels under in requests,
+ * rows and events. Generic keys such as `name` are left out on purpose (product names, error names);
+ * a person's name is logged under one of these keys or not at all.
+ */
+export const PERSONAL_KEYS = [
+  'email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary',
+  'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient',
+];
+
+/**
+ * Secrets and personal data never reach log sinks, whatever a call site passes, at the top level or
+ * up to three objects deep. Request bodies are not logged at all; these paths are the safety net
+ * for metadata objects (`logger-redaction` tests every key at every depth).
  */
 export const REDACT_PATHS = [
-  'password', '*.password', 'passwordHash', '*.passwordHash',
-  'token', '*.token', 'accessToken', '*.accessToken', 'refreshToken', '*.refreshToken',
-  'secret', '*.secret', 'credential', '*.credential', 'apiKey', '*.apiKey',
-  'authorization', '*.authorization', 'headers.authorization', 'headers.cookie', 'cookie', '*.cookie',
+  ...[...SECRET_KEYS, ...PERSONAL_KEYS].flatMap((k) => [k, `*.${k}`, `*.*.${k}`, `*.*.*.${k}`]),
   'req.headers.authorization', 'req.headers.cookie',
 ];
+
+/** `r***@example.com`: enough to tell two mails apart in a dev log, not enough to name the person. */
+export function maskEmail(email: string): string {
+  const at = email.lastIndexOf('@');
+  return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
+}
 
 export interface CreateLoggerOptions {
   service: string;

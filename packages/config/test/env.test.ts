@@ -85,7 +85,19 @@ describe('loadServerEnv', () => {
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
       'PAYMENT_PROVIDER: the dev payment simulator cannot be used in production',
+      'FILE_STORAGE_DRIVER: the dev file storage (a local folder) cannot be used in production (object storage waits for D1)',
     ]);
+  });
+
+  it('data exports (ADR-0016 slice 6): links last 10 minutes by default; the worker refuses dev storage in production', () => {
+    const env = loadServerEnv(base);
+    expect([env.FILE_STORAGE_DRIVER, env.DATA_EXPORT_LINK_SECONDS]).toEqual(['dev', 600]);
+    expect(() => loadServerEnv({ ...base, DATA_EXPORT_LINK_SECONDS: '5' })).toThrow(/DATA_EXPORT_LINK_SECONDS/);
+    const worker = loadWorkerEnv({ DATABASE_URL: base.DATABASE_URL });
+    expect([worker.FILE_STORAGE_DIR, worker.DATA_EXPORT_RETENTION_DAYS]).toEqual([env.FILE_STORAGE_DIR, 7]);
+    expect(() => loadWorkerEnv({ NODE_ENV: 'production', DATABASE_URL: base.DATABASE_URL, WORKER_DATABASE_URL: base.DATABASE_URL, MAILER_DRIVER: 'dev' })).toThrow(
+      /FILE_STORAGE_DRIVER: the dev file storage/,
+    );
   });
 
   it('requires Redis for shared rate limits in production', () => {
@@ -104,5 +116,14 @@ describe('loadServerEnv', () => {
       expect((e as Error).message).toContain('MFA_ENCRYPTION_KEY');
       expect((e as Error).message).not.toContain('too-short-key');
     }
+  });
+
+  it('accepts a previous MFA key only during a rotation: beside a different current key', () => {
+    const current = Buffer.alloc(32, 1).toString('base64');
+    const previous = Buffer.alloc(32, 2).toString('base64');
+    expect(loadServerEnv({ ...base, MFA_ENCRYPTION_KEY: current, MFA_ENCRYPTION_KEY_PREVIOUS: previous }).MFA_ENCRYPTION_KEY_PREVIOUS).toBe(previous);
+    expect(() => loadServerEnv({ ...base, MFA_ENCRYPTION_KEY_PREVIOUS: previous })).toThrow(/set only while rotating/);
+    expect(() => loadServerEnv({ ...base, MFA_ENCRYPTION_KEY: current, MFA_ENCRYPTION_KEY_PREVIOUS: current })).toThrow(/must differ/);
+    expect(loadServerEnv({ ...base, MFA_ENCRYPTION_KEY_PREVIOUS: '' }).MFA_ENCRYPTION_KEY_PREVIOUS).toBeUndefined();
   });
 });

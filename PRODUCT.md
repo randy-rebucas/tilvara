@@ -14,7 +14,7 @@ web
 
 ## Product Purpose
 
-1POS is a multi-tenant POS and business-operations SaaS for the Philippines. The admin web is where a business is set up (legal entity, branches, registers/terminals), its team and permissions are managed, its catalog and prices are maintained, and later its sales, inventory, cash and financial records are reviewed and reconciled. Success: an owner configures the business without help and trusts that every figure shown reconciles to underlying records.
+Tilvara is a multi-tenant POS and business-operations SaaS for the Philippines. The admin web is where a business is set up (legal entity, branches, registers/terminals), its team and permissions are managed, its catalog and prices are maintained, and later its sales, inventory, cash and financial records are reviewed and reconciled. Success: an owner configures the business without help and trusts that every figure shown reconciles to underlying records.
 
 ## Positioning
 
@@ -37,7 +37,7 @@ Unified retail + restaurant operations on one foundation, with financial and inv
 
 ## Brand Commitments
 
-Name: **1POS**. No logo, colors or fonts exist yet (confirmed 2026-10-15); the visual direction established in code is provisional and replaceable.
+Name: **Tilvara**. No logo, colors or fonts exist yet (confirmed 2026-10-15); the visual direction established in code is provisional and replaceable.
 
 ## Evidence on Hand
 

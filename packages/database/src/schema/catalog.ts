@@ -76,6 +76,8 @@ export const categories = pgTable(
     parentId: uuid('parent_id'),
     name: text('name').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),
+    /** Part of the trial's sample set (ADR-0016 slice 6): labelled, and archived together by "remove sample items". */
+    isSample: boolean('is_sample').notNull().default(false),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -107,6 +109,8 @@ export const products = pgTable(
     productType: text('product_type').$type<ProductType>().notNull().default('STANDARD'),
     soldBy: text('sold_by').$type<SoldBy>().notNull().default('UNIT'),
     trackInventory: boolean('track_inventory').notNull().default(true),
+    /** Part of the trial's sample set (ADR-0016 slice 6): labelled, and archived together by "remove sample items". */
+    isSample: boolean('is_sample').notNull().default(false),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

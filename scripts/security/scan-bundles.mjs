@@ -5,6 +5,10 @@
 // Usage (after `pnpm build` and the app builds):
 //   node scripts/security/scan-bundles.mjs            scan the admin, POS and desktop bundles
 //   node scripts/security/scan-bundles.mjs --self-test plant secrets in a temp bundle and expect failure
+//   node scripts/security/scan-bundles.mjs --live [adminUrl] [apiUrl]
+//       The admin's pages are server-rendered per request (cookies), so the build holds no HTML to
+//       scan: sign up a throwaway owner, sign in through the BFF and scan what each page sends to the
+//       browser (HTML with its embedded RSC payload). Needs the API and `next start` running.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { extname, join, relative, resolve } from 'node:path';
@@ -59,6 +63,13 @@ function secretValues(env) {
   return values;
 }
 
+/** Every check on one text that reaches a browser. */
+function checkText(bundle, file, text, values, findings) {
+  for (const n of SERVER_ONLY) if (new RegExp(`\\b${n}\\b`).test(text)) findings.push({ bundle, file, what: `server-only setting name ${n}` });
+  for (const p of PATTERNS) if (p.re.test(text)) findings.push({ bundle, file, what: p.what });
+  for (const v of values) if (text.includes(v.value)) findings.push({ bundle, file, what: `value of ${v.name}` });
+}
+
 export function scan(dirs, env) {
   const values = secretValues(env);
   const findings = [];
@@ -70,11 +81,7 @@ export function scan(dirs, env) {
     }
     for (const file of files(dir)) {
       scanned++;
-      const text = readFileSync(file, 'utf8');
-      const rel = relative(ROOT, file);
-      for (const n of SERVER_ONLY) if (new RegExp(`\\b${n}\\b`).test(text)) findings.push({ bundle: name, file: rel, what: `server-only setting name ${n}` });
-      for (const p of PATTERNS) if (p.re.test(text)) findings.push({ bundle: name, file: rel, what: p.what });
-      for (const v of values) if (text.includes(v.value)) findings.push({ bundle: name, file: rel, what: `value of ${v.name}` });
+      checkText(name, relative(ROOT, file), readFileSync(file, 'utf8'), values, findings);
     }
   }
   return { scanned, findings };
@@ -116,6 +123,48 @@ if (process.argv.includes('--self-test')) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** Pages an owner sees, server-rendered with a real session. */
+const LIVE_PAGES = ['/', '/products', '/prices', '/inventory', '/purchasing', '/books', '/restaurant', '/reports/sales', '/offline-sales',
+  '/locations', '/team', '/subscription', '/audit', '/account', '/security'];
+
+async function scanLive(adminUrl, apiUrl, env) {
+  const values = secretValues(env);
+  const findings = [];
+  const stamp = Date.now().toString(36);
+  const email = `bundle-scan-${stamp}@example.ph`;
+  const password = 'bundle scan password long enough';
+  const signup = await fetch(`${apiUrl}/v1/auth/signup`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password, displayName: 'Bundle Scan', businessName: `Bundle scan ${stamp}`, tenantSlug: `bundle-scan-${stamp}` }),
+  });
+  if (!signup.ok) throw new Error(`sign-up failed: ${signup.status}`);
+  const login = await fetch(`${adminUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: adminUrl, 'x-onepos-request': '1' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!login.ok) throw new Error(`sign-in through the admin failed: ${login.status}`);
+  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  let scanned = 0;
+  for (const page of LIVE_PAGES) {
+    const res = await fetch(adminUrl + page, { headers: { cookie }, redirect: 'manual' });
+    scanned++;
+    // A redirect (e.g. to sign-in) would scan the wrong page: count it as a finding, not a pass.
+    if (res.status !== 200) {
+      findings.push({ bundle: 'admin-web (server-rendered)', file: page, what: `page answered ${res.status}, not scanned` });
+      continue;
+    }
+    checkText('admin-web (server-rendered)', page, await res.text(), values, findings);
+  }
+  return { scanned, findings };
+}
+
+if (process.argv.includes('--live')) {
+  const args = process.argv.slice(process.argv.indexOf('--live') + 1);
+  process.exit(report(await scanLive(args[0] ?? 'http://127.0.0.1:3320', args[1] ?? 'http://127.0.0.1:4320', env)) ? 0 : 1);
 }
 
 process.exit(report(scan(BUNDLES.map((b) => ({ ...b, dir: join(ROOT, b.dir) })), env)) ? 0 : 1);

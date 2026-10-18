@@ -74,7 +74,7 @@ try {
     const nav = document.querySelector('header nav');
     return nav.querySelectorAll('a').length > 10 && nav.scrollWidth <= nav.clientWidth + 1;
   })()`));
-  check('the name in the band opens the account security page', await evaluate(`[...document.querySelectorAll('header a')].some((a) => a.getAttribute('href') === '/security')`));
+  check('the name in the band opens the account page', await evaluate(`[...document.querySelectorAll('header a')].some((a) => a.getAttribute('href') === '/account')`));
   await shot('security-banner.png');
 
   await evaluate(`[...document.querySelectorAll('a')].find((a) => a.textContent === 'Set it up now').click()`);

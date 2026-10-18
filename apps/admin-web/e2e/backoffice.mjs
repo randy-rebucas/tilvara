@@ -68,6 +68,10 @@ try {
   await fill('password', PASSWORD);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.body.innerText.includes('Overview')`);
+  check('setup checklist: the first sale is ticked once a sale exists', await evaluate(`(() => {
+    const li = [...document.querySelectorAll('aside li')].find((x) => x.textContent.includes('First sale'));
+    return Boolean(li?.querySelector('[aria-label="Done"]'));
+  })()`));
 
   // 1. Product page: rename, add a variant, add and remove a barcode.
   await go('/products');
@@ -235,7 +239,7 @@ try {
   await waitFor(`location.pathname === '/reports/tenders'`);
   check('by tender: cash net ₱33.00', (await shown('CASH')) && (await has('₱33.00')));
   const csv = await evaluate(`fetch(document.querySelector('a[download]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), name: r.headers.get('content-disposition'), body: await r.text() }))`);
-  check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('1pos-tenders-') && csv.body.includes('CASH,1,49.50,1,16.50,33.00'));
+  check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('tilvara-tenders-') && csv.body.includes('CASH,1,49.50,1,16.50,33.00'));
   await clickText('This month');
   check('quick range "This month" starts on the 1st', await waitFor(`/from=\\d{4}-\\d{2}-01/.test(location.search)`).then(() => true, () => false));
   await clickHref('/reports?'); // the Restaurant group (the band also has a Restaurant tab)

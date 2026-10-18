@@ -1,4 +1,4 @@
-/** Shapes returned by the 1POS API that the counter uses (see docs/api/openapi.json). */
+/** Shapes returned by the Tilvara API that the counter uses (see docs/api/openapi.json). */
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };

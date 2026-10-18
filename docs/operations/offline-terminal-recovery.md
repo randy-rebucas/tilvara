@@ -1,6 +1,6 @@
 # Runbook: offline tills and their recovery
 
-For: store managers and 1POS support. Background: ADR-0015 (offline cash sales and sync).
+For: store managers and Tilvara support. Background: ADR-0015 (offline cash sales and sync).
 
 The desktop till keeps selling **cash** when it cannot reach the server. Each sale is saved on the till
 first and sent later. The server records each sale once, or puts it in front of a manager. This runbook
@@ -10,7 +10,7 @@ says what to do in each situation. The browser POS does not work offline.
 | What | Where |
 |---|---|
 | Sales waiting to be sent, the price list, settings | `%APPDATA%\ph.onepos.till\till.sqlite` (plus `-wal` / `-shm` files next to it) |
-| The terminal key | Windows Credential Manager, generic credential **"1POS till"** |
+| The terminal key | Windows Credential Manager, generic credential **"Tilvara till"** |
 | Server address and terminal id | inside `till.sqlite` (shown in Till settings) |
 
 ## 1. The connection drops while selling
@@ -78,7 +78,7 @@ When the connection is back, sign in, and the till sends what it holds.
 ## 6. A till is stolen or must be retired
 Admin → Locations → the register → Terminals → **Revoke**. The till stops syncing and selling at once and
 cannot be restored. Anything it had not sent stays on that device. **No tool exists yet** to recover a
-revoked till's queue: escalate to 1POS support with the device if it is recovered.
+revoked till's queue: escalate to Tilvara support with the device if it is recovered.
 
 ## 7. The price list on the till is old
 Till settings shows "Price list from …". A till that has been offline for more than 24 hours still sells

@@ -302,6 +302,23 @@ export class AuthService {
     );
   }
 
+  /** An active Tilvara support staff account (ADR-0016 slice 6). */
+  async isStaff(userId: string): Promise<boolean> {
+    return this.scalarPool<boolean>('SELECT auth_staff_active($1) AS v', [userId]);
+  }
+
+  /** The active business's name, read in its own context (support sessions have no membership row). */
+  tenantName(tenantId: string, auth: AuthContext): Promise<string> {
+    return this.tenantDb.tx(
+      async (tx) => {
+        await tx.setTenant(tenantId);
+        const { rows } = await tx.client.query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [tenantId]);
+        return rows[0]?.name ?? '';
+      },
+      { userId: auth.userId, correlationId: auth.correlationId },
+    );
+  }
+
   async memberships(userId: string): Promise<MembershipSummary[]> {
     const { rows } = await this.database.pool.query<{
       membership_id: string;

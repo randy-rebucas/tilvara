@@ -3,6 +3,7 @@ import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { parseAmount } from '../lib/money';
 import type { Workstation } from '../types';
+import { errorText } from './Payment';
 import { Callout, Field, Note } from './ui';
 
 export interface Shift {
@@ -39,7 +40,7 @@ export function RegisterPicker({ onReady, onKitchen }: { onReady: (shift: Shift)
       const s = await api<{ id: string }>('POST', '/v1/cashier-sessions', { registerId: ws.register.id, openingFloat: amount }, { 'idempotency-key': openKey });
       onReady({ sessionId: s.id, register: ws.register, branch: ws.branch });
     } catch (err) {
-      setError(err instanceof ApiFailure ? (err.error.status === 0 || err.error.status >= 500 ? t('common.network') : err.error.message) : t('common.error'));
+      setError(errorText(err, t('common.error'), t('common.network')));
     }
   }
 

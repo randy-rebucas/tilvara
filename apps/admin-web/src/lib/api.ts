@@ -4,18 +4,26 @@ import { API_URL } from './config';
 import { ACCESS_COOKIE } from './cookies';
 
 export class ApiError extends Error {
+  /**
+   * Next.js keeps an existing digest instead of hashing the error, and the error page shows it: with
+   * the API's correlation id there, the reference a business reads out is the one in the API's logs.
+   */
+  readonly digest?: string;
+
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
     readonly details?: Record<string, unknown>,
+    readonly correlationId?: string,
   ) {
     super(message);
+    if (correlationId) this.digest = correlationId;
   }
 }
 
 /**
- * Server-component fetch to the 1POS API with the session's bearer token.
+ * Server-component fetch to the Tilvara API with the session's bearer token.
  * 401 → sign-in; other errors throw ApiError for the page to render as a state.
  */
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -29,8 +37,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 401) redirect('/sign-in');
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
-    const e = (body as { error?: { code: string; message: string; details?: Record<string, unknown> } } | null)?.error;
-    throw new ApiError(res.status, e?.code ?? 'ERROR', e?.message ?? 'Request failed', e?.details);
+    const e = (body as { error?: { code: string; message: string; details?: Record<string, unknown>; correlationId?: string } } | null)?.error;
+    // A staff member's support view whose grant ended (ADR-0016 slice 6): back to their own session.
+    if (e?.code === 'SUPPORT_ACCESS_ENDED') redirect('/api/support-ended');
+    const correlationId = e?.correlationId ?? res.headers.get('x-correlation-id') ?? undefined;
+    throw new ApiError(res.status, e?.code ?? 'ERROR', e?.message ?? 'Request failed', e?.details, correlationId);
   }
   return body as T;
 }
@@ -93,6 +104,52 @@ export interface Me {
   activeTenant: { tenantId: string; membershipId: string; status: string; permissions: string[] } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];
   mfa: MfaStatus;
+  /** Tilvara support staff (ADR-0016 slice 6). */
+  staff: boolean;
+  /** Set while a staff member views a business under its support grant (read-only). */
+  support: { grantId: string; tenantName: string; expiresAt: string } | null;
+}
+/** Support access a business gave Tilvara (ADR-0016 slice 6). */
+export interface SupportGrant {
+  id: string;
+  purpose: string;
+  ticketRef: string | null;
+  access: 'READ_ONLY';
+  status: 'OPEN' | 'REVOKED' | 'EXPIRED';
+  grantedBy: { id: string; name: string | null };
+  grantedAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  revokeReason: string | null;
+  activity: { sessions: number; requests: number; refusedWrites: number; lastUsedAt: string | null; staff: string[] };
+}
+/** An open grant as Tilvara staff see it. */
+export interface StaffGrant {
+  id: string;
+  tenant: { id: string; name: string; slug: string };
+  purpose: string;
+  ticketRef: string | null;
+  grantedAt: string;
+  expiresAt: string;
+}
+/** A copy of the business's records (ADR-0016 slice 6). */
+export interface DataExport {
+  id: string;
+  status: 'REQUESTED' | 'READY' | 'FAILED' | 'EXPIRED';
+  requestedBy: { id: string; name: string | null };
+  requestedAt: string;
+  completedAt: string | null;
+  sizeBytes: number | null;
+  sha256: string | null;
+  totalRows: number | null;
+  expiresAt: string | null;
+  error: string | null;
+}
+export interface SampleData {
+  loaded: number;
+  canLoad: boolean;
+  reason: 'SAMPLE_DATA_LOADED' | 'NOT_TRIAL' | 'HAS_SALES' | null;
+  items: number;
 }
 /** Two-step sign-in (ADR-0016): required for privileged members, after a grace period. */
 export interface MfaStatus {
@@ -154,6 +211,8 @@ export interface Product {
   trackInventory: boolean;
   categoryId: string | null;
   uomId?: string;
+  /** One of the trial's sample items (ADR-0016 slice 6). */
+  isSample?: boolean;
   archivedAt: string | null;
   variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null }[];
 }

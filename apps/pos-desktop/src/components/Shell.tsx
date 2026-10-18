@@ -34,7 +34,7 @@ export function Shell({ context, nav, onSignOut, children }: { context?: ReactNo
     <div className="flex min-h-dvh flex-col">
       <header className="band sticky top-0 z-10 text-white">
         <div className="flex h-16 items-center gap-4 px-4 sm:px-6">
-          <span className="shrink-0 text-[1.5rem] font-bold tracking-[0.04em]">1POS</span>
+          <span className="shrink-0 text-[1.5rem] font-bold tracking-[0.04em]">Tilvara</span>
           {context && <div className="min-w-0 flex-1 truncate text-blue-ink">{context}</div>}
           {!context && <div className="flex-1" />}
           {nav && <div className="hidden lg:block">{nav}</div>}

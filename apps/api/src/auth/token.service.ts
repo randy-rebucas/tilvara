@@ -15,6 +15,11 @@ export interface AccessClaims {
   sid: string;
   /** active tenant, or null before a tenant is chosen */
   tid: string | null;
+  /**
+   * Support grant (ADR-0016 slice 6): the token is a support session in `tid` under this grant, for
+   * a Tilvara staff member who is not a member of the business. Read-only; re-checked on every request.
+   */
+  sgr?: string;
 }
 
 export class InvalidTokenError extends Error {
@@ -32,9 +37,11 @@ export class TokenService {
     this.key = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
   }
 
-  async signAccess(claims: AccessClaims): Promise<{ token: string; expiresAt: Date }> {
-    const expiresAt = new Date(Date.now() + this.env.JWT_ACCESS_TTL_SECONDS * 1000);
-    const token = await new SignJWT({ sid: claims.sid, tid: claims.tid, typ: 'access' })
+  /** `notAfter` caps the expiry (a support session never outlives its grant). */
+  async signAccess(claims: AccessClaims, notAfter?: Date): Promise<{ token: string; expiresAt: Date }> {
+    const ttl = Date.now() + this.env.JWT_ACCESS_TTL_SECONDS * 1000;
+    const expiresAt = new Date(notAfter ? Math.min(ttl, notAfter.getTime()) : ttl);
+    const token = await new SignJWT({ sid: claims.sid, tid: claims.tid, typ: 'access', ...(claims.sgr ? { sgr: claims.sgr } : {}) })
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(claims.sub)
       .setIssuer(ISSUER)
@@ -57,7 +64,9 @@ export class TokenService {
       }
       const tid = payload.tid;
       if (tid !== null && typeof tid !== 'string') throw new InvalidTokenError();
-      return { sub: payload.sub, sid: payload.sid, tid };
+      const sgr = payload.sgr;
+      if (sgr !== undefined && (typeof sgr !== 'string' || !tid)) throw new InvalidTokenError();
+      return { sub: payload.sub, sid: payload.sid, tid, ...(sgr ? { sgr } : {}) };
     } catch {
       throw new InvalidTokenError();
     }

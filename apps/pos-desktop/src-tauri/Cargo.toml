@@ -1,7 +1,7 @@
 [package]
 name = "onepos-till"
 version = "0.0.0"
-description = "1POS desktop till (Tauri shell, ADR-0006 / ADR-0015 slice 5)"
+description = "Tilvara desktop till (Tauri shell, ADR-0006 / ADR-0015 slice 5)"
 edition = "2021"
 publish = false
 

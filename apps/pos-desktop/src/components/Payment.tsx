@@ -1,7 +1,7 @@
 import { CreditCard, QrCode } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
-import { api, ApiFailure, uuid } from '../lib/api';
+import { api, ApiFailure, uuid, withReference } from '../lib/api';
 import { add, gte, isPositive, isZero, parseAmount, quickTenders, sub } from '../lib/money';
 import type { PaymentIntent } from '../types';
 import type { Shift } from './Registers';
@@ -14,7 +14,7 @@ export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: '
 export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500);
 
 export const errorText = (err: unknown, fallback: string, network: string) =>
-  err instanceof ApiFailure ? (unanswered(err) ? network : err.error.message) : fallback;
+  err instanceof ApiFailure ? (unanswered(err) ? withReference(network, err) : err.error.message) : fallback;
 
 /**
  * Taking payment for one sale or check (ADR-0009/0010): card/QR intents first, cash for the rest.

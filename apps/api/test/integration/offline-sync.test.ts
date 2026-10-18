@@ -5,6 +5,7 @@ import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { addMember, asOwnerInTenant, bearer, createApp, loginToken, ownerPool, signup, uniq } from './helpers.js';
+import { SyncService } from '../../src/sync/sync.service.js';
 import { CLEAN, traceabilityAudit } from './traceability-audit.js';
 
 /** Offline cash sales and sync (ADR-0015 — Phase 5 slice 1): terminal auth, snapshot, sync, quarantine. */
@@ -156,6 +157,21 @@ describe('sync time budget (ADR-0016 slice 5)', () => {
     } finally {
       await tight.close();
     }
+  });
+
+  it('counts the budget from when the request arrived: time lost waiting before the first sale counts', async () => {
+    const s = await shop('off-arrival');
+    const snap = await snapshot(s);
+    const service = app.get(SyncService);
+    const headers = Object.fromEntries(Object.entries(s.t1.headers as Record<string, string>).map(([k, v]) => [k.toLowerCase(), v]));
+    const terminal = await service.authenticate((h) => headers[h.toLowerCase()], 'budget-arrival-test');
+    const batch = [sale(s, snap), sale(s, snap), sale(s, snap)];
+    // Arrived 10 s ago (e.g. a pool wait): past the 8 s budget, so only the oldest is delivered now.
+    const late = await service.syncSales(terminal, batch, performance.now() - 10_000);
+    expect(late.map((r) => r.deviceSeq)).toEqual([batch[0]!.deviceSeq]);
+    // Just arrived: the whole batch fits.
+    const fresh = await service.syncSales(terminal, batch, performance.now());
+    expect(fresh.map((r) => [r.deviceSeq, r.replayed])).toEqual(batch.map((b, i) => [b.deviceSeq, i === 0]));
   });
 });
 

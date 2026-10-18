@@ -188,6 +188,41 @@ describe('kitchen', () => {
     expect(code(await fire(r, away.id, {}, r.otherServer).expect(422))).toBe('NO_KITCHEN_STATION');
   });
 
+  it('un-bump: a ticket bumped by mistake goes back to preparation; served food never comes back', async () => {
+    const r = await restaurant('ord-unbump');
+    const o = (await open(r, { orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body;
+    await add(r, o.id, [{ variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium] }, { variantId: r.burger, quantity: '1', modifierOptionIds: [r.wellDone] }]).expect(201);
+    await fire(r, o.id).expect(200);
+    const tickets = () => http().get('/v1/kitchen/tickets').query({ branchId: r.branchId, stationId: r.grill }).set(r.manager).expect(200).then((x) => x.body.data);
+    const [ticket] = await tickets();
+    const unbump = (who: Headers) => http().post(`/v1/kitchen/tickets/${ticket.id}/unbump`).set(who);
+
+    expect(code(await unbump(r.manager).expect(409))).toBe('NOTHING_TO_UNBUMP'); // nothing ready yet
+    await http().post(`/v1/kitchen/tickets/${ticket.id}/bump`).set(r.manager).expect(200);
+    await unbump(r.server).expect(403); // a kitchen action
+    const undone = (await unbump(r.manager).expect(200)).body;
+    expect(undone).toMatchObject({ bumpedAt: null, bumpedBy: null, inPrepItems: 4 }); // 2 items + their choices
+    const [back] = await tickets();
+    expect(back.items.map((i: { status: string; readyAt: string | null }) => [i.status, i.readyAt])).toEqual([['IN_PREP', null], ['IN_PREP', null]]);
+    const [first, second] = (await order(r, o.id)).items;
+    expect([first.modifiers[0].status, second.modifiers[0].status]).toEqual(['IN_PREP', 'IN_PREP']);
+
+    // Bump again, serve one: un-bump only returns what is still waiting.
+    await http().post(`/v1/kitchen/tickets/${ticket.id}/bump`).set(r.manager).expect(200);
+    await http().post(`/v1/order-items/${first.id}/status`).set(r.server).send({ status: 'SERVED' }).expect(200);
+    expect((await unbump(r.manager).expect(200)).body.inPrepItems).toBe(2);
+    const after = (await order(r, o.id)).items;
+    expect(after.map((i: { status: string }) => i.status)).toEqual(['SERVED', 'IN_PREP']);
+    // The database keeps the rest of the rule: never back from SERVED, never to FIRED/PENDING.
+    for (const [from, to] of [[first.id, 'IN_PREP'], [second.id, 'FIRED']] as const) {
+      await expect(asOwnerInTenant(owner, r.tenantId, (c) => c.query('UPDATE order_items SET status = $2 WHERE id = $1', [from, to]))).rejects.toMatchObject({ constraint: 'order_items_transition' });
+    }
+    const actions = await asOwnerInTenant(owner, r.tenantId, async (c) =>
+      (await c.query<{ action: string }>(`SELECT action FROM audit_logs WHERE resource_id = $1 ORDER BY occurred_at, id`, [ticket.id])).rows.map((x) => x.action),
+    );
+    expect(actions).toEqual(['kitchen_ticket.bumped', 'kitchen_ticket.unbumped', 'kitchen_ticket.bumped', 'kitchen_ticket.unbumped']);
+  });
+
   it('voids: pending items are removed, fired items need sales.void; a wasted void writes its stock off as one WASTE document', async () => {
     const r = await restaurant('ord-void');
     const o = (await open(r, { orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body;

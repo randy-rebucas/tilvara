@@ -87,7 +87,7 @@ mod windows_raw {
             return Err(last_error(&format!("Printer \"{name}\" not found")));
         }
         let printer = Printer(h);
-        let doc_name = wide("1POS receipt");
+        let doc_name = wide("Tilvara receipt");
         let datatype = wide("RAW");
         let doc = DOC_INFO_1W { pDocName: doc_name.as_ptr() as *mut u16, pOutputFile: null_mut(), pDatatype: datatype.as_ptr() as *mut u16 };
         if unsafe { StartDocPrinterW(printer.0, 1, &doc) } == 0 {
@@ -181,7 +181,7 @@ mod tests {
         let t = Target::Network { host: "127.0.0.1".into(), port: 9 };
         assert!(send(&t, b"", Duration::from_millis(100)).is_err());
         assert!(send(&t, &vec![0u8; MAX_BYTES + 1], Duration::from_millis(100)).is_err());
-        let e = send(&Target::Windows { name: "No Such Printer 1POS".into() }, b"\x1b@", Duration::from_millis(100)).unwrap_err();
+        let e = send(&Target::Windows { name: "No Such Printer Tilvara".into() }, b"\x1b@", Duration::from_millis(100)).unwrap_err();
         assert!(e.contains("not found") || e.contains("only available"), "{e}");
     }
 

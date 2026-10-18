@@ -134,6 +134,30 @@ export class KitchenService extends TenantService {
     });
   }
 
+  /**
+   * Undo a mistaken bump (ADR-0014 amendment): the ticket's ready items go back to preparation and the
+   * ticket is no longer bumped. Served items stay served; nothing ready means nothing to undo.
+   */
+  unbump(auth: AuthContext, ticketId: string) {
+    return this.mutate(auth, async (db) => {
+      const [ticket] = await db.select().from(kitchenTickets).where(eq(kitchenTickets.id, ticketId)).for('update');
+      if (!ticket) throw notFound('Kitchen ticket');
+      this.assertCan(auth, 'kitchen.operate', (await branchScope(db, ticket.branchId)).scope);
+      await assertFeature(db, 'restaurant');
+      const moved = await db
+        .update(orderItems)
+        .set({ status: 'IN_PREP', readyAt: null })
+        .where(and(eq(orderItems.kitchenTicketId, ticketId), eq(orderItems.status, 'READY')))
+        .returning({ id: orderItems.id });
+      if (moved.length === 0) {
+        throw new AppError('NOTHING_TO_UNBUMP', 'Nothing on this ticket is ready and waiting; served food cannot go back', HttpStatus.CONFLICT);
+      }
+      const [row] = await db.update(kitchenTickets).set({ bumpedAt: null, bumpedBy: null }).where(eq(kitchenTickets.id, ticketId)).returning();
+      await this.audit(db, auth, 'kitchen_ticket.unbumped', 'kitchen_ticket', ticketId, { ticketNumber: ticket.ticketNumber, items: moved.length });
+      return { ...row!, inPrepItems: moved.length };
+    });
+  }
+
   private itemView(i: typeof orderItems.$inferSelect) {
     return { ...i, quantity: toDec(i.quantity).toString() };
   }

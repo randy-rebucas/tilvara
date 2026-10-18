@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
   return new NextResponse(csv, {
     headers: {
       'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="1pos-journal-${from}_${to}.csv"`,
+      'content-disposition': `attachment; filename="tilvara-journal-${from}_${to}.csv"`,
       'cache-control': 'no-store',
     },
   });

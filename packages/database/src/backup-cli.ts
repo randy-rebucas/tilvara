@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { createBackup, latestManifest, pruneBackups, readManifest, verifyBackupFile } from './backup/backup.js';
 import { pgToolsFromEnv } from './backup/pg-tools.js';
 
-const USAGE = `1POS backups (ADR-0016 slice 4). Runbook: docs/operations/backup-restore.md
+const USAGE = `Tilvara backups (ADR-0016 slice 4). Runbook: docs/operations/backup-restore.md
 
   backup keygen --out <file>      new age key pair: writes the SECRET key to <file> (keep it off the
                                   database and app hosts) and prints the public key for BACKUP_AGE_RECIPIENT
@@ -40,7 +40,7 @@ async function main(): Promise<number> {
     }
     const identity = await generateIdentity();
     // 'wx': never overwrite an existing key (that would orphan every backup made for it).
-    await writeFile(values.out, `# 1POS backup key, created ${new Date().toISOString()}\n${identity}\n`, { flag: 'wx', mode: 0o600 });
+    await writeFile(values.out, `# Tilvara backup key, created ${new Date().toISOString()}\n${identity}\n`, { flag: 'wx', mode: 0o600 });
     console.log(`Secret key written to ${values.out}. Move it to the ops vault; the database host never needs it.`);
     console.log(`BACKUP_AGE_RECIPIENT=${await identityToRecipient(identity)}`);
     return 0;

@@ -27,6 +27,7 @@ import {
   stockMovements,
   terminalTransactions,
   type Database,
+  inSequence,
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
@@ -359,14 +360,14 @@ export class SalesService extends TenantService {
   /** A check's lines and charges for these allocations (ADR-0014 §8); shared by the check and its preview. */
   private async priceCheck(db: Database, bill: typeof orderBills.$inferSelect, allocations: CreateCheckInput['allocations']) {
     const billId = bill.id;
-    const [lines, charges, beneficiaries, prior] = await Promise.all([
-      db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, billId)).orderBy(orderBillLines.lineNo),
-      db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, billId)),
-      db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, billId)),
-      db.select({ a: orderBillAllocations, l: saleLines }).from(orderBillAllocations)
+    const [lines, charges, beneficiaries, prior] = await inSequence(
+      () => db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, billId)).orderBy(orderBillLines.lineNo),
+      () => db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, billId)),
+      () => db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, billId)),
+      () => db.select({ a: orderBillAllocations, l: saleLines }).from(orderBillAllocations)
         .innerJoin(saleLines, eq(saleLines.id, orderBillAllocations.saleLineId))
         .where(eq(orderBillAllocations.orderBillId, billId)),
-    ]);
+    );
     const paid = new Map<string, { share: Fraction; quantity: Dec; buckets: Buckets[] }>();
     for (const p of prior) {
       const acc = paid.get(p.a.billLineId) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
@@ -701,16 +702,16 @@ export class SalesService extends TenantService {
       const [sale] = await db.select().from(sales).where(eq(sales.id, id));
       if (!sale) throw notFound('Sale');
       this.assertCanRead(auth, sale);
-      const [[entity], [branch], [register], [cashier], lines, tenders, beneficiaries, charges] = await Promise.all([
-        db.select().from(legalEntities).where(eq(legalEntities.id, sale.legalEntityId)),
-        db.select().from(branches).where(eq(branches.id, sale.branchId)),
-        db.select().from(registers).where(eq(registers.id, sale.registerId)),
-        db.select({ displayName: users.displayName }).from(users).where(eq(users.id, sale.cashierUserId)),
-        db.select().from(saleLines).where(eq(saleLines.saleId, id)).orderBy(saleLines.lineNo),
-        db.select().from(saleTenders).where(eq(saleTenders.saleId, id)).orderBy(saleTenders.createdAt, saleTenders.id),
-        db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, id)),
-        db.select().from(saleCharges).where(eq(saleCharges.saleId, id)),
-      ]);
+      const [[entity], [branch], [register], [cashier], lines, tenders, beneficiaries, charges] = await inSequence(
+        () => db.select().from(legalEntities).where(eq(legalEntities.id, sale.legalEntityId)),
+        () => db.select().from(branches).where(eq(branches.id, sale.branchId)),
+        () => db.select().from(registers).where(eq(registers.id, sale.registerId)),
+        () => db.select({ displayName: users.displayName }).from(users).where(eq(users.id, sale.cashierUserId)),
+        () => db.select().from(saleLines).where(eq(saleLines.saleId, id)).orderBy(saleLines.lineNo),
+        () => db.select().from(saleTenders).where(eq(saleTenders.saleId, id)).orderBy(saleTenders.createdAt, saleTenders.id),
+        () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, id)),
+        () => db.select().from(saleCharges).where(eq(saleCharges.saleId, id)),
+      );
       const snapshot = sale.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
       return buildReceipt({
         invoicingMode: entity!.invoicingMode,
@@ -763,10 +764,10 @@ export class SalesService extends TenantService {
       // How each sale was paid and whether it was voided or returned since (a sale row never changes).
       const ids = page.map((s) => s.id);
       const [{ rows: tenders }, { rows: backs }] = ids.length
-        ? await Promise.all([
-            db.execute<{ sale_id: string; methods: string[] }>(sql`SELECT sale_id, array_agg(DISTINCT method ORDER BY method) AS methods FROM sale_tenders WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
-            db.execute<{ sale_id: string; voided: boolean; returns: number }>(sql`SELECT sale_id, bool_or(kind = 'VOID') AS voided, count(*)::int AS returns FROM sale_returns WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
-          ])
+        ? await inSequence(
+            () => db.execute<{ sale_id: string; methods: string[] }>(sql`SELECT sale_id, array_agg(DISTINCT method ORDER BY method) AS methods FROM sale_tenders WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
+            () => db.execute<{ sale_id: string; voided: boolean; returns: number }>(sql`SELECT sale_id, bool_or(kind = 'VOID') AS voided, count(*)::int AS returns FROM sale_returns WHERE sale_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)}) GROUP BY 1`),
+          )
         : [{ rows: [] }, { rows: [] }];
       return {
         data: page.map((s) => {
@@ -797,12 +798,12 @@ export class SalesService extends TenantService {
     const { rows: returned } = await db.execute<{ sale_line_id: string; quantity: string }>(
       sql`SELECT rl.sale_line_id, sum(rl.quantity)::text AS quantity FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id WHERE r.sale_id = ${s.id} GROUP BY 1`,
     );
-    const [lines, tenders, beneficiaries, charges] = await Promise.all([
-      db.select().from(saleLines).where(eq(saleLines.saleId, s.id)).orderBy(saleLines.lineNo),
-      db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)),
-      db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, s.id)),
-      db.select().from(saleCharges).where(eq(saleCharges.saleId, s.id)),
-    ]);
+    const [lines, tenders, beneficiaries, charges] = await inSequence(
+      () => db.select().from(saleLines).where(eq(saleLines.saleId, s.id)).orderBy(saleLines.lineNo),
+      () => db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)),
+      () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, s.id)),
+      () => db.select().from(saleCharges).where(eq(saleCharges.saleId, s.id)),
+    );
     return {
       ...this.summary(s),
       lines: lines.map((l) => {

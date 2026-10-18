@@ -4,3 +4,4 @@ export { and, asc, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizz
 export * from './tenant-context.js';
 export * from './platform.js';
 export { runMigrations, expectedMigrationHead, MIGRATIONS_FOLDER, type MigrationHead } from './migrate.js';
+export * from './export/index.js';

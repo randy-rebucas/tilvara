@@ -104,11 +104,13 @@ describe('transactional outbox (emission)', () => {
     const p = await http().post('/v1/products').set(bearer(t.access)).send({ name: 'Evented', ...refs, variants: [{ sku: uniq('EV') }] }).expect(201);
 
     const events = await asOwnerInTenant(owner, t.tenantId, async (c) =>
-      (await c.query<{ topic: string; payload: Record<string, string>; status: string }>('SELECT topic, payload, status FROM outbox_events ORDER BY created_at')).rows,
+      (await c.query<{ topic: string; payload: Record<string, string>; status: string }>('SELECT topic, payload, status FROM outbox_events ORDER BY topic')).rows,
     );
-    expect(events.map((e) => e.topic)).toEqual(['tenant.onboarded', 'catalog.product_created']);
-    expect(events[0]!.payload).toEqual({ ownerUserId: t.userId });
-    expect(events[1]!.payload).toEqual({ productId: p.body.id });
+    // By topic, not created_at: two transactions' clock readings can come back out of order after a
+    // VM clock step (seen once in the session-12 gate).
+    expect(events.map((e) => e.topic)).toEqual(['catalog.product_created', 'tenant.onboarded']);
+    expect(events[0]!.payload).toEqual({ productId: p.body.id });
+    expect(events[1]!.payload).toEqual({ ownerUserId: t.userId });
     expect(events.every((e) => e.status === 'PENDING')).toBe(true);
   });
 

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 /** Port for non-cash payment providers (ADR-0010). Never called inside a database transaction. */
 export interface AuthorizeRequest {
-  /** 1POS intent id — the provider-side idempotency key. */
+  /** Tilvara intent id — the provider-side idempotency key. */
   intentId: string;
   amount: string;
   currency: string;

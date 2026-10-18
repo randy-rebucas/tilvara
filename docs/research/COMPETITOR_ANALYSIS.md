@@ -1,4 +1,4 @@
-# 1POS — Competitor Analysis (Philippines-first hybrid retail + restaurant POS)
+# Tilvara — Competitor Analysis (Philippines-first hybrid retail + restaurant POS)
 
 Research date: **2026-10-15**. All prices are "as seen on 2026-10-15" at the cited URL unless stated otherwise. Anything not confirmed from the vendor's own page or a reliable independent source is marked **UNVERIFIED**. Claims by one vendor about a rival (e.g., StoreHub blog posts about Loyverse/UTAK/Mosaic) are treated as **UNVERIFIED** competitor marketing. "BIR-accredited" claims are the vendor's own claims — note the BIR's 14 Sep 2026 advisory that no *e-invoicing* service provider is accredited (see `docs/compliance/PH_COMPLIANCE_ASSUMPTIONS.md` §4.3); POS-machine accreditation under RMO 24-2023 is a different track.
 
@@ -32,7 +32,7 @@ Hardware ecosystems: Shopify (POS Go, POS Terminal, Tap & Chip readers — PH av
 - **BIR:** nothing found; would require local add-ons.
 
 ### Square
-- Not operational for payments in PH. Offline mode reference design: 24h offline session, 72h upload deadline, per-transaction offline cap ($1–$50,000), pending offline payments lost if user signs out / reinstalls, no close-of-day reporting offline. Useful as a cautionary pattern for 1POS offline design.
+- Not operational for payments in PH. Offline mode reference design: 24h offline session, 72h upload deadline, per-transaction offline cap ($1–$50,000), pending offline payments lost if user signs out / reinstalls, no close-of-day reporting offline. Useful as a cautionary pattern for Tilvara offline design.
 
 ### Lightspeed (Retail X-Series, Restaurant)
 - **Target:** mid-market independent retailers and full-service restaurants in NA/EU/AU.
@@ -111,7 +111,7 @@ Hardware ecosystems: Shopify (POS Go, POS Terminal, Tap & Chip readers — PH av
 8. **Service-charge distribution report** (RA 11360) for restaurants.
 9. **Accountant-friendly exports** (BIR-format sales books, VAT breakdown) for the merchant's CPA.
 
-## 7. Features that could justify switching to 1POS
+## 7. Features that could justify switching to Tilvara
 - Non-destructive, auditable BIR fiscal core + "show your RDO" compliance pack (sample invoices, Z-readings, sales books) — once accredited.
 - Offline-first with LAN sync across tablets/KDS (works through brownouts with a UPS'd router).
 - One system for retail + F&B with recipe-level inventory, unit conversions, waste, and commissary.

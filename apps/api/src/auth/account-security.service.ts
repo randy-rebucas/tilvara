@@ -124,7 +124,7 @@ export class AccountSecurityService {
       .send({
         to: email,
         template: 'auth.password_reset',
-        subject: 'Reset your 1POS password',
+        subject: 'Reset your Tilvara password',
         text: `Set a new password: ${this.env.APP_PUBLIC_URL}/reset-password?token=${token}\nThis link expires in 30 minutes. If you did not ask for it, ignore this email.`,
       })
       .catch((e: unknown) => this.logger.error(`password reset mail failed: ${(e as Error).name}`));
@@ -141,6 +141,24 @@ export class AccountSecurityService {
     if (!userId) {
       throw new AppError('RESET_LINK_INVALID', 'This link has expired or was already used. Ask for a new one.', HttpStatus.BAD_REQUEST);
     }
+  }
+
+  /**
+   * Re-authentication for a sensitive change to one's own account: the password, and a current code
+   * from the app when two-step sign-in is on (its time step is spent). Returns the account's email.
+   */
+  async reauthenticate(userId: string, password: string, code: string | undefined): Promise<string> {
+    const email = await this.checkPassword(userId, password);
+    const f = await this.auth.mfaFactor(userId);
+    if (f?.confirmed && f.secret_ciphertext) {
+      if (code === undefined) {
+        throw new AppError('MFA_CODE_REQUIRED', 'Enter the 6-digit code from your authenticator app', HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      const step = matchTotp(this.secrets.open(f.secret_ciphertext), code);
+      const spent = step !== null && (await this.scalar<boolean>('SELECT auth_mfa_use_step($1, $2) AS v', [userId, step]));
+      if (!spent) throw wrongCode();
+    }
+    return email;
   }
 
   /** The user's email when the password is right; a wrong one counts towards the sign-in lock. */

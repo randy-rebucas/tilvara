@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "openapi": "node dist/openapi/generate.js"
+    "openapi": "node dist/openapi/generate.js",
+    "mfa-rekey": "node --env-file=../../.env dist/cli/mfa-rekey.js"
   },
   "dependencies": {
     "@1pos/accounting": "workspace:*",

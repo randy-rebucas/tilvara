@@ -58,7 +58,7 @@ const signIn = async () => {
 try {
   await viewport(1440, 900);
   await signIn();
-  check('the counter asks for the code after the password', await shown('type the 6-digit code for 1POS'));
+  check('the counter asks for the code after the password', await shown('type the 6-digit code for Tilvara'));
   await shot('mfa-code.png', false);
   await fill('code', totp(secret, 8));
   await submit();
@@ -69,7 +69,7 @@ try {
 
   await viewport(390, 844, true);
   await signIn();
-  await shown('type the 6-digit code for 1POS');
+  await shown('type the 6-digit code for Tilvara');
   check('390px: code step without horizontal scroll', await noHorizontalScroll());
   await clickText('Use a recovery code instead');
   await fill('recoveryCode', recoveryCodes[0]);

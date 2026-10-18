@@ -16,7 +16,7 @@ async function bootstrap(): Promise<void> {
   app.enableShutdownHooks();
   const env = app.get<ServerEnv>(ENV);
   await app.listen(env.API_PORT, env.API_HOST);
-  logger.info({ port: env.API_PORT, host: env.API_HOST }, `1POS API listening on http://${env.API_HOST}:${env.API_PORT}/v1`);
+  logger.info({ port: env.API_PORT, host: env.API_HOST }, `Tilvara API listening on http://${env.API_HOST}:${env.API_PORT}/v1`);
 }
 
 void bootstrap();

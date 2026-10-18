@@ -104,7 +104,7 @@ describe('two-step sign-in (TOTP)', () => {
     await http().post('/v1/auth/mfa/confirm').set(bearer(s.access)).send({ code: '123456' }).expect(409);
 
     const started = await http().post('/v1/auth/mfa/enroll').set(bearer(s.access)).send({ password: PASSWORD }).expect(200);
-    expect(started.body.otpauthUri).toMatch(/^otpauth:\/\/totp\/1POS%3A/);
+    expect(started.body.otpauthUri).toMatch(/^otpauth:\/\/totp\/Tilvara%3A/);
     secret = base32Decode(started.body.secret);
     const bad = await http().post('/v1/auth/mfa/confirm').set(bearer(s.access)).send({ code: code(secret, 5) }).expect(422);
     expect(bad.body.error.code).toBe('INVALID_MFA_CODE');

@@ -7,6 +7,8 @@ export interface ApiFailure {
   code: string;
   message: string;
   details?: Record<string, unknown>;
+  /** The API's X-Correlation-Id for this request: the reference support looks up in the logs. */
+  correlationId?: string;
 }
 
 export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiFailure };
@@ -31,7 +33,8 @@ export async function send<T>(
     const json = res.status === 204 ? null : await res.json().catch(() => null);
     if (!res.ok) {
       const e = (json as { error?: ApiFailure } | null)?.error;
-      return { ok: false, error: { status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? 'Request failed', details: e?.details } };
+      const correlationId = e?.correlationId ?? res.headers.get('x-correlation-id') ?? undefined;
+      return { ok: false, error: { status: res.status, code: e?.code ?? 'ERROR', message: e?.message ?? 'Request failed', details: e?.details, correlationId } };
     }
     return { ok: true, data: json as T };
   } catch {

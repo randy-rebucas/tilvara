@@ -1,5 +1,5 @@
 ---
-name: 1POS Admin
+name: Tilvara Admin
 description: Back office for Philippine shops, styled like peso notes. Denomination colour shows what kind of record you're looking at; serial figures show which record it is.
 colors:
   paper: "#f4f1e8"
@@ -170,7 +170,7 @@ components:
     padding: "12px 16px"
 ---
 
-# Design System: 1POS Admin
+# Design System: Tilvara Admin
 
 ## Overview
 
@@ -180,7 +180,7 @@ The admin reads like Philippine currency. On a banknote, the colour tells you th
 
 The surface is warm note-paper. Records sit on it as pure white "notes". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and inline forms that keep a task on the page instead of moving it into a modal. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.
 
-This identity is **provisional**. 1POS has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.
+This identity is **provisional**. Tilvara has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.
 
 **Key Characteristics:**
 - Warm paper ground (`paper`) with pure white record notes (`note`). The two whites never trade places.
@@ -309,7 +309,7 @@ Restrained and solid: a white secondary button is the default, and blue is reser
 - **Error:** red border with `aria-invalid`, and the hint becomes the red error text. Form-level errors use the error callout with `role="alert"`.
 
 ### Navigation
-The blue band carries the "1POS" wordmark (1.5rem, 700, 0.04em tracking), tabs, the EN/FIL toggle, and the business and user block. Inactive tabs are Band Ink. Hover is a 10% white wash. The active tab is a 18% white fill with white 600-weight text and `aria-current="page"`. Tabs only appear when the user's permissions allow them. The EN/FIL toggle is a serial-styled pair of `aria-pressed` buttons. Sign-out and switch-business are 32px icon buttons with screen-reader labels.
+The blue band carries the "Tilvara" wordmark (1.5rem, 700, 0.04em tracking), tabs, the EN/FIL toggle, and the business and user block. Inactive tabs are Band Ink. Hover is a 10% white wash. The active tab is a 18% white fill with white 600-weight text and `aria-current="page"`. Tabs only appear when the user's permissions allow them. The EN/FIL toggle is a serial-styled pair of `aria-pressed` buttons. Sign-out and switch-business are 32px icon buttons with screen-reader labels.
 
 ### Tables
 Header row in uppercase 0.75rem, 0.06em tracking, muted, on `table-head`. Cells use 11 to 14px padding with soft-hairline row rules and no rule after the last row. Numeric columns are right-aligned. Identifier columns use serial type in ink.
@@ -345,4 +345,4 @@ Page content reveals over 380ms (`cubic-bezier(0.16, 1, 0.3, 1)`), rising 4px fr
 - **Don't** hard-code UI copy in components, or ship a string in only one language.
 - **Don't** tint panels or float them with hard or offset shadows.
 - **Don't** fall back to a grey sidebar with a generic blue button.
-- **Don't** treat Salapi as final brand. It is provisional until 1POS has a real identity.
+- **Don't** treat Salapi as final brand. It is provisional until Tilvara has a real identity.

@@ -35,6 +35,20 @@ async function drain(handlers: Record<string, OutboxHandler> = {}): Promise<void
   while ((await p.runOnce()).claimed > 0);
 }
 
+/**
+ * Run until this event has been attempted. Draining "until a batch is empty" is not enough: an event
+ * emitted a moment ago can be briefly not yet due (`available_at <= now()` across a database clock
+ * step), and then the next test's processor delivers it instead (seen once in the session-14 gate).
+ */
+async function untilProcessed(p: OutboxProcessor, tenantId: string, id: string): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    await p.runOnce();
+    if ((await eventRow(tenantId, id)).attempts > 0) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`event ${id} was never claimed`);
+}
+
 let tA: string;
 let tB: string;
 
@@ -73,7 +87,11 @@ describe('least-privilege roles (ADR-0016)', () => {
       await expect(withTenant(workerPool, tA, (db) => db.execute(sql`INSERT INTO audit_logs (tenant_id, actor_type, action, resource_type) VALUES (${tA}, 'SYSTEM', 'x', 'x')`))).rejects.toMatchObject(denied);
       await expect(workerPool.query('SELECT password_hash FROM users LIMIT 1')).rejects.toThrow(/permission denied/);
       await expect(workerPool.query('SELECT * FROM user_sessions LIMIT 1')).rejects.toThrow(/permission denied/);
-      await expect(workerPool.query('SELECT id FROM sales LIMIT 1')).rejects.toThrow(/permission denied/);
+      // Business records are readable for data exports (ADR-0016 slice 6), never the internal machinery.
+      await expect(workerPool.query('SELECT key FROM idempotency_records LIMIT 1')).rejects.toThrow(/permission denied/);
+      await expect(workerPool.query('SELECT credential_hash FROM terminals LIMIT 1')).rejects.toThrow(/permission denied/);
+      await expect(workerPool.query('SELECT * FROM platform_staff')).rejects.toThrow(/permission denied/);
+      expect((await workerPool.query('SELECT id FROM sales')).rows).toEqual([]);
       // Outside a tenant context the worker sees no tenant at all (RLS).
       expect((await workerPool.query('SELECT id FROM tenants')).rows).toEqual([]);
       expect((await workerPool.query('SELECT platform_purge_expired_idempotency() AS purged')).rows).toHaveLength(1);
@@ -170,6 +188,60 @@ describe('outbox processing', () => {
     expect(ids.every((id) => counts.get(id) === 1)).toBe(true);
   });
 
+  it('a handler that outlives its lease keeps renewing it: no other worker runs it a second time', async () => {
+    await drain();
+    const runs = new Map<string, string[]>();
+    const by = (worker: string): Record<string, OutboxHandler> => ({
+      'test.slow': async (e: OutboxEvent) => {
+        runs.set(e.id, [...(runs.get(e.id) ?? []), worker]);
+        if (worker === 'slow') await new Promise((r) => setTimeout(r, 4500)); // 1.5 leases
+      },
+    });
+    const id = await emit(tA, 'test.slow');
+    const slow = new OutboxProcessor({ pool: workerPool, workerId: 'slow', handlers: by('slow'), leaseSeconds: 3, batchSize: 1 });
+    const running = slow.runOnce();
+    // A rival keeps claiming throughout (it may pick up other tests' leftovers; never this event).
+    const rival = new OutboxProcessor({ pool: workerPool, workerId: 'rival', handlers: by('rival'), leaseSeconds: 3 });
+    for (let i = 0; i < 14; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      await rival.runOnce();
+    }
+    await running;
+    expect(runs.get(id)).toEqual(['slow']);
+    expect((await eventRow(tA, id)).status).toBe('DONE');
+  }, 15_000);
+
+  it('an event whose lease ran out while earlier ones in the batch ran is left to the worker that took it', async () => {
+    await drain();
+    const runs = new Map<string, string[]>();
+    let started: string | undefined;
+    const by = (worker: string): Record<string, OutboxHandler> => ({
+      'test.batch': async (e: OutboxEvent) => {
+        // Whichever event A starts first is the slow one (two events emitted together can tie on
+        // available_at, so the order inside the batch is not fixed).
+        if (worker === 'a' && started === undefined) {
+          started = e.id;
+          await new Promise((r) => setTimeout(r, 2500));
+        }
+        runs.set(e.id, [...(runs.get(e.id) ?? []), worker]);
+      },
+    });
+    const ids = [await emit(tA, 'test.batch'), await emit(tA, 'test.batch')];
+    // Both claimed at once with a 1 s lease; the first one A runs takes 2.5 s (renewed), the other's lease lapses.
+    const a = new OutboxProcessor({ pool: workerPool, workerId: 'batch-a', handlers: by('a'), leaseSeconds: 1, batchSize: 2 });
+    const running = a.runOnce();
+    await new Promise((r) => setTimeout(r, 1500));
+    const other = ids.find((id) => id !== started)!;
+    // One at a time until it reaches the lapsed one (older leftovers of earlier tests may come first).
+    const b = new OutboxProcessor({ pool: workerPool, workerId: 'batch-b', handlers: by('b'), leaseSeconds: 30, batchSize: 1 });
+    while (!runs.has(other) && (await b.runOnce()).claimed > 0);
+    await running;
+    // Each ran exactly once: the slow one by A (its lease renewed), the other by B, which took it over.
+    expect(ids.includes(started!)).toBe(true);
+    expect([runs.get(started!), runs.get(other)]).toEqual([['a'], ['b']]);
+    expect((await eventRow(tA, other)).status).toBe('DONE');
+  }, 15_000);
+
   it('acknowledges events that have no consumer yet (kept for future replay)', async () => {
     const id = await emit(tA, 'catalog.something_new');
     await new OutboxProcessor({ pool: workerPool, workerId: 'w3', handlers: {} }).runOnce();
@@ -198,11 +270,11 @@ describe('handlers', () => {
       await tx.db.insert(tenantMemberships).values({ tenantId, userId: rows[0]!.id });
       return rows[0]!.id;
     });
-    await emit(tenantId, 'tenant.onboarded', { ownerUserId: userId });
+    const id = await emit(tenantId, 'tenant.onboarded', { ownerUserId: userId });
 
     const mailer = new DevWorkerMailer({ info: () => undefined, error: () => undefined });
     const p = new OutboxProcessor({ pool: workerPool, workerId: 'mail', handlers: buildHandlers(mailer), batchSize: 500 });
-    while ((await p.runOnce()).claimed > 0);
+    await untilProcessed(p, tenantId, id);
     const mine = mailer.sent.filter((m) => m.to === email);
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ template: 'tenant.welcome' });
@@ -223,8 +295,9 @@ describe('handlers', () => {
     });
     const id = await emit(tA, 'tenant.onboarded', { ownerUserId: victimUser });
     const mailer = new DevWorkerMailer({ info: () => undefined, error: () => undefined });
-    await new OutboxProcessor({ pool: workerPool, workerId: 'mail2', handlers: buildHandlers(mailer), retryDelaySeconds: () => 3600 }).runOnce();
-    expect(mailer.sent).toHaveLength(0);
+    await untilProcessed(new OutboxProcessor({ pool: workerPool, workerId: 'mail2', handlers: buildHandlers(mailer), retryDelaySeconds: () => 3600 }), tA, id);
+    // Other businesses' leftover events may be delivered in the same runs: only this one matters.
+    expect(mailer.sent.filter((m) => m.text.includes('Victim'))).toHaveLength(0);
     expect((await eventRow(tA, id)).last_error).toContain('not visible');
   });
 });

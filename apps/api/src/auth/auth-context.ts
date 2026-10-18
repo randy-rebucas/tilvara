@@ -10,10 +10,13 @@ export interface AuthContext {
   /** Present only when the token carries an active tenant AND membership was verified this request. */
   tenant: {
     tenantId: string;
-    membershipId: string;
+    /** Null in a support session: Tilvara staff are not members of the business. */
+    membershipId: string | null;
     status: string;
     grants: Grant[];
   } | null;
+  /** Set when the token is a support session (ADR-0016 slice 6): read-only, under a grant. */
+  support?: { grantId: string; staffName: string; expiresAt: Date };
   /** Two-step sign-in state of this user and session (ADR-0016). */
   mfa: {
     enrolled: boolean;
@@ -41,6 +44,13 @@ export const REQUIRED_PERMISSIONS = 'onepos:requiredPermissions';
  * Branch/register-scoped checks happen in the service with `hasPermission(…, scope)`.
  */
 export const RequirePermissions = (...perms: PermissionCode[]) => SetMetadata(REQUIRED_PERMISSIONS, perms);
+
+export const ALLOW_READ_ONLY_BUSINESS = 'onepos:allowReadOnlyBusiness';
+/**
+ * A write that a suspended business, or one whose subscription lapsed, may still make: getting a copy
+ * of its own records (offboarding, ADR-0016 slice 6). The service then skips the write check too.
+ */
+export const AllowReadOnlyBusiness = () => SetMetadata(ALLOW_READ_ONLY_BUSINESS, true);
 
 export const REQUIRES_TENANT = 'onepos:requiresTenant';
 /** Route requires an active tenant but no specific permission (e.g. /me within a tenant). */

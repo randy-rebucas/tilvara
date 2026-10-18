@@ -1,5 +1,5 @@
 /**
- * ISO 4217 currencies 1POS currently understands. Extend deliberately: every new
+ * ISO 4217 currencies Tilvara currently understands. Extend deliberately: every new
  * currency needs a minor-unit scale and a reviewed cash-rounding policy.
  */
 export const CURRENCIES = {

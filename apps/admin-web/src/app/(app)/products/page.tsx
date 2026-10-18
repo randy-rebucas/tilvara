@@ -69,7 +69,10 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <td><Serial>{first?.barcodes[0] ?? '—'}</Serial></td>
                     <td>{p.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}</td>
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
-                    <td>{p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}</td>
+                    <td className="whitespace-nowrap">
+                      {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}
+                      {p.isSample && <span className="tag ml-1.5 text-orange!">{t('sample.tag')}</span>}
+                    </td>
                   </tr>
                 );
               })}

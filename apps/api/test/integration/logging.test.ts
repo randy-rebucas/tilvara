@@ -70,6 +70,25 @@ describe('structured request logging', () => {
     expect(line).not.toHaveProperty('route');
   });
 
+  it('account flows that carry personal data leave none of it in the logs (privacy pack)', async () => {
+    const t = await signup(app, 'log-pii');
+    const roles = (await http().get('/v1/roles').set(bearer(t.access)).expect(200)).body.data as { id: string; key: string }[];
+    const invitee = `juana.invitee-${t.userId.slice(0, 8)}@example.ph`;
+    await http()
+      .post('/v1/invitations')
+      .set(bearer(t.access))
+      .send({ email: invitee, roles: [{ roleId: roles.find((r) => r.key === 'cashier')!.id, scopeType: 'TENANT', scopeId: null }] })
+      .expect(201);
+    await http().patch('/v1/me').set(bearer(t.access)).send({ displayName: 'Ramon Magsaysay Reyes' }).expect(200);
+    await http().post('/v1/auth/password-reset/request').send({ email: t.email }).expect(202);
+    const moved = `ramon.moved-${t.userId.slice(0, 8)}@example.ph`;
+    await http().post('/v1/auth/email-change').set(bearer(t.access)).send({ newEmail: moved, password: PASSWORD }).expect(202);
+    await new Promise((r) => setTimeout(r, 100)); // mails are sent after the answer
+    const all = raw.join('\n');
+    expect(all).toContain('[dev mail]'); // the mails were logged, by template and masked recipient
+    for (const personal of [t.email, invitee, moved, 'Ramon Magsaysay', `Owner ${t.email.split('@')[0]}`]) expect(all).not.toContain(personal);
+  });
+
   it('a token for one tenant never tags log lines with another tenant', async () => {
     const [a, b] = await Promise.all([signup(app, 'log-a'), signup(app, 'log-b')]);
     const responses = await Promise.all(

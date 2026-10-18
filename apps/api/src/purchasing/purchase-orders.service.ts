@@ -11,6 +11,7 @@ import {
   sql,
   suppliers,
   type Database,
+  inSequence,
 } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import type { PermissionCode, CreatePurchaseOrderInput, EndPurchaseOrderInput, PurchaseOrderListQuery, UpdatePurchaseOrderInput } from '@1pos/validation';
@@ -196,9 +197,9 @@ export class PurchaseOrdersService extends TenantService {
 
   /** Order with lines, received/rejected/remaining per line, and its receipts. */
   async view(db: Database, order: OrderRow) {
-    const [[supplier], { rows: lines }, { rows: receipts }] = await Promise.all([
-      db.select({ id: suppliers.id, code: suppliers.code, name: suppliers.name }).from(suppliers).where(eq(suppliers.id, order.supplierId)),
-      db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string }>(sql`
+    const [[supplier], { rows: lines }, { rows: receipts }] = await inSequence(
+      () => db.select({ id: suppliers.id, code: suppliers.code, name: suppliers.name }).from(suppliers).where(eq(suppliers.id, order.supplierId)),
+      () => db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string }>(sql`
         SELECT l.id, l.line_no, l.variant_id, v.sku, p.name, l.quantity::text, l.unit_cost::text,
                coalesce(sum(g.quantity), 0)::text AS received, coalesce(sum(g.rejected_quantity), 0)::text AS rejected
           FROM purchase_order_lines l
@@ -207,9 +208,9 @@ export class PurchaseOrdersService extends TenantService {
           LEFT JOIN goods_receipt_lines g ON g.tenant_id = l.tenant_id AND g.purchase_order_line_id = l.id
          WHERE l.purchase_order_id = ${order.id}
          GROUP BY l.id, v.sku, p.name ORDER BY l.line_no`),
-      db.execute<{ id: string; receipt_number: number; supplier_invoice_ref: string | null; created_at: string }>(sql`
+      () => db.execute<{ id: string; receipt_number: number; supplier_invoice_ref: string | null; created_at: string }>(sql`
         SELECT id, receipt_number::int, supplier_invoice_ref, created_at FROM goods_receipts WHERE purchase_order_id = ${order.id} ORDER BY created_at, id`),
-    ]);
+    );
     let orderedValue = new Dec(0);
     let receivedValue = new Dec(0);
     const out = lines.map((l) => {
