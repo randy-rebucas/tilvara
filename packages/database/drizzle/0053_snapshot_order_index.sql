@@ -1,0 +1,1 @@
+CREATE INDEX "product_variants_snapshot_order_idx" ON "product_variants" USING btree ("tenant_id","sku","id") WHERE "product_variants"."archived_at" IS NULL;

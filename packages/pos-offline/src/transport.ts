@@ -1,5 +1,5 @@
-import type { OfflineSale, Snapshot, SyncSalesResponse } from '@1pos/sync-protocol';
-import { TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER } from '@1pos/sync-protocol';
+import type { OfflineSale, Snapshot, SnapshotItemsPage, SyncSalesResponse } from '@1pos/sync-protocol';
+import { SNAPSHOT_PAGE_SIZE, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER } from '@1pos/sync-protocol';
 
 /** How the engine reaches the server. Swappable so drills can lose answers or take the server away. */
 export interface Transport {
@@ -63,7 +63,23 @@ export function httpTransport(o: HttpTransportOptions): Transport {
     return data as T;
   };
   return {
-    snapshot: () => call<Snapshot>('GET', '/v1/terminal/snapshot'),
+    // Paged (ADR-0016 slice 5): every answer stays bounded however large the catalogue; the pages are
+    // put together here, so the engine still stores one snapshot. A failed page fails the whole
+    // refresh and the till keeps the snapshot it had.
+    snapshot: async () => {
+      const first = await call<Snapshot>('GET', `/v1/terminal/snapshot?pageSize=${SNAPSHOT_PAGE_SIZE}`);
+      const items = [...first.items];
+      for (let after = first.nextPage ?? null; after; ) {
+        const page = await call<SnapshotItemsPage>(
+          'GET',
+          `/v1/terminal/snapshot/${first.snapshotId}/items?pageSize=${SNAPSHOT_PAGE_SIZE}&after=${encodeURIComponent(after)}`,
+        );
+        items.push(...page.items);
+        after = page.nextPage;
+      }
+      const { nextPage: _next, ...whole } = first;
+      return { ...whole, items };
+    },
     syncSales: (sales) => call<SyncSalesResponse>('POST', '/v1/sync/sales', { sales }),
   };
 }

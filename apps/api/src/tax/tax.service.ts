@@ -166,6 +166,8 @@ export class TaxService extends TenantService {
     const schemeCodes = [...new Set(input.lines.flatMap((l) => (l.statutory ? [l.statutory.scheme] : [])))];
     const schemes = await this.schemesInForce(db, schemeCodes, at);
 
+    const prices = await this.pricing.effectivePrices(db, branch.id, variantIds, at);
+
     const meta: LineMeta[] = [];
     let currency: string | undefined;
     const lines: TaxLineInput[] = [];
@@ -176,7 +178,7 @@ export class TaxService extends TenantService {
       if (item.soldBy === 'UNIT' && !item.allowsFraction && !toDec(l.quantity).isInteger()) {
         throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is sold in whole units', { line: lineId });
       }
-      const price = await this.pricing.effectivePrice(db, branch.id, l.variantId, at);
+      const price = prices.get(l.variantId);
       if (!price) throw new AppError('ITEM_NOT_PRICED', 'This item has no price at this branch', HttpStatus.CONFLICT, { line: lineId });
       if (currency && price.currency !== currency) throw unprocessable('MIXED_CURRENCY', 'Items are priced in different currencies', { line: lineId });
       currency = price.currency;

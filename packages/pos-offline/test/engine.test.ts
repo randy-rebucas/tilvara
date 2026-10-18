@@ -164,6 +164,18 @@ describe('sync', () => {
     expect((await engine.status()).lastError).toBeNull();
   });
 
+  it('a server out of time (answers the oldest part of each batch) is drained at once, without backing off', async () => {
+    const server = fakeServer();
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') }; // the clock never moves: nothing may wait on a backoff
+    const { engine } = await till(dbFile(), server, clock);
+    await engine.refreshSnapshot();
+    for (let i = 0; i < 4; i++) await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    server.set('partial');
+    const reports = await engine.drain();
+    expect(reports.map((r) => [r.sent, r.results.length])).toEqual([[4, 1], [3, 1], [2, 1], [1, 1], [0, 0]]);
+    expect(await engine.status()).toMatchObject({ pending: 0, recorded: 4, lastError: null });
+  });
+
   it('a partial answer settles what was answered and retries the rest; quarantined sales are kept for review', async () => {
     const server = fakeServer();
     const clock = { t: Date.parse('2026-10-17T02:00:00Z') };

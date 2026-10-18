@@ -122,7 +122,7 @@ Phase-level:
 - ⬜ Desktop: real printer/drawer hardware check
 - ⬜ Offline SC/PWD and discounts (refused offline today)
 - ⬜ Opening a shift offline
-- ⬜ Snapshot paging for large catalogues (Phase 6 slice 5)
+- ✅ Snapshot paging for large catalogues (Phase 6 slice 5, session 11)
 - ⬜ Push the snapshot when prices change (today: the till refreshes when online)
 - ⬜ Printer status (paper out, cover open) needs the device's status bytes (DLE EOT) through the shell
 - ⬜ Receipt logo/QR images (ESC/POS raster) when a design asks for them
@@ -153,4 +153,17 @@ Slice 4 (backup and restore):
 - ⬜ Production RTO: measured on the D1 staging size (only the dev-machine figure exists: 5.6–18.2 s for 2.7 MB)
 - ⬜ The smoke business the drill creates stays in a restored database: archive it after a real restore (runbook step 4)
 
-The remaining Phase 6 slices (5 performance, 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
+Slice 5 (performance):
+- ⏳ Re-measure on D1 staging. On this laptop with 2 API instances these were missed:
+  - checkout p99: 1.6 s against a 1 s target;
+  - sync of 50: 4.4 s typical, 5.9 s worst, against 5 s.
+  The tails cluster in 1–2 s windows while both event loops stay calm (DB/disk side; Docker Desktop fsync 2–15 ms).
+- ⬜ Slice 7 sizing: at least 2 API instances. One instance is CPU-bound at pilot load: ~29 checkouts/s, with p95 targets missed.
+- ⬜ With one saturated instance a till's sync still got no answer 3 times: the request can wait up to 5 s for a pool connection before the 8 s budget starts. Count the budget from request arrival, or make sync a priority queue.
+- ⬜ `pg` deprecation: "client.query() when the client is already executing a query". Some code runs queries concurrently on one transaction's client (`Promise.all` inside `withTenant`); pg@9 will refuse it. Find and serialize.
+- ⬜ Fewer statements per request: a lookup is 14 (auth context + 5 sequential reads), a 3-line checkout 47. Merge the lookup reads; cache the auth context per token for a few seconds.
+- ⬜ `platform_metrics()` takes ~90 ms on the load DB (100k items, a few thousand sales); watch it as data grows (alert `OneposBusinessGaugesSlow`).
+- ⬜ `monitoring.test.ts` "is its own listener" failed once right after the offline drills in the same run (`onepos_db_up` not yet 1 on the first scrape); it passed alone and in the final full gate. Watch it.
+- ⬜ `onepos_test` grows with every integration run (564 MB on 2026-10-18), and the suites slow down with it. Consider dropping and recreating it at the start of the gate (it is migrated automatically).
+
+The remaining Phase 6 slices ( 6 onboarding/support, 7 deployment, 8 runbooks/privacy, 9 UAT/pilot) are planned in BACKLOG.md. Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.

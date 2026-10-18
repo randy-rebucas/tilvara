@@ -363,9 +363,12 @@ export class MenusService extends TenantService {
           .from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(inArray(productVariants.id, variantIds))
       : [];
     const soldOut = new Set((await db.select({ v: soldOutItems.variantId }).from(soldOutItems).where(eq(soldOutItems.branchId, branchId))).map((r) => r.v));
-    const prices = new Map<string, string | null>();
-    for (const v of variantIds) prices.set(v, (await this.pricing.effectivePrice(db, branchId, v))?.amount ?? null);
-    const variant = (id: string) => variants.find((v) => v.id === id)!;
+    // One query for every price, and maps instead of scans: a large menu stays linear.
+    const effective = await this.pricing.effectivePrices(db, branchId, variantIds);
+    const prices = new Map<string, string | null>(variantIds.map((v) => [v, effective.get(v)?.amount ?? null]));
+    const variantById = new Map(variants.map((v) => [v.id, v]));
+    const groupById = new Map(groups.map((g) => [g.id, g]));
+    const variant = (id: string) => variantById.get(id)!;
     const sellable = (id: string) => !variant(id).archivedAt && prices.get(id) !== null && !soldOut.has(id);
 
     return {
@@ -391,7 +394,7 @@ export class MenusService extends TenantService {
               soldOut: soldOut.has(it.variantId),
               available: sellable(it.variantId),
               modifierGroups: it.modifierGroupIds.map((gid) => {
-                const g = groups.find((x) => x.id === gid)!;
+                const g = groupById.get(gid)!;
                 return {
                   id: g.id,
                   name: g.name,

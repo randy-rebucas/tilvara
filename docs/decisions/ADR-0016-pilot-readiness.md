@@ -258,6 +258,45 @@ Engineering alone cannot meet the exit: it needs D1–D6.
 - **Measured on this machine** (dev DB: 2.7 MB encrypted, 92 tables, 57,181 rows): backup 1.3–2.0 s; drill RTO 18.2 s with a cold API boot, 5.6 s warm (restore 2.4–4.7 s). Not a production figure; D1 staging measures that.
 - **Not in this slice**: PITR and off-site storage (D1); scheduling (a cron line in the runbook until slice 7 deploys it); a drill on managed Postgres (described in the runbook).
 
+## As built — slice 5 (session 11)
+- **Load kit** (`apps/api/test/load/`). Everything runs in its own database, `onepos_load`, created and migrated by the kit, with API processes started on it (rate limits off).
+  - `pnpm load:seed`: the pilot dataset through the real API (20 businesses × 3 branches × 3 registers, 5,000 items each with a barcode and a price, 300 stocked per branch). 100,000 items took 21 min at concurrency 16. Writes retry a 5xx with the same Idempotency-Key, as tills do.
+  - `pnpm load:run [--busy 60 --rate 30 --tills 6 --instances 1 --profile]`:
+    - busy registers do lookup → quote → checkout, and 5% resend a checkout with the same key, which must replay;
+    - tills run in their own processes (`till.ts`, the real `@1pos/pos-offline` engine) and fetch a snapshot, ring up 50 sales, then sync, retrying as the till does;
+    - 31-day reports follow.
+  - It reports p50/p95/p99 against the targets, plus:
+    - stalls: both event loops and the pool queue;
+    - a timeline of slow requests;
+    - an optional V8 CPU profile taken over the inspector protocol;
+    - integrity from the database: every checkout exactly once, no duplicate client transaction, every till sale recorded.
+- **Findings and fixes** (all on this machine: 12-thread laptop, Postgres 18 in Docker Desktop, fsync 2–15 ms):
+  1. **drizzle rebuilt its relational config for the whole schema in every transaction.** `drizzle(client, { schema })` was called in `transaction()`, at 0.875 ms of CPU per call over ~90 tables; it was 46% of the API's CPU under load. `bindDatabase()` now builds the config and dialect once and binds a cheap database object per transaction (0.034 ms, 25× less; a test guards it). One instance went from 18.4 to 28.8 checkouts/s, and from 103 503s to none.
+  2. **Per-item price queries**: `PricingService.effectivePrices()` prices a whole cart or menu in one LATERAL query; `effectivePrice()` uses it. `computeCart` (quote, checkout, bills, offline re-pricing) and the branch menu use it; the menu also uses maps instead of `find()`.
+  3. **Snapshot paging**:
+     - `GET /v1/terminal/snapshot?pageSize=` (100–5,000) returns the first page and a `nextPage` cursor;
+     - `GET /v1/terminal/snapshot/:id/items?after=` returns further pages, priced as of the same `asOf`, for the same terminal only;
+     - without `pageSize` the full list comes back as before, so installed tills keep working;
+     - the till's transport asks for pages of 1,000 and assembles them;
+     - index `product_variants_snapshot_order_idx (tenant_id, sku, id) WHERE archived_at IS NULL` (migration 0053) lets each page stop early (100–280 ms → 70–120 ms a page at 5,000 items).
+  4. **Sync retry storm**:
+     - Under load a batch of 50 could outlive the till's 15 s timeout. The till then resent it while the first copy was still recording, and the copy queued behind the original's locks. Up to 5 attempts and 28 s were seen.
+     - Fix on the server: `SYNC_BATCH_BUDGET_MS` (8,000) stops starting new envelopes after the budget, always delivering at least one.
+     - Fix in the engine: envelopes the server did not reach stay due at once (no backoff) when the batch got some answers.
+- **Results**: pilot load, 60 busy registers at 30/min (30 checkouts/s offered), 6 tills, 120 s:
+  - **2 API instances**:
+    - throughput 30.0/s;
+    - lookup p95 52 ms ✓;
+    - checkout p50/p95/p99 80/397/1,568 ms (p95 ✓, p99 ✗);
+    - sync of 50 at 4.4 s typical, 5.9 s worst ✗ (target 5 s);
+    - every till synced on its first attempt;
+    - reports p95 < 0.5 s ✓;
+    - integrity ok.
+  - **1 API instance**: CPU-bound at ~97%; lookup p95 247 ms ✗; checkout p95 959 ms ✗; tills retried.
+  - **Conclusion for slice 7**: run at least 2 API instances for pilot load on hardware of this class.
+  - The remaining p99 and sync tails cluster in one or two seconds at a time while both API event loops stay below 50 ms. That points at this machine's database or disk; re-measure on D1 staging before any claim.
+- **Seen, not fixed**: `pg` warns "client.query() while already executing" (queries run concurrently on one transaction's client somewhere; pg@9 removes this); a lookup is 14 statements and a 3-line checkout 47; `platform_metrics()` takes ~90 ms on the load database. All are in LEFTOVER.
+
 ## As built — ahead of slice 6 (session 10)
 Pulled forward from slice 6 because a lost phone would otherwise lock a privileged member out during the pilot:
 - **MFA reset by the business** (migration 0050): `POST /v1/members/:id/reset-mfa {reason}` → `auth_mfa_admin_reset()` (SECURITY DEFINER, `onepos_platform`). The business is `app.tenant_id` from `withTenant`, never a parameter; the function re-checks that the actor holds `members.manage` for the whole business and that the target is a member; never oneself; the service also applies the same "could you have granted these roles" rule as suspend/remove. It removes the factor and recovery codes and ends every session; the password stays; a privileged member must enrol again at the next sign-in. Audit: tenant `member.mfa_reset` + platform `auth.mfa.reset` (actor, business, reason). `GET /v1/members/mfa` (`auth_members_mfa()`) tells the member page who has MFA on.

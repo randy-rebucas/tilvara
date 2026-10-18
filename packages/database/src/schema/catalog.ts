@@ -145,6 +145,8 @@ export const productVariants = pgTable(
     foreignKey({ columns: [t.tenantId, t.productId], foreignColumns: [products.tenantId, products.id] }),
     uniqueIndex('product_variants_tenant_sku_unique').on(t.tenantId, sql`lower(${t.sku})`).where(sql`${t.archivedAt} IS NULL`),
     index('product_variants_product_idx').on(t.tenantId, t.productId),
+    // Terminal snapshot pages walk active items in (sku, id) order and stop after a page (ADR-0016 slice 5).
+    index('product_variants_snapshot_order_idx').on(t.tenantId, t.sku, t.id).where(sql`${t.archivedAt} IS NULL`),
     check('product_variants_sku_format', sql`${t.sku} ~ '^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$'`),
     check('product_variants_cost_non_negative', sql`${t.referenceCost} IS NULL OR ${t.referenceCost} >= 0`),
   ],

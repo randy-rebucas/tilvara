@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { auditLogs, createTenant, InvalidTenantContextError, tenants, withTenant } from '../../src/index.js';
+import { auditLogs, bindDatabase, createTenant, InvalidTenantContextError, tenants, withTenant } from '../../src/index.js';
 import { TEST_DATABASE_MIGRATOR_URL, TEST_DATABASE_URL } from './env.js';
 
 const pool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 4 });
@@ -51,6 +51,21 @@ describe('tenant isolation (RLS)', () => {
   it('sees only its own tenant row', async () => {
     const rows = await withTenant(pool, tenantA, (db) => db.select().from(tenants));
     expect(rows.map((r) => r.id)).toEqual([tenantA]);
+  });
+
+  it('each transaction gets a database bound to its own connection, cheaply (schema config built once)', async () => {
+    // Two transactions at once, each with its own tenant: builder and relational API both see only their own.
+    const [a, b] = await Promise.all([
+      withTenant(pool, tenantA, async (db) => [(await db.select().from(tenants)).map((r) => r.id), (await db.query.tenants.findMany()).map((r) => r.id)]),
+      withTenant(pool, tenantB, async (db) => [(await db.select().from(tenants)).map((r) => r.id), (await db.query.tenants.findMany()).map((r) => r.id)]),
+    ]);
+    expect([a, b]).toEqual([[[tenantA], [tenantA]], [[tenantB], [tenantB]]]);
+    // ADR-0016 slice 5: rebuilding drizzle's relational config per transaction was the API's main CPU
+    // cost. Binding must stay far below that (~ms per call for ~90 tables): 2,000 binds in well under a second.
+    const fake = {} as pg.PoolClient;
+    const t = performance.now();
+    for (let i = 0; i < 2000; i++) bindDatabase(fake);
+    expect(performance.now() - t).toBeLessThan(500);
   });
 
   it('cannot read another tenant by id', async () => {

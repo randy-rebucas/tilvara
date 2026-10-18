@@ -192,10 +192,12 @@ export class OfflineEngine {
       }
       const now = this.now();
       for (const r of results) await this.store.settle(r.terminalTxnId, r, now);
-      // Anything the server did not answer for stays pending and is retried later.
+      // Anything the server did not answer for stays pending. A server out of time answers the oldest
+      // part of a batch (always at least one): the rest is simply not reached yet and stays due now, so
+      // drain() goes on at once. No answer at all for the batch is a failure and backs off.
       const answered = new Set(results.map((r) => r.terminalTxnId));
       const missing = due.filter((q) => !answered.has(q.terminalTxnId)).map((q) => q.deviceSeq);
-      if (missing.length) await this.store.backOff(missing, (n) => this.nextAttempt(n), 'NO_RESULT');
+      if (missing.length && !results.length) await this.store.backOff(missing, (n) => this.nextAttempt(n), 'NO_RESULT');
       await this.store.setMeta('last_sync_at', String(now));
       await this.store.setMeta('last_error', null);
       return { sent: due.length, results };

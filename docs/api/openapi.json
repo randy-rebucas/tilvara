@@ -19690,6 +19690,16 @@
         ],
         "parameters": [
           {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 5000
+            }
+          },
+          {
             "name": "X-Terminal-Id",
             "in": "header",
             "required": true,
@@ -19704,8 +19714,119 @@
           "200": {
             "description": "Success"
           },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong terminal credential, or the terminal was revoked (TERMINAL_REVOKED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (Retry-After header)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/terminal/snapshot/{id}/items": {
+      "get": {
+        "operationId": "sync.snapshotItems",
+        "tags": [
+          "sync"
+        ],
+        "description": "Fine-grained permission (incl. branch/register scope) is checked in the service. Rate limit: 600 per 60s per terminal (bucket terminal). Rate limit: 3000 per 60s per IP (bucket terminal-ip).",
+        "security": [
+          {
+            "terminal": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 5000
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          },
+          {
+            "name": "X-Terminal-Id",
+            "in": "header",
+            "required": true,
+            "description": "The registered terminal’s id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong terminal credential, or the terminal was revoked (TERMINAL_REVOKED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found in the caller's tenant (other tenants' ids also 404)",
             "content": {
               "application/json": {
                 "schema": {

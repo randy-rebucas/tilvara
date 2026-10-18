@@ -329,6 +329,9 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/registers/:id/archive': () => http().post(`/v1/registers/${a.registerId}/archive`).set(auth),
     'POST /v1/terminals/:id/revoke': () => http().post(`/v1/terminals/${a.terminalId}/revoke`).set(auth).send({ reason: 'sabotage' }),
     'GET /v1/sync/transactions/:id': () => http().get(`/v1/sync/transactions/${a.offlineTxnId}`).set(auth),
+    // B's till asks for a page of A's snapshot (the tenant comes from B's credential).
+    'GET /v1/terminal/snapshot/:id/items': () =>
+      http().get(`/v1/terminal/snapshot/${a.snapshotId}/items`).query({ after: Buffer.from(JSON.stringify(['A', a.variantId])).toString('base64url') }).set(b.terminalHeaders),
     'POST /v1/sync/transactions/:id/retry': () => http().post(`/v1/sync/transactions/${a.offlineTxnId}/retry`).set(auth),
     'POST /v1/sync/transactions/:id/dismiss': () => http().post(`/v1/sync/transactions/${a.offlineTxnId}/dismiss`).set(auth).send({ reason: 'sabotage' }),
     'PATCH /v1/categories/:id': () => http().patch(`/v1/categories/${a.categoryId}`).set(auth).send({ name: 'pwned' }),

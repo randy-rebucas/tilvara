@@ -187,7 +187,14 @@ Slice 4 — backup and restore (session 11): ✅ done (ADR-0016 "As built — sl
 - ✅ Gauges `backup_last_success_timestamp_seconds`, `restore_drill_last_success_timestamp_seconds`; alerts `OneposBackupMissing`, `OneposRestoreDrillOverdue`.
 - ✅ Tests: `backup.test.ts` (8, incl. tampered file, wrong key, flipped bit, a mutated restore caught item by item), `rls-catalog.test.ts` (+2), unit `backup.test.ts` (6).
 - ⏳ PITR + off-site copy (D1); scheduling on a host (slice 7).
-⬜ Slice 5 — performance: pilot-scale seed, Node load harness (checkout/lookup/sync/reports p50/95/99, zero duplicates), fixes (POS menu N+1, snapshot paging).
+Slice 5 — performance (session 11): ✅ done (ADR-0016 "As built — slice 5"); numbers are this machine's.
+- ✅ `pnpm load:seed` (100,000 items, 20 businesses, own DB `onepos_load`) and `pnpm load:run` (registers, offline tills in their own processes, reports; stalls, slow-request timeline, CPU profile, integrity).
+- ✅ Fixes:
+  - drizzle relational config built once (`bindDatabase`; it was 46% of API CPU): 18 → 29 checkouts/s per instance;
+  - batched pricing (`effectivePrices`) for cart, quote, checkout and menu;
+  - snapshot paging (`?pageSize`, `/terminal/snapshot/:id/items`, index 0053);
+  - sync time budget (`SYNC_BATCH_BUDGET_MS`) with the engine draining partial answers at once.
+- ✅ 2 instances at pilot load: lookup p95 52 ms, checkout p95 397 ms, reports < 0.5 s, all tills first try, nothing lost or doubled. ⏳ checkout p99 1.6 s and sync-50 worst 5.9 s miss the targets on this laptop; re-measure on D1 staging.
 ⬜ Slice 6 — onboarding and support: audit log reader + screen; tenant-approved, time-limited support access; MFA reset by support; tenant data export (ZIP of CSVs, signed link); offboarding runbook; sample data for trials.
 ⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
 ⬜ Slice 8 — runbooks + privacy pack (drafts for the DPO, not legal advice).

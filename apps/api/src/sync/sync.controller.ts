@@ -1,5 +1,12 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from '@nestjs/common';
-import { syncSalesRequestSchema, type SyncSalesRequest } from '@1pos/sync-protocol';
+import {
+  snapshotItemsQuerySchema,
+  snapshotPageQuerySchema,
+  syncSalesRequestSchema,
+  type SnapshotItemsQuery,
+  type SnapshotPageQuery,
+  type SyncSalesRequest,
+} from '@1pos/sync-protocol';
 import { dismissOfflineSchema, idParamSchema, offlineListQuerySchema, type DismissOfflineInput, type OfflineListQuery } from '@1pos/validation';
 import { Auth, RequireTenant, TerminalAuth, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
@@ -25,8 +32,16 @@ export class SyncController {
   @TerminalAuth()
   @RateLimit(...TERMINAL_LIMITS)
   @Get('terminal/snapshot')
-  async snapshot(@Req() req: AuthedRequest) {
-    return this.sync.snapshot(await this.sync.authenticate((h) => req.header(h), req.correlationId));
+  async snapshot(@Req() req: AuthedRequest, @Query(new ZodPipe(snapshotPageQuerySchema)) q: SnapshotPageQuery) {
+    return this.sync.snapshot(await this.sync.authenticate((h) => req.header(h), req.correlationId), q.pageSize);
+  }
+
+  /** Further pages of a paged snapshot (ADR-0016 slice 5), priced as of the same instant. */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @Get('terminal/snapshot/:id/items')
+  async snapshotItems(@Req() req: AuthedRequest, @Param('id', id) snapshotId: string, @Query(new ZodPipe(snapshotItemsQuerySchema)) q: SnapshotItemsQuery) {
+    return this.sync.snapshotItems(await this.sync.authenticate((h) => req.header(h), req.correlationId), snapshotId, q.after, q.pageSize);
   }
 
   @TerminalAuth()

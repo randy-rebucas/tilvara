@@ -1,8 +1,29 @@
-import { drizzle, NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { createTableRelationsHelpers, extractTablesRelationalConfig } from 'drizzle-orm';
+import { NodePgDatabase, NodePgDriver } from 'drizzle-orm/node-postgres';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import type { Pool, PoolClient } from 'pg';
 import * as schema from './schema/index.js';
 
 export type Database = NodePgDatabase<typeof schema>;
+
+/*
+ * `drizzle(client, { schema })` walks every table of the schema to build its relational config, on
+ * each call. Called per transaction it was the API's main CPU cost under load (ADR-0016 slice 5:
+ * ~46% of the API's CPU in drizzle, mostly this). The config and the dialect are immutable, so they
+ * are built once here and every transaction gets a cheap database object over its own client. This
+ * mirrors drizzle-orm/node-postgres `construct()` (0.45), without logger or cache, which we do not use.
+ */
+const dialect = new PgDialect();
+const tablesConfig = extractTablesRelationalConfig(schema, createTableRelationsHelpers);
+const relational = { fullSchema: schema, schema: tablesConfig.tables, tableNamesMap: tablesConfig.tableNamesMap };
+
+/** A drizzle database bound to one pool client (the transaction's). */
+export function bindDatabase(client: PoolClient): Database {
+  const session = new NodePgDriver(client, dialect).createSession(relational);
+  const db = new NodePgDatabase(dialect, session, relational as never) as unknown as Database & { $client: PoolClient };
+  db.$client = client;
+  return db;
+}
 
 export type IsolationLevel = 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
 
@@ -61,7 +82,7 @@ export async function transaction<T>(pool: Pool, fn: (tx: Tx) => Promise<T>, opt
       [options.userId ?? '', options.correlationId ?? ''],
     );
     const tx: Tx = {
-      db: drizzle(client, { schema }),
+      db: bindDatabase(client),
       client,
       async setTenant(tenantId) {
         assertUuid(tenantId);

@@ -91,6 +91,74 @@ describe('terminal authentication and snapshot', () => {
   });
 });
 
+describe('snapshot pages (ADR-0016 slice 5)', () => {
+  it('a large catalogue comes in bounded pages, all priced as of the first page; the whole list is unchanged without pageSize', async () => {
+    const s = await shop('off-page');
+    const pc = ((await http().get('/v1/uoms').set(s.auth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
+    const vat = ((await http().get('/v1/tax-categories').set(s.auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
+    const prefix = uniq('PG');
+    const made: string[] = [];
+    for (const [from, n] of [[0, 100], [100, 100], [200, 50]] as const) {
+      const variants = Array.from({ length: n }, (_, i) => ({ sku: `${prefix}-${String(from + i).padStart(3, '0')}`, name: `size ${from + i}`, price: '10.00' }));
+      made.push(...(await http().post('/v1/products').set(s.auth).send({ name: `Pack ${from}`, uomId: pc, taxCategoryId: vat, variants }).expect(201)).body.variants.map((v: { id: string }) => v.id));
+    }
+    const whole = await snapshot(s);
+    expect(whole.items.length).toBe(252);
+    expect(whole).not.toHaveProperty('nextPage');
+
+    const first = (await http().get('/v1/terminal/snapshot').query({ pageSize: 100 }).set(s.t1.headers).expect(200)).body as Snapshot;
+    expect([first.items.length, typeof first.nextPage]).toEqual([100, 'string']);
+    // A price raised after the first page must not show on later pages: every page is as of `asOf`.
+    const lastVariant = made[made.length - 1]!;
+    const lists = (await http().get('/v1/price-lists').set(s.auth).expect(200)).body.data as { id: string; isDefault: boolean }[];
+    await http().post(`/v1/price-lists/${lists.find((l) => l.isDefault)!.id}/prices`).set(s.auth).send({ items: [{ variantId: lastVariant, amount: '99.00' }] }).expect(201);
+    const items = [...first.items];
+    const sizes: number[] = [first.items.length];
+    for (let after = first.nextPage; after; ) {
+      const page = (await http().get(`/v1/terminal/snapshot/${first.snapshotId}/items`).query({ pageSize: 100, after }).set(s.t1.headers).expect(200)).body;
+      expect(page.snapshotId).toBe(first.snapshotId);
+      items.push(...page.items);
+      sizes.push(page.items.length);
+      after = page.nextPage;
+    }
+    expect(sizes).toEqual([100, 100, 52]);
+    expect(items).toEqual(whole.items); // same order, same prices, nothing repeated or skipped
+    expect(items.find((i) => i.variantId === lastVariant)!.unitPrice).toBe('10.0000');
+    expect((await snapshot(s)).items.find((i) => i.variantId === lastVariant)!.unitPrice).toBe('99.0000');
+
+    // Another till's snapshot, a made-up cursor, a page size out of range.
+    const page = (after: string, t = s.t1) => http().get(`/v1/terminal/snapshot/${first.snapshotId}/items`).query({ pageSize: 100, after }).set(t.headers);
+    expect((await page(first.nextPage!, s.t2).expect(404)).body.error.code).toBe('NOT_FOUND');
+    expect((await page('not-a-cursor').expect(400)).body.error.code).toBe('VALIDATION_FAILED');
+    await http().get('/v1/terminal/snapshot').query({ pageSize: 50 }).set(s.t1.headers).expect(400);
+    await http().get(`/v1/terminal/snapshot/${first.snapshotId}/items`).set(s.t1.headers).expect(400); // no cursor
+  });
+});
+
+describe('sync time budget (ADR-0016 slice 5)', () => {
+  it('a server out of time answers the oldest part of a batch and the rest arrives on the next call, nothing twice', async () => {
+    const s = await shop('off-budget');
+    const snap = await snapshot(s);
+    const tight = await createApp({ SYNC_BATCH_BUDGET_MS: 0 }); // one envelope per call
+    try {
+      const batch = [sale(s, snap), sale(s, snap), sale(s, snap)];
+      const send = () => request(tight.getHttpServer()).post('/v1/sync/sales').set(s.t1.headers).send({ sales: batch }).expect(200);
+      const first = (await send()).body.results;
+      expect(first.map((r: { deviceSeq: number; status: string }) => [r.deviceSeq, r.status])).toEqual([[batch[0]!.deviceSeq, 'RECORDED']]);
+      const second = (await send()).body.results; // the till resends what was not answered, plus the answered one replays
+      expect(second.map((r: { replayed: boolean }) => r.replayed)).toEqual([true]);
+      // The engine sends only what is unanswered: the rest, one per call.
+      for (const env of batch.slice(1)) {
+        const r = (await request(tight.getHttpServer()).post('/v1/sync/sales').set(s.t1.headers).send({ sales: batch.slice(batch.indexOf(env)) }).expect(200)).body.results;
+        expect(r.map((x: { deviceSeq: number; status: string; replayed: boolean }) => [x.deviceSeq, x.status, x.replayed])).toEqual([[env.deviceSeq, 'RECORDED', false]]);
+      }
+      expect(await sql(s, `SELECT count(*)::int AS n FROM sales WHERE origin = 'OFFLINE' AND terminal_id = $1`, [s.t1.id])).toEqual([{ n: 3 }]);
+    } finally {
+      await tight.close();
+    }
+  });
+});
+
 describe('sync', () => {
   it('records offline sales in device order, on the day they happened, once — retries replay; a reused id with new content is rejected', async () => {
     const s = await shop('off-sync');

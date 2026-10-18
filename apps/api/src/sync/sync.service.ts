@@ -18,7 +18,7 @@ import {
   withTenant,
   type Database,
 } from '@1pos/database';
-import { canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotItem, type SyncResult } from '@1pos/sync-protocol';
+import { canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotItem, type SnapshotItemsPage, type SyncResult } from '@1pos/sync-protocol';
 import type { DismissOfflineInput, OfflineListQuery } from '@1pos/validation';
 import { createHash } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
@@ -46,6 +46,19 @@ export interface TerminalPrincipal {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unauthenticated = (code = 'UNAUTHENTICATED', message = 'Terminal authentication required') => new AppError(code, message, HttpStatus.UNAUTHORIZED);
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** Snapshot page cursor: base64url(JSON [sku, variantId]) of the last item sent (pages follow ORDER BY sku, id). */
+const encodeCursor = (sku: string, variantId: string) => Buffer.from(JSON.stringify([sku, variantId])).toString('base64url');
+function decodeCursor(cursor: string): { sku: string; variantId: string } | null {
+  try {
+    const v = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as unknown;
+    if (Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && v[0].length <= 64 && typeof v[1] === 'string' && UUID.test(v[1])) {
+      return { sku: v[0], variantId: v[1] };
+    }
+  } catch {
+    // not a cursor
+  }
+  return null;
+}
 /** A till with an open shift on its register that has not been in touch this long is reported silent. */
 const TILL_SILENCE_MINUTES = 30;
 
@@ -86,8 +99,11 @@ export class SyncService extends TenantService {
     return { terminalId: id, tenantId: t.tenant_id, registerId: t.register_id, correlationId };
   }
 
-  /** What the terminal needs to sell offline, as of now (DB clock); recorded so sales can name it. */
-  snapshot(t: TerminalPrincipal): Promise<Snapshot> {
+  /**
+   * What the terminal needs to sell offline, as of now (DB clock); recorded so sales can name it.
+   * With `pageSize`, only the first page of items comes back, with `nextPage` for `snapshotItems`.
+   */
+  snapshot(t: TerminalPrincipal, pageSize?: number): Promise<Snapshot> {
     return withTenant(this.database.pool, t.tenantId, async (db) => {
       const [row] = await db
         .select({ terminal: { id: terminals.id, name: terminals.name, credentialHint: terminals.credentialHint }, register: registers, branch: branches, entity: legalEntities })
@@ -102,7 +118,7 @@ export class SyncService extends TenantService {
       const asOf = await dbNow(db);
       const profile = (await profilesInForce(db, [row.entity.id], asOf)).get(row.entity.id);
       if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
-      const items = await this.items(db, row.branch.id, asOf);
+      const { items, nextPage } = await this.itemsPage(db, row.branch.id, asOf, pageSize);
       const [open] = await db
         .select({ id: cashierSessions.id, openedBy: cashierSessions.openedBy, openedAt: cashierSessions.openedAt, cashierName: users.displayName })
         .from(cashierSessions)
@@ -124,12 +140,42 @@ export class SyncService extends TenantService {
         taxProfile: { id: profile.id, effectiveFrom: profile.effectiveFrom, vatStatus: profile.vatStatus, vatRate: profile.vatRate, roundingMode: profile.roundingMode },
         openSession: open ? { id: open.id, openedBy: open.openedBy, openedAt: open.openedAt.toISOString(), cashierName: open.cashierName } : null,
         items: items.map(({ currency: _c, ...i }) => i),
+        ...(pageSize ? { nextPage } : {}),
       };
     });
   }
 
-  /** Every active item with a price in force at the branch at `asOf` (same rules as `PricingService.effectivePrice`). */
-  private async items(db: Database, branchId: string, asOf: Date): Promise<(SnapshotItem & { currency: string })[]> {
+  /**
+   * A further page of one of this terminal's snapshots, priced as of the snapshot's `asOf` (so every
+   * page agrees with the first). Another terminal's snapshot, or a cursor that is not ours: 404/400.
+   * An item archived between two pages is simply not sent; the cursor (sku, id) never repeats or skips one.
+   */
+  snapshotItems(t: TerminalPrincipal, snapshotId: string, after: string, pageSize: number): Promise<SnapshotItemsPage> {
+    const cursor = decodeCursor(after);
+    if (!cursor) throw new AppError('VALIDATION_FAILED', 'Not a snapshot page cursor', HttpStatus.BAD_REQUEST);
+    return withTenant(this.database.pool, t.tenantId, async (db) => {
+      const [snap] = await db
+        .select({ asOf: terminalSnapshots.asOf, branchId: registers.branchId })
+        .from(terminalSnapshots)
+        .innerJoin(registers, eq(registers.id, terminalSnapshots.registerId))
+        .where(and(eq(terminalSnapshots.id, snapshotId), eq(terminalSnapshots.terminalId, t.terminalId)));
+      if (!snap) throw notFound('Snapshot');
+      const { items, nextPage } = await this.itemsPage(db, snap.branchId, snap.asOf, pageSize, cursor);
+      return { snapshotId, items: items.map(({ currency: _c, ...i }) => i), nextPage };
+    });
+  }
+
+  /** Items in (sku, id) order, at most `pageSize` (all when absent), after `cursor`; `nextPage` when more follow. */
+  private async itemsPage(db: Database, branchId: string, asOf: Date, pageSize?: number, cursor?: { sku: string; variantId: string }) {
+    const rows = await this.items(db, branchId, asOf, pageSize ? pageSize + 1 : undefined, cursor);
+    if (!pageSize || rows.length <= pageSize) return { items: rows, nextPage: null };
+    const items = rows.slice(0, pageSize);
+    const last = items[items.length - 1]!;
+    return { items, nextPage: encodeCursor(last.sku, last.variantId) };
+  }
+
+  /** Active items with a price in force at the branch at `asOf` (same rules as `PricingService.effectivePrices`). */
+  private async items(db: Database, branchId: string, asOf: Date, limit?: number, after?: { sku: string; variantId: string }): Promise<(SnapshotItem & { currency: string })[]> {
     const { rows } = await db.execute<{
       variant_id: string; sku: string; name: string; barcodes: string[] | null; price_id: string; price_list_id: string; amount: string;
       currency: string; prices_include_tax: boolean; vat_treatment: SnapshotItem['vatTreatment']; tax_category_code: string; whole_units: boolean; track_inventory: boolean;
@@ -155,7 +201,9 @@ export class SyncService extends TenantService {
         JOIN LATERAL (SELECT id, amount FROM product_prices pp
                        WHERE pp.price_list_id = list.id AND pp.variant_id = v.id AND pp.effective_from <= ${asOf.toISOString()}::timestamptz
                        ORDER BY pp.effective_from DESC LIMIT 1) pr ON true
-       ORDER BY v.sku`);
+       ${after ? sql`WHERE (v.sku, v.id) > (${after.sku}, ${after.variantId}::uuid)` : sql``}
+       ORDER BY v.sku, v.id
+       ${limit ? sql`LIMIT ${limit}` : sql``}`);
     return rows.map((r) => ({
       variantId: r.variant_id, sku: r.sku, name: r.name, barcodes: r.barcodes ?? [], priceId: r.price_id, priceListId: r.price_list_id,
       unitPrice: r.amount, priceIncludesTax: r.prices_include_tax, vatTreatment: r.vat_treatment, taxCategoryCode: r.tax_category_code,
@@ -163,10 +211,16 @@ export class SyncService extends TenantService {
     }));
   }
 
-  /** Deliver offline sales, oldest first; each result is final for that envelope (replays answer the same). */
+  /**
+   * Deliver offline sales, oldest first; each result is final for that envelope (replays answer the same).
+   * Stops starting new envelopes once SYNC_BATCH_BUDGET_MS has passed (at least one is always
+   * delivered): the till gets its answer before its own timeout and sends the rest again.
+   */
   async syncSales(t: TerminalPrincipal, envelopes: OfflineSale[]): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
+    const stopAt = performance.now() + this.env.SYNC_BATCH_BUDGET_MS;
     for (const env of [...envelopes].sort((a, b) => a.deviceSeq - b.deviceSeq)) {
+      if (results.length > 0 && performance.now() >= stopAt) break;
       const r = await this.deliver(t, env);
       this.metrics.offlineSales.inc({ outcome: r.replayed ? 'replayed' : r.status.toLowerCase() });
       results.push(r);

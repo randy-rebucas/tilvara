@@ -14,3 +14,5 @@ next-env.d.ts
 *.tsbuildinfo
 # Local backups and their keys (ADR-0016 slice 4)
 .backups/
+# Load test seed descriptions and reports (ADR-0016 slice 5)
+.load/

@@ -49,6 +49,12 @@ export const serverEnvSchema = z.object({
   PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
   /** How long a terminal snapshot may price offline sales before they are flagged SNAPSHOT_EXPIRED (ADR-0015). */
   OFFLINE_WINDOW_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  /**
+   * A sync batch answers within this time (ADR-0016 slice 5): envelopes not reached are left
+   * unanswered and the till sends them again, so a busy server never runs past the till's 15 s
+   * timeout (which would make it resend the whole batch while the first copy is still recording).
+   */
+  SYNC_BATCH_BUDGET_MS: z.coerce.number().int().min(0).max(60_000).default(8_000),
   /** Key prefix of the rate-limit counters in Redis (tests use a unique one per run). */
   RATE_LIMIT_PREFIX: z.string().min(1).max(64).default('onepos:rl:'),
   /**

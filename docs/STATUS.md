@@ -1,6 +1,6 @@
 # 1POS — Status
 
-_Last updated: 2026-10-18 (session 11 — slice 4 backup and restore drill done; slice 5 performance started. Session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
+_Last updated: 2026-10-18 (session 11 — slice 4 backup and restore drill; slice 5 performance (load kit, four fixes, pilot-load numbers on this machine). Session 10 — slice 3 monitoring verified and committed; LEFTOVER worked through in batches: pilot safety, admin back office, reports + CSV, restaurant role templates, POS/KDS, MFA reset + audit log + journal export + return slips. Session 9 — Phase 6 planned (ADR-0016); slice 1 account security; slice 2 platform hardening)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -14,7 +14,42 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 8. runbooks and privacy;
 9. UAT, compliance review and pilot.
 
-The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–4 are done** (below).
+The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–5 are done** (below).
+
+## Phase 6 slice 5 — performance (session 11)
+As built: ADR-0016 "As built — slice 5". Migration 0053 (index). All numbers are **this machine's**: a 12-thread laptop with Postgres 18 in Docker Desktop, fsync 2–15 ms. They are not a production claim.
+- **Load kit**: `pnpm load:seed` and `pnpm load:run`, in their own database `onepos_load` (kept: 20 businesses, 100,000 items, 650 MB). The report covers p50/95/99, stalls (both event loops and the pool queue), a timeline of slow requests, an optional CPU profile, and integrity read from the database.
+- **Defects found by the harness and fixed**:
+  1. **Every transaction rebuilt drizzle's relational config for the whole schema** (`drizzle(client, { schema })` in `transaction()`, 0.875 ms of CPU each). It was 46% of the API's CPU under load. `bindDatabase()` cuts it to 0.034 ms (a test guards it). One API process went from 18.4 to 28.8 checkouts/s, and its 103 503s (pool waits over 5 s) went to 0.
+  2. **Per-item price queries** in quote, checkout, bills, offline re-pricing and the branch menu: one batched `effectivePrices()` query now.
+  3. **Unpaged snapshots**: `?pageSize` + `GET /v1/terminal/snapshot/:id/items` (priced as of the same instant; old tills unchanged); the till transport pages by 1,000; index 0053.
+  4. **Sync retry storm**: a batch outlived the till's 15 s timeout and was resent while still recording (up to 5 attempts, 28 s). Fixed by `SYNC_BATCH_BUDGET_MS` (8 s) on the server, and the engine now drains partial answers at once.
+- **Pilot load** (60 busy registers at 30 sales/min = 30 checkouts/s offered, 6 offline tills, 120 s):
+
+  | | 1 instance | 2 instances |
+  |---|---|---|
+  | checkouts/s | 29.1 | 30.0 |
+  | lookup p95 (target 150 ms) | 247 ms ✗ | **52 ms ✓** |
+  | checkout p95 (target 500 ms) | 959 ms ✗ | **397 ms ✓** |
+  | checkout p99 (target 1 s) | 2,117 ms ✗ | 1,568 ms ✗ |
+  | sync of 50, typical / worst (target 5 s) | 6.6 / 28.3 s ✗ | 4.4 / 5.9 s ✗ |
+  | 31-day reports | met | **met** (p95 < 0.5 s) |
+  | integrity | ok | **ok** |
+
+  Integrity means every checkout recorded once, no duplicate client transaction, every replay matched, and every till sale recorded. With 2 instances all tills synced on their first attempt.
+  - **Sizing for slice 7**: at least 2 API instances.
+  - **Still missed with 2 instances**: checkout p99 and the worst sync. The slow requests cluster in 1–2 s windows while both event loops stay below 50 ms, which points at this machine's database or disk. Re-measure on D1 staging (LEFTOVER).
+- **Defect in my own test, found by the gate**: `backup.test.ts` restored all of `onepos_test`. That database had grown to 564 MB, so the restore went past 120 s, and its leftover `pg_restore` slowed the next suite. The test now builds its own small source database: 169 s → 15 s.
+- **Environment event**: during one gate run Docker Desktop stopped every container (this project's and others'). `pnpm db:up` restarted only this project's services, and the gate was re-run.
+- **Verified this session (final code)**:
+  - `pnpm build` 14/14, `pnpm typecheck` 24/24, `pnpm lint` exit 0, `pnpm test --force` 24/24 tasks (pos-offline 13: +3 transport paging, +1 drain of partial answers);
+  - `turbo run test:integration --concurrency=1 --continue --force` → database **33**, workers 17, api **301** (+ snapshot pages, + sync time budget, isolation +1 route, + `bindDatabase` guard);
+  - OpenAPI regenerated; `pnpm db:migrate` on the dev DB (0053);
+  - E2E on the rebuilt API (:4320, rate limits off), admin `next start` (:3320) and POS preview (:3330):
+    - `test:e2e:web:offline` 14/14;
+    - **`test:e2e:desktop` 21/21**: the till rebuilt with the paged transport;
+    - `test:e2e:pos` 27/27, `test:e2e:tables` 32/32, `test:e2e:service` 22/22.
+  - Not re-run: the other admin suites (no admin change).
 
 ## Phase 6 slice 4 — backup and restore (session 11)
 As built: ADR-0016 "As built — slice 4"; runbook `docs/operations/backup-restore.md`. Migrations 0051/0052; new cluster role `onepos_backup` (dev cluster upgraded with `infra/docker/postgres/upgrade/2026-10-17-backup-role.sql`).
@@ -798,7 +833,7 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 
 ## Next task (start here)
 1. Commit if not yet committed (`git status`).
-2. **Phase 6** (ADR-0016). Slices 1–4 are done (slice 4 in session 11). **Next: slice 5** (load: pilot-scale seed, harness, the menu/quote per-item price queries, snapshot paging), numbers labelled as measured on this machine.
+2. **Phase 6** (ADR-0016). Slices 1–5 are done (4 and 5 in session 11). **Next: slice 6** (onboarding and support: time-limited, tenant-approved support access; tenant data export; offboarding runbook; trial sample data). Slices 7–9 need D1/D3/D4–D6. Slice 5 left re-measurement on D1 staging and a few performance items in LEFTOVER.md (the pg concurrent-query deprecation, statements per request, the sync budget counted from arrival).
    - MFA reset is in place (owner/admin; support CLI for owners). Slice 6 still owes time-limited, tenant-approved support access, tenant data export, offboarding and trial sample data.
    - `test:e2e:desktop` was not run in session 10; run it with the next till change.
    - Decisions for the user (ADR-0016):

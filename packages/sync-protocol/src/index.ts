@@ -47,7 +47,33 @@ export interface Snapshot {
   /** The open shift on this register, if any — offline sales go on it. */
   openSession: { id: string; openedBy: string; cashierName: string; openedAt: string } | null;
   items: SnapshotItem[];
+  /**
+   * Paged snapshots only (`?pageSize=`): the cursor for the next page of `items`, fetched from
+   * `GET /v1/terminal/snapshot/:snapshotId/items?after=<nextPage>&pageSize=`; null on the last page.
+   * Absent when the whole list came in one answer.
+   */
+  nextPage?: string | null;
 }
+
+/** One further page of a paged snapshot's items, priced as of the same `asOf`. */
+export interface SnapshotItemsPage {
+  snapshotId: string;
+  items: SnapshotItem[];
+  nextPage: string | null;
+}
+
+/** Items per snapshot page: tills ask for SNAPSHOT_PAGE_SIZE; the server accepts 100–5,000. */
+export const SNAPSHOT_PAGE_SIZE = 1000;
+export const snapshotPageQuerySchema = z.object({
+  pageSize: z.coerce.number().int().min(100).max(5000).optional(),
+});
+export const snapshotItemsQuerySchema = z.object({
+  pageSize: z.coerce.number().int().min(100).max(5000).default(SNAPSHOT_PAGE_SIZE),
+  /** Opaque cursor from the previous page (the server's; the till passes it back unchanged). */
+  after: z.string().min(1).max(400),
+});
+export type SnapshotPageQuery = z.infer<typeof snapshotPageQuerySchema>;
+export type SnapshotItemsQuery = z.infer<typeof snapshotItemsQuerySchema>;
 
 // ------------------------------------------------------------------ envelopes (terminal → server)
 

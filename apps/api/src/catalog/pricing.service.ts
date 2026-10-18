@@ -258,8 +258,21 @@ export class PricingService extends TenantService {
 
   /** Price in force at `at` for a variant in a branch. Exported for the checkout engine (Phase 2). */
   async effectivePrice(db: Database, branchId: string, variantId: string, at?: Date): Promise<EffectivePrice | null> {
+    return (await this.effectivePrices(db, branchId, [variantId], at)).get(variantId) ?? null;
+  }
+
+  /**
+   * Prices in force at `at` for many variants of one branch, in one query (the cart, the branch menu):
+   * the branch's price list (else the tenant default), then per variant the newest price effective by
+   * `at`. Variants without a price are absent from the map.
+   */
+  async effectivePrices(db: Database, branchId: string, variantIds: readonly string[], at?: Date): Promise<Map<string, EffectivePrice>> {
+    const ids = [...new Set(variantIds)];
+    const out = new Map<string, EffectivePrice>();
+    if (!ids.length) return out;
     const atSql = at ? sql`${at.toISOString()}::timestamptz` : effectiveNowSql;
     const { rows } = await db.execute<{
+      variant_id: string;
       id: string;
       price_list_id: string;
       amount: string;
@@ -275,24 +288,28 @@ export class PricingService extends TenantService {
           (SELECT id FROM price_lists WHERE is_default AND archived_at IS NULL)
         ) AS id
       )
-      SELECT pp.id, pp.price_list_id, pp.amount, pl.currency, pl.prices_include_tax, pp.effective_from
+      SELECT v.variant_id, pp.id, pp.price_list_id, pp.amount, pl.currency, pl.prices_include_tax, pp.effective_from
         FROM list
         JOIN price_lists pl ON pl.id = list.id
-        JOIN product_prices pp ON pp.price_list_id = list.id AND pp.variant_id = ${variantId} AND pp.effective_from <= ${atSql}
-       ORDER BY pp.effective_from DESC
-       LIMIT 1`);
-    const r = rows[0];
-    return r
-      ? {
-          priceId: r.id,
-          priceListId: r.price_list_id,
-          variantId,
-          amount: r.amount,
-          currency: r.currency,
-          pricesIncludeTax: r.prices_include_tax,
-          effectiveFrom: r.effective_from,
-        }
-      : null;
+        CROSS JOIN (VALUES ${sql.join(ids.map((id) => sql`(${id}::uuid)`), sql`, `)}) AS v(variant_id)
+        JOIN LATERAL (
+          SELECT p.id, p.price_list_id, p.amount, p.effective_from FROM product_prices p
+           WHERE p.price_list_id = list.id AND p.variant_id = v.variant_id AND p.effective_from <= ${atSql}
+           ORDER BY p.effective_from DESC
+           LIMIT 1
+        ) pp ON true`);
+    for (const r of rows) {
+      out.set(r.variant_id, {
+        priceId: r.id,
+        priceListId: r.price_list_id,
+        variantId: r.variant_id,
+        amount: r.amount,
+        currency: r.currency,
+        pricesIncludeTax: r.prices_include_tax,
+        effectiveFrom: r.effective_from,
+      });
+    }
+    return out;
   }
 
   private async clearDefault(db: Database) {

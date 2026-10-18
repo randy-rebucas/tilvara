@@ -14,32 +14,50 @@ import {
 } from '../../src/backup/backup.js';
 import { tableRowCounts } from '../../src/backup/catalog.js';
 import { pgToolsFromEnv, withDatabase } from '../../src/backup/pg-tools.js';
-import { expectedMigrationHead } from '../../src/migrate.js';
-import { TEST_DATABASE_URL } from './env.js';
+import { expectedMigrationHead, runMigrations } from '../../src/migrate.js';
+import { createTenant } from '../../src/platform.js';
+import { TEST_DATABASE_MIGRATOR_URL, TEST_DATABASE_URL } from './env.js';
 
 /**
- * ADR-0016 slice 4: a backup of onepos_test is encrypted, describes exactly what it holds, restores
- * into a scratch database that verifies clean, and the verification catches a restore that differs
- * (rows, migrations, grants, RLS, policies, triggers), a changed file and the wrong key.
+ * ADR-0016 slice 4: a backup is encrypted, describes exactly what it holds, restores into a scratch
+ * database that verifies clean, and the verification catches a restore that differs (rows,
+ * migrations, grants, RLS, policies, triggers), a changed file and the wrong key.
+ *
+ * The source is a database of its own (`onepos_drill_src_*`: set up like init/01-roles.sql, migrated,
+ * a few businesses), not onepos_test, which grows with every run and would make this test slower
+ * each time (it reached 564 MB and a 120 s restore).
  */
 const need = (name: string) => {
   const v = process.env[name];
   if (!v) throw new Error(`${name} must be set for the backup tests (see .env.example)`);
   return v;
 };
-const BACKUP_URL = need('TEST_BACKUP_DATABASE_URL');
-if (!BACKUP_URL.includes('onepos_test')) throw new Error('TEST_BACKUP_DATABASE_URL must point at onepos_test');
 const ADMIN_URL = need('DRILL_ADMIN_URL');
 const tools = pgToolsFromEnv();
+const run = Date.now().toString(36);
+const source = `onepos_drill_src_${run}`;
+const BACKUP_URL = withDatabase(need('TEST_BACKUP_DATABASE_URL'), source);
 
 let dir = '';
 let identity = '';
 let backup: BackupResult;
-const scratch = `onepos_drill_t${Date.now().toString(36)}`;
+const scratch = `onepos_drill_t${run}`;
 const scratchUrl = withDatabase(ADMIN_URL, scratch);
 const backupPool = new pg.Pool({ connectionString: BACKUP_URL, max: 1 });
-const appPool = new pg.Pool({ connectionString: TEST_DATABASE_URL, max: 1 });
-const testAdmin = new pg.Pool({ connectionString: withDatabase(ADMIN_URL, 'onepos_test'), max: 1 });
+const appPool = new pg.Pool({ connectionString: withDatabase(TEST_DATABASE_URL, source), max: 1 });
+const testAdmin = new pg.Pool({ connectionString: withDatabase(ADMIN_URL, source), max: 1 });
+
+/** A small, migrated database with a few businesses, set up the way init/01-roles.sql sets up onepos. */
+async function createSource() {
+  await sql(ADMIN_URL, `CREATE DATABASE ${source} OWNER onepos_migrator TEMPLATE template0 ENCODING 'UTF8'`);
+  await sql(withDatabase(ADMIN_URL, source), `ALTER SCHEMA public OWNER TO onepos_migrator;
+    REVOKE ALL ON SCHEMA public FROM PUBLIC;
+    GRANT USAGE ON SCHEMA public TO onepos_app, onepos_worker, onepos_readonly;`);
+  await runMigrations(withDatabase(TEST_DATABASE_MIGRATOR_URL, source));
+  for (const name of ['Alpha Mart', 'Bravo Cafe', 'Carinderia ni Cora']) {
+    await createTenant(appPool, { slug: `${name.toLowerCase().replace(/\W+/g, '-')}-${run}`, name });
+  }
+}
 
 async function sql<T extends pg.QueryResultRow>(url: string, text: string, params: unknown[] = []) {
   const c = new pg.Client({ connectionString: url });
@@ -52,15 +70,16 @@ async function sql<T extends pg.QueryResultRow>(url: string, text: string, param
 }
 
 beforeAll(async () => {
+  await createSource();
   dir = await mkdtemp(join(tmpdir(), 'onepos-backup-'));
   identity = await generateIdentity();
   backup = await createBackup({ url: BACKUP_URL, recipients: [await identityToRecipient(identity)], dir, tools });
 }, 120_000);
 
 afterAll(async () => {
-  await dropScratchDatabase(ADMIN_URL, scratch).catch(() => undefined);
-  await rm(dir, { recursive: true, force: true });
   await Promise.all([backupPool.end(), appPool.end(), testAdmin.end()]);
+  for (const db of [scratch, `${scratch}_c`, source]) await dropScratchDatabase(ADMIN_URL, db).catch(() => undefined);
+  await rm(dir, { recursive: true, force: true });
 });
 
 describe('backup', () => {
@@ -72,12 +91,12 @@ describe('backup', () => {
       expect([clear, bytes.includes(Buffer.from(clear))]).toEqual([clear, false]);
     }
     expect((await readdir(dir)).sort()).toEqual([backup.manifest.file, backup.manifest.file.replace('.dump.age', '.manifest.json')]);
-    expect(backup.manifest.dumpBytes).toBeGreaterThan(100_000);
+    expect(backup.manifest.dumpBytes).toBeGreaterThan(20_000);
   });
 
   it('describes the database at the dump snapshot: every table count, the migration head, the posture', async () => {
     const m = backup.manifest;
-    expect(m.database).toBe('onepos_test');
+    expect(m.database).toBe(source);
     expect(m.migrations.count).toBe(expectedMigrationHead().count);
     // The run is recorded after the snapshot, so the live table holds one row more than the archive.
     const live = await tableRowCounts(backupPool);
