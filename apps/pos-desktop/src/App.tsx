@@ -11,7 +11,7 @@ import { TillSetup } from './components/Till';
 import { useT } from './i18n';
 import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
-import type { Me } from './types';
+import { servesTables, type Me } from './types';
 
 type Stage =
   | { name: 'signin' }
@@ -71,8 +71,9 @@ function Counter() {
     );
   }
   if (stage.name === 'register') {
-    const kitchen = stage.me.activeTenant?.permissions.includes('kitchen.operate');
-    const floor = stage.me.activeTenant?.permissions.includes('restaurant.orders');
+    // A retail business has no restaurant service (business type), whatever the person may do.
+    const kitchen = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
+    const floor = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
       <Shell onSignOut={leave}>
         <RegisterPicker
@@ -145,7 +146,7 @@ function Counter() {
 
   const { me, shift } = stage;
   const permissions = me.activeTenant?.permissions ?? [];
-  const tableService = permissions.includes('restaurant.orders');
+  const tableService = servesTables(me) && permissions.includes('restaurant.orders');
   const tabs: [Tab, string][] = [
     ['sell', t('nav.sell')],
     ...(tableService ? ([['tables', t('nav.tables')]] as [Tab, string][]) : []),

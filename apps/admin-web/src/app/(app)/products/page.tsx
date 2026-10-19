@@ -2,6 +2,7 @@ import { ChevronRight, Search } from 'lucide-react';
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type CurrentPrice, type Me, type PriceList, type Product, type TaxCategory, type Uom } from '@/lib/api';
+import { sellsByWeight } from '@/lib/business-type';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { AddProduct } from './add-product';
@@ -28,6 +29,8 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const prices = defaultList ? await apiOrNull<{ data: CurrentPrice[] }>(`/price-lists/${defaultList.id}/prices`) : null;
   const priceOf = new Map(prices?.data.map((p) => [p.variantId, p.amount]));
   const canManage = me.activeTenant?.permissions.includes('catalog.manage') ?? false;
+  // A restaurant does not sell by weight (business type): no "Sold by" unless an item already does.
+  const byWeight = sellsByWeight(me.activeTenant?.businessType) || (products?.data.some((p) => p.soldBy === 'WEIGHT') ?? false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -39,7 +42,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <label className="sr-only" htmlFor="q">{t('prod.search')}</label>
           <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
         </form>
-        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} />}
+        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} byWeight={sellsByWeight(me.activeTenant?.businessType)} />}
       </div>
 
       <Note denom="blue" className="overflow-x-auto pr-2">
@@ -50,7 +53,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 <th>{t('prod.name')}</th>
                 <th>{t('prod.sku')}</th>
                 <th>{t('prod.barcodeCol')}</th>
-                <th>{t('prod.soldBy')}</th>
+                {byWeight && <th>{t('prod.soldBy')}</th>}
                 <th className="num">{t('price.current')}</th>
                 <th>{t('common.status')}</th>
               </tr>
@@ -67,7 +70,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     </td>
                     <td><Serial className="text-ink">{first?.sku}</Serial></td>
                     <td><Serial>{first?.barcodes[0] ?? '—'}</Serial></td>
-                    <td>{p.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}</td>
+                    {byWeight && <td>{p.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}</td>}
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
                     <td className="whitespace-nowrap">
                       {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}

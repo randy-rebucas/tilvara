@@ -1,5 +1,17 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Query } from '@nestjs/common';
 import {
+  cancelSupplierInvoiceSchema,
+  createSupplierInvoiceSchema,
+  createSupplierPaymentSchema,
+  payablesAgingQuerySchema,
+  supplierInvoiceListQuerySchema,
+  uninvoicedReceiptsQuerySchema,
+  type CancelSupplierInvoiceInput,
+  type CreateSupplierInvoiceInput,
+  type CreateSupplierPaymentInput,
+  type PayablesAgingQuery,
+  type SupplierInvoiceListQuery,
+  type UninvoicedReceiptsQuery,
   createGoodsReceiptSchema,
   createPurchaseOrderSchema,
   createSupplierReturnSchema,
@@ -27,13 +39,14 @@ import {
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
+import { PayablesService } from './payables.service.js';
 import { PurchaseOrdersService } from './purchase-orders.service.js';
 import { ReceivingService } from './receiving.service.js';
 import { SuppliersService } from './suppliers.service.js';
 
 const id = new ZodPipe(idParamSchema);
 
-/** Suppliers, purchase orders, goods receipts and supplier returns. Scope-aware permissions are checked in the services. */
+/** Suppliers, purchase orders, goods receipts, supplier returns, invoices and payments. Scope-aware permissions are checked in the services. */
 @RequireTenant()
 @Controller()
 export class PurchasingController {
@@ -41,6 +54,7 @@ export class PurchasingController {
     @Inject(SuppliersService) private readonly suppliers: SuppliersService,
     @Inject(PurchaseOrdersService) private readonly orders: PurchaseOrdersService,
     @Inject(ReceivingService) private readonly receiving: ReceivingService,
+    @Inject(PayablesService) private readonly payables: PayablesService,
   ) {}
 
   // suppliers
@@ -142,5 +156,50 @@ export class PurchasingController {
   @Get('supplier-returns/:id')
   getReturn(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
     return this.receiving.getReturn(auth, returnId);
+  }
+
+  // payables — books evidence: Idempotency-Key is mandatory
+  @Get('uninvoiced-receipts')
+  uninvoicedReceipts(@Auth() auth: AuthContext, @Query(new ZodPipe(uninvoicedReceiptsQuerySchema)) q: UninvoicedReceiptsQuery) {
+    return this.payables.uninvoicedReceipts(auth, q);
+  }
+
+  @Idempotent({ required: true })
+  @Post('supplier-invoices')
+  createInvoice(@Auth() auth: AuthContext, @Body(new ZodPipe(createSupplierInvoiceSchema)) body: CreateSupplierInvoiceInput) {
+    return this.payables.createInvoice(auth, body);
+  }
+
+  @Get('supplier-invoices')
+  listInvoices(@Auth() auth: AuthContext, @Query(new ZodPipe(supplierInvoiceListQuerySchema)) q: SupplierInvoiceListQuery) {
+    return this.payables.listInvoices(auth, q);
+  }
+
+  @Get('supplier-invoices/:id')
+  getInvoice(@Auth() auth: AuthContext, @Param('id', id) invoiceId: string) {
+    return this.payables.getInvoice(auth, invoiceId);
+  }
+
+  @Idempotent({ required: true })
+  @HttpCode(200)
+  @Post('supplier-invoices/:id/cancel')
+  cancelInvoice(@Auth() auth: AuthContext, @Param('id', id) invoiceId: string, @Body(new ZodPipe(cancelSupplierInvoiceSchema)) body: CancelSupplierInvoiceInput) {
+    return this.payables.cancelInvoice(auth, invoiceId, body);
+  }
+
+  @Idempotent({ required: true })
+  @Post('supplier-invoices/:id/payments')
+  pay(@Auth() auth: AuthContext, @Param('id', id) invoiceId: string, @Body(new ZodPipe(createSupplierPaymentSchema)) body: CreateSupplierPaymentInput) {
+    return this.payables.pay(auth, invoiceId, body);
+  }
+
+  @Get('supplier-payments/:id')
+  getPayment(@Auth() auth: AuthContext, @Param('id', id) paymentId: string) {
+    return this.payables.getPayment(auth, paymentId);
+  }
+
+  @Get('reports/payables-aging')
+  aging(@Auth() auth: AuthContext, @Query(new ZodPipe(payablesAgingQuerySchema)) q: PayablesAgingQuery) {
+    return this.payables.aging(auth, q);
   }
 }

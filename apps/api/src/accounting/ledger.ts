@@ -6,7 +6,8 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 
 export type SourceType =
   | 'SALE' | 'SALE_RETURN' | 'GOODS_RECEIPT' | 'SUPPLIER_RETURN' | 'STOCK_ADJUSTMENT' | 'STOCK_COUNT'
-  | 'TRANSFER_DISPATCH' | 'TRANSFER_RECEIPT' | 'CASH_MOVEMENT' | 'CASH_VARIANCE' | 'MANUAL' | 'REVERSAL';
+  | 'TRANSFER_DISPATCH' | 'TRANSFER_RECEIPT' | 'CASH_MOVEMENT' | 'CASH_VARIANCE' | 'SUPPLIER_INVOICE' | 'SUPPLIER_PAYMENT'
+  | 'MANUAL' | 'REVERSAL';
 
 export interface PostInput {
   tenantId: string;

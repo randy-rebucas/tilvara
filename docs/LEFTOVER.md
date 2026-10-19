@@ -9,7 +9,14 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 - ⏳ Trademark and domain clearance for "Tilvara" (WIPO, IPOPHL classes 9/42, `.com`/`.ph`) before any public launch; `api.1pos.ph` in `desktop.test.ts` is only an example host.
 
 ## Phase 0 — Repository & architecture
-- ⏳ CI: `.github/workflows/ci.yml` is written (session 16) but has never run; it needs the remote repository (D3). Expect to adjust it on its first run
+- ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux)
+
+## Business types (session 17)
+- ⬜ Sample items follow the type: `SAMPLE_ITEMS` is one café set for every business; a retail shop should get shop items (and a restaurant a menu).
+- ⬜ Role templates follow the type: a RETAIL business still gets Restaurant Manager and Kitchen Crew roles, and cashiers/branch managers still hold `restaurant.orders`/`kitchen.operate` (harmless: the screens and the server leave restaurant service out, but the role editor lists them).
+- ⬜ The admin and till do not hide features the *plan* lacks (Starter has no `restaurant`): `/me` carries the business type only, so a Starter owner of a HYBRID/RESTAURANT business still sees restaurant screens that answer `ENTITLEMENT_REQUIRED`. Add `features` to `/me` and gate on both.
+- ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; switching back lets it be settled.
+- ⬜ Selling by weight is hidden for RESTAURANT on screens only (product form and list); the API still accepts `soldBy: WEIGHT` and scale labels from any business.
 
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2

@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { BusinessTypeField } from '@/components/business-type-field';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
@@ -34,6 +35,7 @@ export function SignUpForm() {
         displayName: f.get('displayName'),
         businessName: f.get('businessName'),
         tenantSlug: f.get('tenantSlug'),
+        businessType: f.get('businessType'),
       },
       { refresh: false },
     );
@@ -49,6 +51,7 @@ export function SignUpForm() {
       <TextField label={t('auth.slug')} name="tenantSlug" required value={slug} hint={t('auth.slugHint')}
         error={fieldError('tenantSlug') ?? (error?.code === 'SLUG_UNAVAILABLE' ? error.message : undefined)}
         onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); }} />
+      <BusinessTypeField error={fieldError('businessType')} />
       <TextField label={t('auth.displayName')} name="displayName" autoComplete="name" required error={fieldError('displayName')} />
       <TextField label={t('auth.email')} name="email" type="email" autoComplete="email" required
         error={fieldError('email') ?? (error?.code === 'EMAIL_UNAVAILABLE' ? error.message : undefined)} />

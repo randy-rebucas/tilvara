@@ -3,7 +3,9 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
-import { api, apiOrNull, ApiError, type Branch } from '@/lib/api';
+import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
+import { hasRestaurant } from '@/lib/business-type';
+import { RestaurantOff } from '@/components/restaurant-off';
 import { PrintButton } from '@/components/print-button';
 import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
@@ -76,6 +78,16 @@ export async function ReportsChrome({ tab, scope, error, children }: {
   const { t, lang } = await getT();
   const { branches, branch, from, to, day } = scope;
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
+  // A retail business has no restaurant reports (business type): one group, so no group tabs either.
+  const restaurant = hasRestaurant((await api<Me>('/me')).activeTenant?.businessType);
+  if (group === 'restaurant' && !restaurant) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
+        <RestaurantOff />
+      </div>
+    );
+  }
   const params = (k: ReportTab, extra: Record<string, string> = {}) =>
     new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }), ...extra });
   const keep = (k: ReportTab) => `${PATHS[k]}?${params(k)}`;
@@ -90,7 +102,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
         </p>
       )}
       <div className="contents print:hidden">
-      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
+      {restaurant && <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />}
       <SubNav label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />
       {branch && (

@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { bigint, char, check, date, foreignKey, index, integer, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, char, check, date, foreignKey, index, integer, numeric, pgTable, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
-import { branches } from './organization.js';
+import { branches, legalEntities } from './organization.js';
 
 const money = (name: string) => numeric(name, { precision: 20, scale: 4 });
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -190,5 +190,107 @@ export const supplierReturnLines = pgTable(
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     check('supplier_return_lines_quantity_check', sql`${t.quantity} > 0`),
     check('supplier_return_lines_cost_check', sql`${t.creditUnitCost} >= 0`),
+  ],
+);
+
+// ------------------------------------------------------------------ supplier invoices and payments (session 16)
+
+/**
+ * A supplier's invoice for whole goods receipts of one branch: clears their GRNI, claims input VAT
+ * and opens a payable (ADR-0013 amendment). OPEN → CANCELLED only (trigger), and only while unpaid.
+ */
+export const supplierInvoices = pgTable(
+  'supplier_invoices',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    entryNumber: bigint('entry_number', { mode: 'number' }).notNull(),
+    invoiceNumber: text('invoice_number').notNull(),
+    invoiceDate: date('invoice_date').notNull(),
+    dueDate: date('due_date').notNull(),
+    currency: char('currency', { length: 3 }).notNull().default('PHP'),
+    netAmount: money('net_amount').notNull(),
+    vatAmount: money('vat_amount').notNull(),
+    totalAmount: money('total_amount').notNull(),
+    /** GRNI cleared: the receipts at cost less returns against them before invoicing. */
+    matchedAmount: money('matched_amount').notNull(),
+    inputVat: money('input_vat').notNull(),
+    status: text('status').notNull().default('OPEN'),
+    notes: text('notes'),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    cancelledBy: uuid('cancelled_by'),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    unique('supplier_invoices_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('supplier_invoices_number_unique').on(t.tenantId, t.legalEntityId, t.entryNumber),
+    uniqueIndex('supplier_invoices_supplier_ref_unique').on(t.tenantId, t.supplierId, sql`lower(${t.invoiceNumber})`).where(sql`${t.status} = 'OPEN'`),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierId], foreignColumns: [suppliers.tenantId, suppliers.id] }),
+    index('supplier_invoices_supplier_idx').on(t.tenantId, t.supplierId, t.status),
+    index('supplier_invoices_due_idx').on(t.tenantId, t.legalEntityId, t.dueDate),
+    check('supplier_invoices_status_check', sql`${t.status} IN ('OPEN','CANCELLED')`),
+    check('supplier_invoices_number_check', sql`length(trim(${t.invoiceNumber})) > 0`),
+    check('supplier_invoices_amounts_check', sql`${t.netAmount} >= 0 AND ${t.vatAmount} >= 0 AND ${t.totalAmount} = ${t.netAmount} + ${t.vatAmount} AND ${t.inputVat} IN (0, ${t.vatAmount}) AND ${t.matchedAmount} >= 0`),
+    check('supplier_invoices_due_check', sql`${t.dueDate} >= ${t.invoiceDate}`),
+    check('supplier_invoices_cancel_check', sql`(${t.status} = 'CANCELLED') = (${t.cancelledAt} IS NOT NULL) AND (${t.status} = 'OPEN' OR length(trim(coalesce(${t.cancelReason}, ''))) > 0)`),
+  ],
+);
+
+/** The receipts an invoice covers. A receipt is on at most one open invoice; `active` only goes true → false (cancel). */
+export const supplierInvoiceReceipts = pgTable(
+  'supplier_invoice_receipts',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id').notNull(),
+    goodsReceiptId: uuid('goods_receipt_id').notNull(),
+    matchedAmount: money('matched_amount').notNull(),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('supplier_invoice_receipts_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('supplier_invoice_receipts_pair_unique').on(t.tenantId, t.supplierInvoiceId, t.goodsReceiptId),
+    uniqueIndex('supplier_invoice_receipts_active_unique').on(t.tenantId, t.goodsReceiptId).where(sql`${t.active}`),
+    foreignKey({ columns: [t.tenantId, t.supplierInvoiceId], foreignColumns: [supplierInvoices.tenantId, supplierInvoices.id] }),
+    foreignKey({ columns: [t.tenantId, t.goodsReceiptId], foreignColumns: [goodsReceipts.tenantId, goodsReceipts.id] }),
+  ],
+);
+
+/** Append-only. A payment against one invoice, from the bank; never more than the invoice's open balance (service, under a lock). */
+export const supplierPayments = pgTable(
+  'supplier_payments',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id').notNull(),
+    paymentNumber: bigint('payment_number', { mode: 'number' }).notNull(),
+    amount: money('amount').notNull(),
+    paidOn: date('paid_on').notNull(),
+    method: text('method').notNull(),
+    reference: text('reference'),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('supplier_payments_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('supplier_payments_number_unique').on(t.tenantId, t.legalEntityId, t.paymentNumber),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierId], foreignColumns: [suppliers.tenantId, suppliers.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierInvoiceId], foreignColumns: [supplierInvoices.tenantId, supplierInvoices.id] }),
+    index('supplier_payments_invoice_idx').on(t.tenantId, t.supplierInvoiceId),
+    check('supplier_payments_amount_check', sql`${t.amount} > 0`),
+    check('supplier_payments_method_check', sql`${t.method} IN ('BANK_TRANSFER','CHECK','OTHER')`),
   ],
 );

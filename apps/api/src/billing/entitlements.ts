@@ -1,5 +1,5 @@
 import { HttpStatus } from '@nestjs/common';
-import { sql, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
+import { sql, type BusinessType, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
 import { AppError } from '../infrastructure/http-error.filter.js';
 
 export const TRIAL_PLAN = 'growth';
@@ -56,7 +56,25 @@ export async function assertWithinLimit(db: Database, limit: keyof PlanLimits, a
   }
 }
 
+/** The business's type (`tenants.business_type`), inside its tenant transaction. */
+export async function businessType(db: Database): Promise<BusinessType> {
+  const { rows } = await db.execute<{ business_type: BusinessType }>(sql`SELECT business_type FROM tenants`);
+  return rows[0]?.business_type ?? 'HYBRID';
+}
+
+/**
+ * Refuse a feature the plan does not include, or (restaurant service) one the business type leaves
+ * out. Reads stay open, as after a plan change, so the records made before remain visible.
+ */
 export async function assertFeature(db: Database, feature: PlanFeature): Promise<void> {
+  if (feature === 'restaurant' && (await businessType(db)) === 'RETAIL') {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is set up as a retail shop. Change its type to use restaurant service.',
+      HttpStatus.FORBIDDEN,
+      { feature, businessType: 'RETAIL' },
+    );
+  }
   const plan = await currentPlan(db);
   if (!plan.features.includes(feature)) {
     throw new AppError('ENTITLEMENT_REQUIRED', `Your ${plan.planCode} plan does not include ${feature}`, HttpStatus.FORBIDDEN, {

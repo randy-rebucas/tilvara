@@ -2,9 +2,13 @@
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  activeTenant: { tenantId: string; permissions: string[] } | null;
+  /** businessType: RETAIL leaves out restaurant service (tables, floor, kitchen display). */
+  activeTenant: { tenantId: string; businessType?: 'RETAIL' | 'RESTAURANT' | 'HYBRID'; permissions: string[] } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
+
+/** Whether the business serves tables at all (business type); permissions decide who does. */
+export const servesTables = (me: Me) => me.activeTenant?.businessType !== 'RETAIL';
 
 export interface Workstation {
   register: { id: string; code: string; name: string };

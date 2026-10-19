@@ -57,7 +57,7 @@ describe('chart of accounts', () => {
     const s = await shop('gl-chart');
     const accounts = (await http().get('/v1/accounts').query({ legalEntityId: s.le }).set(s.accountant).expect(200)).body.data as { systemKey: string; code: string; name: string; type: string }[];
     expect(accounts.map((a) => [a.systemKey, a.code, a.name, a.type]).sort()).toEqual(DEFAULT_CHART.map((a) => [a.key, a.code, a.name, a.type]).sort());
-    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql']
+    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql', '0069_supplier_invoices_rls.sql']
       .map((f) => readFileSync(new URL(`../../../../packages/database/drizzle/${f}`, import.meta.url), 'utf8'))
       .join('\n');
     const seeded = [...sql.matchAll(/\('([A-Z_]+)', '(\d{4})', '([^']+)', '([A-Z]+)'\)/g)].map((m) => [m[1], m[2], m[3], m[4]]);

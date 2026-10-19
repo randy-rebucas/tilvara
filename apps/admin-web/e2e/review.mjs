@@ -72,6 +72,7 @@ try {
   await fill('displayName', 'Nena Reyes');
   await fill('email', email);
   await fill('password', PASSWORD);
+  await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
   await submit();
   await waitFor(`location.pathname === '/'`);
   const entity = await bff('POST', '/api/v1/legal-entities', { registeredName: 'Nena Reyes Trading', tin: '123-456-789', vatStatus: 'NON_VAT' }, true);

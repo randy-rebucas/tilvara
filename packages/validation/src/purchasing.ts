@@ -160,3 +160,53 @@ export type CreateSupplierReturnInput = z.infer<typeof createSupplierReturnSchem
 
 export const supplierReturnListQuerySchema = z.object({ branchId: z.uuid(), supplierId: z.uuid().optional() });
 export type SupplierReturnListQuery = z.infer<typeof supplierReturnListQuerySchema>;
+
+// ------------------------------------------------------------------ supplier invoices and payments (session 16)
+
+/** Pesos with at most two decimals, as printed on an invoice. */
+const peso = z.string().trim().regex(/^\d{1,16}(\.\d{1,2})?$/, 'Use pesos such as "1125.60"');
+
+export const createSupplierInvoiceSchema = z
+  .object({
+    supplierId: z.uuid(),
+    /** The supplier's own invoice number. */
+    invoiceNumber: z.string().trim().min(1).max(60),
+    invoiceDate: z.iso.date(),
+    /** Defaults to the invoice date plus the supplier's payment terms. */
+    dueDate: z.iso.date().optional(),
+    /** Whole goods receipts of one branch, not yet on an open invoice. */
+    goodsReceiptIds: z.array(z.uuid()).min(1).max(100),
+    netAmount: peso,
+    vatAmount: peso,
+    notes: optionalText(1000),
+  })
+  .superRefine((v, ctx) => {
+    if (new Set(v.goodsReceiptIds).size !== v.goodsReceiptIds.length) ctx.addIssue({ code: 'custom', path: ['goodsReceiptIds'], message: 'Each receipt once' });
+    if (v.dueDate && v.dueDate < v.invoiceDate) ctx.addIssue({ code: 'custom', path: ['dueDate'], message: 'Due on or after the invoice date' });
+  });
+export type CreateSupplierInvoiceInput = z.infer<typeof createSupplierInvoiceSchema>;
+
+export const supplierInvoiceListQuerySchema = z.object({
+  legalEntityId: z.uuid(),
+  supplierId: z.uuid().optional(),
+  /** OPEN = not cancelled and not fully paid; PAID; CANCELLED. */
+  status: z.enum(['OPEN', 'PAID', 'CANCELLED']).optional(),
+});
+export type SupplierInvoiceListQuery = z.infer<typeof supplierInvoiceListQuerySchema>;
+
+export const uninvoicedReceiptsQuerySchema = z.object({ branchId: z.uuid(), supplierId: z.uuid() });
+export type UninvoicedReceiptsQuery = z.infer<typeof uninvoicedReceiptsQuerySchema>;
+
+export const cancelSupplierInvoiceSchema = z.object({ reason });
+export type CancelSupplierInvoiceInput = z.infer<typeof cancelSupplierInvoiceSchema>;
+
+export const createSupplierPaymentSchema = z.object({
+  amount: peso.refine((v) => Number(v) > 0, 'More than zero'),
+  paidOn: z.iso.date(),
+  method: z.enum(['BANK_TRANSFER', 'CHECK', 'OTHER']),
+  reference: optionalText(100),
+});
+export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
+
+export const payablesAgingQuerySchema = z.object({ legalEntityId: z.uuid(), asOf: z.iso.date().optional() });
+export type PayablesAgingQuery = z.infer<typeof payablesAgingQuerySchema>;

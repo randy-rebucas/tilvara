@@ -20,7 +20,7 @@ export async function createApp(envOverrides: Partial<ServerEnv> = {}, logger?: 
   configureApp(app, logger);
   await app.init();
   // Adversarial tests fire many parallel requests at one server.
-  app.getHttpServer().setMaxListeners(120);
+  app.getHttpServer().setMaxListeners(160);
   return app;
 }
 

@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react';
 import { Empty, Note, PageHeader } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
-import { apiOrNull, type Branch } from '@/lib/api';
+import { api, apiOrNull, type Branch, type Me } from '@/lib/api';
+import { hasRestaurant } from '@/lib/business-type';
+import { RestaurantOff } from '@/components/restaurant-off';
 import { getT } from '@/i18n/server';
 
 export type RestaurantTab = 'floor' | 'menus' | 'modifiers' | 'recipes' | 'settings';
@@ -27,6 +29,15 @@ export async function RestaurantChrome({ tab, branches = [], branch, children }:
   const { t } = await getT();
   const q = branch ? `?branch=${branch.id}` : '';
   const perBranch = PER_BRANCH.includes(tab);
+  // A retail business has no restaurant service (business type; the API refuses its changes too).
+  if (!hasRestaurant((await api<Me>('/me')).activeTenant?.businessType)) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title={t('rest.title')} lede={t('rest.lede')} />
+        <RestaurantOff />
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('rest.title')} lede={t('rest.lede')} />

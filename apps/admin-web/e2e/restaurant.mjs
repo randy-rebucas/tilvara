@@ -42,6 +42,7 @@ try {
   await fill('displayName', 'Lito Santos');
   await fill('email', `${slug}@example.ph`);
   await fill('password', 'correct horse battery staple');
+  await evaluate(`document.querySelector('input[name=businessType][value=RESTAURANT]').click()`);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.body.innerText.includes('Overview')`);
 

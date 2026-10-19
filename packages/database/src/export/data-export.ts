@@ -98,8 +98,8 @@ export async function writeDataExport(client: PoolClient, out: Writable, info: D
     `SELECT to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now, current_setting('app.tenant_id', true) AS tenant_id`,
   );
   if (!meta?.tenant_id) throw new Error('writeDataExport needs a tenant context');
-  const { rows: [business] } = await client.query<{ id: string; slug: string; name: string; status: string; timezone: string; default_currency: string }>(
-    'SELECT id, slug, name, status, timezone, default_currency FROM tenants',
+  const { rows: [business] } = await client.query<{ id: string; slug: string; name: string; status: string; timezone: string; default_currency: string; business_type: string }>(
+    'SELECT id, slug, name, status, timezone, default_currency, business_type FROM tenants',
   );
   if (!business || business.id !== meta.tenant_id) throw new Error('the business is not visible in its own context');
 
@@ -117,7 +117,7 @@ export async function writeDataExport(client: PoolClient, out: Writable, info: D
     format: 'tilvara-data-export',
     version: EXPORT_FORMAT_VERSION,
     exportId: info.exportId,
-    business: { id: business.id, slug: business.slug, name: business.name, status: business.status, timezone: business.timezone, currency: business.default_currency },
+    business: { id: business.id, slug: business.slug, name: business.name, status: business.status, timezone: business.timezone, currency: business.default_currency, businessType: business.business_type },
     generatedAt: meta.now,
     files: [
       { name: 'members.csv', rows: memberCount },

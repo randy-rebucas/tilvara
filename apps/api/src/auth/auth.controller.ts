@@ -184,6 +184,7 @@ export class AuthController {
 
   @Get('me')
   async me(@Auth() auth: AuthContext) {
+    const business = auth.tenant ? await this.auth.tenantProfile(auth.tenant.tenantId, auth) : null;
     return {
       userId: auth.userId,
       user: await this.auth.profile(auth.userId),
@@ -192,6 +193,8 @@ export class AuthController {
             tenantId: auth.tenant.tenantId,
             membershipId: auth.tenant.membershipId,
             status: auth.tenant.status,
+            // Which features the screens offer (the server refuses restaurant writes for RETAIL itself).
+            businessType: business!.businessType,
             permissions: permissionCodes(auth.tenant.grants),
             grants: auth.tenant.grants,
           }
@@ -202,7 +205,7 @@ export class AuthController {
       // support session this token is, if any (read-only, until expiresAt at the latest).
       staff: await this.auth.isStaff(auth.userId),
       support: auth.support
-        ? { grantId: auth.support.grantId, tenantName: await this.auth.tenantName(auth.tenant!.tenantId, auth), expiresAt: auth.support.expiresAt.toISOString() }
+        ? { grantId: auth.support.grantId, tenantName: business!.name, expiresAt: auth.support.expiresAt.toISOString() }
         : null,
     };
   }

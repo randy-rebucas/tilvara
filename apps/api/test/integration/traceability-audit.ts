@@ -11,7 +11,8 @@ import type pg from 'pg';
  *   value ties:          per document and branch, the entry's inventory lines equal the value of
  *                        that document's movements, and goods in transit clear when received;
  *   restaurant:          a settled bill's checks add up to it, no bill line is paid beyond the whole,
- *                        and an order's state follows its bill (Phase 4).
+ *                        and an order's state follows its bill (Phase 4);
+ *   payables:            per supplier invoice, the books owe what it still owes and cleared the GRNI its receipts held.
  *
  * Also used against the dev database after migrations (scripts in the exit review).
  */
@@ -44,7 +45,9 @@ const DOCS = `
     UNION ALL SELECT 'TRANSFER_DISPATCH', id, from_branch_id, 0 FROM stock_transfers
     UNION ALL SELECT 'TRANSFER_RECEIPT', id, to_branch_id, 0 FROM stock_transfers WHERE status = 'RECEIVED'
     UNION ALL SELECT 'CASH_MOVEMENT', m.id, s.branch_id, m.amount FROM cash_movements m JOIN cashier_sessions s ON s.id = m.cashier_session_id WHERE m.type IN ('PAY_IN', 'PAY_OUT')
-    UNION ALL SELECT 'CASH_VARIANCE', r.cashier_session_id, s.branch_id, r.variance FROM cash_reconciliations r JOIN cashier_sessions s ON s.id = r.cashier_session_id),
+    UNION ALL SELECT 'CASH_VARIANCE', r.cashier_session_id, s.branch_id, r.variance FROM cash_reconciliations r JOIN cashier_sessions s ON s.id = r.cashier_session_id
+    UNION ALL SELECT 'SUPPLIER_INVOICE', id, branch_id, total_amount FROM supplier_invoices
+    UNION ALL SELECT 'SUPPLIER_PAYMENT', id, branch_id, amount FROM supplier_payments),
   inv AS (
     SELECT e.source_type AS doc_type, e.source_id AS doc_id, l.branch_id, sum(l.debit - l.credit) AS amount
       FROM journal_entries e JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
@@ -77,6 +80,24 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
            (SELECT coalesce(-sum(m.value), 0) FROM stock_movements m JOIN stock_transfer_lines x ON x.id = m.stock_transfer_line_id
              WHERE x.stock_transfer_id = t.id AND m.type = 'TRANSFER_OUT')::text AS sent
       FROM stock_transfers t`,
+  // Payables (ADR-0013 amendment, session 16): per invoice, the payable left in the books (its entry,
+  // its reversal, its payments) is what it still owes, and the GRNI it cleared is what its receipts held.
+  'supplier invoice whose payable or cleared GRNI disagrees with it': `
+    WITH ent AS (
+      SELECT i.id AS invoice_id, e.id AS entry_id FROM supplier_invoices i JOIN journal_entries e ON e.source_type = 'SUPPLIER_INVOICE' AND e.source_id = i.id
+      UNION ALL SELECT i.id, r.id FROM supplier_invoices i JOIN journal_entries e ON e.source_type = 'SUPPLIER_INVOICE' AND e.source_id = i.id JOIN journal_entries r ON r.reverses_entry_id = e.id
+      UNION ALL SELECT p.supplier_invoice_id, e.id FROM supplier_payments p JOIN journal_entries e ON e.source_type = 'SUPPLIER_PAYMENT' AND e.source_id = p.id),
+    books AS (
+      SELECT ent.invoice_id, sum(l.credit - l.debit) FILTER (WHERE a.system_key = 'ACCOUNTS_PAYABLE') AS payable,
+             sum(l.debit - l.credit) FILTER (WHERE a.system_key = 'GRNI' AND e.source_type = 'SUPPLIER_INVOICE') AS grni
+        FROM ent JOIN journal_entries e ON e.id = ent.entry_id JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
+       GROUP BY 1)
+    SELECT i.id, i.status, coalesce(b.payable, 0)::text AS payable, coalesce(b.grni, 0)::text AS grni
+      FROM supplier_invoices i LEFT JOIN books b ON b.invoice_id = i.id
+     WHERE coalesce(b.payable, 0) <> CASE WHEN i.status = 'CANCELLED' THEN 0
+             ELSE i.total_amount - (SELECT coalesce(sum(amount), 0) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id) END
+        OR coalesce(b.grni, 0) <> i.matched_amount
+        OR i.matched_amount <> (SELECT coalesce(sum(matched_amount), 0) FROM supplier_invoice_receipts x WHERE x.supplier_invoice_id = i.id)`,
   // Restaurant (ADR-0014 §8): a bill's checks add up to it, and the order follows its bill.
   'settled bill whose checks ≠ the bill': `
     SELECT b.id, b.amount_due::text AS bill, (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id)::text AS checks

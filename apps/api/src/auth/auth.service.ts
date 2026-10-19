@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { membershipRoles, rolePermissions, roles, tenantMemberships, type Tx } from '@1pos/database';
+import { membershipRoles, rolePermissions, roles, tenantMemberships, type BusinessType, type Tx } from '@1pos/database';
 import {
   ROLE_TEMPLATES,
   type AuthResponse,
@@ -89,13 +89,14 @@ export class AuthService {
             input.businessName,
           ]);
           await tx.setTenant(tenantId);
+          await tx.client.query('UPDATE tenants SET business_type = $1 WHERE id = $2', [input.businessType, tenantId]);
           await this.seedTenantAccess(tx, tenantId, userId, meta.correlationId);
           await seedCatalogDefaults(tx.db, tenantId);
           await tx.client.query('SELECT platform_start_trial($1, $2, $3)', [tenantId, TRIAL_PLAN, TRIAL_DAYS]);
           await emitEvent(tx.db, {
             tenantId,
             topic: 'tenant.onboarded',
-            payload: { ownerUserId: userId },
+            payload: { ownerUserId: userId, businessType: input.businessType },
             correlationId: meta.correlationId,
           });
           return { userId, tenantId };
@@ -307,13 +308,16 @@ export class AuthService {
     return this.scalarPool<boolean>('SELECT auth_staff_active($1) AS v', [userId]);
   }
 
-  /** The active business's name, read in its own context (support sessions have no membership row). */
-  tenantName(tenantId: string, auth: AuthContext): Promise<string> {
+  /** The active business's name and type, read in its own context (support sessions have no membership row). */
+  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType }> {
     return this.tenantDb.tx(
       async (tx) => {
         await tx.setTenant(tenantId);
-        const { rows } = await tx.client.query<{ name: string }>('SELECT name FROM tenants WHERE id = $1', [tenantId]);
-        return rows[0]?.name ?? '';
+        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType }>(
+          'SELECT name, business_type FROM tenants WHERE id = $1',
+          [tenantId],
+        );
+        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'HYBRID' };
       },
       { userId: auth.userId, correlationId: auth.correlationId },
     );

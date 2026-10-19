@@ -27,7 +27,7 @@
 |---|---|
 | 400 `VALIDATION_FAILED` | schema validation (details lists field issues) |
 | 401 `UNAUTHENTICATED` | missing/expired token |
-| 403 `FORBIDDEN` / `ENTITLEMENT_REQUIRED` | permission or plan missing |
+| 403 `FORBIDDEN` / `ENTITLEMENT_REQUIRED` / `BUSINESS_TYPE_EXCLUDES_FEATURE` | permission or plan missing; the business type leaves the feature out (restaurant service in a RETAIL business) |
 | 404 `NOT_FOUND` | also returned for other tenants' resources (never 403 — no existence oracle) |
 | 409 business conflicts | `TOTAL_CHANGED` (details.amountDue), `DUPLICATE_TRANSACTION` (details.saleId, saleNumber — this client transaction was already sold), `SESSION_NOT_OPEN`, `PAYMENTS_OUTSTANDING` (details.payments), `PAYMENT_NOT_SUCCEEDED`, `ALREADY_RETURNED`, … |
 | 422 `IDEMPOTENCY_KEY_REUSED` | |

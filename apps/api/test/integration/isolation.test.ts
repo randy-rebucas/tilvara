@@ -51,6 +51,8 @@ interface World {
   draftOrderId: string;
   goodsReceiptId: string;
   supplierReturnId: string;
+  supplierInvoiceId: string;
+  supplierPaymentId: string;
   branch2Id: string;
   transferId: string;
   countId: string;
@@ -190,6 +192,15 @@ async function world(prefix: string): Promise<World> {
       .send({ branchId: branch.id, supplierId: supplier.id, goodsReceiptId: receipt.id, reason: 'Fixture', lines: [{ goodsReceiptLineId: receipt.lines[0]!.id, variantId, quantity: '1' }] }),
   );
   const draft = ok(await http().post('/v1/purchase-orders').set(auth).send({ branchId: branch.id, supplierId: supplier.id, lines: [{ variantId, quantity: '1', unitCost: '1.00' }] }));
+  // Session 16: the supplier's invoice for that receipt, part paid.
+  const supplierInvoice = ok(
+    await http().post('/v1/supplier-invoices').set(auth).set('Idempotency-Key', randomUUID())
+      .send({ supplierId: supplier.id, invoiceNumber: 'F-1', invoiceDate: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()), goodsReceiptIds: [receipt.id], netAmount: '24.00', vatAmount: '2.88' }),
+  );
+  const paid = ok<{ payments: { id: string }[] }>(
+    await http().post(`/v1/supplier-invoices/${supplierInvoice.id}/payments`).set(auth).set('Idempotency-Key', randomUUID())
+      .send({ amount: '10.00', paidOn: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date()), method: 'BANK_TRANSFER' }),
+  );
   // Phase 3 slice 3: a received transfer to a second branch, a count, and a reorder point.
   const branch2 = ok(await http().post('/v1/branches').set(auth).send({ legalEntityId: entity.id, code: 'B2', name: 'Two', birBranchCode: '00001' }));
   const transfer = ok(await http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: branch.id, toBranchId: branch2.id, lines: [{ variantId, quantity: '1' }] }));
@@ -293,6 +304,8 @@ async function world(prefix: string): Promise<World> {
     draftOrderId: draft.id,
     goodsReceiptId: receipt.id,
     supplierReturnId: supplierReturn.id,
+    supplierInvoiceId: supplierInvoice.id,
+    supplierPaymentId: paid.payments[0]!.id,
     branch2Id: branch2.id,
     transferId: transfer.id,
     countId: count.id,
@@ -413,6 +426,11 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/purchase-orders/:id/close': () => http().post(`/v1/purchase-orders/${a.purchaseOrderId}/close`).set(auth).send({ reason: 'sabotage' }),
     'GET /v1/goods-receipts/:id': () => http().get(`/v1/goods-receipts/${a.goodsReceiptId}`).set(auth),
     'GET /v1/supplier-returns/:id': () => http().get(`/v1/supplier-returns/${a.supplierReturnId}`).set(auth),
+    'GET /v1/supplier-invoices/:id': () => http().get(`/v1/supplier-invoices/${a.supplierInvoiceId}`).set(auth),
+    'POST /v1/supplier-invoices/:id/cancel': () => http().post(`/v1/supplier-invoices/${a.supplierInvoiceId}/cancel`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'sabotage' }),
+    'POST /v1/supplier-invoices/:id/payments': () =>
+      http().post(`/v1/supplier-invoices/${a.supplierInvoiceId}/payments`).set(auth).set('Idempotency-Key', randomUUID()).send({ amount: '1.00', paidOn: today(), method: 'OTHER' }),
+    'GET /v1/supplier-payments/:id': () => http().get(`/v1/supplier-payments/${a.supplierPaymentId}`).set(auth),
     'GET /v1/stock/transfers/:id': () => http().get(`/v1/stock/transfers/${a.transferId}`).set(auth),
     'POST /v1/stock/transfers/:id/receive': () => http().post(`/v1/stock/transfers/${a.transferId}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
     'GET /v1/stock/counts/:id': () => http().get(`/v1/stock/counts/${a.countId}`).set(auth),
@@ -533,6 +551,13 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['return against the A receipt', () => http().post('/v1/supplier-returns').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, supplierId: b.supplierId, goodsReceiptId: a.goodsReceiptId, reason: 'x', lines: [{ variantId: b.variantId, quantity: '1' }] })],
     ['list receipts at the A branch', () => http().get('/v1/goods-receipts').query({ branchId: a.branchId }).set(auth)],
     ['list supplier returns at the A branch', () => http().get('/v1/supplier-returns').query({ branchId: a.branchId }).set(auth)],
+    ['invoice the A receipt', () => http().post('/v1/supplier-invoices').set(auth).set('Idempotency-Key', randomUUID()).send({ supplierId: b.supplierId, invoiceNumber: 'S-1', invoiceDate: today(), goodsReceiptIds: [a.goodsReceiptId], netAmount: '1.00', vatAmount: '0' })],
+    ['invoice a B receipt as the A supplier', () => http().post('/v1/supplier-invoices').set(auth).set('Idempotency-Key', randomUUID()).send({ supplierId: a.supplierId, invoiceNumber: 'S-2', invoiceDate: today(), goodsReceiptIds: [b.goodsReceiptId], netAmount: '1.00', vatAmount: '0' })],
+    ['uninvoiced receipts at the A branch', () => http().get('/v1/uninvoiced-receipts').query({ branchId: a.branchId, supplierId: b.supplierId }).set(auth)],
+    ['uninvoiced receipts of the A supplier', () => http().get('/v1/uninvoiced-receipts').query({ branchId: b.branchId, supplierId: a.supplierId }).set(auth)],
+    ['supplier invoices of the A entity', () => http().get('/v1/supplier-invoices').query({ legalEntityId: a.entityId }).set(auth)],
+    ['supplier invoices of the A supplier', () => http().get('/v1/supplier-invoices').query({ legalEntityId: b.entityId, supplierId: a.supplierId }).set(auth)],
+    ['payables aging of the A entity', () => http().get('/v1/reports/payables-aging').query({ legalEntityId: a.entityId }).set(auth)],
     ['transfer from the A branch', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: a.branchId, toBranchId: b.branchId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
     ['transfer to the A branch', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: b.branchId, toBranchId: a.branchId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
     ['transfer an A variant', () => http().post('/v1/stock/transfers').set(auth).set('Idempotency-Key', randomUUID()).send({ fromBranchId: b.branchId, toBranchId: b.branch2Id, lines: [{ variantId: a.variantId, quantity: '1' }] })],
@@ -605,7 +630,7 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.zRegisterId, w.zReadingId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.supplierInvoiceId, w.supplierPaymentId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.zRegisterId, w.zReadingId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
    w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
    w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId, w.supportGrantId, w.exportId];
 
@@ -655,6 +680,8 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect([t.status, t.lines[0].receivedQuantity]).toEqual(['RECEIVED', '1']);
     const po = (await http().get(`/v1/purchase-orders/${a.draftOrderId}`).set(a.auth).expect(200)).body;
     expect([po.status, po.notes]).toEqual(['DRAFT', null]);
+    const inv = (await http().get(`/v1/supplier-invoices/${a.supplierInvoiceId}`).set(a.auth).expect(200)).body;
+    expect([inv.status, inv.paidAmount, inv.payments.length]).toEqual(['OPEN', '10.00', 1]);
     const settings = (await http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(a.auth).expect(200)).body;
     expect([settings.dineInMenuId, settings.serviceChargeRate]).toEqual([a.menuId, '0.1']);
     const draft = (await http().get(`/v1/menu-versions/${a.draftVersionId}`).set(a.auth).expect(200)).body;
@@ -687,7 +714,7 @@ describe('Phase 1 cross-tenant sweep', () => {
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
     const paths = [
-      '/v1/me', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
+      '/v1/me', '/v1/business', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, `/v1/variants/${b.dishId}/recipe`, '/v1/invitations',
@@ -699,6 +726,8 @@ describe('Phase 1 cross-tenant sweep', () => {
       ...['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
+      `/v1/supplier-invoices?legalEntityId=${b.entityId}`, `/v1/supplier-invoices/${b.supplierInvoiceId}`, `/v1/supplier-payments/${b.supplierPaymentId}`,
+      `/v1/uninvoiced-receipts?branchId=${b.branchId}&supplierId=${b.supplierId}`, `/v1/reports/payables-aging?legalEntityId=${b.entityId}`,
       `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/count-sheets?branchId=${b.branch2Id}`, `/v1/stock/count-sheets/${b.sheetId}`, `/v1/registers/${b.zRegisterId}/z-readings`, `/v1/z-readings/${b.zReadingId}`, `/v1/branches/${b.branchId}/inventory-settings`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
       `/v1/stock/low?branchId=${b.branchId}`, `/v1/stock/reorder-points?branchId=${b.branchId}`,`/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-lines?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`, `/v1/journal-entries/${b.journalEntryId}`,

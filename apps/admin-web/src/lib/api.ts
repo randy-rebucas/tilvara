@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { API_URL } from './config';
 import { ACCESS_COOKIE } from './cookies';
+import type { BusinessType } from './business-type';
 
 export class ApiError extends Error {
   /**
@@ -98,10 +99,17 @@ export async function variantNamesById(ids: string[]): Promise<Map<string, Varia
 }
 
 // ---- response shapes used by the admin (subset of the API) ----
+export interface Business {
+  id: string;
+  slug: string;
+  name: string;
+  businessType: BusinessType;
+}
+
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  activeTenant: { tenantId: string; membershipId: string; status: string; permissions: string[] } | null;
+  activeTenant: { tenantId: string; membershipId: string; status: string; businessType: BusinessType; permissions: string[] } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];
   mfa: MfaStatus;
   /** Tilvara support staff (ADR-0016 slice 6). */

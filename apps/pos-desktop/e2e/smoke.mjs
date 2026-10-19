@@ -22,7 +22,7 @@ async function call(method, path, token, body, headers = {}) {
 }
 const slug = `pos-${Date.now().toString(36)}`;
 const email = `${slug}@example.ph`;
-const owner = await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Nena Reyes', businessName: 'Tindahan ni Aling Nena', tenantSlug: slug });
+const owner = await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Nena Reyes', businessName: 'Tindahan ni Aling Nena', tenantSlug: slug, businessType: 'RETAIL' });
 const tk = owner.tokens.accessToken;
 const le = await call('POST', '/v1/legal-entities', tk, { registeredName: 'Nena Reyes Trading', tradeName: 'Tindahan ni Aling Nena', tin: '123-456-789', vatStatus: 'VAT' });
 const br = await call('POST', '/v1/branches', tk, { legalEntityId: le.id, code: 'QC-01', name: 'Cubao' });
@@ -65,12 +65,15 @@ try {
   await fill('password', PASSWORD);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.body.innerText.includes('Counter 1')`);
+  // A retail shop (business type): no table service or kitchen display, though the owner may do both.
+  check('retail shop: no floor or kitchen entry on the register picker', !/Work the floor|Kitchen display/.test(await text()));
   await clickText('Open shift');
   await waitFor(`document.getElementById('float')`);
   await fill('float', '1000');
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.getElementById('scan')`);
   check('shift opened; counter shows the scan field focused', await evaluate(`document.activeElement?.id === 'scan'`));
+  check('retail shop: no Tables tab', !(await evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent === 'Tables')`)));
 
   // Customer display (session 16): opened before the sale. A same-origin iframe stands in for the
   // second window (the till feeds it over a BroadcastChannel, which reaches both alike).

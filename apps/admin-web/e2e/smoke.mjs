@@ -26,6 +26,7 @@ try {
   await fill('displayName', 'Maria Santos');
   await fill('email', `${slug}@example.ph`);
   await fill('password', 'correct horse battery staple');
+  await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`location.pathname === '/' || document.querySelector('[role=alert]')`);
   const signupError = await evaluate(`document.querySelector('[role=alert]')?.textContent ?? ''`);
@@ -34,6 +35,20 @@ try {
   check('sign-up lands on overview', true);
   check('tokens are not readable by page JS', !(await evaluate(`document.cookie.includes('onepos_at') || document.cookie.includes('onepos_rt')`)));
   await shot('overview-empty.png');
+
+  // 2b. Business type: a retail shop sees no restaurant; changing the type brings it into view.
+  const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Main] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
+  check('retail shop: no Restaurant tab', !(await navHas('Restaurant')));
+  await go('/restaurant');
+  check('retail shop: restaurant set-up says it is off', await evaluate(`document.body.innerText.includes('set up as a retail shop')`));
+  await go('/subscription/business');
+  check('business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').checked`));
+  await shot('business-type.png');
+  await evaluate(`document.querySelector('input[name=businessType][value=HYBRID]').click()`);
+  await evaluate(`document.querySelector('form button.btn-primary').click()`);
+  await waitFor(`[...document.querySelectorAll('[role=status]')].some((x) => x.textContent.startsWith('Saved'))`);
+  await go('/');
+  check('after changing to Both: Restaurant tab shown', await navHas('Restaurant'));
 
   // 3. CSRF: a mutation without the custom header is refused by the BFF
   const csrf = await evaluate(`fetch('/api/v1/categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' }).then((r) => r.status)`);

@@ -10,8 +10,11 @@ export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENS
 export const DEFAULT_CHART = [
   { key: 'CASH_ON_HAND', code: '1010', name: 'Cash on hand', type: 'ASSET' },
   { key: 'PAYMENT_CLEARING', code: '1020', name: 'Card/QR clearing', type: 'ASSET' },
+  { key: 'CASH_IN_BANK', code: '1030', name: 'Cash in bank', type: 'ASSET' },
   { key: 'INVENTORY', code: '1200', name: 'Inventory', type: 'ASSET' },
   { key: 'INVENTORY_IN_TRANSIT', code: '1210', name: 'Inventory in transit', type: 'ASSET' },
+  { key: 'INPUT_VAT', code: '1300', name: 'Input VAT', type: 'ASSET' },
+  { key: 'ACCOUNTS_PAYABLE', code: '2000', name: 'Accounts payable – trade', type: 'LIABILITY' },
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
@@ -165,6 +168,34 @@ export function supplierReturnPosting(a: SupplierReturnAmounts, branchId?: strin
     // Average out ≠ purchase credit: the difference is a purchase price variance.
     dr('PURCHASE_PRICE_VARIANCE', toDec(String(a.stockValueOut)).minus(String(a.stockCredit)), branchId),
   ]);
+}
+
+export interface SupplierInvoiceAmounts {
+  /** GRNI the invoice clears: the covered receipts at cost, less what was returned against them before. */
+  matched: Amount;
+  /** VAT on the invoice the entity may claim (VAT-registered); 0 for a non-VAT entity, whose VAT is cost. */
+  inputVat: Amount;
+  /** What the supplier is owed: the invoice total. */
+  payable: Amount;
+}
+
+/**
+ * Supplier invoice (session 16): GRNI cleared, input VAT claimed, the supplier owed the total; what
+ * the invoice charges above or below the receipts (and a non-VAT entity's VAT) is a purchase price variance.
+ */
+export function supplierInvoicePosting(a: SupplierInvoiceAmounts, branchId?: string | null): PostingLine[] {
+  const payable = toDec(String(a.payable));
+  return balanced([
+    dr('GRNI', a.matched, branchId),
+    dr('INPUT_VAT', a.inputVat, branchId),
+    dr('PURCHASE_PRICE_VARIANCE', payable.minus(String(a.matched)).minus(String(a.inputVat)), branchId),
+    cr('ACCOUNTS_PAYABLE', payable, branchId),
+  ]);
+}
+
+/** Supplier payment: the payable settled from the bank. */
+export function supplierPaymentPosting(amount: Amount, branchId?: string | null): PostingLine[] {
+  return balanced([dr('ACCOUNTS_PAYABLE', amount, branchId), cr('CASH_IN_BANK', amount, branchId)]);
 }
 
 /** Adjustment, waste or count: Σ signed movement values against the matching expense account. */

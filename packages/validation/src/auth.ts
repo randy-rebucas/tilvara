@@ -16,13 +16,23 @@ export const tenantSlugSchema = z
   .toLowerCase()
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use 2–63 lowercase letters, digits or hyphens');
 
+/** What the business does; it decides which features its people see (`tenants.business_type`). */
+export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID'] as const;
+export type BusinessType = (typeof BUSINESS_TYPES)[number];
+export const businessTypeSchema = z.enum(BUSINESS_TYPES);
+
 export const signupSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
   displayName: z.string().trim().min(1).max(200),
   businessName: z.string().trim().min(1).max(200),
   tenantSlug: tenantSlugSchema,
+  /** Omitted by older clients: every feature, as before business types. */
+  businessType: businessTypeSchema.default('HYBRID'),
 });
+
+export const businessUpdateSchema = z.object({ businessType: businessTypeSchema });
+export type BusinessUpdateInput = z.infer<typeof businessUpdateSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 
 export const loginSchema = z.object({

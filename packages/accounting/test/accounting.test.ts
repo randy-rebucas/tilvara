@@ -9,6 +9,8 @@ import {
   salePosting,
   saleReturnPosting,
   stockChangePosting,
+  supplierInvoicePosting,
+  supplierPaymentPosting,
   supplierReturnPosting,
   transferDispatchPosting,
   transferReceiptPosting,
@@ -57,6 +59,18 @@ describe('posting rules', () => {
   it('supplier return: credit at purchase cost, stock out at average, difference is price variance', () => {
     const lines = supplierReturnPosting({ stockValueOut: '36.00', stockCredit: '42.00', nonStockCredit: '0' });
     expect(net(lines)).toEqual({ GRNI: '42.00', INVENTORY: '-36.00', PURCHASE_PRICE_VARIANCE: '-6.00' });
+  });
+
+  it('supplier invoice: GRNI cleared, input VAT claimed, the difference a price variance; payment from the bank', () => {
+    // Receipts ₱1,000.00 at cost; the invoice says ₱1,005.00 + ₱120.60 VAT.
+    expect(net(supplierInvoicePosting({ matched: '1000.00', inputVat: '120.60', payable: '1125.60' }))).toEqual({
+      GRNI: '1000.00', INPUT_VAT: '120.60', PURCHASE_PRICE_VARIANCE: '5.00', ACCOUNTS_PAYABLE: '-1125.60',
+    });
+    // A non-VAT entity claims nothing: the VAT it pays is cost (its receipts were costed with VAT).
+    expect(net(supplierInvoicePosting({ matched: '1120.00', inputVat: '0', payable: '1120.00' }))).toEqual({ GRNI: '1120.00', ACCOUNTS_PAYABLE: '-1120.00' });
+    // Invoiced below the receipts: a credit variance.
+    expect(net(supplierInvoicePosting({ matched: '500.0040', inputVat: '0', payable: '500.00' }))).toEqual({ GRNI: '500.00', PURCHASE_PRICE_VARIANCE: '-0.00', ACCOUNTS_PAYABLE: '-500.00' });
+    expect(net(supplierPaymentPosting('400.00'))).toEqual({ ACCOUNTS_PAYABLE: '400.00', CASH_IN_BANK: '-400.00' });
   });
 
   it('adjustments, waste and counts post to their expense accounts in either direction', () => {
