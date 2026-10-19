@@ -698,6 +698,36 @@ export interface KitchenVoids {
   byUser: { userId: string; displayName: string | null; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
   totals: { voids: number; cookingStarted: number; wasted: number; wasteValue: string };
 }
+/** A register's Z-reading (session 16; not BIR-accredited). Money as 2-dp strings. */
+export interface ZReading {
+  id: string;
+  registerId: string;
+  businessDay: string;
+  zNumber: number;
+  resetCounter: number;
+  firstSaleNumber: number | null;
+  lastSaleNumber: number | null;
+  salesCount: number;
+  gross: string;
+  discount: string;
+  statutoryDiscount: string;
+  vatableSales: string;
+  vatAmount: string;
+  vatExemptSales: string;
+  zeroRatedSales: string;
+  salesAmount: string;
+  returnsCount: number;
+  returnsAmount: string;
+  voidsCount: number;
+  voidsAmount: string;
+  netAmount: string;
+  previousGrandTotal: string;
+  grandTotal: string;
+  tenders: Record<string, string>;
+  statutory: Record<string, string>;
+  createdAt: string;
+  note: string;
+}
 /** GET /v1/reports/refund-watch (THREAT_MODEL T5). Rates are 4-dp ratio strings; null without sales. */
 export interface RefundWatch {
   data: {

@@ -13,3 +13,4 @@ export * from './accounting.js';
 export * from './restaurant.js';
 export * from './sync.js';
 export * from './support.js';
+export * from './readings.js';

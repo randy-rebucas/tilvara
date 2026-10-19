@@ -244,6 +244,20 @@ try {
   await waitFor(`location.pathname === '/reports/refunds'`);
   check('refund watch: the branch refunded ₱16.50 of ₱49.50 (33.3%); one refund of own sales, no flag', (await shown('₱16.50 refunded on ₱49.50 sold (33.3%)')) && !(await evaluate(`document.querySelector('main table .tag-warn')`)));
   await shot('bo-report-refunds.png');
+
+  // Z-readings (session 16; not BIR-accredited): refused while the shift is open, then taken once.
+  await clickText('Z-readings');
+  await waitFor(`location.pathname === '/reports/z-readings'`);
+  check('Z-readings say plainly they are not BIR-accredited', await shown('not BIR-accredited'));
+  await clickText('Take the Z-reading');
+  check('a Z-reading is refused while a shift is open on the register', await shown('Close the open shift on this register'));
+  const expected = (await call('GET', `/v1/cashier-sessions/${shift.id}`, tk)).expectedCash;
+  await call('POST', `/v1/cashier-sessions/${shift.id}/close`, tk, { countedCash: expected });
+  await clickText('Take the Z-reading');
+  check('taken: Z-1 with the day’s net and the accumulated grand total (₱33.00)', await waitFor(`(document.querySelector('[data-testid="z-latest"]')?.innerText ?? '').includes('Z-1 for') && document.querySelector('[data-testid="z-latest"]').innerText.includes('₱33.00')`, 15000).then(() => true, () => false));
+  await clickText('Take the Z-reading');
+  check('a second Z-reading for the same day is refused', await shown('already has its Z-reading'));
+  await shot('bo-z-reading.png');
   await clickText('This month');
   check('quick range "This month" starts on the 1st', await waitFor(`/from=\\d{4}-\\d{2}-01/.test(location.search)`).then(() => true, () => false));
   await clickHref('/reports?'); // the Restaurant group (the band also has a Restaurant tab)

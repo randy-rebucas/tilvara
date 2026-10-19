@@ -23,17 +23,19 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 Slice 1 (tax):
 - ⏳ SC/PWD sign-off by a PH tax professional (MVP gate #6)
 - ⬜ 5 % BNPC / NAAC / Solo Parent schemes (rules unverified)
-- ⬜ Invoice-level rounding option
+- ⏳ Invoice-level rounding option: ADR-0008 leaves it unimplemented until the tax adviser answers what the BIR expects (question 6); the engine rounds per line (`roundingLevel: 'LINE'` in `@1pos/tax`), and the option would become a versioned `tax_profiles` column
 
 Slice 3 (payments):
 - ⏳ PayMongo adapter + webhooks (needs sandbox keys) — D6
 
 Slice 4 (voids/returns):
 - ⬜ Refunds to card/QR (needs PayMongo)
-- ⬜ Cross-branch returns
+- ⏳ Cross-branch returns: a credit memo issued at another BIR-registered branch (its own branch code and return series) against this branch's invoice, and which branch's books carry the reversed sale, are tax-adviser questions. Design once answered: same legal entity only; refund permission and the drawer at the processing branch; stock back into the processing branch at the sale's cost; the POS finds the sale by its reference across the entity (today `sales.read` is checked at the selling branch)
 
 Slice 5 (reports):
-- ⬜ Z-reading with accumulated grand total (fiscal gate G2)
+- ⏳ Z-readings (session 16, ADR-0009 amendment) are not BIR-accredited: the official field format, grand-total digit length and whether a reading may be taken from the admin rather than at the terminal are tax-adviser questions (PH_COMPLIANCE_ASSUMPTIONS §5)
+- ⏳ An offline sale delivered after its day's Z-reading is in no reading (readings are by local day and go forward). Options: count it in the next reading as a late sale, or refuse a Z while the register's tills have undelivered sales (needs a fresh sync status). Tax adviser's call
+- ⬜ X-readings (intraday, unlimited) as their own document; the shift report covers it today
 
 Slice 6 (POS browser checkout):
 - ⬜ CSP response header in production hosting
@@ -43,7 +45,6 @@ Slice 6 (POS browser checkout):
 Phase-level:
 - ⬜ `@1pos/pricing` promotions
 - ⬜ Invoice sequences (dev series only today)
-- ⬜ A test for one session spanning local midnight (needs clock control)
 
 ## Phase 3 — Inventory, purchasing, accounting
 Slice 5 (admin UI):

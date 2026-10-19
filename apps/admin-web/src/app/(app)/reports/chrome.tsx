@@ -9,7 +9,7 @@ import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 
-export type ReportTab = 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
+export type ReportTab = 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
 const PATHS: Record<ReportTab, string> = {
   sales: '/reports/sales',
   products: '/reports/products',
@@ -18,6 +18,7 @@ const PATHS: Record<ReportTab, string> = {
   tenders: '/reports/tenders',
   tax: '/reports/tax',
   statutory: '/reports/statutory',
+  z: '/reports/z-readings',
   items: '/reports',
   usage: '/reports/ingredient-usage',
   voids: '/reports/kitchen-voids',
@@ -26,7 +27,7 @@ const PATHS: Record<ReportTab, string> = {
   charge: '/reports/service-charge',
 };
 const GROUPS = {
-  sales: ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory'],
+  sales: ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'z'],
   restaurant: ['items', 'usage', 'voids', 'prep', 'open', 'charge'],
 } as const satisfies Record<string, readonly ReportTab[]>;
 
@@ -115,7 +116,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
               </>
             )}
             <button className="btn">{t('common.show')}</button>
-            {!error && (
+            {!error && tab !== 'z' && (
               <a href={`/reports/export?${params(tab, { report: tab })}`} className="btn" download>
                 <Download aria-hidden className="size-4" /> {t('rep.csv')}
               </a>

@@ -15,3 +15,9 @@
 ## Consequences
 - Every sale reconciles by construction and by test: Σ lines = sale totals, Σ tenders applied = amount due, tendered − change = due, drawer movement = due, stock movement = −quantity for tracked items.
 - Voids, returns and refunds will be separate append-only documents referencing the sale.
+
+## Amendment: Z-readings (session 16; fiscal gate G2, not BIR-accredited)
+- `z_readings` (migrations 0066/0067, append-only): one reading per register per local business day (branch time zone), taken by `cash.reconcile` through `POST /v1/registers/:id/z-readings`. Refused while a shift is open on the register (`409 SHIFT_OPEN`), for a day not started (`422 DAY_NOT_STARTED`), and for a day on or before the register's last reading (`409 Z_READING_ORDER`; readings go forward).
+- It numbers per register (`z_number`), records the first and last sale numbers, the sale buckets, returns and voids (their own series, ADR-0011 §6), net = sales − returns − voids, tenders net of refunds, statutory discounts by scheme, and the accumulated grand total = previous + net (never reset; `reset_counter` stays 0). Check constraints hold both equations. A transaction advisory lock per register serialises readings.
+- Day windows use the branch's local midnight, so one shift across midnight puts its sales into two readings while its shift report stays one (tested with backdated rows: the "session spanning local midnight" gap of the Phase 2 review).
+- The official field format, the grand-total digit length and what a reading must show are tax-adviser questions (PH_COMPLIANCE_ASSUMPTIONS §5); the screens say the readings are the business's own records, not BIR-accredited. Offline sales delivered after their day's reading are not in it (open item in LEFTOVER).

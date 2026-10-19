@@ -55,6 +55,8 @@ interface World {
   transferId: string;
   countId: string;
   sheetId: string;
+  zRegisterId: string;
+  zReadingId: string;
   adjustmentId: string;
   journalEntryId: string;
   cashAccountId: string;
@@ -194,6 +196,10 @@ async function world(prefix: string): Promise<World> {
   ok(await http().post(`/v1/stock/transfers/${transfer.id}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}), 200);
   const count = ok(await http().post('/v1/stock/counts').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch2.id, lines: [{ variantId, countedQuantity: '2' }] }));
   ok(await http().put('/v1/stock/reorder-points').set(auth).send({ branchId: branch.id, items: [{ variantId, reorderPoint: '20' }] }), 200);
+  // Session 16: a Z-reading of a second register (no shift open on it), for today.
+  const zRegister = ok(await http().post('/v1/registers').set(auth).send({ branchId: branch.id, code: 'RZ', name: 'Z only' }));
+  const zDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+  const zReading = ok(await http().post(`/v1/registers/${zRegister.id}/z-readings`).set(auth).send({ day: zDay }));
   // Session 16: branch inventory settings and an open count sheet with one counted line.
   ok(await http().put(`/v1/branches/${branch.id}/inventory-settings`).set(auth).send({ negativeStockPolicy: 'ALLOW_WITH_FLAG', lowStockAlerts: true }), 200);
   const sheet = ok(await http().post('/v1/stock/count-sheets').set(auth).send({ branchId: branch2.id, variantIds: [variantId] }));
@@ -291,6 +297,8 @@ async function world(prefix: string): Promise<World> {
     transferId: transfer.id,
     countId: count.id,
     sheetId: sheet.id,
+    zRegisterId: zRegister.id,
+    zReadingId: zReading.id,
     adjustmentId: adjustment.id,
     journalEntryId: entries[0]!.id,
     cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
@@ -409,6 +417,9 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/stock/transfers/:id/receive': () => http().post(`/v1/stock/transfers/${a.transferId}/receive`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
     'GET /v1/stock/counts/:id': () => http().get(`/v1/stock/counts/${a.countId}`).set(auth),
     'GET /v1/stock/count-sheets/:id': () => http().get(`/v1/stock/count-sheets/${a.sheetId}`).set(auth),
+    'POST /v1/registers/:id/z-readings': () => http().post(`/v1/registers/${a.zRegisterId}/z-readings`).set(auth).send({ day: '2026-01-01' }),
+    'GET /v1/registers/:id/z-readings': () => http().get(`/v1/registers/${a.zRegisterId}/z-readings`).set(auth),
+    'GET /v1/z-readings/:id': () => http().get(`/v1/z-readings/${a.zReadingId}`).set(auth),
     'PUT /v1/stock/count-sheets/:id/lines': () => http().put(`/v1/stock/count-sheets/${a.sheetId}/lines`).set(auth).send({ lines: [{ variantId: b.variantId, countedQuantity: '1' }] }),
     'POST /v1/stock/count-sheets/:id/post': () => http().post(`/v1/stock/count-sheets/${a.sheetId}/post`).set(auth).set('Idempotency-Key', randomUUID()),
     'POST /v1/stock/count-sheets/:id/cancel': () => http().post(`/v1/stock/count-sheets/${a.sheetId}/cancel`).set(auth).send({ reason: 'sabotage' }),
@@ -594,7 +605,7 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.zRegisterId, w.zReadingId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
    w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
    w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId, w.supportGrantId, w.exportId];
 
@@ -688,7 +699,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       ...['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
-      `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/count-sheets?branchId=${b.branch2Id}`, `/v1/stock/count-sheets/${b.sheetId}`, `/v1/branches/${b.branchId}/inventory-settings`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
+      `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/count-sheets?branchId=${b.branch2Id}`, `/v1/stock/count-sheets/${b.sheetId}`, `/v1/registers/${b.zRegisterId}/z-readings`, `/v1/z-readings/${b.zReadingId}`, `/v1/branches/${b.branchId}/inventory-settings`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,
       `/v1/stock/low?branchId=${b.branchId}`, `/v1/stock/reorder-points?branchId=${b.branchId}`,`/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-lines?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`, `/v1/journal-entries/${b.journalEntryId}`,
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,

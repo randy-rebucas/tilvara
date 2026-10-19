@@ -227,3 +227,7 @@ export type ReportDayQuery = z.infer<typeof reportDaySchema>;
 /** Prep times grouped by station (default), local hour fired, or menu item. */
 export const prepTimesBySchema = z.object({ by: z.enum(['station', 'hour', 'item']).default('station') });
 export type PrepTimesByQuery = z.infer<typeof prepTimesBySchema>;
+
+/** Take the Z-reading of a register for one local business day (session 16). */
+export const zReadingSchema = z.object({ day: z.iso.date() });
+export type ZReadingInput = z.infer<typeof zReadingSchema>;
