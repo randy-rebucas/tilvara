@@ -41,6 +41,9 @@ jobs:
       - name: Environment
         run: cp .env.example .env
 
+      - name: bsdtar (independent ZIP reader for the data-export test; skipped without it)
+        run: sudo apt-get install -y --no-install-recommends libarchive-tools
+
       - name: Postgres and Redis
         run: docker compose up -d --wait postgres redis
 
