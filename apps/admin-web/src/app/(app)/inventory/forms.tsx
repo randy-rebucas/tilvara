@@ -23,6 +23,60 @@ function Actions({ pending, general, submitLabel, close }: { pending: boolean; g
   );
 }
 
+// ---------------------------------------------------------------- adjustment / waste
+/**
+ * Correct stock by hand (ADJUSTMENT: a signed change) or write off spoiled stock (WASTE: the
+ * quantity thrown away, sent negative). One document, one journal entry, one key per open form.
+ */
+function AdjustFields({ close, branchId, variants }: { close: () => void; branchId: string; variants: VariantOption[] }) {
+  const { t } = useT();
+  const router = useRouter();
+  const key = useFormKey();
+  const { pending, submit, fieldError: apiFieldError, error } = useSubmit();
+  // The API's paths are `items.<i>.<field>`; the rows are named `lines.<i>.<field>`.
+  const fieldError = (path: string) => apiFieldError(path.replace(/^lines\./, 'items.'));
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const kind = f.get('kind') === 'WASTE' ? 'WASTE' : 'ADJUSTMENT';
+    const items = readLines(f, ['variantId', 'quantity']).map((l) => ({
+      variantId: l.variantId,
+      quantity: kind === 'WASTE' && l.quantity && !l.quantity.startsWith('-') ? `-${l.quantity}` : l.quantity,
+    }));
+    const r = await submit<{ id: string }>('POST', '/api/v1/stock/adjustments', { branchId, kind, reason: text(f, 'reason'), items }, { idempotencyKey: key, refresh: false });
+    if (r.ok) {
+      close();
+      router.push(`/inventory/adjustments/${r.data.id}`);
+    }
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('inv.adjustHint')}</p>
+      <SelectField label={t('inv.adjustKind')} name="kind">
+        <option value="ADJUSTMENT">{t('inv.adjustKind.ADJUSTMENT')}</option>
+        <option value="WASTE">{t('inv.adjustKind.WASTE')}</option>
+      </SelectField>
+      <TextField label={t('common.reason')} name="reason" required error={fieldError('reason')} />
+      <LineItems
+        fields={[
+          { name: 'variantId', label: t('common.item'), kind: 'select' },
+          { name: 'quantity', label: t('inv.adjustQty'), kind: 'decimal', placeholder: '-1' },
+        ]}
+        options={variants}
+        fieldError={fieldError}
+        addLabel={t('common.addLine')}
+        removeLabel={t('common.removeLine')}
+      />
+      <Actions pending={pending} general={general(error) ?? apiFieldError('items')} submitLabel={t('inv.adjustSave')} close={close} />
+    </form>
+  );
+}
+
+export function AdjustStockForm(props: { branchId: string; variants: VariantOption[] }) {
+  const { t } = useT();
+  return <Disclosure label={t('inv.adjust')}>{(close) => <AdjustFields close={close} {...props} />}</Disclosure>;
+}
+
 // ---------------------------------------------------------------- reorder point
 function ReorderFields({ close, branchId, variants }: { close: () => void; branchId: string; variants: VariantOption[] }) {
   const { t } = useT();

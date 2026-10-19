@@ -56,12 +56,15 @@ export default async function SupplierPage({ params }: { params: Promise<{ id: s
         </div>
       </Note>
 
-      {canManage && !supplier.archivedAt && (
-        <div className="flex flex-wrap items-start gap-2">
-          <EditSupplierForm supplier={supplier} />
-          <ActionButton url={`/api/v1/suppliers/${supplier.id}/archive`} label={t('pur.archiveSupplier')} confirmText={t('pur.archiveConfirm', { name: supplier.name })} />
-        </div>
-      )}
+      <div className="flex flex-wrap items-start gap-2">
+        <Link href={`/purchasing/invoices?supplier=${supplier.id}`} className="btn">{t('ap.supplierInvoices')}</Link>
+        {canManage && !supplier.archivedAt && (
+          <>
+            <EditSupplierForm supplier={supplier} />
+            <ActionButton url={`/api/v1/suppliers/${supplier.id}/archive`} label={t('pur.archiveSupplier')} confirmText={t('pur.archiveConfirm', { name: supplier.name })} />
+          </>
+        )}
+      </div>
 
       <section>
         <h2 className="section-title mb-3">{t('pur.orders')}</h2>

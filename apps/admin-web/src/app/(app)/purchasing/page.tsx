@@ -34,7 +34,7 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
 
   return (
     <div className="flex flex-col gap-8">
-      <PageHeader title={t('pur.title')} lede={t('pur.lede')} />
+      <PageHeader title={t('pur.title')} lede={t('pur.lede')} actions={<Link href="/purchasing/invoices" className="btn">{t('ap.open')}</Link>} />
 
       <section>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">

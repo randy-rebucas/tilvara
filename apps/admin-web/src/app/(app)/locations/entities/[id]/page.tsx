@@ -6,6 +6,7 @@ import { formatDateTime, formatTin, percentFromRate } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
+import { EditEntityForm } from '../../forms';
 import { ChangeTaxForm } from './tax-form';
 
 export const metadata = { title: 'Legal entity' };
@@ -25,6 +26,7 @@ export default async function EntityPage({ params }: { params: Promise<{ id: str
   const entity = entities?.data.find((e) => e.id === id);
   if (!entity) notFound();
   const canChange = (me.activeTenant?.permissions.includes('tax.manage') ?? false) && !entity.archivedAt;
+  const canEdit = (me.activeTenant?.permissions.includes('org.manage') ?? false) && !entity.archivedAt;
   const inForce = profiles?.data.find((p) => p.state === 'IN_FORCE');
   const rateLine = (p: TaxProfile) =>
     p.vatStatus === 'VAT' ? t('tax.vatAt', { rate: percentFromRate(p.vatRate) }) : t('tax.ptAt', { rate: percentFromRate(p.percentageTaxRate) });
@@ -36,6 +38,27 @@ export default async function EntityPage({ params }: { params: Promise<{ id: str
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{entity.registeredName}</h1>
         <Serial className="mt-1 block">TIN {formatTin(entity.tin)}{entity.tradeName && ` · ${entity.tradeName}`}</Serial>
       </div>
+
+      <section>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <h2 className="section-title pt-2">{t('loc.details')}</h2>
+          {canEdit && <EditEntityForm entity={entity} />}
+        </div>
+        <Note denom="violet" className="grid grid-cols-1 gap-4 px-5 py-4 pr-8 sm:grid-cols-2">
+          <div>
+            <div className="text-[0.8125rem] text-muted">{t('loc.tradeName')}</div>
+            <div className="mt-1">{entity.tradeName ?? '—'}</div>
+          </div>
+          <div>
+            <div className="text-[0.8125rem] text-muted">{t('loc.rdo')}</div>
+            <Serial className="mt-1 block text-ink">{entity.rdoCode ?? '—'}</Serial>
+          </div>
+          <div className="sm:col-span-2">
+            <div className="text-[0.8125rem] text-muted">{t('loc.address')}</div>
+            <div className="mt-1">{entity.registeredAddress ?? '—'}</div>
+          </div>
+        </Note>
+      </section>
 
       <Callout>{t('tax.review')}</Callout>
 

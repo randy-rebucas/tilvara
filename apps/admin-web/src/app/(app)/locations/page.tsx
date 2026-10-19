@@ -3,7 +3,7 @@ import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type Branch, type LegalEntity, type Me, type Register, type Terminal } from '@/lib/api';
 import { formatDateTime, formatTin } from '@/lib/format';
 import { getT } from '@/i18n/server';
-import { AddBranchForm, AddEntityForm, AddRegisterForm, PairTerminalForm, RowAction } from './forms';
+import { AddBranchForm, AddEntityForm, AddRegisterForm, EditBranchForm, EditRegisterForm, PairTerminalForm, RowAction } from './forms';
 
 export const metadata = { title: 'Locations' };
 
@@ -76,7 +76,7 @@ export default async function LocationsPage() {
             {branches.data.map((b) => {
               const regs = activeRegisters.filter((r) => r.branchId === b.id).length;
               return (
-                <Note as="li" key={b.id} denom={b.archivedAt ? 'none' : 'violet'} className="flex h-[148px] flex-col px-4 py-4 pr-6">
+                <Note as="li" key={b.id} denom={b.archivedAt ? 'none' : 'violet'} className="flex min-h-[148px] flex-col px-4 py-4 pr-6">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-[1.0625rem] font-semibold">{b.name}</span>
                     {b.archivedAt && <span className="tag">{t('common.archived')}</span>}
@@ -84,10 +84,14 @@ export default async function LocationsPage() {
                   <Serial className="mt-1 block truncate">
                     <span className="font-semibold text-violet">{b.code}</span> · BIR {b.birBranchCode} · {entityName.get(b.legalEntityId) ?? '—'}
                   </Serial>
-                  <div className="mt-auto flex items-center justify-between">
+                  <span className="mt-1 block truncate text-[0.8125rem] text-muted" title={b.address ?? undefined}>{b.address ?? t('loc.noAddress')}</span>
+                  <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-2">
                     <span className="text-[0.875rem] text-muted">{t('loc.registers')}: <b className="text-ink tabular-nums">{regs}</b></span>
                     {canManage && !b.archivedAt && (
-                      <RowAction url={`/api/v1/branches/${b.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
+                      <span className="flex flex-wrap items-center gap-2">
+                        <EditBranchForm branch={b} />
+                        <RowAction url={`/api/v1/branches/${b.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
+                      </span>
                     )}
                   </div>
                 </Note>
@@ -118,7 +122,10 @@ export default async function LocationsPage() {
                       <td>{branchOf.get(r.branchId)?.code ?? '—'}</td>
                       <td className="text-right">
                         {r.archivedAt ? <span className="tag">{t('common.archived')}</span> : canManage && (
-                          <RowAction url={`/api/v1/registers/${r.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
+                          <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                            <EditRegisterForm register={r} />
+                            <RowAction url={`/api/v1/registers/${r.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
+                          </span>
                         )}
                       </td>
                     </tr>

@@ -54,6 +54,43 @@ export function AddEntityForm() {
   return <Disclosure label={t('loc.addEntity')}>{(close) => <EntityFields close={close} />}</Disclosure>;
 }
 
+const blankToNull = (f: FormData, k: string) => String(f.get(k) ?? '').trim() || null;
+
+/** The names, TIN, address and RDO that receipts print (VAT status is a tax profile, changed apart). */
+function EditEntityFields({ close, entity }: { close: () => void; entity: LegalEntity }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, general } = useForm();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('PATCH', `/api/v1/legal-entities/${entity.id}`, {
+      registeredName: String(f.get('registeredName') ?? '').trim(),
+      tradeName: blankToNull(f, 'tradeName'),
+      tin: blankToNull(f, 'tin'),
+      registeredAddress: blankToNull(f, 'registeredAddress'),
+      rdoCode: blankToNull(f, 'rdoCode'),
+    });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+      <TextField label={t('loc.registeredName')} name="registeredName" required autoFocus defaultValue={entity.registeredName} error={fieldError('registeredName')} />
+      <TextField label={`${t('loc.tradeName')} (${t('common.optional')})`} name="tradeName" defaultValue={entity.tradeName ?? ''} error={fieldError('tradeName')} />
+      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} defaultValue={entity.tin ?? ''} error={fieldError('tin')} />
+      <TextField label={`${t('loc.rdo')} (${t('common.optional')})`} name="rdoCode" placeholder="049" defaultValue={entity.rdoCode ?? ''} error={fieldError('rdoCode')} />
+      <div className="col-span-full">
+        <TextField label={`${t('loc.address')} (${t('common.optional')})`} name="registeredAddress" hint={t('loc.addressHint')} defaultValue={entity.registeredAddress ?? ''} error={fieldError('registeredAddress')} />
+      </div>
+      <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditEntityForm({ entity }: { entity: LegalEntity }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('loc.editDetails')}>{(close) => <EditEntityFields close={close} entity={entity} />}</Disclosure>;
+}
+
 // ---------------------------------------------------------------- branch
 function BranchFields({ close, entities }: { close: () => void; entities: LegalEntity[] }) {
   const { t } = useT();
@@ -85,6 +122,58 @@ function BranchFields({ close, entities }: { close: () => void; entities: LegalE
 export function AddBranchForm({ entities }: { entities: LegalEntity[] }) {
   const { t } = useT();
   return <Disclosure label={t('loc.addBranch')}>{(close) => <BranchFields close={close} entities={entities} />}</Disclosure>;
+}
+
+/** Name, BIR branch code, address (printed on receipts) and time zone (local days for reports). */
+function EditBranchFields({ close, branch }: { close: () => void; branch: Branch }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, general } = useForm();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('PATCH', `/api/v1/branches/${branch.id}`, {
+      name: String(f.get('name') ?? '').trim(),
+      birBranchCode: String(f.get('birBranchCode') ?? '').trim() || '00000',
+      address: blankToNull(f, 'address'),
+      timezone: String(f.get('timezone') ?? '').trim(),
+    });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+      <TextField label={t('loc.branchName')} name="name" required autoFocus defaultValue={branch.name} error={fieldError('name')} />
+      <TextField label={t('loc.birBranch')} name="birBranchCode" inputMode="numeric" defaultValue={branch.birBranchCode} error={fieldError('birBranchCode')} />
+      <TextField label={`${t('loc.address')} (${t('common.optional')})`} name="address" hint={t('loc.addressHint')} defaultValue={branch.address ?? ''} error={fieldError('address')} />
+      <TextField label={t('loc.timezone')} name="timezone" defaultValue={branch.timezone} hint={t('loc.timezoneHint')} error={fieldError('timezone')} />
+      <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditBranchForm({ branch }: { branch: Branch }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('loc.edit')}>{(close) => <EditBranchFields close={close} branch={branch} />}</Disclosure>;
+}
+
+function EditRegisterFields({ close, register }: { close: () => void; register: Register }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, general } = useForm();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const r = await submit('PATCH', `/api/v1/registers/${register.id}`, { name: String(new FormData(e.currentTarget).get('name') ?? '').trim() });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+      <TextField label={t('loc.registerName')} name="name" required autoFocus defaultValue={register.name} error={fieldError('name')} />
+      <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
+    </form>
+  );
+}
+
+export function EditRegisterForm({ register }: { register: Register }) {
+  const { t } = useT();
+  return <Disclosure kind="edit" label={t('loc.edit')}>{(close) => <EditRegisterFields close={close} register={register} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- register

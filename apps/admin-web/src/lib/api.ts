@@ -171,6 +171,8 @@ export interface LegalEntity {
   registeredName: string;
   tradeName: string | null;
   tin: string | null;
+  registeredAddress: string | null;
+  rdoCode: string | null;
   vatStatus: 'VAT' | 'NON_VAT';
   priceDisplay: string;
   invoicingMode: string;

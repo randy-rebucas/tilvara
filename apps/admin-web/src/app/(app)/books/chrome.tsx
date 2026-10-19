@@ -21,6 +21,8 @@ export function sourceHref(e: { sourceType: string; sourceId: string | null; rev
   switch (e.sourceType) {
     case 'GOODS_RECEIPT': return `/purchasing/receipts/${e.sourceId}`;
     case 'SUPPLIER_RETURN': return `/purchasing/returns/${e.sourceId}`;
+    case 'SUPPLIER_INVOICE': return `/purchasing/invoices/${e.sourceId}`;
+    case 'SUPPLIER_PAYMENT': return `/purchasing/payments/${e.sourceId}`;
     case 'SALE': return `/sales/${e.sourceId}`;
     case 'SALE_RETURN': return `/sales/returns/${e.sourceId}`;
     case 'CASH_MOVEMENT': return `/shifts/movements/${e.sourceId}`;
@@ -48,6 +50,8 @@ export async function BooksChrome({ tab, entities, entity, children }: { tab: Bo
           { key: 'trial', href: `${PATHS.trial}${q}`, label: t('books.tab.trial') },
           { key: 'accounts', href: `${PATHS.accounts}${q}`, label: t('books.tab.accounts') },
           { key: 'periods', href: `${PATHS.periods}${q}`, label: t('books.tab.periods') },
+          // Payables live under Purchasing; accountants (no Purchasing tab) reach them from here.
+          { key: 'payables', href: `/purchasing/invoices${q}`, label: t('ap.title') },
           // The business's audit log (not per entity): accountants hold audit.read.
           { key: 'audit', href: '/audit', label: t('audit.link') },
         ]}

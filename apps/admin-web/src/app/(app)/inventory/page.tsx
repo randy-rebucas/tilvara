@@ -6,7 +6,7 @@ import { peso, qty, signOf } from '@/lib/format';
 import { variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from './chrome';
-import { RemoveReorderPoint, ReorderForm } from './forms';
+import { AdjustStockForm, RemoveReorderPoint, ReorderForm } from './forms';
 
 export const metadata = { title: 'Inventory' };
 
@@ -26,11 +26,15 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
   ]);
   const perms = me.activeTenant?.permissions ?? [];
   const canReorder = perms.includes('purchasing.manage') || perms.includes('inventory.adjust');
+  const canAdjust = perms.includes('inventory.adjust');
 
   return (
     <InventoryChrome tab="stock" branches={branches} branch={branch}>
       <section>
-        <h2 className="section-title mb-3">{t('inv.tab.stock')}</h2>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <h2 className="section-title pt-2">{t('inv.tab.stock')}</h2>
+          {canAdjust && branch && <AdjustStockForm branchId={branch.id} variants={variantOptions(products?.data, { stocked: true })} />}
+        </div>
         {valuation && (
           <div className="mb-3">
             {valuation.totalValue === valuation.ledgerValue ? (
