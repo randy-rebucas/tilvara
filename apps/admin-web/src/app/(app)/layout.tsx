@@ -25,7 +25,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-dvh">
-      <header className="band sticky top-0 z-20 text-white">
+      <header className="band sticky top-0 z-20 text-white print:hidden">
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 px-4 sm:px-7 lg:h-16 lg:flex-nowrap lg:gap-x-5">
           <a href="/" className="flex h-14 shrink-0 items-center text-[1.5rem] font-bold tracking-[0.04em] lg:h-auto">
             Tilvara
@@ -42,14 +42,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       </header>
       {me.support && (
-        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7">
+        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden">
           <Callout tone="warn">
             {t('staff.banner', { business: me.support.tenantName, date: formatDateTime(me.support.expiresAt, lang) })} <LeaveSupportButton />
           </Callout>
         </div>
       )}
       {mfaDue && (
-        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7">
+        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden">
           <Callout tone="warn">
             {t('mfa.banner', { date: formatDateTime(mfaDue, lang) })}{' '}
             <a href="/security" className="font-semibold underline">
@@ -59,7 +59,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
       )}
       {sub?.access === 'READ_ONLY' && (
-        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7">
+        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden">
           <Callout tone="warn">{t('sub.readOnly')}</Callout>
         </div>
       )}

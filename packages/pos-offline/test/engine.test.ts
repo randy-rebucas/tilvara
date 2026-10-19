@@ -1,4 +1,4 @@
-import type { OfflineSale, Snapshot, SyncResult } from '@1pos/sync-protocol';
+import { ean13CheckDigit, type OfflineSale, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -248,5 +248,22 @@ describe('a till whose file was lost or restored from an old copy (session 16)',
     server.transport.snapshot = async () => ({ ...snapshot, lastDeviceSeq: 10 });
     await engine.refreshSnapshot();
     expect((await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' })).sale.deviceSeq).toBe(43);
+  });
+});
+
+describe('scale labels offline (session 16)', () => {
+  it('reads a weighed label from the snapshot like the server: an item sold by weight, by its scale code', async () => {
+    const server = fakeServer();
+    const RICE_KEY = '212345';
+    server.transport.snapshot = async () => ({ ...snapshot, items: snapshot.items.map((i) => (i.variantId === RICE ? { ...i, barcodes: [RICE_KEY] } : { ...i, barcodes: ['254321'] })) });
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const first12 = '212345012340';
+    const code = `${first12}${ean13CheckDigit(first12)}`;
+    expect(await engine.lookup(code)).toMatchObject({ variantId: RICE, quantity: '1.234' });
+    // A unit item's code is not read as a weight; a wrong check digit is not a label.
+    const unit = '254321010000';
+    expect(await engine.lookup(`${unit}${ean13CheckDigit(unit)}`)).toBeNull();
+    expect(await engine.lookup(`${first12}${(ean13CheckDigit(first12) + 1) % 10}`)).toBeNull();
   });
 });

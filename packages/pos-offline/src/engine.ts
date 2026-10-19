@@ -1,5 +1,5 @@
 import { Dec, isCurrencyCode, toDec } from '@1pos/money';
-import type { OfflineSale, Snapshot, SyncResult } from '@1pos/sync-protocol';
+import { parseScaleLabel, type OfflineSale, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
 import { calculateTax, TaxError, type TaxResult } from '@1pos/tax';
 import { LocalStore, type OfflineReceipt, type QueuedSale } from './store.js';
 import { TransportError, type Transport } from './transport.js';
@@ -117,11 +117,16 @@ export class OfflineEngine {
   }
 
   /** Find an item in the stored snapshot by SKU or barcode (case-insensitive SKU, exact barcode). */
-  async lookup(code: string): Promise<Snapshot['items'][number] | null> {
+  async lookup(code: string): Promise<(Snapshot['items'][number] & { quantity?: string }) | null> {
     const stored = await this.store.snapshot();
     if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
     const c = code.trim();
-    return stored.body.items.find((i) => i.barcodes.includes(c)) ?? stored.body.items.find((i) => i.sku.toLowerCase() === c.toLowerCase()) ?? null;
+    const found = stored.body.items.find((i) => i.barcodes.includes(c)) ?? stored.body.items.find((i) => i.sku.toLowerCase() === c.toLowerCase());
+    if (found) return found;
+    // A weighing-scale label, read as the server reads it: an item sold by weight, by its scale code.
+    const label = parseScaleLabel(c);
+    const weighed = label ? stored.body.items.find((i) => i.barcodes.includes(label.key) && !i.wholeUnits) : undefined;
+    return weighed ? { ...weighed, quantity: label!.quantity } : null;
   }
 
   /**

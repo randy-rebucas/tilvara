@@ -13,3 +13,7 @@ Tauri needs a Rust toolchain (not installed on the dev machine) and real hardwar
 
 ## Prerequisite
 Install Rust (rustup) and the Tauri Windows prerequisites (WebView2, MSVC build tools) before Phase 5.
+
+## Amendment (session 16): customer display and scale labels
+- **Customer display** (browser mode): the till opens a second window (`?display=customer`) and feeds it over a `BroadcastChannel` in the same browser: idle → the priced lines and total → "Thank you" with the change. No token, no network, no sign-in in that window; a newly opened display asks for the current state. The desktop till would need a second Tauri window (not built).
+- **Scale labels**: an in-store EAN-13 `2` + 5-digit item code + 5-digit weight in grams + check digit; the item is the one whose barcode is the label's first six characters (its scale code) and must be sold by weight; the line takes the printed weight, never merged with another line. Read the same way online (`/v1/catalog/lookup`, which then answers `quantity`) and offline (the till's snapshot), by `parseScaleLabel` in `@1pos/sync-protocol`. Price-embedded labels are not read: dividing a printed price back into a quantity could not be reproduced exactly by the server's re-pricing.

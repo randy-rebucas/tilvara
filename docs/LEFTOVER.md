@@ -34,12 +34,11 @@ Slice 4 (voids/returns):
 
 Slice 5 (reports):
 - ⬜ Z-reading with accumulated grand total (fiscal gate G2)
-- ⬜ PDF export of reports (CSV download exists for every report since session 10)
 
 Slice 6 (POS browser checkout):
 - ⬜ CSP response header in production hosting
-- ⬜ Customer display
-- ⬜ Barcode scale codes
+- ⬜ Customer display on the desktop till (a second Tauri window); browser mode has one since session 16
+- ⏳ Price-embedded scale labels (weight labels are read since session 16): which format the scales print, and whether a re-priced total may differ from the label by a centavo, is the user's call
 
 Phase-level:
 - ⬜ `@1pos/pricing` promotions
@@ -70,7 +69,6 @@ Slice 3 (orders + kitchen):
 
 Slice 4 (bills + checks + service charge):
 - ⬜ Tips
-- ⬜ A bill as PDF (the till prints and reprints the bill since session 10)
 - ⬜ Adding items after a partial payment (today: a new order once the bill settles)
 - ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
 
@@ -84,8 +82,6 @@ Slice 6 (UI):
 - 6c admin set-up:
   - ⬜ Drag-and-drop ordering (buttons today)
   - ⬜ A plan view of the floor (positions/shapes are stored, tiles today)
-- 6d report screens:
-  - ⬜ PDF export (CSV and date presets are done)
 
 Slice 7 (exit review):
 - ⬜ `sales.gross` counts a service charge ex VAT while item lines count VAT-inclusive; the receipt adds the charge VAT back, but any other consumer of `gross` (exports, a future invoice) must do the same — decide whether to store a charge's gross with VAT

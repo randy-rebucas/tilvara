@@ -274,6 +274,18 @@ describe('pricing & POS lookup', () => {
     await http().patch(`/v1/price-lists/${s.defaultListId}`).set(s.auth).send({ isDefault: true }).expect(200);
   });
 
+  it('a cashier given access at one branch looks items up there (not at another branch) and browses the catalog', async () => {
+    // Session 16: catalog.read held at a branch did not count for the business-wide catalog, so such a
+    // cashier could not scan anything at their own till.
+    const cashier = await addMember(owner, s.t.tenantId, 'cashier', { type: 'BRANCH', id: s.branchId });
+    const token = bearer(await loginToken(app, cashier.email));
+    await http().get('/v1/catalog/lookup').query({ code: barcode, branchId: s.branchId }).set(token).expect(200);
+    await http().get('/v1/catalog/lookup').query({ code: barcode, branchId: s.branch2Id }).set(token).expect(403);
+    await http().get('/v1/products').set(token).expect(200);
+    await http().get('/v1/categories').set(token).expect(200);
+    await http().post('/v1/products').set(token).send(product(s)).expect(403);
+  });
+
   it('cashiers can look up and browse but not edit the catalog or prices', async () => {
     const cashier = await addMember(owner, s.t.tenantId, 'cashier');
     const token = bearer(await loginToken(app, cashier.email));

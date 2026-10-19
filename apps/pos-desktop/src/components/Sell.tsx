@@ -1,4 +1,4 @@
-import { Minus, Plus, ScanLine, Trash2 } from 'lucide-react';
+import { MonitorUp, Minus, Plus, ScanLine, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
@@ -6,6 +6,7 @@ import { toDec } from '@1pos/money';
 import { isPositive, isZero } from '../lib/money';
 import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
+import { openCustomerDisplay, usePublishDisplay, type DisplayState } from '../lib/customer-display';
 import type { LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
 import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './Payment';
@@ -126,6 +127,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
     return {
       variantId: item.variantId, sku: item.sku, name: item.name, price: { amount: item.unitPrice },
       soldBy: item.wholeUnits ? 'UNIT' : 'WEIGHT', uom: { code: '', allowsFraction: !item.wholeUnits },
+      ...(item.quantity && { quantity: item.quantity }),
     };
   }
 
@@ -135,6 +137,11 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
       return;
     }
     setNotice(null);
+    // A scale label is one weighed pack: its own line, at the printed weight, never merged with another.
+    if (item.quantity) {
+      setCart((c) => [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: item.quantity!, wholeUnits: false }]);
+      return;
+    }
     setCart((c) => {
       const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && l.wholeUnits);
       if (existing) return c.map((l) => (l === existing ? { ...l, quantity: toDec(l.quantity).plus(1).toString() } : l));
@@ -256,6 +263,16 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
     }
   }
 
+  // What the customer display shows: the priced lines and total, then the change once paid.
+  const shown: DisplayState = receipt
+    ? { kind: 'paid', total: receipt.totals.amountDue ?? due, change: receipt.tenders.find((x) => x.change)?.change ?? null }
+    : offlineReceipt
+      ? { kind: 'paid', total: due, change: null }
+      : cart.length && quote
+        ? { kind: 'cart', lines: quote.lines.map((l) => ({ name: l.name, quantity: l.quantity, amount: l.amountDue })), total: quote.totals.amountDue }
+        : { kind: 'idle' };
+  usePublishDisplay(shown);
+
   function newSale() {
     setCart([]);
     setBeneficiaries([]);
@@ -314,6 +331,12 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
             <input id="scan" ref={scanRef} autoFocus autoComplete="off" className="input pl-10 text-[1.0625rem]" placeholder={t('sell.scan')} />
           </div>
           <button className="btn btn-primary">{t('sell.add')}</button>
+          {till.mode === 'browser' && (
+            <button type="button" className="btn" title={t('display.open')} onClick={openCustomerDisplay}>
+              <MonitorUp className="size-5" aria-hidden />
+              <span className="sr-only">{t('display.open')}</span>
+            </button>
+          )}
         </form>
         <p className="-mt-2 hidden flex-wrap gap-x-4 gap-y-1 text-[0.8125rem] text-muted lg:flex" aria-label={t('keys.title')}>
           <span><kbd className="kbd">F2</kbd> {t('keys.scan')}</span>

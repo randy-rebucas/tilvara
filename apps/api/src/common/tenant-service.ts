@@ -42,6 +42,17 @@ export abstract class TenantService {
     }
   }
 
+  /**
+   * Business-wide reference data (the catalog: products, categories, units, tax categories, price
+   * lists): a grant at any scope is enough to read it. A cashier given `catalog.read` at one branch
+   * must still be able to scan the business's items (session 16 fix: they could not).
+   */
+  protected assertHolds(auth: AuthContext, perm: PermissionCode): void {
+    if (!tenantOf(auth).grants.some((g) => g.permission === perm)) {
+      throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing: [perm] });
+    }
+  }
+
   protected read<T>(auth: AuthContext, fn: (db: Database) => Promise<T>): Promise<T> {
     return this.tenantDb.run(auth, fn);
   }

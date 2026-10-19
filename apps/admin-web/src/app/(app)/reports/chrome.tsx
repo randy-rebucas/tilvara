@@ -4,7 +4,8 @@ import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, ApiError, type Branch } from '@/lib/api';
-import { datePresets, todayManila } from '@/lib/format';
+import { PrintButton } from '@/components/print-button';
+import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 
@@ -71,7 +72,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
   error?: string;
   children: ReactNode;
 }) {
-  const { t } = await getT();
+  const { t, lang } = await getT();
   const { branches, branch, from, to, day } = scope;
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
   const params = (k: ReportTab, extra: Record<string, string> = {}) =>
@@ -81,6 +82,13 @@ export async function ReportsChrome({ tab, scope, error, children }: {
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : 'rep.lede')} />
+      {/* On paper (or a saved PDF): which report, branch and range, and when it was printed. */}
+      {branch && (
+        <p className="hidden text-[0.9375rem] print:block" data-testid="print-heading">
+          <b>{t(`rep.tab.${tab}` as MessageKey)}</b> · {branch.name} · {tab === 'open' ? day : from === to ? from : `${from} – ${to}`} · {t('rep.printedAt', { at: formatDateTime(new Date().toISOString(), lang) })}
+        </p>
+      )}
+      <div className="contents print:hidden">
       <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />
@@ -112,6 +120,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
                 <Download aria-hidden className="size-4" /> {t('rep.csv')}
               </a>
             )}
+            {!error && <PrintButton />}
           </form>
           {tab !== 'open' && (
             <nav aria-label={t('rep.presets')} className="flex flex-wrap gap-1.5">
@@ -132,6 +141,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
           )}
         </div>
       )}
+      </div>
       {!branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone="error">{error}</Callout> : children}
     </div>
   );

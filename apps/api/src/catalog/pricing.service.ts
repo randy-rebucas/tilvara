@@ -19,6 +19,7 @@ import {
   inSequence,
 } from '@1pos/database';
 import type { AssignPriceListInput, CreatePriceListInput, SetPricesInput, UpdatePriceListInput } from '@1pos/validation';
+import { parseScaleLabel } from '@1pos/sync-protocol';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -50,7 +51,7 @@ export class PricingService extends TenantService {
   }
 
   listPriceLists(auth: AuthContext) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const [lists, assigned] = await inSequence(
         () => db.select().from(priceLists).orderBy(asc(priceLists.name)),
@@ -142,7 +143,7 @@ export class PricingService extends TenantService {
   }
 
   currentPrices(auth: AuthContext, priceListId: string) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const list = await this.listRow(db, priceListId);
       const { rows } = await db.execute<{
@@ -186,7 +187,7 @@ export class PricingService extends TenantService {
   }
 
   priceHistory(auth: AuthContext, variantId: string) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       // 404 for unknown (incl. other tenants') variants, like every other id-addressed route.
       const [variant] = await db.select({ id: productVariants.id }).from(productVariants).where(eq(productVariants.id, variantId));
@@ -207,10 +208,11 @@ export class PricingService extends TenantService {
    * item has no price — the POS must refuse to sell it rather than default to zero.
    */
   lookup(auth: AuthContext, code: string, branchId: string) {
-    this.assertCan(auth, 'catalog.read');
     return this.read(auth, async (db) => {
-      const [branch] = await db.select({ id: branches.id, archivedAt: branches.archivedAt }).from(branches).where(eq(branches.id, branchId));
+      const [branch] = await db.select({ id: branches.id, archivedAt: branches.archivedAt, legalEntityId: branches.legalEntityId }).from(branches).where(eq(branches.id, branchId));
       if (!branch) throw notFound('Branch');
+      // The branch's price for its own people: catalog.read where they work (a branch grant counts).
+      this.assertCan(auth, 'catalog.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
 
       const [byBarcode] = await db
         .select({ variantId: barcodes.variantId })
@@ -223,6 +225,15 @@ export class PricingService extends TenantService {
           .from(productVariants)
           .where(and(sql`lower(${productVariants.sku}) = lower(${code})`, isNull(productVariants.archivedAt)));
         variantId = bySku?.id;
+      }
+      // A weighing-scale label (session 16): the item by its 6-character scale code, the weight from the label.
+      const label = variantId ? null : parseScaleLabel(code);
+      if (label) {
+        const [byKey] = await db
+          .select({ variantId: barcodes.variantId })
+          .from(barcodes)
+          .where(and(eq(barcodes.code, label.key), isNull(barcodes.archivedAt)));
+        variantId = byKey?.variantId;
       }
       if (!variantId) throw notFound('Item');
 
@@ -241,6 +252,9 @@ export class PricingService extends TenantService {
         .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.uomId))
         .where(eq(productVariants.id, variantId));
       if (!item || item.product.archivedAt || item.variant.archivedAt) throw notFound('Item');
+      if (label && item.product.soldBy !== 'WEIGHT') {
+        throw new AppError('SCALE_LABEL_NOT_BY_WEIGHT', `${item.product.name} is not sold by weight; its scale code cannot carry a weight`, HttpStatus.UNPROCESSABLE_ENTITY);
+      }
 
       const price = await this.effectivePrice(db, branchId, variantId);
       return {
@@ -253,6 +267,8 @@ export class PricingService extends TenantService {
         tax: { categoryCode: item.taxCategoryCode, vatTreatment: item.vatTreatment },
         trackInventory: item.product.trackInventory,
         price,
+        /** From a scale label: the weighed quantity (kg) to sell, as printed. */
+        ...(label && { quantity: label.quantity }),
       };
     });
   }

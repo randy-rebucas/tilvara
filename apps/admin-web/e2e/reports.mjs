@@ -36,7 +36,7 @@ await call('POST', `/v1/order-items/${b2.id}/void`, tk, { reason: 'Dropped on th
 // --- read the reports in the admin
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9340 });
-const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll } = b;
+const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll, send } = b;
 const text = () => evaluate('document.body.innerText');
 const has = async (...parts) => {
   const s = await text();
@@ -86,6 +86,22 @@ try {
     return rows.length > 0 && rows.every((tr) => /\\d\\d:00–\\d\\d:59/.test(tr.innerText)) && counted === 3;
   })()`));
   await shot('reports-prep-hour.png');
+
+  // Print / save as PDF (session 16): on paper only the report, with what it is and when it was printed.
+  check('a print button sits beside the CSV download', await evaluate(`[...document.querySelectorAll('button')].some((x) => x.textContent.includes('Print / save as PDF'))`));
+  await send('Emulation.setEmulatedMedia', { media: 'print' });
+  check('printed: the band and the report controls are hidden, the table and a heading with the range are shown', await evaluate(`(() => {
+    const hidden = (el) => !el || getComputedStyle(el).display === 'none' || !el.getClientRects().length;
+    const heading = document.querySelector('[data-testid="print-heading"]');
+    return hidden(document.querySelector('header.band')) && hidden(document.querySelector('form[method="get"]'))
+      && !hidden(heading) && heading.innerText.includes('Prep times') && heading.innerText.includes('printed')
+      && !hidden(document.querySelector('main table'));
+  })()`));
+  await send('Emulation.setEmulatedMedia', { media: '' });
+  const pdf = await send('Page.printToPDF', { printBackground: true });
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(`${OUT}/reports-prep-hour.pdf`, Buffer.from(pdf.data, 'base64'));
+  check('the browser makes a PDF of it', Buffer.from(pdf.data, 'base64').subarray(0, 5).toString() === '%PDF-');
 
   await clickText('Open orders');
   await waitFor(`document.body.innerText.includes('Left to collect')`);

@@ -83,7 +83,7 @@ export class CatalogService extends TenantService {
 
   // ---------------------------------------------------------------- units & tax categories
   listUoms(auth: AuthContext) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, (db) => db.select().from(unitsOfMeasure).orderBy(asc(unitsOfMeasure.code)));
   }
 
@@ -97,7 +97,7 @@ export class CatalogService extends TenantService {
   }
 
   listTaxCategories(auth: AuthContext) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, (db) => db.select().from(taxCategories).orderBy(asc(taxCategories.code)));
   }
 
@@ -112,7 +112,7 @@ export class CatalogService extends TenantService {
 
   // ---------------------------------------------------------------- categories
   listCategories(auth: AuthContext) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, (db) =>
       db.select().from(categories).orderBy(asc(categories.sortOrder), asc(categories.name)),
     );
@@ -205,12 +205,12 @@ export class CatalogService extends TenantService {
   }
 
   getProduct(auth: AuthContext, id: string) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, (db) => this.productView(db, id));
   }
 
   listProducts(auth: AuthContext, q: ProductListQuery) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const conds = [];
       if (!q.includeArchived) conds.push(isNull(products.archivedAt));
@@ -239,7 +239,7 @@ export class CatalogService extends TenantService {
 
   /** sku and display name per variant id ("Product — Variant"), archived included, for document lines. */
   lookupVariants(auth: AuthContext, ids: string[]) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const rows = await db
         .select({
@@ -374,7 +374,7 @@ export class CatalogService extends TenantService {
   // ---------------------------------------------------------------- sample items (ADR-0016 slice 6)
   /** Whether this business can load the trial's sample items, and how many are on its list now. */
   sampleData(auth: AuthContext) {
-    this.assertCan(auth, 'catalog.read');
+    this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const s = await this.sampleState(db);
       return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: SAMPLE_ITEMS.length };

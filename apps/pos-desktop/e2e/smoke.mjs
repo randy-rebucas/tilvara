@@ -34,6 +34,10 @@ const product = async (name, sku, barcode, price, tax = 'VAT') =>
 const cola = await product('Coke Mismo 290ml', 'CK-290', '4801981116072', '22.40');
 await product('Dinorado Rice 1kg', 'RICE-1', null, '56.00', 'VAT_EXEMPT');
 await product('Pancit Canton Chilimansi', 'PC-CHILI', '4807770270017', '16.50');
+// Sold by the kilo, labelled by the scale: scale code 212345 (session 16).
+const kg = (await call('GET', '/v1/uoms', tk)).data.find((u) => u.code === 'KG').id;
+await call('POST', '/v1/products', tk, { name: 'Pork belly', taxCategoryId: taxes.VAT_EXEMPT, uomId: kg, soldBy: 'WEIGHT', trackInventory: false, variants: [{ sku: 'PORK-KG', barcodes: ['212345'], price: '320.00' }] }, { 'idempotency-key': randomUUID() });
+const ean13 = (first12) => { let sum = 0; for (let i = 0; i < 12; i++) sum += Number(first12[i]) * (i % 2 ? 3 : 1); return `${first12}${(10 - (sum % 10)) % 10}`; };
 await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Opening stock', items: [{ variantId: cola, quantity: '24' }] }, { 'idempotency-key': randomUUID() });
 
 // --- drive the counter
@@ -68,11 +72,19 @@ try {
   await waitFor(`document.getElementById('scan')`);
   check('shift opened; counter shows the scan field focused', await evaluate(`document.activeElement?.id === 'scan'`));
 
+  // Customer display (session 16): opened before the sale. A same-origin iframe stands in for the
+  // second window (the till feeds it over a BroadcastChannel, which reaches both alike).
+  check('the counter offers the customer display', await evaluate(`Boolean(document.querySelector('button[title="Open the customer display"]'))`));
+  await evaluate(`(() => { const f = document.createElement('iframe'); f.id = 'cd'; f.src = '/?display=customer'; f.style.cssText = 'position:fixed;right:0;bottom:0;width:480px;height:320px;'; document.body.appendChild(f); })()`);
+  const display = () => evaluate(`document.getElementById('cd')?.contentDocument?.body?.innerText ?? ''`);
+  check('the display greets while the cart is empty', await waitFor(`(document.getElementById('cd')?.contentDocument?.body?.innerText ?? '').includes('Welcome')`).then(() => true, () => false));
+
   // Sale 1: barcode + SKU, cash with change
   await scan('4801981116072');
   await scan('RICE-1');
   check('server-priced total for barcode + SKU items (₱78.40)', await totalShows('₱78.40'));
   check('VAT breakdown shows VATable and exempt sales', /VATable sales[\s\S]*₱20\.00/.test(await text()) && /VAT-exempt sales[\s\S]*₱56\.00/.test(await text()));
+  check('the customer display shows the lines and the server-priced total ₱78.40', await waitFor(`(document.getElementById('cd')?.contentDocument?.body?.innerText ?? '').includes('₱78.40')`).then(() => true, () => false) && /Coke Mismo|Rice/.test(await display()));
   await shot('sell-cart.png', false);
   await clickText('₱100.00');
   await sleep(200);
@@ -81,6 +93,8 @@ try {
   await waitFor(`document.body.innerText.includes('NOT AN OFFICIAL INVOICE')`);
   const r1 = await text();
   check('receipt: not an invoice, VAT REG TIN, reference R1-000001', r1.includes('VAT REG TIN 123-456-789-00000') && r1.includes('R1-000001'));
+  check('the customer display thanks and shows the change ₱21.60', await waitFor(`(document.getElementById('cd')?.contentDocument?.body?.innerText ?? '').includes('Thank you')`).then(() => true, () => false) && (await display()).includes('₱21.60'));
+  await evaluate(`document.getElementById('cd').remove()`);
   await shot('receipt-cash.png');
   await clickText('New sale');
 
@@ -186,6 +200,12 @@ try {
   check('F9 completes the sale', await shown('NOT AN OFFICIAL INVOICE'));
   await key('F2');
   check('F2 starts a new sale with the scan field focused', await waitFor(`document.activeElement?.id === 'scan'`).then(() => true, () => false));
+
+  // A weighing-scale label: the pork belly at the printed 1.234 kg (1.234 × ₱320.00 = ₱394.88).
+  await scan(ean13('212345012340'));
+  check('a scale label rings up the weighed item at its printed weight (₱394.88)', await totalShows('₱394.88') && (await text()).includes('Pork belly'));
+  await evaluate(`[...document.querySelectorAll('button[aria-label="Remove"]')].filter((x) => x.getClientRects().length).forEach((x) => x.click())`);
+  await waitFor(`!document.body.innerText.includes('Pork belly')`);
 
   // Layout at a tablet counter and a phone width (three lines push the payment panel below the fold)
   await scan('4801981116072');

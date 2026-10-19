@@ -19,6 +19,8 @@ export interface LookupItem {
   soldBy: 'UNIT' | 'WEIGHT';
   uom: { code: string; allowsFraction: boolean };
   price: { amount: string } | null;
+  /** A weighing-scale label carried this quantity (kg): the line takes it as weighed. */
+  quantity?: string;
 }
 
 export interface QuoteLine {
