@@ -197,6 +197,19 @@ try {
   const rec = await call('GET', '/v1/sync/transactions?status=RECORDED', tk);
   await check('the plain offline sale was recorded', rec.data.length === 1);
   await shot('synced.png', false);
+
+  // 6. A price changed in the back office reaches the till within half a minute (session 16), long before
+  //    its 10-minute refresh: after the change, cut the connection and price the item from the till.
+  await signIn(); // the restart above signed the cashier out (tokens live in memory)
+  await waitFor(`document.body.innerText.includes('Continue shift')`);
+  await clickText('Continue shift');
+  await waitFor(`document.getElementById('scan')`);
+  const lists = (await call('GET', '/v1/price-lists', tk)).data;
+  await call('POST', `/v1/price-lists/${lists.find((l) => l.isDefault).id}/prices`, tk, { items: [{ variantId: cola, amount: '25.00' }] });
+  await sleep(40_000);
+  await proxyDown();
+  await scan('CK-290');
+  await check('a price changed online is on the till at once: offline, Coke is ₱25.00', await totalShows('₱25.00'));
 } catch (e) {
   console.error(e);
   await check('no unexpected error', false);

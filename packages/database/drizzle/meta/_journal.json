@@ -449,6 +449,20 @@
       "when": 1792335808031,
       "tag": "0063_restaurant_notes_moves_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1792368869828,
+      "tag": "0064_catalog_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1792368872564,
+      "tag": "0065_catalog_versions_rls",
+      "breakpoints": true
     }
   ]
 }

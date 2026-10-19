@@ -309,6 +309,104 @@ describe('till health', () => {
 });
 
 describe('quarantine', () => {
+  it('tills learn the catalog changed: the version moves with every catalog edit, a scheduled change is announced, sales do not move it', async () => {
+    const s = await shop('off-version');
+    const other = await shop('off-version-b');
+    const version = async (t = s.t1) => (await http().get('/v1/terminal/catalog-version').set(t.headers).expect(200)).body as { version: number; nextChangeAt: string | null };
+    const snap = await snapshot(s);
+    expect(snap.catalogVersion).toBeGreaterThan(0);
+    expect(snap.nextChangeAt).toBeNull();
+    expect(await version()).toEqual({ version: snap.catalogVersion, nextChangeAt: null });
+    // A sale (online or offline) is not a catalog change.
+    await http().post('/v1/sales').set(s.cashier).set('Idempotency-Key', randomUUID())
+      .send({ cashierSessionId: s.session.id, clientTransactionId: randomUUID(), lines: [{ variantId: s.cola, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '50.00' }] }).expect(201);
+    expect((await sync(s.t1, [sale(s, snap)]).expect(200)).body.results[0].status).toBe('RECORDED');
+    expect((await version()).version).toBe(snap.catalogVersion);
+    // Another business's edits do not reach this till.
+    await http().patch(`/v1/products/${(await http().get('/v1/products').set(other.auth).expect(200)).body.data[0].id}`).set(other.auth).send({ name: 'Renamed elsewhere' }).expect(200);
+    expect((await version()).version).toBe(snap.catalogVersion);
+    // A rename moves it; so does a price scheduled for later, which is also announced.
+    const product = (await http().get('/v1/products').set(s.auth).expect(200)).body.data.find((x: { name: string }) => x.name === 'Cola');
+    await http().patch(`/v1/products/${product.id}`).set(s.auth).send({ name: 'Cola 290ml' }).expect(200);
+    const renamed = await version();
+    expect(renamed.version).toBeGreaterThan(snap.catalogVersion!);
+    const at = new Date(Date.now() + 3_600_000);
+    at.setUTCMilliseconds(0);
+    const list = ((await http().get('/v1/price-lists').set(s.auth).expect(200)).body.data as { id: string; isDefault: boolean }[]).find((l) => l.isDefault)!;
+    await http().post(`/v1/price-lists/${list.id}/prices`).set(s.auth).send({ items: [{ variantId: s.cola, amount: '25.00', effectiveFrom: at.toISOString() }] }).expect(201);
+    const scheduled = await version();
+    expect(scheduled.version).toBeGreaterThan(renamed.version);
+    expect(scheduled.nextChangeAt).toBe(at.toISOString());
+    const fresh = await snapshot(s);
+    expect([fresh.catalogVersion, fresh.nextChangeAt]).toEqual([scheduled.version, at.toISOString()]);
+    expect(fresh.items.find((i) => i.variantId === s.cola)!.unitPrice).toBe('22.4000'); // not yet in force
+    expect(fresh.lastDeviceSeq).toBe(seq); // the offline sale synced above was the last one this terminal numbered
+    // A revoked till learns nothing.
+    await http().post(`/v1/terminals/${s.t2.id}/revoke`).set(s.auth).send({ reason: 'Stolen' }).expect(200);
+    await http().get('/v1/terminal/catalog-version').set(s.t2.headers).expect(401);
+  });
+
+  it('a till revoked and set up again on its register delivers what it rang up under the old credential; nobody else can', async () => {
+    const s = await shop('off-recover');
+    const snap = await snapshot(s);
+    const delivered = sale(s, snap);
+    const stranded = sale(s, snap);
+    const foreign = sale(s, snap);
+    expect((await sync(s.t1, [delivered]).expect(200)).body.results[0].status).toBe('RECORDED');
+    // The till is revoked (say its credential leaked) and paired again: a new terminal on the same register.
+    await http().post(`/v1/terminals/${s.t1.id}/revoke`).set(s.auth).send({ reason: 'Credential shown on a screenshot' }).expect(200);
+    await http().post('/v1/sync/sales').set(s.t1.headers).send({ sales: [stranded] }).expect(401);
+    const res = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.r1, name: 'Till again' }).expect(201)).body;
+    const again = { id: res.terminal.id as string, headers: { 'x-terminal-id': res.terminal.id, Authorization: `Terminal ${res.credential}` } };
+    const results = (await sync(again, [delivered, stranded]).expect(200)).body.results;
+    // Delivered before the revocation: the original answer. Stranded: recorded now, once.
+    const first = (await sql<{ sale_id: string }>(s, `SELECT sale_id FROM terminal_transactions WHERE terminal_txn_id = $1`, [delivered.terminalTxnId]))[0]!.sale_id;
+    expect(results.map((r: { status: string; replayed: boolean; saleId: string }) => [r.status, r.replayed])).toEqual([['RECORDED', true], ['RECORDED', false]]);
+    expect(results[0].saleId).toBe(first);
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales WHERE client_transaction_id = ANY($1::text[])`, [[delivered.terminalTxnId, stranded.terminalTxnId]])).toEqual([{ n: 2 }]);
+    const recovered = await sql<{ metadata: Record<string, string> }>(s, `SELECT metadata FROM audit_logs WHERE action = 'offline_sale.recovered'`);
+    expect(recovered).toEqual([{ metadata: expect.objectContaining({ terminalId: again.id, revokedTerminalId: s.t1.id, localReference: stranded.localReference }) }]);
+    expect((await sync(again, [stranded]).expect(200)).body.results[0]).toMatchObject({ status: 'RECORDED', replayed: true });
+    // A till on another register cannot deliver the revoked till's sales.
+    const r = (await sync(s.t2, [foreign]).expect(200)).body.results[0];
+    expect([r.status, r.code]).toEqual(['QUARANTINED', 'UNKNOWN_SNAPSHOT']);
+    // Nor can a till deliver with the snapshot of another till that is still active on its register.
+    const active = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.r1, name: 'Second till' }).expect(201)).body;
+    const activeSnap = (await http().get('/v1/terminal/snapshot').set({ 'x-terminal-id': active.terminal.id, Authorization: `Terminal ${active.credential}` }).expect(200)).body as Snapshot;
+    const borrowed = (await sync(again, [sale(s, activeSnap)]).expect(200)).body.results[0];
+    expect([borrowed.status, borrowed.code]).toEqual(['QUARANTINED', 'UNKNOWN_SNAPSHOT']);
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('a sale whose month was closed while the till was offline is quarantined (PERIOD_CLOSED), and recorded once the month reopens', async () => {
+    const s = await shop('off-period');
+    const snap = await snapshot(s);
+    const offline = sale(s, snap);
+    // The books of the sale's month are closed meanwhile. The API closes only months that have ended, so
+    // the drill writes the closed period itself: the database guard on postings is what is exercised.
+    const [period] = await sql<{ le: string; month: string }>(s,
+      `SELECT b.legal_entity_id AS le, to_char(now() AT TIME ZONE b.timezone, 'YYYY-MM-01') AS month FROM branches b WHERE b.id = $1`, [s.branchId]);
+    const { le, month } = period!;
+    await sql(s, `INSERT INTO accounting_periods (tenant_id, legal_entity_id, starts_on, status, closed_by, closed_at)
+                  VALUES ($1, $2, $3, 'CLOSED', $4, now())
+                  ON CONFLICT (tenant_id, legal_entity_id, starts_on) DO UPDATE SET status = 'CLOSED', closed_by = EXCLUDED.closed_by, closed_at = now()`,
+      [s.tenantId, le, month, s.cashierId]);
+    const before = await sql(s, `SELECT count(*)::int AS n FROM sales`);
+    const r = (await sync(s.t1, [offline]).expect(200)).body.results[0];
+    expect([r.status, r.code]).toEqual(['QUARANTINED', 'PERIOD_CLOSED']);
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales`)).toEqual(before); // nothing half-recorded
+    const q = (await http().get('/v1/sync/transactions?status=QUARANTINED').set(s.manager).expect(200)).body.data[0];
+    expect(q).toMatchObject({ errorCode: 'PERIOD_CLOSED', localReference: offline.localReference });
+    // Still closed: a retry is refused and counted.
+    expect((await http().post(`/v1/sync/transactions/${q.id}/retry`).set(s.manager).expect(409)).body.error).toMatchObject({ code: 'STILL_QUARANTINED', details: { code: 'PERIOD_CLOSED' } });
+    // The accountant reopens the month (with a reason, through the API); the manager retries: recorded once.
+    await http().post('/v1/accounting/periods/reopen').set(s.auth).send({ legalEntityId: le, month: month.slice(0, 7), reason: 'An offline till synced late' }).expect(200);
+    const retried = (await http().post(`/v1/sync/transactions/${q.id}/retry`).set(s.manager).expect(200)).body;
+    expect([retried.status, retried.attempts]).toEqual(['RECORDED', 3]);
+    expect((await sync(s.t1, [offline]).expect(200)).body.results[0]).toMatchObject({ status: 'RECORDED', saleId: retried.saleId, replayed: true });
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
   it('what cannot be recorded waits for a manager, blocks the close, and is retried or dismissed', async () => {
     const s = await shop('off-quarantine');
     const snap = await snapshot(s);

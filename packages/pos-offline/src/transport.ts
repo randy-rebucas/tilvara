@@ -1,10 +1,12 @@
-import type { OfflineSale, Snapshot, SnapshotItemsPage, SyncSalesResponse } from '@1pos/sync-protocol';
+import type { CatalogVersion, OfflineSale, Snapshot, SnapshotItemsPage, SyncSalesResponse } from '@1pos/sync-protocol';
 import { SNAPSHOT_PAGE_SIZE, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER } from '@1pos/sync-protocol';
 
 /** How the engine reaches the server. Swappable so drills can lose answers or take the server away. */
 export interface Transport {
   snapshot(): Promise<Snapshot>;
   syncSales(sales: OfflineSale[]): Promise<SyncSalesResponse>;
+  /** The server's catalog version (session 16); absent in transports for older servers and some tests. */
+  catalogVersion?(): Promise<CatalogVersion>;
 }
 
 /**
@@ -81,5 +83,6 @@ export function httpTransport(o: HttpTransportOptions): Transport {
       return { ...whole, items };
     },
     syncSales: (sales) => call<SyncSalesResponse>('POST', '/v1/sync/sales', { sales }),
+    catalogVersion: () => call<CatalogVersion>('GET', '/v1/terminal/catalog-version'),
   };
 }

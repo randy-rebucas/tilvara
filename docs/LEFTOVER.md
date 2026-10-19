@@ -103,20 +103,14 @@ Slice 6 (deferred by the user's decision):
 - ⏳ PayMongo adapter + webhooks (env settings done session 8; waiting for sandbox keys in `.env`) — D6
 - ⏳ Invoice transmission (compliance gate)
 
-Slice 7 (exit review):
-- ⬜ Not drilled: `PERIOD_CLOSED` for an offline sale (needs month-old fixtures)
-
 Phase-level:
-- ⬜ Recovering a revoked terminal's queue (admin tool)
-- ⬜ Device sequence restarts if the till's file is lost
-- ⬜ Desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier)
+- ⏳ Desktop: offline sign-in after a restart during an outage (PIN for the shift's cashier) — a security design for the user to approve (ADR-0015 ★)
 - ⬜ Desktop: signed NSIS installer + auto-update
 - ⬜ Desktop: serial/COM printers without a Windows driver
 - ⬜ Desktop: real printer/drawer hardware check
-- ⬜ Offline SC/PWD and discounts (refused offline today)
-- ⬜ Opening a shift offline
+- ⏳ Offline SC/PWD and discounts (refused offline today) — changes an ADR-0015 ★ default; SC/PWD also waits on the tax sign-off
+- ⏳ Opening a shift offline — changes an ADR-0015 ★ default (the user's decision)
 - ✅ Snapshot paging for large catalogues (Phase 6 slice 5, session 11)
-- ⬜ Push the snapshot when prices change (today: the till refreshes when online)
 - ⬜ Printer status (paper out, cover open) needs the device's status bytes (DLE EOT) through the shell
 - ⬜ Receipt logo/QR images (ESC/POS raster) when a design asks for them
 

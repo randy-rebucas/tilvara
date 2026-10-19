@@ -53,6 +53,25 @@ export interface Snapshot {
    * Absent when the whole list came in one answer.
    */
   nextPage?: string | null;
+  /**
+   * The business's catalog version when the snapshot was taken (session 16; absent from older servers).
+   * When `GET /v1/terminal/catalog-version` answers another one, the snapshot is out of date.
+   */
+  catalogVersion?: number;
+  /** The next scheduled price or tax change at this branch after `asOf`, if any: refresh then. */
+  nextChangeAt?: string | null;
+  /**
+   * The highest `deviceSeq` the server has from this terminal (session 16). A till whose file was lost
+   * or restored from an old copy numbers its next sales after it, so local references never repeat.
+   */
+  lastDeviceSeq?: number;
+}
+
+/** `GET /v1/terminal/catalog-version`: cheap enough to ask every half minute. */
+export interface CatalogVersion {
+  version: number;
+  /** The next scheduled price or tax change at the terminal's branch, after now. */
+  nextChangeAt: string | null;
 }
 
 /** One further page of a paged snapshot's items, priced as of the same `asOf`. */

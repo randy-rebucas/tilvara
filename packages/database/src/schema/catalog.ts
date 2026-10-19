@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigint,
   boolean,
   char,
   check,
@@ -237,6 +238,19 @@ export const productPrices = pgTable(
     foreignKey({ columns: [t.tenantId, t.priceListId], foreignColumns: [priceLists.tenantId, priceLists.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     index('product_prices_lookup_idx').on(t.tenantId, t.priceListId, t.variantId, t.effectiveFrom.desc()),
+    // The next scheduled change of a list (tills refresh when it takes effect).
+    index('product_prices_schedule_idx').on(t.tenantId, t.priceListId, t.effectiveFrom),
     check('product_prices_amount_non_negative', sql`${t.amount} >= 0`),
   ],
 );
+
+/**
+ * One counter per business, bumped by a statement trigger whenever anything a till's snapshot is made
+ * of changes (items, prices, lists, barcodes, tax, branch and register names). A till compares it with
+ * the version its snapshot was taken at and fetches a new one when they differ (session 16).
+ */
+export const catalogVersions = pgTable('catalog_versions', {
+  tenantId: uuid('tenant_id').primaryKey(),
+  version: bigint('version', { mode: 'number' }).notNull().default(1),
+  changedAt: timestamp('changed_at', { withTimezone: true }).notNull().defaultNow(),
+});

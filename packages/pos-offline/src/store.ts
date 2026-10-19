@@ -128,6 +128,12 @@ export class LocalStore {
    * Take the next device sequence number and queue the sale in one local transaction: once this
    * returns, the sale survives a crash, and its number is never reused.
    */
+  /** Never number a sale at or below `last` (what the server already has from this terminal). */
+  async raiseSequence(last: number): Promise<void> {
+    const next = Number((await this.meta('next_device_seq')) ?? '1');
+    if (last + 1 > next) await this.setMeta('next_device_seq', String(last + 1));
+  }
+
   async enqueue(build: (deviceSeq: number) => { envelope: OfflineSale; receipt: OfflineReceipt }, now: number): Promise<QueuedSale> {
     return this.sql.transaction(async () => {
       const seq = Number((await this.meta('next_device_seq')) ?? '1');

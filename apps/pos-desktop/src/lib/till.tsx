@@ -52,6 +52,8 @@ const STATUS_MS = 3_000;
  */
 const REFRESH_ONLINE_MS = 10 * 60_000;
 const PROBE_OFFLINE_MS = 30_000;
+/** Online, how often the till asks whether its snapshot is out of date (a cheap version check). */
+const CHECK_ONLINE_MS = 30_000;
 
 export function TillProvider({ children }: { children: ReactNode }) {
   const store = useMemo(() => (isDesktop ? new LocalStore(tauriSqlDriver()) : null), []);
@@ -118,6 +120,19 @@ export function TillProvider({ children }: { children: ReactNode }) {
       engine.refreshSnapshot().then(() => setOnline(true), () => setOnline(false));
     }, online ? REFRESH_ONLINE_MS : PROBE_OFFLINE_MS);
     return () => clearInterval(p);
+  }, [engine, online]);
+
+  // Online, a cheap question every half minute: did anything the snapshot is made of change (an edit
+  // in the back office, or a scheduled price taking effect)? Then fetch a new one at once (session 16).
+  useEffect(() => {
+    if (!engine || !online) return;
+    const c = setInterval(() => {
+      engine.snapshotOutdated().then(
+        (outdated) => (outdated ? engine.refreshSnapshot().then(() => setOnline(true), () => setOnline(false)) : undefined),
+        () => setOnline(false),
+      );
+    }, CHECK_ONLINE_MS);
+    return () => clearInterval(c);
   }, [engine, online]);
 
   // A sync that got no answer means the API is unreachable too.

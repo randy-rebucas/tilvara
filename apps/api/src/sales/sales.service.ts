@@ -151,6 +151,8 @@ export interface OfflineContext {
   windowHours: number;
   /** The quarantined delivery being retried, if any (it becomes RECORDED with the sale). */
   quarantinedId?: string;
+  /** Rung up under a terminal since revoked, delivered by its replacement on the same register (audited). */
+  recoveredFrom?: string;
   payload: unknown;
   payloadHash: string;
 }
@@ -350,6 +352,11 @@ export class SalesService extends TenantService {
         await db.insert(terminalTransactions).values({
           tenantId: tenantOf(auth).tenantId, terminalId: ctx.terminalId, terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq,
           payload: ctx.payload, payloadHash: ctx.payloadHash, cashierSessionId: session.id, status: 'RECORDED', saleId: sale.id,
+        });
+      }
+      if (ctx.recoveredFrom) {
+        await this.audit(db, auth, 'offline_sale.recovered', 'sale', sale.id, {
+          terminalId: ctx.terminalId, revokedTerminalId: ctx.recoveredFrom, localReference: env.localReference,
         });
       }
       const [reg] = await db.select({ code: registers.code }).from(registers).where(eq(registers.id, session.registerId));

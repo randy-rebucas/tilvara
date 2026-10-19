@@ -18,7 +18,7 @@ import {
   withTenant,
   type Database,
 } from '@1pos/database';
-import { canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotItem, type SnapshotItemsPage, type SyncResult } from '@1pos/sync-protocol';
+import { canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER, type OfflineFlag, type CatalogVersion, type OfflineSale, type Snapshot, type SnapshotItem, type SnapshotItemsPage, type SyncResult } from '@1pos/sync-protocol';
 import type { DismissOfflineInput, OfflineListQuery } from '@1pos/validation';
 import { createHash } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
@@ -115,6 +115,8 @@ export class SyncService extends TenantService {
       if (!row) throw unauthenticated();
       // The plain DB clock, not "in force now" with its skew allowance: a price set a moment after the
       // snapshot must not count as already in force when the sale is re-priced at this instant.
+      // Read before the items: an edit landing in between makes the till refresh once more, never miss one.
+      const catalogVersion = await this.versionOf(db);
       const asOf = await dbNow(db);
       const profile = (await profilesInForce(db, [row.entity.id], asOf)).get(row.entity.id);
       if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
@@ -141,8 +143,50 @@ export class SyncService extends TenantService {
         openSession: open ? { id: open.id, openedBy: open.openedBy, openedAt: open.openedAt.toISOString(), cashierName: open.cashierName } : null,
         items: items.map(({ currency: _c, ...i }) => i),
         ...(pageSize ? { nextPage } : {}),
+        catalogVersion,
+        nextChangeAt: await this.nextChange(db, row.branch.id, row.entity.id, asOf),
+        lastDeviceSeq: Number(
+          (await db.execute<{ n: string }>(sql`SELECT coalesce(max(device_seq), 0)::text AS n FROM terminal_transactions WHERE terminal_id = ${t.terminalId}`)).rows[0]!.n,
+        ),
       };
     });
+  }
+
+  /** The business's catalog version, and the next scheduled change at this terminal's branch (session 16). */
+  catalogVersion(t: TerminalPrincipal): Promise<CatalogVersion> {
+    return withTenant(this.database.pool, t.tenantId, async (db) => {
+      const [row] = await db
+        .select({ branchId: branches.id, entityId: branches.legalEntityId })
+        .from(terminals)
+        .innerJoin(registers, eq(registers.id, terminals.registerId))
+        .innerJoin(branches, eq(branches.id, registers.branchId))
+        .where(eq(terminals.id, t.terminalId));
+      if (!row) throw unauthenticated();
+      return { version: await this.versionOf(db), nextChangeAt: await this.nextChange(db, row.branchId, row.entityId, await dbNow(db)) };
+    });
+  }
+
+  private async versionOf(db: Database): Promise<number> {
+    const { rows } = await db.execute<{ version: string }>(sql`SELECT version::text FROM catalog_versions`);
+    return Number(rows[0]?.version ?? 0);
+  }
+
+  /** The earliest price of the branch's list or tax profile of its entity taking effect after `after`. */
+  private async nextChange(db: Database, branchId: string, entityId: string, after: Date): Promise<string | null> {
+    const at = after.toISOString();
+    const { rows } = await db.execute<{ next: string | null }>(sql`
+      WITH list AS (
+        SELECT coalesce(
+          (SELECT bpl.price_list_id FROM branch_price_lists bpl
+             JOIN price_lists pl ON pl.tenant_id = bpl.tenant_id AND pl.id = bpl.price_list_id AND pl.archived_at IS NULL
+            WHERE bpl.branch_id = ${branchId}),
+          (SELECT id FROM price_lists WHERE is_default AND archived_at IS NULL)) AS id)
+      SELECT least(
+               (SELECT min(pp.effective_from) FROM product_prices pp WHERE pp.price_list_id = (SELECT id FROM list) AND pp.effective_from > ${at}::timestamptz),
+               (SELECT min(tp.effective_from) FROM tax_profiles tp WHERE tp.legal_entity_id = ${entityId} AND tp.effective_from > ${at}::timestamptz)
+             ) AS next`);
+    const next = rows[0]?.next;
+    return next ? new Date(next).toISOString() : null;
   }
 
   /**
@@ -235,12 +279,31 @@ export class SyncService extends TenantService {
     const known = await this.delivery(t, env.terminalTxnId);
     if (known) return this.replay(known, env, payloadHash);
 
-    const snapshot = await withTenant(this.database.pool, t.tenantId, async (db) =>
-      (await db.select().from(terminalSnapshots).where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminalSnapshots.terminalId, t.terminalId))))[0]);
+    const snapshot = await withTenant(this.database.pool, t.tenantId, async (db) => {
+      const [own] = await db.select({ asOf: terminalSnapshots.asOf }).from(terminalSnapshots)
+        .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminalSnapshots.terminalId, t.terminalId)));
+      if (own) return { asOf: own.asOf, recoveredFrom: null };
+      // Recovery (session 16): a till revoked and set up again on the same register still holds sales
+      // rung up under its old credential. Their snapshot is the revoked terminal's; nobody else's is accepted.
+      const [old] = await db
+        .select({ asOf: terminalSnapshots.asOf, terminalId: terminalSnapshots.terminalId })
+        .from(terminalSnapshots)
+        .innerJoin(terminals, eq(terminals.id, terminalSnapshots.terminalId))
+        .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminals.registerId, t.registerId), eq(terminals.status, 'REVOKED')));
+      return old ? { asOf: old.asOf, recoveredFrom: old.terminalId } : undefined;
+    });
+    if (snapshot?.recoveredFrom) {
+      // Delivered by the old credential before it was revoked: answer what was recorded then.
+      const earlier = await this.delivery({ ...t, terminalId: snapshot.recoveredFrom }, env.terminalTxnId);
+      if (earlier) return this.replay(earlier, env, payloadHash);
+    }
     try {
       if (!snapshot) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
       const cashier = await this.cashierAuth(t, env.cashierUserId);
-      const r = await this.sales.recordOffline(cashier, env, this.offlineContext(t, snapshot.asOf, env, payloadHash));
+      const r = await this.sales.recordOffline(cashier, env, {
+        ...this.offlineContext(t, snapshot.asOf, env, payloadHash),
+        ...(snapshot.recoveredFrom && { recoveredFrom: snapshot.recoveredFrom }),
+      });
       return { terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq, status: 'RECORDED', ...r, replayed: false };
     } catch (e) {
       if (!(e instanceof AppError) || e.getStatus() >= 500) throw e; // transient: the terminal retries with the same envelope

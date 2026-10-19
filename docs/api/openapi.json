@@ -21894,6 +21894,57 @@
         }
       }
     },
+    "/v1/terminal/catalog-version": {
+      "get": {
+        "operationId": "sync.catalogVersion",
+        "tags": [
+          "sync"
+        ],
+        "description": "Fine-grained permission (incl. branch/register scope) is checked in the service. Rate limit: 600 per 60s per terminal (bucket terminal). Rate limit: 3000 per 60s per IP (bucket terminal-ip).",
+        "security": [
+          {
+            "terminal": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Terminal-Id",
+            "in": "header",
+            "required": true,
+            "description": "The registered terminal’s id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "401": {
+            "description": "Missing or wrong terminal credential, or the terminal was revoked (TERMINAL_REVOKED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limited (Retry-After header)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/terminal/snapshot": {
       "get": {
         "operationId": "sync.snapshot",

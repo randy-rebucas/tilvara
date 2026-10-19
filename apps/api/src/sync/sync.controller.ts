@@ -29,6 +29,14 @@ const TERMINAL_LIMITS = [
 export class SyncController {
   constructor(@Inject(SyncService) private readonly sync: SyncService) {}
 
+  /** Asked every half minute by an online till: has anything its snapshot is made of changed? */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @Get('terminal/catalog-version')
+  async catalogVersion(@Req() req: AuthedRequest) {
+    return this.sync.catalogVersion(await this.sync.authenticate((h) => req.header(h), req.correlationId));
+  }
+
   @TerminalAuth()
   @RateLimit(...TERMINAL_LIMITS)
   @Get('terminal/snapshot')

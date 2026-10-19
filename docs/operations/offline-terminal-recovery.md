@@ -67,7 +67,8 @@ When the connection is back, sign in, and the till sends what it holds.
   file) to the replacement PC's folder above, start the till, and it sends them. Restoring an **older
   backup** is also safe:
   - sales the server already has are answered "already recorded" and not counted again;
-  - new sales continue normally (their local reference numbers may repeat earlier ones).
+  - new sales continue normally; their numbers continue after the last one the server has from this
+    terminal (since session 16 the snapshot tells the till), so local references do not repeat.
 - **If nothing can be recovered**, the unsent sales are lost to the system. The drawer count at closing
   shows their cash as an overage. Use the paper copies of the offline receipts (local references) to
   explain it.
@@ -77,8 +78,14 @@ When the connection is back, sign in, and the till sends what it holds.
 
 ## 6. A till is stolen or must be retired
 Admin → Locations → the register → Terminals → **Revoke**. The till stops syncing and selling at once and
-cannot be restored. Anything it had not sent stays on that device. **No tool exists yet** to recover a
-revoked till's queue: escalate to Tilvara support with the device if it is recovered.
+cannot be restored. Anything it had not sent stays on that device.
+
+**Recovering what a revoked till had not sent** (since session 16): if you have the device, add a new
+terminal **on the same register**, and on that PC open Till settings → **Disconnect**, then set it up again
+with the new terminal id and key. The sales waiting on it are delivered by the new terminal and recorded
+(each one audited as `offline_sale.recovered`, naming the revoked terminal). A sale the old till had
+already delivered answers with its original record, never twice. Only a terminal on the same register can
+do this, and only for a terminal that is revoked.
 
 ## 7. The price list on the till is old
 Till settings shows "Price list from …". A till that has been offline for more than 24 hours still sells

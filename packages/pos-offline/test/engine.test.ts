@@ -214,3 +214,39 @@ describe('sync', () => {
     expect(sync.map((r) => r.sent)).toEqual([10, 0]);
   });
 });
+
+describe('knowing when the snapshot is out of date (session 16)', () => {
+  it('asks the server: a moved catalog version or a scheduled change that took effect means refresh; an older server never says so', async () => {
+    const server = fakeServer();
+    let answer = { version: 7, nextChangeAt: '2026-10-17T10:00:00.000Z' as string | null };
+    server.transport.snapshot = async () => ({ ...snapshot, catalogVersion: 7, nextChangeAt: '2026-10-17T10:00:00.000Z' });
+    server.transport.catalogVersion = async () => answer;
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    expect(await engine.snapshotOutdated()).toBe(true); // none stored yet
+    await engine.refreshSnapshot();
+    expect(await engine.snapshotOutdated()).toBe(false);
+    answer = { version: 8, nextChangeAt: '2026-10-17T10:00:00.000Z' }; // an edit in the back office
+    expect(await engine.snapshotOutdated()).toBe(true);
+    answer = { version: 7, nextChangeAt: null }; // the scheduled price took effect, nothing else planned
+    expect(await engine.snapshotOutdated()).toBe(true);
+    answer = { version: 7, nextChangeAt: '2026-10-17T10:00:00.000Z' };
+    expect(await engine.snapshotOutdated()).toBe(false);
+    delete server.transport.catalogVersion; // an older server: the 10-minute refresh is all there is
+    expect(await engine.snapshotOutdated()).toBe(false);
+  });
+});
+
+describe('a till whose file was lost or restored from an old copy (session 16)', () => {
+  it('numbers its next sale after the last one the server has, so local references never repeat', async () => {
+    const server = fakeServer();
+    server.transport.snapshot = async () => ({ ...snapshot, lastDeviceSeq: 41 });
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') }); // a fresh file
+    await engine.refreshSnapshot();
+    const { sale } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    expect([sale.deviceSeq, sale.envelope.localReference]).toEqual([42, 'R1-TAbCd-000042']);
+    // A counter already ahead is never moved back.
+    server.transport.snapshot = async () => ({ ...snapshot, lastDeviceSeq: 10 });
+    await engine.refreshSnapshot();
+    expect((await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' })).sale.deviceSeq).toBe(43);
+  });
+});

@@ -88,9 +88,25 @@ export class OfflineEngine {
     return this.serial(async () => {
       const snap = await this.transport.snapshot().catch((e) => this.noteAuth(e));
       await this.store.saveSnapshot(snap, this.now());
+      // A lost or restored till file restarts its counter: continue after what the server has.
+      if (snap.lastDeviceSeq) await this.store.raiseSequence(snap.lastDeviceSeq);
       await this.store.setMeta('auth_state', 'OK');
       return snap;
     });
+  }
+
+  /**
+   * Whether the stored snapshot is out of date (session 16): the server's catalog version moved (an
+   * item, price, barcode, tax or name changed), or its next scheduled change is no longer the one the
+   * snapshot knew (it took effect). Needs no device clock. False when the server cannot say (older
+   * server); a failed call rejects, like any other call while offline.
+   */
+  async snapshotOutdated(): Promise<boolean> {
+    const stored = await this.store.snapshot();
+    if (!stored) return true;
+    if (!this.transport.catalogVersion) return false;
+    const now = await this.transport.catalogVersion();
+    return now.version !== stored.body.catalogVersion || now.nextChangeAt !== (stored.body.nextChangeAt ?? null);
   }
 
   /** Price a cart offline exactly as the server will re-price it (no discounts offline, ADR-0015 §1). */

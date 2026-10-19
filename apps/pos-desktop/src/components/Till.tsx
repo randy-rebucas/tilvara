@@ -126,7 +126,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
           </ul>
         )}
         {status?.snapshot?.expired && <Callout kind="warn">{t('till.priceListExpired')}</Callout>}
-        {status?.authState === 'REVOKED' && <Callout kind="error">{t('till.revoked')}</Callout>}
+        {status?.authState === 'REVOKED' && <Callout kind="error">{t('till.revoked')}. {t('till.revokedHelp')}</Callout>}
         <button className="btn justify-self-start" onClick={() => void till.engine?.drain().finally(() => void till.refresh())}>{t('till.syncNow')}</button>
       </Note>
 
