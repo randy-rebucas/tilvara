@@ -347,7 +347,8 @@ beforeAll(async () => {
   owner = ownerPool();
   runtime = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 2 });
   [a, b] = await Promise.all([world('iso-a'), world('iso-b')]);
-});
+  // Two full businesses with a row in every tenant table: ~10 s alone, past 60 s late in a full gate run.
+}, 180_000);
 
 afterAll(async () => {
   await app.close();

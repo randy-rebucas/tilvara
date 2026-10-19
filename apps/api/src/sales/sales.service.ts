@@ -771,6 +771,7 @@ export class SalesService extends TenantService {
           and(
             q.cashierSessionId ? eq(sales.cashierSessionId, q.cashierSessionId) : undefined,
             q.registerId ? eq(sales.registerId, q.registerId) : undefined,
+            q.saleNumber ? eq(sales.saleNumber, q.saleNumber) : undefined,
             q.cursor ? sql`${sales.id} < ${q.cursor}` : undefined,
           ),
         )

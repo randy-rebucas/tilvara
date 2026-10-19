@@ -82,7 +82,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('offline', 'off.title', 'orange', 3, 1, { area: area('/offline-sales') }),
   // Same managers (cash.reconcile) as offline sales; no tab of its own (the band is full), reached from there and the overview.
   section('drawers', 'drawers.title', 'orange', 3, 2, { area: area('/offline-sales'), href: '/shifts' }),
-  section('locations', 'nav.locations', 'violet', 5, 2, { area: area('/locations') }),
+  section('locations', 'nav.locations', 'violet', 5, 3, { area: area('/locations') }),
   section('team', 'nav.team', 'green', 4, 2, { area: area('/team') }),
   section('subscription', 'nav.subscription', 'none', 4, 1, { area: area('/subscription') }),
   section('account', 'guide.account.title', 'none', 4, 2),

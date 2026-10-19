@@ -232,6 +232,13 @@ describe('what a branch serves', () => {
     expect((await http().get(`/v1/branches/${r.branchId}/menu`).query({ orderType: 'TAKEAWAY' }).set(r.cashier).expect(200)).body.menu).toBeNull();
     await http().get(`/v1/branches/${r.branchId}/menu`).set(r.otherCashier).expect(403);
     await http().get(`/v1/branches/${r.branchId}/menu`).set(r.inventory).expect(403);
+    // Kitchen crew read the menu to mark its items sold out from the KDS (and may set it), at their branch only.
+    const crew = bearer(await loginToken(app, (await addMember(owner, r.tenantId, 'kitchen_crew', { type: 'BRANCH', id: r.branchId })).email));
+    const crewMenu = (await http().get(`/v1/branches/${r.branchId}/menu`).set(crew).expect(200)).body.menu;
+    expect(crewMenu.sections.flatMap((s: { items: { variantId: string }[] }) => s.items.map((i) => i.variantId))).toContain(m.tea);
+    await http().put(`/v1/branches/${r.branchId}/sold-out`).set(crew).send({ variantId: m.tea, soldOut: true }).expect(200);
+    await http().put(`/v1/branches/${r.branchId}/sold-out`).set(crew).send({ variantId: m.tea, soldOut: false }).expect(200);
+    await http().get(`/v1/branches/${r.branch2Id}/menu`).set(crew).expect(403);
     expect(code(await http().post(`/v1/menus/${m.menu.id}/archive`).set(r.auth).expect(409))).toBe('MENU_IN_USE');
   });
 });

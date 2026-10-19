@@ -303,13 +303,17 @@ export class PayablesService extends TenantService {
         id: string; entry_number: number; invoice_number: string; invoice_date: string; due_date: string; branch_id: string; supplier_id: string;
         supplier_code: string; supplier_name: string; total_amount: string; paid: string; status: string;
       }>(sql`
-        SELECT i.id, i.entry_number::int, i.invoice_number, i.invoice_date::text, i.due_date::text, i.branch_id, i.supplier_id,
-               s.code AS supplier_code, s.name AS supplier_name, i.total_amount::text,
-               coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id), 0)::text AS paid, i.status
-          FROM supplier_invoices i JOIN suppliers s ON s.id = i.supplier_id
-         WHERE i.legal_entity_id = ${q.legalEntityId}
-           ${q.supplierId ? sql`AND i.supplier_id = ${q.supplierId}` : sql``}
-         ORDER BY i.due_date, i.entry_number
+        SELECT * FROM (
+          SELECT i.id, i.entry_number::int, i.invoice_number, i.invoice_date::text, i.due_date::text, i.branch_id, i.supplier_id,
+                 s.code AS supplier_code, s.name AS supplier_name, i.total_amount::text,
+                 coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id), 0)::text AS paid, i.status
+            FROM supplier_invoices i JOIN suppliers s ON s.id = i.supplier_id
+           WHERE i.legal_entity_id = ${q.legalEntityId}
+             ${q.supplierId ? sql`AND i.supplier_id = ${q.supplierId}` : sql``}
+        ) x
+        -- The derived status filters before the limit, so a filter never loses rows past it.
+         WHERE ${q.status === 'CANCELLED' ? sql`x.status = 'CANCELLED'` : q.status === 'PAID' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric <= x.paid::numeric` : q.status === 'OPEN' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric > x.paid::numeric` : sql`TRUE`}
+         ORDER BY x.due_date, x.entry_number
          LIMIT 1000`);
       const data = rows
         .map((r) => {
@@ -365,7 +369,9 @@ export class PayablesService extends TenantService {
   aging(auth: AuthContext, q: PayablesAgingQuery) {
     return this.read(auth, async (db) => {
       await this.assertEntityRead(db, auth, q.legalEntityId);
-      const asOf = q.asOf ?? (await localToday(db, 'Asia/Manila'));
+      // An entity has no time zone of its own: its first branch's local day (Manila when it has none).
+      const [first] = await db.select({ timezone: branches.timezone }).from(branches).where(eq(branches.legalEntityId, q.legalEntityId)).orderBy(asc(branches.createdAt)).limit(1);
+      const asOf = q.asOf ?? (await localToday(db, first?.timezone ?? 'Asia/Manila'));
       const { rows } = await db.execute<{ supplier_id: string; code: string; name: string; due_date: string; days: number; balance: string }>(sql`
         SELECT i.supplier_id, s.code, s.name, i.due_date::text, (${asOf}::date - i.due_date)::int AS days,
                (i.total_amount - coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id AND p.paid_on <= ${asOf}::date), 0))::text AS balance

@@ -1025,4 +1025,4 @@ MFA (TOTP) for privileged roles · password reset (needs real email adapter) · 
 4. Decisions for the user:
    - whether a service charge's stored gross should include its VAT (LEFTOVER.md, Phase 4 slice 7).
 5. Carried, non-blocking: the tax adviser's and accountant's answers (service charge; ADR-0013 questions 1–10); all phase/slice leftovers now live in `docs/LEFTOVER.md` (moved out of BACKLOG 2026-10-17).
-Carried (non-blocking): supplier invoices/AP + input VAT; low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.
+Carried (non-blocking): low-stock push alerts; blind counts; admin UI for tax profiles; SC/PWD professional sign-off (gate #6); PayMongo adapter + card/QR refunds + provider fees/settlement; Z-reading/fiscal gate G2; CSP header for POS hosting; POS phone sticky total bar; shift-history tender/void tags.

@@ -339,7 +339,8 @@ export class MenusService extends TenantService {
   branchMenu(auth: AuthContext, branchId: string, q: BranchMenuQuery) {
     return this.read(auth, async (db) => {
       const { scope } = await branchScope(db, branchId);
-      if (!['restaurant.orders', 'restaurant.manage'].some((p) => this.can(auth, p as PermissionCode, scope))) this.assertCan(auth, 'restaurant.orders', scope);
+      // The kitchen reads it too: the KDS marks the menu's items sold out (kitchen.operate may set that).
+      if (!['restaurant.orders', 'restaurant.manage', 'kitchen.operate'].some((p) => this.can(auth, p as PermissionCode, scope))) this.assertCan(auth, 'restaurant.orders', scope);
       await assertFeature(db, 'restaurant');
       return this.served(db, branchId, q.orderType);
     });

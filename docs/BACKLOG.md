@@ -220,5 +220,11 @@ User guide (session 18): ✅ done.
 - ✅ Tests: admin `guide.test.ts` (7), POS `guide.test.ts` (3), `test:e2e:web:guide` (22), `test:e2e:pos` (+7).
 - ✅ Drawer count approval screen (admin Drawer counts + shift page; names on shifts; BFF allow-list); `test:e2e:web:drawers` (19).
 
+Full audit (session 19): ✅ done ([AUDIT-2026-10-19.md](AUDIT-2026-10-19.md)).
+- ✅ Wired API that had no screen: supplier invoices/payments/aging (admin), stock adjustment and waste, entity/branch/register details, till pay in/out, returns of earlier sales (`saleNumber` lookup), KDS sold out (kitchen crew read the branch menu).
+- ✅ Fixes: payables list filter before its limit, aging day by branch time zone, no manual reversal of an invoice entry, journal labels/links for supplier documents, till search errors, two stale/slow integration tests.
+- ✅ Tests: `test:e2e:web:payables` (28), `test:e2e:pos:extras` (15), integration additions in `payables`, `sales`, `menu`.
+- ⬜ Untracked gaps found (customer management, held carts, exchanges, price override, reservations, reports, …) moved to LEFTOVER "Audit 2026-10-19".
+
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

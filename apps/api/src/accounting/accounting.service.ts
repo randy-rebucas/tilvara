@@ -157,6 +157,9 @@ export class AccountingService extends TenantService {
       if (!entry) throw notFound('Journal entry');
       await this.entity(db, auth, entry.legalEntityId, 'accounting.post');
       if (entry.sourceType === 'REVERSAL') throw unprocessable('CANNOT_REVERSE_REVERSAL', 'Post a new entry instead of reversing a reversal');
+      // An invoice's entry is undone by cancelling the invoice, which also frees its receipts; a
+      // reversal by hand would leave the invoice open against books that no longer carry it.
+      if (entry.sourceType === 'SUPPLIER_INVOICE') throw unprocessable('CANCEL_THE_DOCUMENT', 'Cancel the supplier invoice instead of reversing its entry');
       const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, id));
       const posting: PostingLine[] = lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }));
       const reversal = await post(db, {

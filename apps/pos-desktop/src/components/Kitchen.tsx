@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import { chime, soundPreference } from '../lib/chime';
 import { usePoll } from '../lib/poll';
 import { useFloorPush } from '../lib/push';
-import type { KitchenTicket } from '../types';
+import type { BranchMenu, KitchenTicket, MenuItem } from '../types';
 import { errorText, type Notice } from './Payment';
 import { Callout, Note } from './ui';
 
@@ -49,6 +49,60 @@ function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Mark menu items sold out ("86") at this branch, or back: the floor can no longer order them.
+ * The items are those on the branch's published menus (dine-in and takeaway).
+ */
+function SoldOutPanel({ branchId }: { branchId: string }) {
+  const { t } = useT();
+  const [items, setItems] = useState<MenuItem[] | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useCallback(() => {
+    Promise.all((['DINE_IN', 'TAKEAWAY'] as const).map((o) => api<BranchMenu>('GET', `/v1/branches/${branchId}/menu?orderType=${o}`)))
+      .then((menus) => {
+        const byVariant = new Map<string, MenuItem>();
+        for (const m of menus) for (const s of m.menu?.sections ?? []) for (const i of s.items) byVariant.set(i.variantId, i);
+        setItems([...byVariant.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
+  }, [branchId]);
+  useEffect(load, [load]);
+
+  async function toggle(item: MenuItem) {
+    setBusy(item.variantId);
+    try {
+      await api('PUT', `/v1/branches/${branchId}/sold-out`, { variantId: item.variantId, soldOut: !item.soldOut });
+      setNotice(null);
+      load();
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (items === null) return notice ? <Callout kind={notice.kind}>{notice.text}</Callout> : <p className="text-muted">{t('floor.loading')}</p>;
+  return (
+    <div className="grid gap-3">
+      <p className="text-muted">{t('kitchen.soldOutHint')}</p>
+      {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-2" aria-label={t('kitchen.soldOutTitle')}>
+        {items.map((i) => (
+          <li key={i.variantId}>
+            <Note className="flex items-center justify-between gap-3 px-4 py-3">
+              <span className={`font-semibold ${i.soldOut ? 'text-muted line-through' : ''}`}>{i.name}</span>
+              <button type="button" className={`btn btn-sm ${i.soldOut ? '' : 'btn-danger'}`} disabled={busy === i.variantId} onClick={() => void toggle(i)}>
+                {i.soldOut ? t('kitchen.markAvailable') : t('kitchen.markSoldOut')}
+              </button>
+            </Note>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -122,7 +176,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
   const { t } = useT();
   const [tickets, setTickets] = useState<KitchenTicket[] | null>(null);
   const [done, setDone] = useState<KitchenTicket[] | null>(null);
-  const [view, setView] = useState<'open' | 'done'>('open');
+  const [view, setView] = useState<'open' | 'done' | 'soldout'>('open');
   const [notice, setNotice] = useState<Notice>(null);
   const [now, setNow] = useState(() => Date.now());
   const busy = useRef(new Set<string>());
@@ -201,6 +255,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
         <div className="flex gap-2" role="group" aria-label={t('kds.view')}>
           <button type="button" className="btn" aria-pressed={view === 'open'} onClick={() => setView('open')}>{t('kds.viewOpen')}{tickets ? ` (${tickets.length})` : ''}</button>
           <button type="button" className="btn" aria-pressed={view === 'done'} onClick={() => setView('done')}>{t('kds.viewDone')}</button>
+          <button type="button" className="btn" aria-pressed={view === 'soldout'} onClick={() => setView('soldout')}>{t('kitchen.soldOut')}</button>
         </div>
         <button
           type="button"
@@ -217,7 +272,9 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
         </button>
       </div>
       {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
-      {view === 'done' ? (
+      {view === 'soldout' ? (
+        <SoldOutPanel branchId={place.branch.id} />
+      ) : view === 'done' ? (
         <DoneTickets tickets={done} showStation={!place.station} />
       ) : tickets === null ? (
         <p className="text-muted">{t('floor.loading')}</p>

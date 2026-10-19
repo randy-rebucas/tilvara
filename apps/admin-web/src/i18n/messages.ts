@@ -1497,6 +1497,7 @@ export const en = {
   'guide.locations.s5': 'For the desktop till, press “Pair a terminal” on the register and copy the terminal id and pairing key into the till. The key is shown only once.',
   'guide.locations.t1': 'Revoke a lost or replaced till at once: it stops working immediately.',
   'guide.locations.t2': 'The counter app in a browser needs no pairing: sign in, choose the register and open a shift.',
+  'guide.locations.t3': 'Receipts print the entity’s trade name and address and the branch’s address: open the entity and press “Edit details”, and press “Edit” on a branch, to fill them in.',
 
   'guide.team.lede': 'People who can sign in to this business, and what they may do.',
   'guide.team.s1': 'Press “Invite someone” and enter their email, a role and where it applies: the whole business or one branch. They get an email to set their name and password.',
@@ -3027,6 +3028,7 @@ export const fil: Record<MessageKey, string> = {
   'guide.locations.s5': 'Para sa desktop till, pindutin ang “Mag-pair ng terminal” sa register at kopyahin ang terminal id at pairing key sa till. Minsan lang ipinapakita ang key.',
   'guide.locations.t1': 'Bawiin agad ang nawala o pinalitang till: titigil ito kaagad.',
   'guide.locations.t2': 'Hindi kailangang i-pair ang counter app sa browser: mag-sign in, piliin ang register at magbukas ng shift.',
+  'guide.locations.t3': 'Nakalimbag sa resibo ang trade name at address ng entity at ang address ng branch: buksan ang entity at pindutin ang “Baguhin ang detalye”, at pindutin ang “Baguhin” sa branch, para punan ang mga ito.',
 
   'guide.team.lede': 'Mga taong puwedeng mag-sign in sa negosyong ito, at kung ano ang puwede nilang gawin.',
   'guide.team.s1': 'Pindutin ang “Mag-imbita” at ilagay ang email nila, isang tungkulin at kung saan ito gagana: buong negosyo o isang branch. Makakatanggap sila ng email para itakda ang pangalan at password nila.',

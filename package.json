@@ -40,6 +40,8 @@
     "test:e2e:web:guide": "node apps/admin-web/e2e/guide.mjs",
     "test:e2e:web:drawers": "node apps/admin-web/e2e/drawers.mjs",
     "test:e2e:web:stock": "node apps/admin-web/e2e/stock.mjs",
+    "test:e2e:web:payables": "node apps/admin-web/e2e/payables.mjs",
+    "test:e2e:pos:extras": "node apps/pos-desktop/e2e/counter-extras.mjs",
     "backup": "pnpm --filter @1pos/database backup",
     "test:db:reset": "pnpm --filter @1pos/database build && pnpm --filter @1pos/database test-db-reset",
     "drill:restore": "node --env-file-if-exists=.env infra/backup/drill-restore.mjs",

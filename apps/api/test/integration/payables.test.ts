@@ -166,6 +166,12 @@ describe('supplier invoices', () => {
     const fixed = (await invoice(s, { invoiceNumber: 'C-9', goodsReceiptIds: [r.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
     expect(fixed).toMatchObject({ entryNumber: 2, status: 'OPEN' });
     expect((await http().get('/v1/supplier-invoices').query({ legalEntityId: s.le, status: 'CANCELLED' }).set(s.auth).expect(200)).body.data).toMatchObject([{ id: inv.id }]);
+    // Each status filter returns exactly its own invoices (the filter runs before the list's limit).
+    expect((await http().get('/v1/supplier-invoices').query({ legalEntityId: s.le, status: 'OPEN' }).set(s.auth).expect(200)).body.data).toMatchObject([{ id: fixed.id, status: 'OPEN' }]);
+    expect((await http().get('/v1/supplier-invoices').query({ legalEntityId: s.le, status: 'PAID' }).set(s.auth).expect(200)).body.data).toEqual([]);
+    // Its entry is undone by cancelling the invoice, never by a reversal by hand (the invoice would stay open).
+    const byHand = await http().post(`/v1/journal-entries/${fixed.journalEntryId}/reverse`).set(s.auth).set('Idempotency-Key', randomUUID()).send({ memo: 'Oops' }).expect(422);
+    expect(byHand.body.error.code).toBe('CANCEL_THE_DOCUMENT');
 
     // The database keeps the rules whoever writes: no reopening, no editing amounts, no deleting.
     const tryAs = (q: string) => asOwnerInTenant(owner, s.tenantId, (c) => c.query(q)).then(() => null, (e: Error) => e.message);

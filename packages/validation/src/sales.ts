@@ -159,6 +159,8 @@ export type CreateSaleReturnInput = z.infer<typeof createSaleReturnSchema>;
 export const saleListQuerySchema = z.object({
   cashierSessionId: z.uuid().optional(),
   registerId: z.uuid().optional(),
+  /** The number printed on the receipt; numbers are per register, so pair it with `registerId`. */
+  saleNumber: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   cursor: z.uuid().optional(),
 });

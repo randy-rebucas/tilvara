@@ -31,7 +31,7 @@ SPEC §6.8 / Phase 3 exit: stock and financial movements remain traceable and co
    | INVENTORY_WASTE | 5110 Spoilage and waste | WASTE movements |
    | TRANSIT_LOSS | 5120 Transit losses | transfer shortfalls |
    | CASH_OVER_SHORT | 5200 Cash over/short | drawer count variances |
-   Opening floats are internal moves between cash and the drawer and are not posted. Ordinary discounts are already netted in the sale buckets. Purchase costs are assumed VAT-exclusive; input VAT and supplier invoices (GRNI → payables) come with accounts payable later. Provider fees and settlements come with the PayMongo adapter.
+   Opening floats are internal moves between cash and the drawer and are not posted. Ordinary discounts are already netted in the sale buckets. Purchase costs are assumed VAT-exclusive; input VAT and supplier invoices (GRNI → payables) are posted by the supplier invoice (see the session-16 amendment below; admin screens session 19). Provider fees and settlements come with the PayMongo adapter.
 7. **Reports**: trial balance per entity and date range (opening, period movement, closing per account; totals equal); journal listing; source → entry traceability both ways (`source_type/source_id` on the entry).
 
 ## Consequences

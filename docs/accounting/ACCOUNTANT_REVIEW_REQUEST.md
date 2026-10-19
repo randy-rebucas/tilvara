@@ -49,6 +49,8 @@ Policies: moving-average cost per branch and item; negative stock is allowed and
 
 ## 3. Questions
 
+> Update 2026-10-19: questions 1 and 2 were built as proposed (supplier invoices clear GRNI to Accounts payable, input VAT to an Input VAT asset, the difference to purchase price variance; ADR-0013 amendment). Your answers still decide whether that stays.
+
 1. **GRNI instead of Accounts payable.** Supplier invoices are not recorded yet, so receipts credit GRNI and stay there. Acceptable as an interim? When invoices arrive, should we move GRNI → AP at invoice amount and post the difference to purchase price variance?
 2. **Input VAT.** Receipts are booked at cost without input VAT (it belongs to the supplier invoice, not yet modelled). Is that right for a VAT-registered buyer until invoices exist, and which account should input VAT use (e.g. "Input VAT" asset, with deferred input VAT on capital goods out of scope)?
 3. **SC/PWD discounts** are a contra-revenue account (4020) and the sale is recorded at the full price ex VAT. Is this the presentation you expect, versus recording the sale net of the discount? Any separate tracking needed for the deductibility of the discount for income tax?

@@ -203,6 +203,12 @@ describe('retries and duplicates', () => {
     const res = await Promise.all(Array.from({ length: 10 }, () => post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '22.40'))));
     expect(res.map((r) => r.status)).toEqual(Array(10).fill(201));
     expect(res.map((r) => r.body.saleNumber).sort((x, y) => x - y)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    // The till finds an earlier sale by the number on its receipt (a return after the shift).
+    const seventh = res.find((r) => r.body.saleNumber === 7)!.body;
+    const found = await http().get('/v1/sales').query({ registerId: s.registerId, saleNumber: 7, limit: 1 }).set(s.cashier).expect(200);
+    expect(found.body.data.map((x: { id: string }) => x.id)).toEqual([seventh.id]);
+    expect((await http().get('/v1/sales').query({ registerId: s.registerId, saleNumber: 99 }).set(s.cashier).expect(200)).body.data).toEqual([]);
+    await http().get('/v1/sales').query({ registerId: s.registerId, saleNumber: 0 }).set(s.cashier).expect(400);
   });
 });
 

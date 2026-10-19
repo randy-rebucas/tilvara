@@ -39,6 +39,19 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
     setMessage(null);
   }
 
+  async function find(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const n = Number.parseInt(String(new FormData(e.currentTarget).get('findNumber') ?? '').trim(), 10);
+    if (!Number.isInteger(n) || n <= 0) return setMessage({ kind: 'error', text: t('history.notFound') });
+    try {
+      const r = await api<{ data: SaleSummary[] }>('GET', `/v1/sales?registerId=${shift.register.id}&saleNumber=${n}&limit=1`);
+      if (!r.data[0]) return setMessage({ kind: 'error', text: t('history.notFound') });
+      await open(r.data[0].id);
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof ApiFailure ? withReference(err.error.message, err) : t('common.error') });
+    }
+  }
+
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selected || !mode) return;
@@ -76,6 +89,17 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
   return (
     <div className="mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[380px_1fr]">
       <Note denom="blue" className="p-2">
+        {(canVoid || canReturn) && (
+          // Returns are not limited to this shift: find any sale of this register by its receipt number.
+          <form className="no-print row-rule grid gap-2 px-3 pb-3 pt-2" onSubmit={find}>
+            <p className="font-semibold">{t('history.findTitle')}</p>
+            <p className="text-[0.8125rem] text-muted">{t('history.findHint')}</p>
+            <div className="flex items-end gap-2">
+              <Field id="findNumber" name="findNumber" inputMode="numeric" label={t('history.findNumber')} placeholder="000123" />
+              <button className="btn mb-[2px]">{t('history.find')}</button>
+            </div>
+          </form>
+        )}
         {sales?.length === 0 && <p className="p-4 text-muted">{t('history.empty')}</p>}
         <ul>
           {sales?.map((s) => (

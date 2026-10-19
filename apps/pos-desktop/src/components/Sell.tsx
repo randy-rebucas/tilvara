@@ -179,9 +179,14 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
       if (unanswered(err)) till.reportUnreachable();
       if (offlineText(err)) setNotice({ kind: 'error', text: offlineText(err)! });
       else if (err instanceof ApiFailure && err.error.status === 404) {
-        const found = await api<{ data: ProductHit[] }>('GET', `/v1/products?q=${encodeURIComponent(q)}&limit=8`).catch(() => ({ data: [] }));
-        if (found.data.length) setHits(found.data);
-        else setNotice({ kind: 'warn', text: t('sell.notFound', { q }) });
+        // A failed search is an error to show, not "no such item".
+        try {
+          const found = await api<{ data: ProductHit[] }>('GET', `/v1/products?q=${encodeURIComponent(q)}&limit=8`);
+          if (found.data.length) setHits(found.data);
+          else setNotice({ kind: 'warn', text: t('sell.notFound', { q }) });
+        } catch (searchErr) {
+          setNotice({ kind: 'error', text: errorText(searchErr, t('common.error'), t('common.network')) });
+        }
       } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
     }
     focusScan();

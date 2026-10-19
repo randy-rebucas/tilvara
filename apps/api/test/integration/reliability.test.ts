@@ -110,7 +110,8 @@ describe('transactional outbox (emission)', () => {
     // VM clock step (seen once in the session-12 gate).
     expect(events.map((e) => e.topic)).toEqual(['catalog.product_created', 'tenant.onboarded']);
     expect(events[0]!.payload).toEqual({ productId: p.body.id });
-    expect(events[1]!.payload).toEqual({ ownerUserId: t.userId });
+    // Sign-up without a type makes a HYBRID business (session 17); the event names the type.
+    expect(events[1]!.payload).toEqual({ ownerUserId: t.userId, businessType: 'HYBRID' });
     expect(events.every((e) => e.status === 'PENDING')).toBe(true);
   });
 

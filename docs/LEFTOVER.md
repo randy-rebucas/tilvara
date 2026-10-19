@@ -8,6 +8,23 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 - Renameable later, as a separate slice: the `@1pos/*` package scope, the `onepos_*` DB roles and DB names (these appear in migrations that are already applied, so this needs new migrations plus `01-roles.sql` and a dev-volume upgrade script), the `x-onepos-request` CSRF header, the `Onepos*` alert names, the compose project, the cargo crate and exe name `onepos-till`, and the localStorage keys.
 - ⏳ Trademark and domain clearance for "Tilvara" (WIPO, IPOPHL classes 9/42, `.com`/`.ph`) before any public launch; `api.1pos.ph` in `desktop.test.ts` is only an example host.
 
+## Audit 2026-10-19 (session 19) — gaps no earlier list had
+Full write-up and evidence: [AUDIT-2026-10-19.md](AUDIT-2026-10-19.md). Fixed in the session: payables screens, journal labels, stock adjustment/waste form, entity/branch/register details, till pay in/out, returns of earlier sales, KDS sold out, payables list filter and aging day, invoice-entry reversal guard, search errors at the till, two test-suite defects.
+- ⬜ **Customer management** (SPEC §6.9): profiles, search, history, customer on a sale, store credit/AR, consent, export/correction; `customers.*` permissions grant nothing today. Its own slice with an ADR, privacy register row, cross-tenant cases.
+- ⏳ **Mobile app** (SPEC §5.3): no app and no plan; scope and timing are the user's call.
+- ⬜ Outbound webhooks and tenant API keys (§6.11; `api_access` plan feature unused).
+- ⬜ Retail till: held/suspended carts; exchanges; a line/sale discount control (API ready, `sales.discount`); manager price override (`sales.price_override` checked nowhere); returns of another register's sale (the finder searches this register).
+- ⏳ Customer-specific VAT treatment (zero-rated/exempt buyers) — tax adviser.
+- ⬜ Stock reservations (available = on hand − reserved; `DATA_MODEL.md` lists a table that does not exist); supplier catalog references (supplier SKU/price).
+- ⬜ Reports: sales by category; by branch / consolidated; discounts (and overrides); purchases by supplier; payment exceptions across shifts.
+- ⬜ Restaurant: editing a pending order item at the till (`PATCH /v1/order-items/:id` has no caller); per-item comps on a bill. ⏳ Shift close with open/part-paid bills: warn or refuse (user's call).
+- ⏳ Plan features `advanced_reports`, `multi_entity`, `api_access` are seeded but not enforced (what each plan includes is the user's call).
+- ⬜ Unused permission codes `sales.price_override`, `customers.read`, `customers.manage`, `integrations.manage` show in the role editor and grant nothing (`integrations.manage` still makes a member privileged → MFA). Build the features or hide the codes.
+- ⬜ Business name cannot be changed after sign-up (`PATCH /v1/business` changes the type only); Senior Cashier / Purchasing Officer templates (§4).
+- ⏳ **Offline sales delivered after a subscription lapse or suspension are quarantined** (`recordOffline` is not `allowReadOnlyBusiness`), cannot be retried while suspended, and the admin has no words for `SUBSCRIPTION_READ_ONLY`/`TENANT_SUSPENDED`. Proposed: record sales whose snapshot was issued while writable. Changes a security posture: needs the user's approval.
+- ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
+- ⬜ Weighing-scale and barcode-scanner adapters (§5.2; manual weight, scale labels and keyboard-wedge work today).
+
 ## Phase 0 — Repository & architecture
 - ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux)
 
@@ -15,7 +32,7 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 - ⬜ Sample items follow the type: `SAMPLE_ITEMS` is one café set for every business; a retail shop should get shop items (and a restaurant a menu).
 - ⬜ Role templates follow the type: a RETAIL business still gets Restaurant Manager and Kitchen Crew roles, and cashiers/branch managers still hold `restaurant.orders`/`kitchen.operate` (harmless: the screens and the server leave restaurant service out, but the role editor lists them).
 - ⬜ The admin and till do not hide features the *plan* lacks (Starter has no `restaurant`): `/me` carries the business type only, so a Starter owner of a HYBRID/RESTAURANT business still sees restaurant screens that answer `ENTITLEMENT_REQUIRED`. Add `features` to `/me` and gate on both.
-- ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; switching back lets it be settled.
+- ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; a BILLED one can still be paid (`createFromBill` does not check the type or plan, on purpose: refusing payment for food served is worse), other changes need switching back.
 - ⬜ Selling by weight is hidden for RESTAURANT on screens only (product form and list); the API still accepts `soldBy: WEIGHT` and scale labels from any business.
 
 ## User guide (session 18)
@@ -65,7 +82,10 @@ Slice 5 (admin UI):
 - ⏳ Accountant review answers (ADR-0013 questions 1–10)
 
 Phase-level:
-- ⬜ Supplier invoices + accounts payable (GRNI → AP, input VAT)
+- ✅ Supplier invoices + accounts payable (GRNI → AP, input VAT): API in ab51583 (ADR-0013 amendment), admin screens session 19. Follow-ups:
+  - ⬜ credit/debit notes (a supplier return after invoicing leaves a GRNI debit); one payment across several invoices
+  - ⏳ EWT / BIR 2307 (accountant)
+  - ⬜ correcting a mistaken supplier payment: no void; a manual reversal of its entry is still allowed and leaves the invoice showing it paid (invoice entries are refused since session 19)
 - ⬜ UoM conversions and purchase units
 - ⬜ Batch/expiry and serial tracking
 - ⬜ Landed cost
