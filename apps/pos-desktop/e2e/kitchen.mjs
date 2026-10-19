@@ -79,6 +79,19 @@ try {
   check('a newly fired ticket flashes as New ticket', await waitFor(`document.querySelector('[data-fresh]') && document.body.innerText.includes('New ticket')`, 10000).then(() => true, () => false));
   check('and the kitchen hears it (two tones)', (await evaluate('window.__tones')) === 2);
   await shot('kds-new-ticket.png', false);
+
+  // Pushed, not polled (the poll is 30 s while the stream is up): a course with its note, fired
+  // through the API, is on the board within a moment; voiding its cheese strikes the cheese.
+  await call('PUT', `/v1/restaurant/orders/${order.id}/course-notes`, tk, { course: 2, note: 'Birthday: bring with a candle' });
+  await call('POST', `/v1/restaurant/orders/${order.id}/items`, tk, { items: [{ variantId: r.burger, quantity: '1', course: 2, modifierOptionIds: [r.medium, r.cheeseOption] }] }, { 'idempotency-key': randomUUID() });
+  const fired = Date.now();
+  await call('POST', `/v1/restaurant/orders/${order.id}/fire`, tk, { courses: [2] });
+  const noted = await waitFor(`document.querySelector('[data-testid="course-note"]')?.innerText.includes('Birthday: bring with a candle')`, 2500).then(() => true, () => false);
+  check(`a fired course arrives by push within 2.5 s, with its course note (${Date.now() - fired} ms)`, noted);
+  const course2 = (await items()).find((i) => i.course === 2 && i.name === 'Burger');
+  await call('POST', `/v1/order-items/${course2.modifiers.find((m) => m.name === 'Cheese').id}/void`, tk, { reason: 'No cheese after all' }, { 'idempotency-key': randomUUID() });
+  check('a choice voided on its own is struck on the ticket', await waitFor(`[...document.querySelectorAll('s')].some((x) => x.textContent === 'Cheese')`, 2500).then(() => true, () => false));
+  await shot('kds-course-note.png', false);
   await clickText('Sound on');
   check('sound can be turned off', await shown('Sound off'));
   await clickText('Sound off');

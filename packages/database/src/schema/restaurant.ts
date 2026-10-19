@@ -375,6 +375,8 @@ export const kitchenTickets = pgTable(
     firedAt: timestamp('fired_at', { withTimezone: true }).notNull().defaultNow(),
     bumpedAt: timestamp('bumped_at', { withTimezone: true }),
     bumpedBy: uuid('bumped_by'),
+    /** The order's note for this course when it was fired (frozen with the ticket). */
+    courseNote: text('course_note'),
   },
   (t) => [
     unique('kitchen_tickets_tenant_id_id_unique').on(t.tenantId, t.id),
@@ -625,5 +627,51 @@ export const orderBillCharges = pgTable(
     foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
     check('order_bill_charges_kind_check', sql`${t.kind} IN ('SERVICE_CHARGE')`),
     check('order_bill_charges_amount_check', sql`${t.amountDue} > 0 AND ${t.rate} > 0`),
+  ],
+);
+
+/**
+ * A note for one course of an order ("hold until the cake is out", "birthday: bring with a candle").
+ * Live while the order is open; each ticket fired for the course copies it (`course_note`).
+ */
+export const orderCourseNotes = pgTable(
+  'order_course_notes',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    orderId: uuid('order_id').notNull(),
+    course: integer('course').notNull(),
+    note: text('note').notNull(),
+    updatedBy: uuid('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tenantId, t.orderId, t.course] }),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.orderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.branchId, restaurantOrders.id] }),
+    check('order_course_notes_course_check', sql`${t.course} BETWEEN 1 AND 9`),
+    check('order_course_notes_note_check', sql`length(trim(${t.note})) BETWEEN 1 AND 200`),
+  ],
+);
+
+/**
+ * Where an item was before a move or merge (append-only, written by a trigger), so reports can
+ * place items on the order they were on at a past moment.
+ */
+export const orderItemMoves = pgTable(
+  'order_item_moves',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    itemId: uuid('item_id').notNull(),
+    fromOrderId: uuid('from_order_id').notNull(),
+    toOrderId: uuid('to_order_id').notNull(),
+    movedAt: timestamp('moved_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('order_item_moves_tenant_id_id_unique').on(t.tenantId, t.id),
+    // No FK to the item: a pending item may be removed after a move, and its history stays.
+    foreignKey({ columns: [t.tenantId, t.fromOrderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.id] }),
+    foreignKey({ columns: [t.tenantId, t.toOrderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.id] }),
+    index('order_item_moves_item_idx').on(t.tenantId, t.itemId, t.movedAt),
   ],
 );

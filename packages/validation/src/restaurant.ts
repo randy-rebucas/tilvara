@@ -204,6 +204,10 @@ export const voidOrderItemSchema = z.object({
 });
 export type VoidOrderItemInput = z.infer<typeof voidOrderItemSchema>;
 
+/** A note for one course of an order; `note: null` removes it. Copied onto the course's tickets when fired. */
+export const courseNoteSchema = z.object({ course, note: z.string().trim().min(1).max(200).nullable() });
+export type CourseNoteInput = z.infer<typeof courseNoteSchema>;
+
 export const fireOrderSchema = z.object({
   /** Courses to send now; omitted = every pending item. */
   courses: z.array(course).min(1).max(9).optional(),

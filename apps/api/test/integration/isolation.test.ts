@@ -237,6 +237,11 @@ async function world(prefix: string): Promise<World> {
   const table2 = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T2' }));
   const liveOrder = ok<{ id: string }>(await http().post('/v1/restaurant/orders').set(auth).send({ branchId: branch.id, orderType: 'DINE_IN', tableId: table2.id }));
   const liveItems = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${liveOrder.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
+  // Session 16: a course note on the live order, and an item moved from it to a new order on T3 (its move history).
+  ok(await http().put(`/v1/restaurant/orders/${liveOrder.id}/course-notes`).set(auth).send({ course: 1, note: 'Fixture note' }), 200);
+  const extra = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${liveOrder.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
+  const table3 = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T3' }));
+  ok(await http().post(`/v1/restaurant/orders/${liveOrder.id}/move-items`).set(auth).send({ itemIds: [extra.items[1]!.id], toTableId: table3.id }), 200);
   // Phase 5: the terminal takes a snapshot and delivers two offline sales: one recorded, one quarantined (wrong total).
   const terminalHeaders = { 'x-terminal-id': terminal.terminal.id, Authorization: `Terminal ${terminal.credential}` };
   const snap = ok<{ snapshotId: string }>(await http().get('/v1/terminal/snapshot').set(terminalHeaders), 200);
@@ -441,6 +446,7 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/restaurant/orders/:id/items': () =>
       http().post(`/v1/restaurant/orders/${a.orderId}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: b.dishId, quantity: '1' }] }),
     'POST /v1/restaurant/orders/:id/fire': () => http().post(`/v1/restaurant/orders/${a.orderId}/fire`).set(auth).send({}),
+    'PUT /v1/restaurant/orders/:id/course-notes': () => http().put(`/v1/restaurant/orders/${a.liveOrderId}/course-notes`).set(auth).send({ course: 1, note: 'pwned' }),
     'POST /v1/restaurant/orders/:id/transfer': () => http().post(`/v1/restaurant/orders/${a.orderId}/transfer`).set(auth).send({ tableId: b.tableId }),
     'POST /v1/restaurant/orders/:id/merge': () => http().post(`/v1/restaurant/orders/${a.orderId}/merge`).set(auth).send({ intoOrderId: b.orderId }),
     'POST /v1/restaurant/orders/:id/move-items': () => http().post(`/v1/restaurant/orders/${a.orderId}/move-items`).set(auth).send({ itemIds: [a.firedItemId], toOrderId: b.orderId }),
@@ -565,6 +571,7 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['move B items into an A order', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [b.liveItemId], toOrderId: a.liveOrderId })],
     ['move B items onto an A table', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [b.liveItemId], toTableId: a.tableId })],
     ['move A items out of a B order', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [a.liveItemId], toTableId: b.tableId })],
+    ['floor stream of the A branch', () => http().get('/v1/restaurant/stream').query({ branchId: a.branchId }).set(auth)],
     ['kitchen tickets of the A branch', () => http().get('/v1/kitchen/tickets').query({ branchId: a.branchId }).set(auth)],
     ['A station on the B kitchen display', () => http().get('/v1/kitchen/tickets').query({ branchId: b.branchId, stationId: a.stationId }).set(auth)],
     ['pay an A bill from the B drawer', () =>

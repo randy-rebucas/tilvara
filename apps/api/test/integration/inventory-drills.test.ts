@@ -257,7 +257,7 @@ describe('closing a month while posting into it', () => {
 
 
 describe('who sees which branch', () => {
-  it('an inventory officer at one branch sees that branch (to pick it in the admin), not the others; a cashier sees none', async () => {
+  it('an inventory officer at one branch sees that branch (to pick it in the admin), not the others; a cashier sees only theirs', async () => {
     const s = await shop('branch-view');
     const officer = await addMember(owner, s.tenantId, 'inventory_officer', { type: 'BRANCH', id: s.b2 });
     const cashier = await addMember(owner, s.tenantId, 'cashier', { type: 'BRANCH', id: s.b1 });
@@ -266,7 +266,9 @@ describe('who sees which branch', () => {
       return ((await http().get('/v1/branches').set(bearer(token)).expect(200)).body.data as { id: string }[]).map((b) => b.id);
     };
     expect(await seen(officer.email)).toEqual([s.b2]);
-    expect(await seen(cashier.email)).toEqual([]);
+    // Cashiers take table orders (restaurant.orders): since session 16 they may work the floor without a
+    // drawer, so they pick their own branch, and only it.
+    expect(await seen(cashier.email)).toEqual([s.b1]);
     // Kitchen crew (a custom role with kitchen.operate) picks its branch on the KDS: that branch only.
     await http().post('/v1/roles').set(s.auth).send({ key: 'kitchen', name: 'Kitchen crew', permissions: ['kitchen.operate'] }).expect(201);
     expect(await seen((await addMember(owner, s.tenantId, 'kitchen', { type: 'BRANCH', id: s.b1 })).email)).toEqual([s.b1]);

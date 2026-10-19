@@ -1,11 +1,12 @@
 import { ArrowLeft, Minus, Plus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api, uuid } from '../lib/api';
 import type { BranchMenu, DiningArea, MenuItem, Order, OrderItem, OrderSummary, Quote } from '../types';
 import { errorText, unanswered, type Notice } from './Payment';
-import type { Shift } from './Registers';
+import type { FloorPlace } from './Tables';
 import { usePoll } from '../lib/poll';
+import { useFloorPush } from '../lib/push';
 import { Callout, Field, Money, Note } from './ui';
 
 interface Compose {
@@ -27,7 +28,8 @@ interface Diner {
 }
 type Place = { id: string; label: string };
 type Panel =
-  | { kind: 'void'; item: OrderItem; key: string }
+  | { kind: 'void'; item: { id: string; name: string; status: OrderItem['status'] }; choice: boolean; key: string }
+  | { kind: 'notes' }
   | { kind: 'transfer'; free: { id: string; code: string }[] }
   | { kind: 'merge'; orders: Place[] }
   | { kind: 'move'; orders: Place[]; free: { id: string; code: string }[]; chosen: string[] }
@@ -42,8 +44,8 @@ const LIVE = (i: { status: string }) => i.status !== 'VOIDED';
  * added as PENDING, sent to the kitchen by course, served, voided (manager) and finally billed —
  * every step on the server, which also prices the subtotal.
  */
-export function OrderScreen({ shift, orderId, permissions, active, onBack, onBill }: {
-  shift: Shift;
+export function OrderScreen({ place: shift, orderId, permissions, active, onBack, onBill }: {
+  place: FloorPlace;
   orderId: string;
   permissions: string[];
   active: boolean;
@@ -67,7 +69,8 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
       .then(setOrder)
       .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
   }, [orderId]);
-  usePoll(load, 5000, active);
+  const pushed = useFloorPush(shift.branch.id, load, active);
+  usePoll(load, pushed ? 30_000 : 5000, active);
 
   const orderType = order?.orderType;
   useEffect(() => {
@@ -157,6 +160,23 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
         throw err;
       }
     }, () => setCompose(null));
+  }
+
+  /** Save the course notes that changed (an emptied one is removed). */
+  function saveNotes(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const before = new Map((order?.courseNotes ?? []).map((n) => [n.course, n.note]));
+    const changes = NOTE_COURSES.flatMap((c) => {
+      const v = String(f.get(`course-${c}`) ?? '').trim();
+      return v === (before.get(c) ?? '') ? [] : [{ course: c, note: v || null }];
+    });
+    if (!changes.length) return setPanel(null);
+    void act(async () => {
+      let last: Order | null = null;
+      for (const ch of changes) last = await api<Order>('PUT', `/v1/restaurant/orders/${orderId}/course-notes`, ch);
+      return last;
+    }, () => setPanel(null));
   }
 
   const fire = (courses?: number[]) => act(() => api<Order>('POST', `/v1/restaurant/orders/${orderId}/fire`, courses ? { courses } : {}));
@@ -362,6 +382,15 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
 
         {/* Ticket */}
         <aside className="grid content-start gap-4" aria-label={t('order.ticket')}>
+          {(order.courseNotes ?? []).length > 0 && (
+            <ul className="grid gap-1" aria-label={t('order.courseNotes')}>
+              {order.courseNotes!.map((n) => (
+                <li key={n.course} className="rounded-[4px] bg-[#fff6d6] px-3 py-2 text-[0.9375rem]">
+                  <b>{t('order.courseN', { n: String(n.course) })}:</b> {n.note}
+                </li>
+              ))}
+            </ul>
+          )}
           <Note className="p-2">
             {order.items.length === 0 ? (
               <p className="grid min-h-[160px] place-items-center px-4 text-center text-muted">{t('order.empty')}</p>
@@ -376,7 +405,8 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
                     working={working}
                     onRemove={() => remove(i.id)}
                     onServed={() => served(i.id)}
-                    onVoid={() => setPanel({ kind: 'void', item: i, key: uuid() })}
+                    onVoid={() => setPanel({ kind: 'void', item: i, choice: false, key: uuid() })}
+                    onVoidChoice={(m) => setPanel({ kind: 'void', item: m, choice: true, key: uuid() })}
                   />
                 ))}
               </ul>
@@ -386,7 +416,7 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
           {panel?.kind === 'void' && (
             <Note className="p-4">
               <form className="grid gap-3" onSubmit={voidItem}>
-                <p className="font-semibold">{t('order.voidTitle', { name: panel.item.name })}</p>
+                <p className="font-semibold">{t(panel.choice ? 'order.voidChoiceTitle' : 'order.voidTitle', { name: panel.item.name })}</p>
                 <Field id="voidReason" name="reason" required maxLength={200} label={t('history.reason')} autoFocus />
                 <label className="flex min-h-12 items-center gap-3">
                   <input type="checkbox" name="wasted" className="size-5" defaultChecked={panel.item.status !== 'FIRED'} />
@@ -430,6 +460,7 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
               <div className="flex flex-wrap gap-2">
                 {order.orderType === 'DINE_IN' && <button type="button" className="btn btn-sm" onClick={() => void openTransfer()}>{t('order.transfer')}</button>}
                 {live.length > 0 && <button type="button" className="btn btn-sm" onClick={() => void openPanel('move')}>{t('order.moveItems')}</button>}
+                <button type="button" className="btn btn-sm" onClick={() => setPanel({ kind: 'notes' })}>{t('order.courseNotes')}</button>
                 <button type="button" className="btn btn-sm" onClick={() => void openPanel('merge')}>{t('order.merge')}</button>
                 <button type="button" className="btn btn-sm btn-danger ml-auto" onClick={() => setPanel({ kind: 'cancel' })}>{t('order.cancel')}</button>
               </div>
@@ -517,6 +548,29 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
             </Note>
           )}
 
+          {panel?.kind === 'notes' && (
+            <Note className="p-4">
+              <form className="grid gap-3" onSubmit={saveNotes}>
+                <p className="font-semibold">{t('order.courseNotes')}</p>
+                <p className="text-[0.875rem] text-muted">{t('order.courseNotesHint')}</p>
+                {NOTE_COURSES.map((c) => (
+                  <Field
+                    key={c}
+                    id={`course-${c}`}
+                    name={`course-${c}`}
+                    maxLength={200}
+                    label={t('order.courseN', { n: String(c) })}
+                    defaultValue={order.courseNotes?.find((n) => n.course === c)?.note ?? ''}
+                  />
+                ))}
+                <div className="flex gap-2">
+                  <button className="btn btn-primary" disabled={working}>{t('order.saveNotes')}</button>
+                  <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+                </div>
+              </form>
+            </Note>
+          )}
+
           {panel?.kind === 'cancel' && (
             <Note className="p-4">
               <form className="grid gap-3" onSubmit={cancelOrder}>
@@ -537,8 +591,10 @@ export function OrderScreen({ shift, orderId, permissions, active, onBack, onBil
 }
 
 const STATUS_TONE: Partial<Record<OrderItem['status'], string>> = { READY: 'tag-warn', VOIDED: 'tag-bad' };
+/** Courses a note can be written for (the composer offers 1–3). */
+const NOTE_COURSES = [1, 2, 3];
 
-function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, onVoid }: {
+function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, onVoid, onVoidChoice }: {
   item: OrderItem;
   canVoid: boolean;
   canServe: boolean;
@@ -546,6 +602,7 @@ function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, on
   onRemove: () => void;
   onServed: () => void;
   onVoid: () => void;
+  onVoidChoice: (m: OrderItem['modifiers'][number]) => void;
 }) {
   const { t } = useT();
   const voided = i.status === 'VOIDED';
@@ -557,7 +614,24 @@ function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, on
           <p className={`font-semibold ${voided ? 'text-muted line-through' : ''}`}>
             <span className="money">{i.quantity}×</span> {i.name}
           </p>
-          {i.modifiers.length > 0 && <p className="text-[0.875rem] text-muted">{i.modifiers.map((m) => m.name).join(' · ')}</p>}
+          {i.modifiers.length > 0 && (
+            <p className="text-[0.875rem] text-muted">
+              {i.modifiers.map((m, k) => (
+                <Fragment key={m.id}>
+                  {k > 0 && ' · '}
+                  <span className={m.status === 'VOIDED' ? 'line-through' : ''}>{m.name}</span>
+                  {canVoid && !voided && m.status !== 'VOIDED' && m.status !== 'PENDING' && (
+                    <>
+                      {' '}
+                      <button type="button" className="-my-2 inline-flex min-h-10 min-w-10 items-center justify-center rounded px-1.5 underline decoration-dotted hover:bg-paper" disabled={working} aria-label={t('order.voidChoice', { name: m.name })} onClick={() => onVoidChoice(m)}>
+                        {t('order.voidShort')}
+                      </button>
+                    </>
+                  )}
+                </Fragment>
+              ))}
+            </p>
+          )}
           {i.note && <p className="text-[0.875rem] italic text-muted">“{i.note}”</p>}
           <p className="mt-1 flex flex-wrap items-center gap-1">
             <span className={`tag ${STATUS_TONE[i.status] ?? ''}`}>{t(`item.status.${i.status}` as MessageKey)}</span>

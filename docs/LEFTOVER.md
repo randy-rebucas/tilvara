@@ -63,12 +63,10 @@ Slice 2 (menu foundation):
 - ⬜ Modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen)
 
 Slice 3 (orders + kitchen):
-- ⬜ KDS push (SSE) instead of polling
 - ⬜ Per-seat views and "fire course N" reminders/timers
 - ⬜ Kitchen printers (device adapters)
-- ⬜ Voiding a modifier alone (today: void the item and re-add)
 - ⬜ Reprint a ticket (needs kitchen printers; recalling finished tickets is the KDS Done view since session 10)
-- ⬜ Order notes per course
+- ⬜ Floor push (session 16) at deployment (slice 7): the edge proxy must not buffer `text/event-stream` (`/v1/restaurant/stream`; the API sends `X-Accel-Buffering: no`) and must allow a 10-minute response; open streams are not yet a metric
 
 Slice 4 (bills + checks + service charge):
 - ⬜ Tips
@@ -77,17 +75,12 @@ Slice 4 (bills + checks + service charge):
 - ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
 
 Slice 5 (restaurant reports):
-- ⬜ Prep times by hour or day part and per item
-- ⬜ Open orders: items as they were at the cutoff (today: as attached now)
 - ⬜ Free modifiers ("no onions") counts in item performance (no sale line today). Needs a rule for when a free choice counts as sold (fired, billed or paid), so it is left for the restaurant reporting review
 - ⏳ The DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9)
 
 Slice 6 (UI):
 - 6a POS table service:
-  - ⬜ Servers without a drawer (today the Tables tab lives inside a register shift)
   - ⬜ Floor positions/shapes on a drawn plan (tiles today)
-- 6b KDS:
-  - ⬜ Push (SSE) instead of polling
 - 6c admin set-up:
   - ⬜ Drag-and-drop ordering (buttons today)
   - ⬜ A plan view of the floor (positions/shapes are stored, tiles today)
@@ -100,7 +93,7 @@ Slice 7 (exit review):
 - ⬜ The "void vs bill" drill asserts both outcomes but cannot force each interleaving
 
 Out of scope for Phase 4 (later):
-- ⬜ Delivery orders; unit conversions/purchase units for recipes; sub-recipes/prep production; rule-based modifier pricing; tips; reservations; KDS push (SSE) and kitchen printers
+- ⬜ Delivery orders; unit conversions/purchase units for recipes; sub-recipes/prep production; rule-based modifier pricing; tips; reservations; kitchen printers
 
 Open questions for the tax adviser and the accountant:
 - ⏳ Service charge base and VAT; SC/PWD share of the service charge; service charge as a liability

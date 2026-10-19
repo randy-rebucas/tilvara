@@ -1,9 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from '@1pos/database';
+import { sql, type Database } from '@1pos/database';
 import { toDec, type Dec } from '@1pos/money';
 import type { AuthContext } from '../auth/auth-context.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { money, qty, ReportsService, type ReportRange, type Row } from './reports.service.js';
+import { money, qty, ReportsService, type ReportRange, type ReportWindow, type Row } from './reports.service.js';
+
+export type PrepTimesBy = 'station' | 'hour' | 'item';
 
 const ZERO = toDec('0');
 const dec = (v: unknown) => toDec((v as string | null) ?? '0');
@@ -244,8 +246,9 @@ export class RestaurantReportsService extends ReportsService {
    * (average, median, 90th percentile, longest), fired → preparation started, and ready → served.
    * Only items the kitchen marked ready are timed; voided items count apart.
    */
-  prepTimes(auth: AuthContext, range: ReportRange) {
+  prepTimes(auth: AuthContext, range: ReportRange, by: PrepTimesBy = 'station') {
     return this.run(auth, range, async (db, w) => {
+      if (by !== 'station') return this.prepTimesBy(db, w, by);
       const { rows } = await db.execute<Row>(sql`
         WITH x AS (
           SELECT k.station_id, i.kitchen_ticket_id, i.status,
@@ -285,21 +288,73 @@ export class RestaurantReportsService extends ReportsService {
   }
 
   /**
+   * The same timings grouped by the local hour the items were fired (0–23; day parts are ranges of
+   * hours) or by menu item (its variant; free-text names of the same item add up). Sorted by hour, or
+   * by the longest average preparation first.
+   */
+  private async prepTimesBy(db: Database, w: ReportWindow, by: 'hour' | 'item') {
+    const key = by === 'hour' ? sql`extract(hour FROM i.fired_at AT TIME ZONE ${w.tz})::int` : sql`i.variant_id`;
+    const { rows } = await db.execute<Row>(sql`
+      WITH x AS (
+        SELECT ${key} AS key, i.name, i.kitchen_ticket_id, i.status,
+               extract(epoch FROM i.ready_at - i.fired_at)::float8 AS prep,
+               extract(epoch FROM i.prep_started_at - i.fired_at)::float8 AS wait,
+               extract(epoch FROM i.served_at - i.ready_at)::float8 AS pass
+          FROM order_items i JOIN kitchen_tickets k ON k.id = i.kitchen_ticket_id
+         WHERE k.branch_id = ${w.branchId} AND i.kind = 'ITEM' AND i.fired_at >= ${w.start} AND i.fired_at < ${w.end})
+      SELECT x.key::text AS key, min(x.name) AS name,
+             count(DISTINCT x.kitchen_ticket_id)::int AS tickets, count(*)::int AS items,
+             count(*) FILTER (WHERE x.status = 'VOIDED')::int AS voided, count(x.prep)::int AS timed,
+             round(avg(x.prep))::int AS avg_seconds,
+             round(percentile_cont(0.5) WITHIN GROUP (ORDER BY x.prep))::int AS median_seconds,
+             round(percentile_cont(0.9) WITHIN GROUP (ORDER BY x.prep))::int AS p90_seconds,
+             round(max(x.prep))::int AS max_seconds,
+             round(avg(x.wait))::int AS avg_wait_seconds,
+             round(avg(x.pass))::int AS avg_pass_seconds
+        FROM x GROUP BY x.key`);
+    const groups = rows.map((r) => ({
+      key: r.key as string,
+      ...(by === 'hour' ? { hour: Number(r.key) } : { variantId: r.key as string, name: r.name as string }),
+      tickets: r.tickets,
+      items: r.items,
+      voided: r.voided,
+      timed: r.timed,
+      prepSeconds: { average: r.avg_seconds, median: r.median_seconds, p90: r.p90_seconds, max: r.max_seconds },
+      waitSeconds: r.avg_wait_seconds,
+      passSeconds: r.avg_pass_seconds,
+    }));
+    groups.sort((a, b) =>
+      by === 'hour' ? Number(a.key) - Number(b.key) : (Number(b.prepSeconds.average ?? -1) - Number(a.prepSeconds.average ?? -1)) || String(a.key).localeCompare(String(b.key)),
+    );
+    return { by, groups };
+  }
+
+  /**
    * Orders still open at the close of a local day (or now, for today): never settled, cancelled or merged
-   * before then. Billed ones show the bill and what checks had paid by then. Item counts are as the
-   * items are attached now (items can move between orders).
+   * before then. Billed ones show the bill and what checks had paid by then. Items are counted where they
+   * were at that moment (moves and merges are recorded since session 16; earlier moves are not known, so
+   * those items count where they are now), and as they stood then: voided or served by then, or not.
    */
   openOrders(auth: AuthContext, q: { branchId: string; day: string }) {
     return this.run(auth, { branchId: q.branchId, from: q.day, to: q.day }, async (db, w) => {
       const { rows: [cut] } = await db.execute<{ as_of: string }>(sql`SELECT least(${w.end}::timestamptz, now())::text AS as_of`);
       const asOf = cut!.as_of;
       const { rows } = await db.execute<Row>(sql`
+        WITH att AS (
+          SELECT coalesce(
+                   (SELECT m.to_order_id FROM order_item_moves m WHERE m.item_id = i.id AND m.moved_at < ${asOf} ORDER BY m.moved_at DESC, m.id DESC LIMIT 1),
+                   (SELECT m.from_order_id FROM order_item_moves m WHERE m.item_id = i.id ORDER BY m.moved_at, m.id LIMIT 1),
+                   i.order_id) AS order_id,
+                 (i.voided_at IS NOT NULL AND i.voided_at < ${asOf}) AS voided,
+                 (i.served_at IS NOT NULL AND i.served_at < ${asOf}) AS served
+            FROM order_items i JOIN restaurant_orders io ON io.id = i.order_id
+           WHERE io.branch_id = ${w.branchId} AND i.kind = 'ITEM' AND i.created_at < ${asOf})
         SELECT o.id, o.order_number::int AS order_number, o.order_type, t.code AS table_code, o.customer_name, o.guest_count,
                o.opened_at, o.opened_by, u.display_name AS opened_by_name, o.status AS status_now,
                b.id AS bill_id, b.bill_number::int AS bill_number, b.amount_due::text AS bill_amount,
                (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id AND s.completed_at < ${asOf})::text AS paid,
-               (SELECT count(*) FROM order_items i WHERE i.order_id = o.id AND i.kind = 'ITEM' AND i.status <> 'VOIDED')::int AS items,
-               (SELECT count(*) FROM order_items i WHERE i.order_id = o.id AND i.kind = 'ITEM' AND i.status IN ('PENDING', 'FIRED', 'IN_PREP', 'READY'))::int AS not_served
+               (SELECT count(*) FROM att WHERE att.order_id = o.id AND NOT att.voided)::int AS items,
+               (SELECT count(*) FROM att WHERE att.order_id = o.id AND NOT att.voided AND NOT att.served)::int AS not_served
           FROM restaurant_orders o
           LEFT JOIN restaurant_tables t ON t.id = o.table_id
           LEFT JOIN users u ON u.id = o.opened_by

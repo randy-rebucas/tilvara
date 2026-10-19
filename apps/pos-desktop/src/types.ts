@@ -128,6 +128,8 @@ export interface Order extends Omit<OrderSummary, 'items'> {
   table: { id: string; code: string } | null;
   bill: { id: string; billNumber: number; status: 'ACTIVE' | 'SETTLED'; amountDue: string } | null;
   items: OrderItem[];
+  /** Notes per course (session 16); each fired ticket keeps the note it was fired with. */
+  courseNotes?: { course: number; note: string }[];
 }
 
 export interface MenuOption {
@@ -190,7 +192,9 @@ export interface KitchenTicket {
   station: { id: string; code: string; name: string };
   /** Where the food goes now (the order may have moved tables since firing). */
   order: { id: string; orderNumber: number; orderType: 'DINE_IN' | 'TAKEAWAY'; tableCode: string | null; customerName: string | null } | null;
-  items: { id: string; name: string; quantity: string; seat: number | null; note: string | null; status: ItemStatus; modifiers: { id: string; name: string }[] }[];
+  items: { id: string; name: string; quantity: string; seat: number | null; note: string | null; status: ItemStatus; modifiers: { id: string; name: string; status?: ItemStatus }[] }[];
+  /** The order's note for this course when it was fired. */
+  courseNote?: string | null;
 }
 
 export interface CheckPreview {

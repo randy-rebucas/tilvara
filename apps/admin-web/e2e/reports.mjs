@@ -75,6 +75,17 @@ try {
   await clickText('Prep times');
   await waitFor(`document.body.innerText.includes('All stations')`);
   check('prep times: Grill timed 1 of 2 (the voided burger untimed), Bar 1 of 1, all stations 2 of 3', await has(/Grill[\s\S]*1 \/ 2/, /Bar[\s\S]*1 \/ 1/, /All stations[\s\S]*2 \/ 3/));
+  await clickText('By item');
+  await waitFor(`location.search.includes('by=item') && document.body.innerText.includes('Iced tea')`);
+  check('prep times by item: Burger 1 of 2 and Iced tea 1 of 1', await has(/Burger[\s\S]*1 \/ 2/, /Iced tea[\s\S]*1 \/ 1/));
+  await clickText('By hour');
+  await waitFor(`location.search.includes('by=hour')`);
+  check('prep times by hour: rows named by local hour, 3 items in all', await evaluate(`(() => {
+    const rows = [...document.querySelectorAll('main table tbody tr')];
+    const counted = rows.map((tr) => /(\\d+) \\/ (\\d+)/.exec(tr.innerText)).filter(Boolean).reduce((a, m) => a + Number(m[2]), 0);
+    return rows.length > 0 && rows.every((tr) => /\\d\\d:00–\\d\\d:59/.test(tr.innerText)) && counted === 3;
+  })()`));
+  await shot('reports-prep-hour.png');
 
   await clickText('Open orders');
   await waitFor(`document.body.innerText.includes('Left to collect')`);

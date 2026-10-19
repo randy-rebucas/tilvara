@@ -95,10 +95,17 @@ const bill = (r: R, orderId: string) => http().post(`/v1/restaurant/orders/${ord
 const check = (r: R, billId: string, body: Record<string, unknown> = {}) =>
   http().post(`/v1/restaurant/bills/${billId}/checks`).set(r.server).set(key())
     .send({ cashierSessionId: r.session, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '2000.00' }], ...body }).expect(201).then((x) => x.body);
-/** Kitchen timestamps as offsets (seconds) from when the item was fired; null clears one. */
+/**
+ * Kitchen timestamps as offsets (seconds) from when the item was fired; null clears one. The item is
+ * first moved to having been fired 15 minutes ago, so every stamp is in the past (reports cut at now).
+ */
 const times = (r: R, itemId: string, t: { prep?: number | null; ready?: number | null; served?: number | null }) => {
-  const at = (s: number | null | undefined) => (s === null || s === undefined ? 'NULL' : `fired_at + interval '${s} seconds'`);
-  return sql(r, `UPDATE order_items SET prep_started_at = ${at(t.prep)}, ready_at = ${at(t.ready)}, served_at = ${at(t.served)} WHERE id = $1`, [itemId]);
+  const at = (s: number | null | undefined) => (s === null || s === undefined ? 'NULL' : `fired_at - interval '15 minutes' + interval '${s} seconds'`);
+  return sql(
+    r,
+    `UPDATE order_items SET prep_started_at = ${at(t.prep)}, ready_at = ${at(t.ready)}, served_at = ${at(t.served)}, fired_at = fired_at - interval '15 minutes' WHERE id = $1`,
+    [itemId],
+  );
 };
 
 /**

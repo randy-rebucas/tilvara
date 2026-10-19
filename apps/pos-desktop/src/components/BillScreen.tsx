@@ -11,6 +11,7 @@ import type { Bill, BillLine, CheckPreview, Order, Receipt as ReceiptData } from
 import { errorText, PaymentPanel, usePayment, type Notice } from './Payment';
 import { Receipt } from './Receipt';
 import type { Shift } from './Registers';
+import type { FloorPlace } from './Tables';
 import { Callout, Field, Money, Note } from './ui';
 
 type Split = { kind: 'rest' } | { kind: 'even'; ways: number } | { kind: 'items'; picked: Record<string, number> };
@@ -82,7 +83,9 @@ const BillSlip = forwardRef<HTMLDivElement, { bill: Bill; branch: string; where:
  * A frozen bill (ADR-0014 §8) paid in one or more checks: the rest, an even split, or by item. The
  * server prices each check (preview) and records it as a sale; the till never prorates money itself.
  */
-export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; billId: string; onBack: () => void; onDone: () => void }) {
+export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlace; billId: string; onBack: () => void; onDone: () => void }) {
+  // Without a drawer (server mode) the bill is shown and printed, but money is taken at a till.
+  const shift = place.shift ?? ({ sessionId: '', branch: place.branch } as Shift);
   const { t } = useT();
   const [bill, setBill] = useState<Bill | null>(null);
   const [split, setSplit] = useState<Split>({ kind: 'rest' });
@@ -300,7 +303,11 @@ export function BillScreen({ shift, billId, onBack, onDone }: { shift: Shift; bi
           )}
         </div>
 
-        {bill.status === 'ACTIVE' ? (
+        {bill.status === 'ACTIVE' && !place.shift ? (
+          <aside className="grid content-start gap-4" aria-label={t('bill.payTitle')}>
+            <Callout kind="info">{t('floor.payAtTill')}</Callout>
+          </aside>
+        ) : bill.status === 'ACTIVE' ? (
           <aside className="grid content-start gap-4" aria-label={t('bill.payTitle')}>
             <Note className="grid gap-3 p-5">
               <div className="flex flex-wrap gap-1" role="group" aria-label={t('bill.splitHow')}>

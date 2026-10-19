@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api } from '../lib/api';
 import { usePoll } from '../lib/poll';
+import { useFloorPush } from '../lib/push';
 import type { DiningArea, OrderSummary } from '../types';
 import { BillScreen } from './BillScreen';
 import { OrderScreen } from './OrderScreen';
@@ -12,13 +13,23 @@ import { Callout, Field, Note } from './ui';
 
 type View = { name: 'floor' } | { name: 'order'; orderId: string } | { name: 'bill'; orderId: string; billId: string };
 
+/**
+ * Where table service runs: a branch, and the shift when there is a drawer. Servers may work the
+ * floor without one (session 16): they take orders, send them and print bills; taking money needs a
+ * till with an open shift.
+ */
+export interface FloorPlace {
+  branch: Shift['branch'];
+  shift: Shift | null;
+}
+
 /** Table service (ADR-0014): floor → order → bill → checks, all on the server; this tab only shows and asks. */
-export function Tables({ shift, permissions, active }: { shift: Shift; permissions: string[]; active: boolean }) {
+export function Tables({ place, permissions, active }: { place: FloorPlace; permissions: string[]; active: boolean }) {
   const [view, setView] = useState<View>({ name: 'floor' });
   if (view.name === 'order') {
     return (
       <OrderScreen
-        shift={shift}
+        place={place}
         orderId={view.orderId}
         permissions={permissions}
         active={active}
@@ -28,12 +39,44 @@ export function Tables({ shift, permissions, active }: { shift: Shift; permissio
     );
   }
   if (view.name === 'bill') {
-    return <BillScreen shift={shift} billId={view.billId} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
+    return <BillScreen place={place} billId={view.billId} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
   }
-  return <Floor shift={shift} active={active} onOpen={(orderId) => setView({ name: 'order', orderId })} />;
+  return <Floor shift={place} active={active} onOpen={(orderId) => setView({ name: 'order', orderId })} />;
 }
 
-function Floor({ shift, active, onOpen }: { shift: Shift; active: boolean; onOpen: (orderId: string) => void }) {
+/** Server mode: pick the branch to work (servers see only their own branches). */
+export function FloorPicker({ onReady, onBack }: { onReady: (branch: Shift['branch']) => void; onBack: () => void }) {
+  const { t } = useT();
+  const [branches, setBranches] = useState<Shift['branch'][] | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+  useEffect(() => {
+    api<{ data: (Shift['branch'] & { archivedAt?: string | null })[] }>('GET', '/v1/branches')
+      .then(({ data }) => {
+        const open = data.filter((b) => !b.archivedAt);
+        if (open.length === 1) onReady(open[0]!);
+        else setBranches(open);
+      })
+      .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
+  }, []);
+  return (
+    <div className="mx-auto max-w-[760px] px-4 py-10 sm:px-6">
+      <h1 className="text-[1.75rem] font-bold">{t('floor.entryTitle')}</h1>
+      <p className="mt-1 text-muted">{t('floor.entryLede')}</p>
+      {notice && <div className="mt-4"><Callout kind={notice.kind}>{notice.text}</Callout></div>}
+      {branches?.length === 0 && <div className="mt-6"><Callout kind="warn">{t('kds.noBranch')}</Callout></div>}
+      <div className="mt-6 flex flex-wrap gap-2">
+        {branches?.map((b) => (
+          <button key={b.id} type="button" className="btn" onClick={() => onReady(b)}>
+            {b.name} <span className="serial text-[0.8125rem] text-violet">{b.code}</span>
+          </button>
+        ))}
+      </div>
+      <button type="button" className="btn mt-8" onClick={onBack}>{t('common.back')}</button>
+    </div>
+  );
+}
+
+function Floor({ shift, active, onOpen }: { shift: FloorPlace; active: boolean; onOpen: (orderId: string) => void }) {
   const { t } = useT();
   const [areas, setAreas] = useState<DiningArea[] | null>(null);
   const [areaId, setAreaId] = useState<string | null>(null);
@@ -56,7 +99,8 @@ function Floor({ shift, active, onOpen }: { shift: Shift; active: boolean; onOpe
       .then(({ data }) => setOrders(data))
       .catch(() => undefined); // the next poll retries; the floor keeps what it last showed
   }, [shift.branch.id]);
-  usePoll(loadOrders, 8000, active);
+  const pushed = useFloorPush(shift.branch.id, loadOrders, active);
+  usePoll(loadOrders, pushed ? 30_000 : 8000, active);
 
   async function open(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

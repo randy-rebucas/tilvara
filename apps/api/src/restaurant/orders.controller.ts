@@ -1,4 +1,8 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Put, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
+import { branchQuerySchema, type BranchQuery } from '@1pos/validation';
+import { tenantOf } from '../auth/auth-context.js';
+import { FloorEvents } from './floor-events.js';
 import {
   addOrderItemsSchema,
   cancelOrderSchema,
@@ -7,6 +11,7 @@ import {
   type CreateBillInput,
   type VoidBillInput,
   fireOrderSchema,
+  courseNoteSchema,
   idParamSchema,
   itemStatusSchema,
   kitchenTicketQuerySchema,
@@ -20,6 +25,7 @@ import {
   type AddOrderItemsInput,
   type CancelOrderInput,
   type FireOrderInput,
+  type CourseNoteInput,
   type ItemStatusInput,
   type KitchenTicketQuery,
   type MergeOrderInput,
@@ -38,6 +44,7 @@ import { KitchenService } from './kitchen.service.js';
 import { OrdersService } from './orders.service.js';
 
 const id = new ZodPipe(idParamSchema);
+const STREAM_MAX_MS = 10 * 60_000;
 
 /** Restaurant orders and the kitchen display (ADR-0014 §6, §7). Branch-scoped permissions are checked in the services. */
 @RequireTenant()
@@ -47,6 +54,7 @@ export class OrdersController {
     @Inject(OrdersService) private readonly orders: OrdersService,
     @Inject(KitchenService) private readonly kitchen: KitchenService,
     @Inject(BillsService) private readonly bills: BillsService,
+    @Inject(FloorEvents) private readonly events: FloorEvents,
   ) {}
 
   /** Freeze the order's price (ADR-0014 §8). Idempotency-Key is mandatory (financial snapshot). */
@@ -89,6 +97,39 @@ export class OrdersController {
   @Post('restaurant/orders/:id/items')
   addItems(@Auth() auth: AuthContext, @Param('id', id) orderId: string, @Body(new ZodPipe(addOrderItemsSchema)) body: AddOrderItemsInput) {
     return this.orders.addItems(auth, orderId, body);
+  }
+
+  /**
+   * Server-Sent Events for a branch's floor and kitchen (session 16): `changed` whenever an order,
+   * item, ticket or bill there changes (coalesced over 150 ms), a comment every 25 s to keep proxies
+   * from closing it, and the end after 10 minutes so the client reconnects with a fresh token (access
+   * is checked again then). No data travels on it: clients re-read through their normal routes.
+   */
+  @Get('restaurant/stream')
+  async stream(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) q: BranchQuery, @Req() req: Request, @Res() res: Response) {
+    await this.orders.checkFloorAccess(auth, q.branchId);
+    res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+    res.write('retry: 3000\nevent: ready\ndata: {}\n\n');
+    let pending: NodeJS.Timeout | null = null;
+    const off = this.events.subscribe(tenantOf(auth).tenantId, q.branchId, () => {
+      pending ??= setTimeout(() => {
+        pending = null;
+        res.write('event: changed\ndata: {}\n\n');
+      }, 150);
+    });
+    const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+    const end = setTimeout(() => res.end(), STREAM_MAX_MS);
+    req.on('close', () => {
+      off();
+      clearInterval(ping);
+      clearTimeout(end);
+      if (pending) clearTimeout(pending);
+    });
+  }
+
+  @Put('restaurant/orders/:id/course-notes')
+  setCourseNote(@Auth() auth: AuthContext, @Param('id', id) orderId: string, @Body(new ZodPipe(courseNoteSchema)) body: CourseNoteInput) {
+    return this.orders.setCourseNote(auth, orderId, body);
   }
 
   @Idempotent()

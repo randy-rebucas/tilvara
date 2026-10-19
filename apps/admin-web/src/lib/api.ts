@@ -711,6 +711,11 @@ export interface PrepTimes {
   stations: (PrepFigures & { stationId: string; code: string; name: string })[];
   overall: PrepFigures | null;
 }
+/** Prep times by local hour fired (`hour`) or by menu item (`variantId`, `name`). */
+export interface PrepTimesGrouped {
+  by: 'hour' | 'item';
+  groups: (PrepFigures & { key: string; hour?: number; variantId?: string; name?: string })[];
+}
 export interface OpenOrders {
   day: string;
   asOf: string;

@@ -86,7 +86,7 @@ export class KitchenService extends TenantService {
               status: p.item.status,
               firedAt: p.item.firedAt,
               readyAt: p.item.readyAt,
-              modifiers: mine.filter((m) => m.item.parentItemId === p.item.id).map((m) => ({ id: m.item.id, name: m.item.name })),
+              modifiers: mine.filter((m) => m.item.parentItemId === p.item.id).map((m) => ({ id: m.item.id, name: m.item.name, status: m.item.status })),
             })),
           };
         }),

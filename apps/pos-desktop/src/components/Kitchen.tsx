@@ -4,6 +4,7 @@ import { useT, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
 import { chime, soundPreference } from '../lib/chime';
 import { usePoll } from '../lib/poll';
+import { useFloorPush } from '../lib/push';
 import type { KitchenTicket } from '../types';
 import { errorText, type Notice } from './Payment';
 import { Callout, Note } from './ui';
@@ -149,7 +150,9 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
       // Keep showing the last tickets: a kitchen screen must not go blank on a dropped connection.
       .catch(() => setNotice({ kind: 'warn', text: t('kds.offline') }));
   }, [place.branch.id, place.station?.id]);
-  usePoll(load, 4000, true);
+  // Pushed changes reload at once; polling stays as a slow safety net (fast when the stream is down).
+  const live = useFloorPush(place.branch.id, load, true);
+  usePoll(load, live ? 30_000 : 4000, true);
 
   /** Recently finished tickets (everything served or voided), newest first, to look one up again. */
   const loadDone = useCallback(() => {
@@ -247,6 +250,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                       {late && `${t('kds.late')} · `}{minutes}:{String(seconds).padStart(2, '0')}
                     </span>
                   </header>
+                  {tk.courseNote && <p className="rounded-[4px] bg-[#fff6d6] px-3 py-2 text-[1rem] font-semibold" data-testid="course-note">{t('kds.courseNote')}: {tk.courseNote}</p>}
                   <ul className="grid gap-3">
                     {tk.items.map((i) => (
                       <li key={i.id} className="grid gap-1">
@@ -257,7 +261,16 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                           </p>
                           <span className={`tag ${i.status === 'READY' ? 'tag-warn' : ''}`}>{i.status === 'FIRED' ? t('kds.new') : t(`item.status.${i.status}` as MessageKey)}</span>
                         </div>
-                        {i.modifiers.length > 0 && <p className="text-[1rem]">{i.modifiers.map((m) => m.name).join(' · ')}</p>}
+                        {i.modifiers.length > 0 && (
+                          <p className="text-[1rem]">
+                            {i.modifiers.map((m, k) => (
+                              <span key={m.id}>
+                                {k > 0 && ' · '}
+                                {m.status === 'VOIDED' ? <s className="text-muted" aria-label={t('kds.choiceVoided', { name: m.name })}>{m.name}</s> : m.name}
+                              </span>
+                            ))}
+                          </p>
+                        )}
                         {i.note && <p className="text-[1rem] italic">“{i.note}”</p>}
                         {i.status === 'FIRED' && <button type="button" className="btn btn-sm justify-self-start" disabled={busy.current.has(i.id)} onClick={() => void setStatus(i.id, 'IN_PREP')}>{t('kds.start')}</button>}
                         {i.status === 'IN_PREP' && <button type="button" className="btn btn-sm justify-self-start" disabled={busy.current.has(i.id)} onClick={() => void setStatus(i.id, 'READY')}>{t('kds.ready')}</button>}

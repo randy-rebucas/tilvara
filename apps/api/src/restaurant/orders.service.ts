@@ -8,9 +8,12 @@ import {
   isNull,
   kitchenStations,
   kitchenTickets,
+  modifierGroups,
+  modifierOptions,
   ne,
   or,
   orderBills,
+  orderCourseNotes,
   orderItems,
   products,
   productVariants,
@@ -24,6 +27,7 @@ import { toDec } from '@1pos/money';
 import type {
   AddOrderItemsInput,
   CancelOrderInput,
+  CourseNoteInput,
   FireOrderInput,
   MergeOrderInput,
   MoveOrderItemsInput,
@@ -109,6 +113,14 @@ export class OrdersService extends TenantService {
           items: Object.fromEntries(counts.filter((c) => c.orderId === r.order.id).map((c) => [c.status, Number(c.n)])),
         })),
       };
+    });
+  }
+
+  /** Who may follow a branch's floor stream: whoever may read its orders and tickets. */
+  checkFloorAccess(auth: AuthContext, branchId: string) {
+    return this.read(auth, async (db) => {
+      const { scope } = await branchScope(db, branchId);
+      this.assertAny(auth, FLOOR_READ, scope);
     });
   }
 
@@ -214,11 +226,12 @@ export class OrdersService extends TenantService {
    */
   voidItem(auth: AuthContext, itemId: string, input: VoidOrderItemInput) {
     return this.mutate(auth, async (db) => {
-      const { order, item, branch } = await this.lockedItem(db, auth, itemId, 'sales.void');
+      const { order, item, branch } = await this.lockedItem(db, auth, itemId, 'sales.void', true);
       if (order.status !== 'OPEN') throw notOpen(order);
       if (item.status === 'PENDING') throw conflict('ITEM_NOT_FIRED', 'This item was not sent to the kitchen; remove it instead');
       if (item.status === 'VOIDED') throw conflict('ALREADY_VOIDED', 'This item is already voided');
-      const children = await db.select().from(orderItems).where(eq(orderItems.parentItemId, itemId));
+      if (item.kind === 'MODIFIER') await this.assertModifierMayGo(db, item);
+      const children = item.kind === 'ITEM' ? await db.select().from(orderItems).where(eq(orderItems.parentItemId, itemId)) : [];
       let wasteAdjustmentId: string | null = null;
       if (input.wasted) {
         const lines = [item, ...children].flatMap((x) => (x.variantId ? [{ variantId: x.variantId, quantity: x.quantity }] : []));
@@ -239,7 +252,48 @@ export class OrdersService extends TenantService {
       const voided = { status: 'VOIDED', voidedAt: sql`now()`, voidedBy: auth.userId, voidReason: input.reason };
       await db.update(orderItems).set({ ...voided, wasteAdjustmentId }).where(eq(orderItems.id, itemId));
       await db.update(orderItems).set(voided).where(and(eq(orderItems.parentItemId, itemId), ne(orderItems.status, 'VOIDED')));
-      await this.audit(db, auth, 'order.item_voided', 'restaurant_order', order.id, { itemId, name: item.name, quantity: item.quantity, fromStatus: item.status, reason: input.reason, wasteAdjustmentId });
+      await this.audit(db, auth, item.kind === 'MODIFIER' ? 'order.modifier_voided' : 'order.item_voided', 'restaurant_order', order.id, {
+        itemId, ...(item.parentItemId && { parentItemId: item.parentItemId }), name: item.name, quantity: item.quantity, fromStatus: item.status, reason: input.reason, wasteAdjustmentId,
+      });
+      return this.view(db, order);
+    });
+  }
+
+  /**
+   * A choice voided on its own ("no cheese after all"): its item must still be live, and the choice
+   * must not be one the item cannot do without (a group's minimum, e.g. doneness): void the item then.
+   */
+  private async assertModifierMayGo(db: Database, mod: Item) {
+    const [parent] = await db.select().from(orderItems).where(eq(orderItems.id, mod.parentItemId!));
+    if (!parent || parent.status === 'VOIDED') throw conflict('ALREADY_VOIDED', 'The item this choice belongs to is voided');
+    if (!mod.modifierOptionId) return;
+    const [group] = await db
+      .select({ id: modifierGroups.id, name: modifierGroups.name, min: modifierGroups.minSelect })
+      .from(modifierOptions)
+      .innerJoin(modifierGroups, eq(modifierGroups.id, modifierOptions.modifierGroupId))
+      .where(eq(modifierOptions.id, mod.modifierOptionId));
+    if (!group || group.min === 0) return;
+    const { rows: [left] } = await db.execute<{ n: number }>(sql`
+      SELECT count(*)::int AS n FROM order_items i JOIN modifier_options o ON o.id = i.modifier_option_id
+       WHERE i.parent_item_id = ${parent.id} AND i.id <> ${mod.id} AND i.status <> 'VOIDED' AND o.modifier_group_id = ${group.id}`);
+    if (left!.n < group.min) {
+      throw conflict('CHOICE_REQUIRED', `${group.name} needs at least ${group.min} choice${group.min === 1 ? '' : 's'}; void the item instead`, { group: group.name, min: group.min });
+    }
+  }
+
+  /** A note for one course, while the order is open; `null` removes it. Fired tickets keep their copy. */
+  setCourseNote(auth: AuthContext, orderId: string, input: CourseNoteInput) {
+    return this.mutate(auth, async (db) => {
+      const order = await this.lockedOrder(db, auth, orderId, 'restaurant.orders');
+      if (order.status !== 'OPEN') throw notOpen(order);
+      const where = and(eq(orderCourseNotes.orderId, orderId), eq(orderCourseNotes.course, input.course));
+      if (input.note === null) await db.delete(orderCourseNotes).where(where);
+      else
+        await db
+          .insert(orderCourseNotes)
+          .values({ tenantId: order.tenantId, branchId: order.branchId, orderId, course: input.course, note: input.note, updatedBy: auth.userId })
+          .onConflictDoUpdate({ target: [orderCourseNotes.tenantId, orderCourseNotes.orderId, orderCourseNotes.course], set: { note: input.note, updatedBy: auth.userId, updatedAt: sql`now()` } });
+      await this.audit(db, auth, 'order.course_note_set', 'restaurant_order', orderId, { course: input.course, removed: input.note === null });
       return this.view(db, order);
     });
   }
@@ -272,11 +326,13 @@ export class OrdersService extends TenantService {
         groups.set(key, g);
       }
       const fired: { ticketId: string; ticketNumber: number; stationId: string; course: number; items: number }[] = [];
+      const notes = await db.select().from(orderCourseNotes).where(eq(orderCourseNotes.orderId, orderId));
       for (const g of [...groups.values()].sort((a, b) => a.course - b.course)) {
         const ticketNumber = await nextNumber(db, order.tenantId, order.branchId, 'KITCHEN_TICKET');
+        const courseNote = notes.find((n) => n.course === g.course)?.note ?? null;
         const [ticket] = await db
           .insert(kitchenTickets)
-          .values({ tenantId: order.tenantId, branchId: order.branchId, orderId, stationId: g.stationId, ticketNumber, course: g.course, firedBy: auth.userId })
+          .values({ tenantId: order.tenantId, branchId: order.branchId, orderId, stationId: g.stationId, ticketNumber, course: g.course, firedBy: auth.userId, courseNote })
           .returning();
         const ids = g.items.map((i) => i.id);
         await db
@@ -429,14 +485,14 @@ export class OrdersService extends TenantService {
     return [first, second];
   }
 
-  private async lockedItem(db: Database, auth: AuthContext, itemId: string, perm: PermissionCode) {
+  private async lockedItem(db: Database, auth: AuthContext, itemId: string, perm: PermissionCode, allowModifier = false) {
     const [peek] = await db.select({ orderId: orderItems.orderId }).from(orderItems).where(eq(orderItems.id, itemId));
     if (!peek) throw notFound('Order item');
     const order = await this.lockedOrder(db, auth, peek.orderId, perm);
     const [item] = await db.select().from(orderItems).where(eq(orderItems.id, itemId));
     // Moved to another order between the peek and the lock: ask the client to retry.
     if (!item || item.orderId !== order.id) throw conflict('ORDER_CHANGED', 'This item just moved to another order; reload and try again');
-    if (item.kind !== 'ITEM') throw unprocessable('NOT_AN_ITEM', 'Change the item this choice belongs to');
+    if (item.kind !== 'ITEM' && !allowModifier) throw unprocessable('NOT_AN_ITEM', 'Change the item this choice belongs to');
     const { branch } = await branchScope(db, order.branchId);
     return { order, item, branch };
   }
@@ -452,8 +508,10 @@ export class OrdersService extends TenantService {
       .select({ id: orderBills.id, billNumber: orderBills.billNumber, status: orderBills.status, amountDue: orderBills.amountDue })
       .from(orderBills).where(eq(orderBills.orderId, o.id)).orderBy(asc(orderBills.billNumber));
     const current = bills.filter((b) => b.status !== 'VOIDED').at(-1);
+    const notes = await db.select({ course: orderCourseNotes.course, note: orderCourseNotes.note }).from(orderCourseNotes).where(eq(orderCourseNotes.orderId, o.id)).orderBy(asc(orderCourseNotes.course));
     return {
       ...order!,
+      courseNotes: notes,
       table: table ?? null,
       bill: current ? { ...current, amountDue: toDec(current.amountDue).toFixed(2) } : null,
       items: items.filter((i) => i.kind === 'ITEM').map((i) => ({ ...item(i), modifiers: items.filter((m) => m.parentItemId === i.id).map(item) })),

@@ -435,6 +435,20 @@
       "when": 1792332258267,
       "tag": "0061_inventory_policy_counts_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1792335804819,
+      "tag": "0062_restaurant_notes_moves",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1792335808031,
+      "tag": "0063_restaurant_notes_moves_rls",
+      "breakpoints": true
     }
   ]
 }

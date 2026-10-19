@@ -6,7 +6,7 @@ import { KitchenBoard, KitchenPicker, type KitchenPlace } from './components/Kit
 import { RegisterPicker, type Shift } from './components/Registers';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
-import { Tables } from './components/Tables';
+import { FloorPicker, Tables } from './components/Tables';
 import { TillSetup } from './components/Till';
 import { useT } from './i18n';
 import { useTill } from './lib/till';
@@ -19,7 +19,9 @@ type Stage =
   | { name: 'register'; me: Me }
   | { name: 'counter'; me: Me; shift: Shift }
   | { name: 'kitchen-pick'; me: Me }
-  | { name: 'kitchen'; me: Me; place: KitchenPlace };
+  | { name: 'kitchen'; me: Me; place: KitchenPlace }
+  | { name: 'floor-pick'; me: Me }
+  | { name: 'floor'; me: Me; branch: Shift['branch'] };
 type Tab = 'sell' | 'tables' | 'history' | 'close';
 
 export function App() {
@@ -70,6 +72,7 @@ function Counter() {
   }
   if (stage.name === 'register') {
     const kitchen = stage.me.activeTenant?.permissions.includes('kitchen.operate');
+    const floor = stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
       <Shell onSignOut={leave}>
         <RegisterPicker
@@ -79,6 +82,7 @@ function Counter() {
             setStage({ name: 'counter', me: stage.me, shift });
           }}
           onKitchen={kitchen ? () => setStage({ name: 'kitchen-pick', me: stage.me }) : undefined}
+          onFloor={floor ? () => setStage({ name: 'floor-pick', me: stage.me }) : undefined}
         />
       </Shell>
     );
@@ -107,6 +111,34 @@ function Counter() {
         }
       >
         <KitchenBoard key={`${place.branch.id}:${place.station?.id ?? 'all'}`} place={place} />
+      </Shell>
+    );
+  }
+
+  if (stage.name === 'floor-pick') {
+    return (
+      <Shell onSignOut={leave}>
+        <FloorPicker onReady={(branch) => setStage({ name: 'floor', me: stage.me, branch })} onBack={() => setStage({ name: 'register', me: stage.me })} />
+      </Shell>
+    );
+  }
+  if (stage.name === 'floor') {
+    const { branch, me: who } = stage;
+    return (
+      <Shell
+        onSignOut={leave}
+        context={
+          <span className="serial text-[0.8125rem]">
+            {t('floor.entryTitle')} · {branch.name} · <span className="text-white">{who.user.displayName}</span>
+          </span>
+        }
+        nav={
+          <button type="button" className="h-10 whitespace-nowrap rounded px-3 text-[0.9375rem] text-blue-ink hover:bg-white/10" onClick={() => setStage({ name: 'register', me: who })}>
+            {t('floor.toRegisters')}
+          </button>
+        }
+      >
+        <Tables place={{ branch, shift: null }} permissions={who.activeTenant?.permissions ?? []} active />
       </Shell>
     );
   }
@@ -151,7 +183,7 @@ function Counter() {
       {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
       {tableService && (
         <div hidden={tab !== 'tables'}>
-          <Tables shift={shift} permissions={permissions} active={tab === 'tables'} />
+          <Tables place={{ branch: shift.branch, shift }} permissions={permissions} active={tab === 'tables'} />
         </div>
       )}
       {tab === 'history' && <History shift={shift} permissions={permissions} />}

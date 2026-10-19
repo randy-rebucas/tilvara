@@ -104,6 +104,32 @@ export async function api<T>(method: string, path: string, body?: unknown, heade
   return data as T;
 }
 
+/**
+ * A Server-Sent Events stream read with fetch (EventSource cannot send the bearer token). Calls
+ * `onEvent` with each event name; resolves when the server ends the stream or `signal` aborts it,
+ * rejects when it cannot be opened. One silent refresh on 401, like `api()`.
+ */
+export async function readEvents(path: string, onEvent: (name: string) => void, signal: AbortSignal): Promise<void> {
+  const open = () => fetch(apiBase() + path, { headers: { accept: 'text/event-stream', ...(tokens ? { authorization: `Bearer ${tokens.accessToken}` } : {}) }, signal });
+  let res = await open();
+  if (res.status === 401 && (await refresh())) res = await open();
+  if (!res.ok || !res.body) throw new ApiFailure({ status: res.status, code: 'STREAM', message: 'Stream unavailable' });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += decoder.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const name = /^event: (.+)$/m.exec(buf.slice(0, i))?.[1];
+      buf = buf.slice(i + 2);
+      if (name) onEvent(name);
+    }
+  }
+}
+
 export interface Membership {
   tenantId: string;
   tenantName: string;

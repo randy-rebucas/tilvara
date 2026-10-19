@@ -2,9 +2,11 @@ import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
 import {
   branchQuerySchema,
   idParamSchema,
+  prepTimesBySchema,
   reportDaySchema,
   reportRangeSchema,
   type BranchQuery,
+  type PrepTimesByQuery,
   type ReportDayQuery,
   type ReportRangeQuery,
 } from '@1pos/validation';
@@ -83,8 +85,8 @@ export class ReportsController {
   }
 
   @Get('prep-times')
-  prepTimes(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.restaurant.prepTimes(auth, q);
+  prepTimes(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery, @Query(new ZodPipe(prepTimesBySchema)) g: PrepTimesByQuery) {
+    return this.restaurant.prepTimes(auth, q, g.by);
   }
 
   @Get('open-orders')
