@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-19 (session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-19 (session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,35 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 19 — full audit
+The user asked for a full audit, a separate document of missing or incomplete features, and for everything built to work. The document is `docs/AUDIT-2026-10-19.md`. New untracked gaps are in LEFTOVER under "Audit 2026-10-19". No migration.
+- **Wired API that had no screen** (each was unusable before):
+  - supplier invoices, payments and aging: admin `/purchasing/invoices`, the API from ab51583;
+  - journal labels and links for supplier documents;
+  - Inventory "Adjust stock or record waste";
+  - entity, branch and register details that receipts print;
+  - till pay in/out on Close shift;
+  - till "Find an earlier sale" for returns, with the new `GET /v1/sales?saleNumber=`;
+  - KDS "Sold out" view, with the branch menu now readable with `kitchen.operate`.
+- **Fixes:**
+  - the payables list filtered status after its `LIMIT 1000`;
+  - the aging day was hard-coded to Manila;
+  - a manual reversal of a supplier invoice entry is now refused (`CANCEL_THE_DOCUMENT`);
+  - till search errors used to read as "not found".
+- **Committed test defects found:**
+  - `reliability.test.ts` was stale since session 17 (`businessType` in the onboarding event);
+  - the `isolation.test.ts` setup went past 60 s late in a full gate run, so the whole file was skipped. It now has 180 s.
+- **Left for decisions** (LEFTOVER): offline sales delivered after a subscription lapse are quarantined; plan features not enforced; unused permission codes; shift close with open bills; customer management (largest gap); mobile app.
+- **Verified (session 19):**
+  - `pnpm build` 14/14; `pnpm typecheck` 24/24; `pnpm lint` clean;
+  - unit `turbo run test --force --concurrency=4` 24/24 tasks: admin 27 (guide incl. new lines), POS 17, api 52 after regenerating OpenAPI;
+  - integration `turbo run test:integration --concurrency=1 --continue --force` on the final code: database **33/33**, workers **22/22**, api **367/367**. The first run, before fixes, was 356/357 plus the isolation file timing out (above);
+  - E2E on a fresh API (:4322, rate limits off), admin `next start` (:3322) and POS preview (:3332):
+    - new `test:e2e:web:payables` **28/28**. Its first run was 22/28: five failures were my own checks (CSS-uppercased text, a label that matched before the refresh, a wrong receipt-address assumption) and one was a FIL click before the page settled;
+    - new `test:e2e:pos:extras` **15/15**. Its first run stopped at a reload that signs the till out;
+    - regression: `web` 46/46, `web:guide` 22/22, `web:backoffice` 49/49, `web:stock` 22/22, `pos` 41/41, `kitchen` 22/22.
+  - Not re-run: restaurant, floor, tables, service, offline, onboarding, security, account, drawers, desktop.
 
 ## Session 18 — user guide (admin and counter)
 The user asked for a user guide in both the admin and the desktop/browser counter (SPEC §13 "contextual help").
