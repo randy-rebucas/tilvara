@@ -289,9 +289,22 @@ describe('cashier session rules', () => {
     await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '100.00')).expect(201);
     const closed = (await http().post(`/v1/cashier-sessions/${session.id}/close`).set(s.cashier).send({ countedCash: '520.00', note: 'Short' }).expect(200)).body;
     expect(closed).toMatchObject({ status: 'CLOSED', reconciliation: { expectedCash: '522.40', countedCash: '520.00', variance: '-2.40', approvedBy: null } });
+    // The manager's list of drawers waiting for approval carries the count (the admin's Drawer counts page).
+    const waiting = (await http().get('/v1/cashier-sessions?status=CLOSED').set(s.manager).expect(200)).body.data;
+    expect(waiting).toEqual([expect.objectContaining({ id: session.id, reconciliation: expect.objectContaining({ variance: '-2.40', countedCash: '520.00', countedBy: closed.reconciliation.countedBy, approvedBy: null }) })]);
+    // Names travel with the shift: an approver with cash.reconcile at one branch may not read /members.
+    expect(waiting[0].openedByName).toEqual(expect.any(String));
+    expect(waiting[0].reconciliation).toMatchObject({ countedByName: waiting[0].openedByName, approvedByName: null });
+    expect(closed.openedByName).toBe(waiting[0].openedByName);
     await http().post(`/v1/cashier-sessions/${session.id}/approve-variance`).set(s.cashier).send({ note: 'ok' }).expect(403);
     const approved = (await http().post(`/v1/cashier-sessions/${session.id}/approve-variance`).set(s.manager).send({ note: 'Coins miscounted' }).expect(200)).body;
-    expect(approved).toMatchObject({ status: 'RECONCILED', reconciliation: { approvalNote: 'Coins miscounted' } });
+    expect(approved).toMatchObject({ status: 'RECONCILED', reconciliation: { approvalNote: 'Coins miscounted', approvedByName: expect.any(String) } });
+    expect(approved.reconciliation.approvedByName).not.toBe(approved.reconciliation.countedByName);
+    expect((await http().get('/v1/cashier-sessions?status=CLOSED').set(s.manager).expect(200)).body.data).toEqual([]);
+    const done = (await http().get('/v1/cashier-sessions?status=RECONCILED').set(s.manager).expect(200)).body.data;
+    expect(done.find((x: { id: string }) => x.id === session.id).reconciliation).toMatchObject({ approvalNote: 'Coins miscounted', variance: '-2.40' });
+    // An open shift has no count yet.
+    expect((await http().get('/v1/cashier-sessions?status=OPEN').set(s.manager).expect(200)).body.data.every((x: { reconciliation: unknown }) => x.reconciliation === null)).toBe(true);
     expect((await http().post(`/v1/cashier-sessions/${session.id}/approve-variance`).set(s.manager).send({ note: 'again' }).expect(409)).body.error.code).toBe('INVALID_STATE');
   });
 

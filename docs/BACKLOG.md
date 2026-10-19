@@ -215,5 +215,10 @@ Business types (session 17): ✅ RETAIL / RESTAURANT / HYBRID per business decid
 ⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
 Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
 
+User guide (session 18): ✅ done.
+- ✅ Admin `/help` (parts per area, following the business type and marking areas outside the role) with a context-aware ? button in the band; counter guide over the current screen (? or F1) at the part for the stage or tab.
+- ✅ Tests: admin `guide.test.ts` (7), POS `guide.test.ts` (3), `test:e2e:web:guide` (22), `test:e2e:pos` (+7).
+- ✅ Drawer count approval screen (admin Drawer counts + shift page; names on shifts; BFF allow-list); `test:e2e:web:drawers` (19).
+
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

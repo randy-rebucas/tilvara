@@ -81,7 +81,7 @@ export default async function OfflineSalesPage({ searchParams }: { searchParams:
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('off.title')} lede={t('off.lede')} />
+      <PageHeader title={t('off.title')} lede={t('off.lede')} actions={<Link href="/shifts" className="btn">{t('drawers.title')}</Link>} />
       {tills.length > 0 && (
         <section aria-labelledby="tills">
           <h2 id="tills" className="mb-2 text-[1.0625rem] font-semibold">{t('off.tills')}</h2>

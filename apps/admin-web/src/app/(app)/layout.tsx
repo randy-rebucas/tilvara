@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-dvh">
       <header className="band sticky top-0 z-20 text-white print:hidden">
-        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 px-4 sm:px-7 lg:h-16 lg:flex-nowrap lg:gap-x-5">
+        <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 px-4 sm:px-7 lg:h-16 lg:flex-nowrap lg:gap-x-4">
           <a href="/" className="flex h-14 shrink-0 items-center text-[1.5rem] font-bold tracking-[0.04em] lg:h-auto">
             Tilvara
           </a>
@@ -37,7 +37,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {/* Below lg it shares the wordmark's line and shrinks (the names truncate) rather than wrapping. */}
           <div className="ml-auto flex min-w-0 flex-1 basis-0 items-center justify-end gap-3 sm:gap-4 lg:flex-none lg:basis-auto">
             <LangSwitch onBand />
-            <UserMenu tenantName={tenantName} userName={me.user.displayName} multiple={me.memberships.length > 1} />
+            <UserMenu tenantName={tenantName} userName={me.user.displayName} multiple={me.memberships.length > 1} businessType={me.activeTenant.businessType} />
           </div>
         </div>
       </header>

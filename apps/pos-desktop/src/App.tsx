@@ -9,6 +9,7 @@ import { Shell } from './components/Shell';
 import { FloorPicker, Tables } from './components/Tables';
 import { TillSetup } from './components/Till';
 import { useT } from './i18n';
+import type { GuideTopic } from './lib/guide';
 import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
 import { servesTables, type Me } from './types';
@@ -23,6 +24,8 @@ type Stage =
   | { name: 'floor-pick'; me: Me }
   | { name: 'floor'; me: Me; branch: Shift['branch'] };
 type Tab = 'sell' | 'tables' | 'history' | 'close';
+/** The part of the user guide each counter tab opens. */
+const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', tables: 'tables', history: 'shift', close: 'close' };
 
 export function App() {
   const till = useTill();
@@ -30,7 +33,7 @@ export function App() {
   if (till.mode === 'loading') return <Shell>{null}</Shell>;
   if (till.mode === 'unconfigured' && !skippedSetup) {
     return (
-      <Shell>
+      <Shell help={{ topic: 'till' }}>
         <TillSetup onSkip={() => setSkippedSetup(true)} />
       </Shell>
     );
@@ -75,7 +78,7 @@ function Counter() {
     const kitchen = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
     const floor = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
-      <Shell onSignOut={leave}>
+      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me) }}>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.
@@ -90,7 +93,7 @@ function Counter() {
   }
   if (stage.name === 'kitchen-pick') {
     return (
-      <Shell onSignOut={leave}>
+      <Shell onSignOut={leave} help={{ topic: 'kitchen' }}>
         <KitchenPicker onReady={(place) => setStage({ name: 'kitchen', me: stage.me, place })} onBack={() => setStage({ name: 'register', me: stage.me })} />
       </Shell>
     );
@@ -100,6 +103,7 @@ function Counter() {
     return (
       <Shell
         onSignOut={leave}
+        help={{ topic: 'kitchen' }}
         context={
           <span className="serial text-[0.8125rem]">
             {t('kds.entryTitle')} · {place.branch.name} · <span className="text-white">{place.station?.code ?? t('kds.allStations')}</span>
@@ -118,7 +122,7 @@ function Counter() {
 
   if (stage.name === 'floor-pick') {
     return (
-      <Shell onSignOut={leave}>
+      <Shell onSignOut={leave} help={{ topic: 'tables' }}>
         <FloorPicker onReady={(branch) => setStage({ name: 'floor', me: stage.me, branch })} onBack={() => setStage({ name: 'register', me: stage.me })} />
       </Shell>
     );
@@ -128,6 +132,7 @@ function Counter() {
     return (
       <Shell
         onSignOut={leave}
+        help={{ topic: 'tables' }}
         context={
           <span className="serial text-[0.8125rem]">
             {t('floor.entryTitle')} · {branch.name} · <span className="text-white">{who.user.displayName}</span>
@@ -156,6 +161,7 @@ function Counter() {
   return (
     <Shell
       onSignOut={leave}
+      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me) }}
       context={
         <span className="serial text-[0.8125rem]">
           {shift.branch.name} · <span className="text-white">{shift.register.code}</span> · {me.user.displayName}

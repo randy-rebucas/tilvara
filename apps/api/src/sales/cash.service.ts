@@ -14,6 +14,7 @@ import {
   registers,
   sql,
   terminalTransactions,
+  users,
   type Database,
   mapInSequence,
 } from '@1pos/database';
@@ -138,7 +139,19 @@ export class CashService extends TenantService {
         const scope = { legalEntityId, branchId: session.branchId, registerId: session.registerId };
         return this.can(auth, 'cash.reconcile', scope) || (this.can(auth, 'cash.session', scope) && session.openedBy === auth.userId);
       });
-      return { data: await mapInSequence(visible, (r) => this.view(db, r.session)) };
+      // Each counted drawer carries its count, so a manager can see which wait for approval and by how much.
+      const recs = visible.length
+        ? await db.select().from(cashReconciliations).where(inArray(cashReconciliations.cashierSessionId, visible.map((r) => r.session.id)))
+        : [];
+      const recOf = new Map(recs.map((rec) => [rec.cashierSessionId, rec]));
+      const names = await namesOf(db, [...visible.map((r) => r.session.openedBy), ...recs.flatMap((rec) => [rec.countedBy, rec.approvedBy])]);
+      return {
+        data: await mapInSequence(visible, async (r) => ({
+          ...(await this.view(db, r.session)),
+          openedByName: names.get(r.session.openedBy) ?? null,
+          reconciliation: reconciliationView(recOf.get(r.session.id), names),
+        })),
+      };
     });
   }
 
@@ -297,6 +310,7 @@ export class CashService extends TenantService {
       sql`SELECT count(*)::int AS count, sum(amount_due)::text AS total FROM sales WHERE cashier_session_id = ${s.id}`,
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
+    const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy]);
     // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry).
     const payInOut = await db
       .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
@@ -305,14 +319,36 @@ export class CashService extends TenantService {
       .orderBy(cashMovements.createdAt, cashMovements.id);
     return {
       ...base,
+      openedByName: names.get(s.openedBy) ?? null,
       movements: byType.map((m) => ({ type: m.type, total: money(m.total), count: m.count })),
       payInOut: payInOut.map((m) => ({ ...m, amount: money(m.amount) })),
       sales: { count: salesAgg[0]!.count, total: money(salesAgg[0]!.total ?? '0') },
-      reconciliation: rec
-        ? { ...rec, expectedCash: money(rec.expectedCash), countedCash: money(rec.countedCash), variance: money(rec.variance) }
-        : null,
+      reconciliation: reconciliationView(rec, names),
     };
   }
 }
+
+/**
+ * Display names of the people on a shift. Carried in the response because the person approving a
+ * count may hold `cash.reconcile` at one branch only, without the business-wide `members.read`.
+ */
+async function namesOf(db: Database, ids: (string | null | undefined)[]) {
+  const wanted = [...new Set(ids.filter((x): x is string => !!x))];
+  if (!wanted.length) return new Map<string, string>();
+  const rows = await db.select({ id: users.id, displayName: users.displayName }).from(users).where(inArray(users.id, wanted));
+  return new Map(rows.map((u) => [u.id, u.displayName]));
+}
+
+const reconciliationView = (rec: typeof cashReconciliations.$inferSelect | undefined, names: Map<string, string>) =>
+  rec
+    ? {
+        ...rec,
+        expectedCash: money(rec.expectedCash),
+        countedCash: money(rec.countedCash),
+        variance: money(rec.variance),
+        countedByName: names.get(rec.countedBy) ?? null,
+        approvedByName: rec.approvedBy ? (names.get(rec.approvedBy) ?? null) : null,
+      }
+    : null;
 
 const notOpen = () => new AppError('SESSION_NOT_OPEN', 'This cashier session is not open', HttpStatus.CONFLICT);

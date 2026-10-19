@@ -414,8 +414,12 @@ export interface CashierSession {
   movements: { type: string; total: string; count: number }[];
   payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
   sales: { count: number; total: string };
-  reconciliation: { expectedCash: string; countedCash: string; variance: string; countedBy: string; note: string | null; approvedBy: string | null; approvedAt: string | null; approvalNote: string | null } | null;
+  /** Names travel with the shift (a branch manager may not read /members). */
+  openedByName: string | null;
+  reconciliation: { expectedCash: string; countedCash: string; variance: string; countedBy: string; countedByName: string | null; countedAt: string; note: string | null; approvedBy: string | null; approvedByName: string | null; approvedAt: string | null; approvalNote: string | null } | null;
 }
+/** A shift in `/cashier-sessions` (the list): the drawer count without the shift's sales and movements. */
+export type CashierSessionRow = Omit<CashierSession, 'movements' | 'payInOut' | 'sales'>;
 
 export interface SupplierReturn {
   id: string;

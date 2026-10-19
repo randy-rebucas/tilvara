@@ -89,6 +89,33 @@ try {
   check('VAT breakdown shows VATable and exempt sales', /VATable sales[\s\S]*₱20\.00/.test(await text()) && /VAT-exempt sales[\s\S]*₱56\.00/.test(await text()));
   check('the customer display shows the lines and the server-priced total ₱78.40', await waitFor(`(document.getElementById('cd')?.contentDocument?.body?.innerText ?? '').includes('₱78.40')`).then(() => true, () => false) && /Coke Mismo|Rice/.test(await display()));
   await shot('sell-cart.png', false);
+
+  // User guide (? in the band, or F1): opens over the counter at the part you are on; the cart stays.
+  // Sent to the focused element, as a keyboard does (the guide holds back the counter's keys in the capture phase).
+  const pressKey = (k) => evaluate(`(document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+  const cashValue = () => evaluate(`document.getElementById('cash')?.value ?? null`);
+  const cashBefore = await cashValue();
+  await evaluate(`document.querySelector('header button[title^="Help and user guide"]').click()`);
+  await waitFor(`document.getElementById('guide-sell')`);
+  check('the ? button opens the guide at Sell, marked "You are here"', await evaluate(`document.getElementById('guide-sell').innerText.includes('You are here') && !document.getElementById('guide-start').innerText.includes('You are here')`));
+  check('retail shop: the guide leaves out tables and the kitchen, keeps the desktop till and problems', await evaluate(`!document.getElementById('guide-tables') && !document.getElementById('guide-kitchen') && !!document.getElementById('guide-till') && !!document.getElementById('guide-trouble')`));
+  check('the counter is hidden behind the guide, which lists the counter keys', await evaluate(`document.querySelector('main').hidden`) && (await text()).includes('F8 exact cash'));
+  await shot('guide-sell.png', false);
+  await pressKey('F8');
+  await pressKey('Escape');
+  await waitFor(`!document.querySelector('main').hidden`);
+  check('Esc returns to the same cart (₱78.40), and F8 behind the guide did not fill in the cash', await totalShows('₱78.40') && (await cashValue()) === cashBefore);
+  await pressKey('F1');
+  check('F1 opens the guide too', await waitFor(`document.getElementById('guide-sell')`).then(() => true, () => false));
+  const lang = (l) => evaluate(`[...document.querySelectorAll('[role=group][aria-label=Language] button')].find((x) => x.textContent === ${JSON.stringify(l)}).click()`);
+  await lang('fil');
+  check('Filipino: the guide is translated', await shown('Gabay sa paggamit') && (await text()).includes('Narito ka'));
+  await lang('en');
+  await shown('User guide');
+  await clickText('Back');
+  await waitFor(`!document.querySelector('main').hidden`);
+  check('Back returns to the cart', await totalShows('₱78.40'));
+
   await clickText('₱100.00');
   await sleep(200);
   check('change preview ₱21.60', (await text()).includes('₱21.60'));

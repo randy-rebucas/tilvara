@@ -1,7 +1,9 @@
-import { LogOut } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { CircleHelp, LogOut } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useT } from '../i18n';
+import type { GuideTopic } from '../lib/guide';
 import { useTill } from '../lib/till';
+import { Guide } from './Guide';
 import { TillSettings, TillStatus } from './Till';
 
 export function LangToggle() {
@@ -23,13 +25,33 @@ export function LangToggle() {
   );
 }
 
-/** The blue band: wordmark, where you are (branch · register · shift), till status, language, sign-out. */
-export function Shell({ context, nav, onSignOut, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; children: ReactNode }) {
+/** Which part of the user guide the ? button (and F1) opens; `restaurant` false leaves out tables and the kitchen. */
+export interface HelpContext {
+  topic: GuideTopic;
+  restaurant?: boolean;
+}
+
+/** The blue band: wordmark, where you are (branch · register · shift), till status, help, language, sign-out. */
+export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; help?: HelpContext; children: ReactNode }) {
   const { t } = useT();
   const till = useTill();
-  // Till settings open over the current screen, which stays mounted (a cart survives a look).
-  const [tillOpen, setTillOpen] = useState(false);
+  // Till settings and the guide open over the current screen, which stays mounted (a cart survives a look).
+  const [overlay, setOverlay] = useState<'till' | 'guide' | null>(null);
+  const tillOpen = overlay === 'till' && till.mode === 'ready';
+  const guideOpen = overlay === 'guide';
   const mode = till.mode === 'browser' ? t('app.browserMode') : till.mode === 'ready' ? t('till.desktopMode') : t('till.desktopNoTerminal');
+
+  // F1 opens the guide from anywhere (and never the browser's own help page).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'F1' || e.altKey || e.ctrlKey || e.metaKey) return;
+      e.preventDefault();
+      setOverlay('guide');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="band sticky top-0 z-10 text-white">
@@ -38,7 +60,17 @@ export function Shell({ context, nav, onSignOut, children }: { context?: ReactNo
           {context && <div className="min-w-0 flex-1 truncate text-blue-ink">{context}</div>}
           {!context && <div className="flex-1" />}
           {nav && <div className="hidden lg:block">{nav}</div>}
-          <TillStatus onOpen={() => setTillOpen(true)} />
+          <TillStatus onOpen={() => setOverlay('till')} />
+          <button
+            type="button"
+            onClick={() => setOverlay(guideOpen ? null : 'guide')}
+            title={`${t('guide.help')} (F1)`}
+            aria-pressed={guideOpen}
+            className={`grid size-10 shrink-0 place-items-center rounded ${guideOpen ? 'bg-white/20 text-white' : 'text-blue-ink hover:bg-white/10'}`}
+          >
+            <CircleHelp className="size-5" aria-hidden />
+            <span className="sr-only">{t('guide.help')}</span>
+          </button>
           <LangToggle />
           {onSignOut && (
             <button type="button" onClick={onSignOut} title={t('common.signOut')} className="grid size-10 place-items-center rounded text-blue-ink hover:bg-white/10">
@@ -54,8 +86,9 @@ export function Shell({ context, nav, onSignOut, children }: { context?: ReactNo
       {till.mode === 'ready' && !till.online && (
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}
-      {tillOpen && till.mode === 'ready' && <TillSettings onBack={() => setTillOpen(false)} />}
-      <main className="flex-1" hidden={tillOpen && till.mode === 'ready'}>{children}</main>
+      {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
+      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} onBack={() => setOverlay(null)} />}
+      <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
     </div>
   );
 }

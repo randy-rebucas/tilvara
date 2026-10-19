@@ -18,6 +18,13 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 - ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; switching back lets it be settled.
 - ⬜ Selling by weight is hidden for RESTAURANT on screens only (product form and list); the API still accepts `soldBy: WEIGHT` and scale labels from any business.
 
+## User guide (session 18)
+- ✅ Drawer variance approval has a screen (session 18, second part): admin Drawer counts (`/shifts`) and the shift page; see STATUS.
+- ⬜ Branch-scoped managers cannot read `/members` (it needs `members.read` business-wide), so other document pages show “—” for people: pay-ins/outs on the shift page, sale and return pages, transfers. Shifts now carry their own names (`openedByName`, `countedByName`, `approvedByName`); do the same for the other documents, or let `/members` answer a branch-scoped reader with the members of their branches.
+- ⬜ Approval is admin only; the till's close screen says where it happens. A second manager at the till (PIN) is not built.
+- ⬜ The guide copy is written from the screens' own labels; when a label changes, the guide line quoting it does not fail any test. Review the guide (EN and FIL) with each UI change, and with the native speaker's FIL review.
+- ⬜ No screenshots or short videos in the guide yet (text only); worth adding once the brand (Salapi is provisional) settles.
+
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)

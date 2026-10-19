@@ -3,11 +3,13 @@ import Link from 'next/link';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import {
   allProducts,
+  api,
   apiOrNull,
   type Branch,
   type CurrentPrice,
   type Invitation,
   type LegalEntity,
+  type Me,
   type Member,
   type PriceList,
   type Register,
@@ -27,7 +29,8 @@ type List<T> = { data: T[] };
 
 export default async function OverviewPage() {
   const { t, lang } = await getT();
-  const [entities, branches, registers, terminals, products, lists, members, invites, sub, sample, sales] = await Promise.all([
+  const [me, entities, branches, registers, terminals, products, lists, members, invites, sub, sample, sales] = await Promise.all([
+    api<Me>('/me'),
     apiOrNull<List<LegalEntity>>('/legal-entities'),
     apiOrNull<List<Branch>>('/branches'),
     apiOrNull<List<Register>>('/registers'),
@@ -40,6 +43,10 @@ export default async function OverviewPage() {
     apiOrNull<SampleData>('/sample-data'),
     apiOrNull<List<{ id: string }>>('/sales?limit=1'),
   ]);
+  // Drawers counted short or over wait for a manager (Drawer counts); only managers are told.
+  const drawersWaiting = me.activeTenant?.permissions.includes('cash.reconcile')
+    ? ((await apiOrNull<List<{ id: string }>>('/cashier-sessions?status=CLOSED'))?.data.length ?? 0)
+    : 0;
 
   const defaultList = lists?.data.find((l) => l.isDefault && !l.archivedAt);
   const prices = defaultList ? await apiOrNull<{ data: CurrentPrice[] }>(`/price-lists/${defaultList.id}/prices`) : null;
@@ -83,6 +90,12 @@ export default async function OverviewPage() {
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
         {/* Below xl the next action comes first; on wide screens it sits in the right column. */}
         <aside className="flex flex-col gap-4 xl:order-last">
+          {drawersWaiting > 0 && (
+            <Callout tone="warn">
+              {t('drawers.banner', { n: drawersWaiting })}{' '}
+              <Link href="/shifts" className="font-semibold underline">{t('drawers.bannerLink')}</Link>
+            </Callout>
+          )}
           {sub && (
             <Note className="px-5 py-4">
               <span className="block text-[1.375rem] font-semibold">
@@ -114,6 +127,9 @@ export default async function OverviewPage() {
                 {t(next.action)} <ChevronRight aria-hidden className="size-4 shrink-0" />
               </Link>
             )}
+            <Link href="/help#start" className="mt-3 block text-[0.875rem] text-blue hover:underline">
+              {t('overview.guide')}
+            </Link>
           </Note>
           {sample && lists && <SampleCard state={sample} />}
           <Callout tone="info">{t('loc.invoicingOff')}</Callout>

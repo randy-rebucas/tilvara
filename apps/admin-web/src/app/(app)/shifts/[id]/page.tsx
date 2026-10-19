@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { ReasonAction } from '@/components/actions';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { apiOrNull, type Branch, type CashierSession, type Member, type Register, type Sale } from '@/lib/api';
+import { api, apiOrNull, type Branch, type CashierSession, type Me, type Member, type Register, type Sale } from '@/lib/api';
 import { formatDateTime, peso, signed, signOf } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -16,7 +17,8 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [shift, sales, branches, registers, members] = await Promise.all([
+  const [me, shift, sales, branches, registers, members] = await Promise.all([
+    api<Me>('/me'),
     apiOrNull<CashierSession>(`/cashier-sessions/${id}`),
     apiOrNull<{ data: Sale[] }>(`/sales?cashierSessionId=${id}&limit=200`),
     apiOrNull<{ data: Branch[] }>('/branches'),
@@ -29,13 +31,15 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const person = (userId: string | null) => (userId ? members?.data.find((m) => m.user.id === userId)?.user.displayName ?? '—' : '—');
   const journal = (sourceId: string) => (branch ? `/books?entity=${branch.legalEntityId}&source=${sourceId}` : null);
   const rec = shift.reconciliation;
+  // Counted short or over and not yet approved: a manager other than the counter approves (the API checks both).
+  const awaiting = shift.status === 'CLOSED' && rec !== null && (me.activeTenant?.permissions.includes('cash.reconcile') ?? false);
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('doc.shiftTitle', { register: register ? `${register.code} ${register.name}` : '—' })}</h1>
         <Serial className="mt-1 block">
-          {branch?.code ?? '—'} · {person(shift.openedBy)} · {formatDateTime(shift.openedAt, lang)}{shift.closedAt && ` – ${formatDateTime(shift.closedAt, lang)}`}
+          {branch?.code ?? '—'} · {shift.openedByName ?? person(shift.openedBy)} · {formatDateTime(shift.openedAt, lang)}{shift.closedAt && ` – ${formatDateTime(shift.closedAt, lang)}`}
         </Serial>
       </div>
 
@@ -62,19 +66,23 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
             </div>
             <div className="min-w-0">
               <div className="text-[0.8125rem] text-muted">{t('doc.countedBy')}</div>
-              <div className="mt-1">{person(rec.countedBy)}{rec.note && <span className="block text-[0.875rem] text-muted">{rec.note}</span>}</div>
+              <div className="mt-1">{rec.countedByName ?? person(rec.countedBy)}{rec.note && <span className="block text-[0.875rem] text-muted">{rec.note}</span>}</div>
             </div>
             <div className="min-w-0">
               <div className="text-[0.8125rem] text-muted">{t('doc.approvedBy')}</div>
               <div className="mt-1">
-                {rec.approvedBy ? `${person(rec.approvedBy)} · ${formatDateTime(rec.approvedAt, lang)}` : signOf(rec.variance) === 0 ? t('doc.noApproval') : t('doc.awaitingApproval')}
+                {rec.approvedBy ? `${rec.approvedByName ?? person(rec.approvedBy)} · ${formatDateTime(rec.approvedAt, lang)}` : signOf(rec.variance) === 0 ? t('doc.noApproval') : t('doc.awaitingApproval')}
                 {rec.approvalNote && <span className="block text-[0.875rem] text-muted">{rec.approvalNote}</span>}
               </div>
             </div>
           </Note>
-          {signOf(rec.variance) !== 0 && journal(shift.id) && (
-            <Link href={journal(shift.id)!} className="btn mt-3">{t('common.journalEntry')}</Link>
-          )}
+          <div className="mt-3 flex flex-wrap items-start gap-2">
+            {awaiting && rec.countedBy !== me.userId && (
+              <ReasonAction url={`/api/v1/cashier-sessions/${shift.id}/approve-variance`} label={t('drawers.approve')} reasonLabel={t('drawers.approveNote')} hint={t('drawers.approveHint')} field="note" />
+            )}
+            {awaiting && rec.countedBy === me.userId && <p className="text-[0.875rem] text-muted">{t('drawers.selfCounted')}</p>}
+            {signOf(rec.variance) !== 0 && journal(shift.id) && <Link href={journal(shift.id)!} className="btn">{t('common.journalEntry')}</Link>}
+          </div>
         </section>
       )}
 
