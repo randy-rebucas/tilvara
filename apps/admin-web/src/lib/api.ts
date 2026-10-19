@@ -698,6 +698,24 @@ export interface KitchenVoids {
   byUser: { userId: string; displayName: string | null; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
   totals: { voids: number; cookingStarted: number; wasted: number; wasteValue: string };
 }
+/** GET /v1/reports/refund-watch (THREAT_MODEL T5). Rates are 4-dp ratio strings; null without sales. */
+export interface RefundWatch {
+  data: {
+    userId: string;
+    displayName: string | null;
+    salesCount: number;
+    sales: string;
+    returnsCount: number;
+    returns: string;
+    voidsCount: number;
+    voids: string;
+    ownSalesRefunded: number;
+    refunded: string;
+    refundRate: string | null;
+    flags: ('HIGH_RATE' | 'OWN_SALES')[];
+  }[];
+  branch: { sales: string; refunded: string; refundRate: string | null };
+}
 export interface PrepFigures {
   tickets: number;
   items: number;

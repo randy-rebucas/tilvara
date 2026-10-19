@@ -503,7 +503,7 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['tender A payment in a B sale', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'INTENT', paymentIntentId: a.paymentIntentId }] })],
     ['list A session payments', () => http().get('/v1/payment-intents').query({ cashierSessionId: a.openSessionId }).set(auth)],
     ['refund a B sale from the A drawer', () => http().post(`/v1/sales/${b.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, kind: 'VOID', reason: 'x' })],
-    ...(['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book', ...RESTAURANT_REPORTS] as const).map(
+    ...(['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book', ...RESTAURANT_REPORTS] as const).map(
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
     ['open orders of the A branch', () => http().get('/v1/reports/open-orders').query({ branchId: a.branchId, day: today() }).set(auth)],
@@ -685,7 +685,7 @@ describe('Phase 1 cross-tenant sweep', () => {
       '/v1/sync/transactions', `/v1/sync/transactions?terminalId=${b.terminalId}`,
       '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/sale-returns/${b.saleReturnId}`, `/v1/sale-returns/${b.saleReturnId}/receipt`, `/v1/cash-movements/${b.cashMovementId}`,`/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
-      ...['sales-summary', 'by-product', 'by-cashier', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
+      ...['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
       `/v1/stock/transfers?branchId=${b.branchId}`, `/v1/stock/transfers/${b.transferId}`, `/v1/stock/counts?branchId=${b.branch2Id}`, `/v1/stock/counts/${b.countId}`, `/v1/stock/count-sheets?branchId=${b.branch2Id}`, `/v1/stock/count-sheets/${b.sheetId}`, `/v1/branches/${b.branchId}/inventory-settings`, `/v1/stock/adjustments?branchId=${b.branchId}`, `/v1/stock/adjustments/${b.adjustmentId}`,

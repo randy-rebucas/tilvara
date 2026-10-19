@@ -84,6 +84,11 @@ export class ReportsController {
     return this.restaurant.kitchenVoids(auth, q);
   }
 
+  @Get('refund-watch')
+  refundWatch(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.reports.refundWatch(auth, q);
+  }
+
   @Get('prep-times')
   prepTimes(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery, @Query(new ZodPipe(prepTimesBySchema)) g: PrepTimesByQuery) {
     return this.restaurant.prepTimes(auth, q, g.by);

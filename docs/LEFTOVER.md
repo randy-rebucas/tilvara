@@ -116,19 +116,19 @@ Phase-level:
 
 ## Phase 6 — Pilot readiness
 Slice 1 (account security):
-- ⬜ Nonce-based CSP for the admin; CSP for POS browser hosting
+- ⏳ CSP for POS browser hosting: set by the hosting (D1, slice 7); the admin has a nonce CSP since session 16
 - ⬜ WebAuthn/passkeys
 
 Slice 2 (platform hardening):
-- ⬜ Accepted dev-only advisory: esbuild ≤ 0.24.2 in drizzle-kit (re-check when drizzle-kit updates)
+- ⬜ Accepted dev-only advisory: esbuild ≤ 0.24.2 in drizzle-kit (re-checked 2026-10-19: still there; re-check when drizzle-kit updates)
 - ⏳ Run the security gates automatically (needs CI, D3)
-- ⬜ T5 refund approval thresholds / anomaly report (product backlog)
+- ⏳ T5 manager approval above a refund amount at the till (a second person): needs the user's thresholds. The refund watch report is done (session 16)
 
 Slice 3 (monitoring):
 - ✅ Backup-age metric and alert (slice 4, session 11)
 - ⬜ Billing failure metrics (no billing integration yet, D6)
 - ⏳ OTel traces/exporter — D1
-- ⬜ DEAD letters are a CLI only; no admin/support screen
+- ⏳ DEAD letters are a CLI only: a screen needs a platform console for Tilvara operators, which does not exist (the user's decision)
 
 Slice 4 (backup and restore):
 - ⏳ Point-in-time recovery (WAL) and the off-site copy with a retention lock: D1. Until then RPO = time since the last daily backup, and online sales after it are lost in a disaster

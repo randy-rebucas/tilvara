@@ -37,5 +37,15 @@ describe('report CSV', () => {
     const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-17', day: '2026-10-17' };
     expect(reportPath('statutory', q)).toBe('/reports/statutory-book?branchId=b&from=2026-10-01&to=2026-10-17');
     expect(reportPath('open', q)).toBe('/reports/open-orders?branchId=b&day=2026-10-17');
+    expect(reportPath('refunds', q)).toBe('/reports/refund-watch?branchId=b&from=2026-10-01&to=2026-10-17');
+  });
+
+  it('refund watch: exact amounts and ratios, flags as words in one cell', () => {
+    const t = (k: string) => k;
+    const rows = reportRows('refunds', {
+      data: [{ userId: 'u', displayName: 'Ana', salesCount: 4, sales: '400.00', returnsCount: 0, returns: '0.00', voidsCount: 3, voids: '300.00', ownSalesRefunded: 3, refunded: '300.00', refundRate: '0.7500', flags: ['HIGH_RATE', 'OWN_SALES'] }],
+      branch: { sales: '1000.00', refunded: '300.00', refundRate: '0.3000' },
+    }, t as never);
+    expect(rows[1]).toEqual(['Ana', 4, '400.00', 0, '0.00', 3, '300.00', 3, '0.7500', 'HIGH_RATE OWN_SALES']);
   });
 });

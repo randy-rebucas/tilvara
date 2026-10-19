@@ -3,23 +3,11 @@ import type { NextConfig } from 'next';
 const isDev = process.env.NODE_ENV === 'development';
 
 /**
- * Content Security Policy without nonces (Next 16 guide, "Without Nonces"): only this origin may
- * supply scripts, styles, images, fonts and fetches; nothing may frame the admin or post its forms
- * elsewhere. Inline scripts are still allowed (Next's bootstrap); a nonce policy is a follow-up
- * (ADR-0016 slice 1). React needs eval only in development.
+ * The Content Security Policy is set per request in `src/proxy.ts` (a fresh script nonce each time,
+ * session 16). Files the proxy does not see (`/_next/static`) carry this fallback, which allows no
+ * script at all: they are scripts and styles themselves, never pages.
  */
-const csp = [
-  "default-src 'self'",
-  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' blob: data:",
-  "font-src 'self'",
-  "connect-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
+const staticCsp = "default-src 'none'; frame-ancestors 'none'";
 
 const nextConfig: NextConfig = {
   // The admin talks to the API only from the server (BFF); the API URL never reaches the browser.
@@ -28,9 +16,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        source: '/_next/static/:path*',
+        headers: [{ key: 'Content-Security-Policy', value: staticCsp }],
+      },
+      {
         source: '/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: csp },
           { key: 'X-Frame-Options', value: 'DENY' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           // Also keeps the password-reset token in the URL from leaking to other sites.

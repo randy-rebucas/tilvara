@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { branches, eq, sql, type Database } from '@1pos/database';
-import { toDec } from '@1pos/money';
+import { Dec, toDec } from '@1pos/money';
 import type { AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -164,6 +164,50 @@ export class ReportsService extends TenantService {
          WHERE s.user_id IS NOT NULL OR r.user_id IS NOT NULL
          ORDER BY u.display_name`);
       return { data: rows.map((r) => shape(r, ['sales', 'returns'])) };
+    });
+  }
+
+  /**
+   * Refund watch (THREAT_MODEL T5, session 16): per person, the sales they rang up, the returns and voids
+   * they processed, and how many of those were of their own sales. Signals for a manager to look at,
+   * not findings: HIGH_RATE when someone's refunds are at least twice the branch's rate (and at least
+   * three), OWN_SALES when someone refunded their own sales twice or more.
+   */
+  refundWatch(auth: AuthContext, range: ReportRange) {
+    return this.run(auth, range, async (db, w) => {
+      const { rows } = await db.execute<Row>(sql`
+        WITH s AS (SELECT cashier_user_id AS user_id, count(*) AS n, sum(amount_due) AS amount FROM sales
+                    WHERE branch_id = ${w.branchId} AND completed_at >= ${w.start} AND completed_at < ${w.end} GROUP BY 1),
+             r AS (SELECT sr.processed_by AS user_id,
+                          count(*) FILTER (WHERE sr.kind = 'RETURN') AS returns_n, coalesce(sum(sr.amount_due) FILTER (WHERE sr.kind = 'RETURN'), 0) AS returns_amount,
+                          count(*) FILTER (WHERE sr.kind = 'VOID') AS voids_n, coalesce(sum(sr.amount_due) FILTER (WHERE sr.kind = 'VOID'), 0) AS voids_amount,
+                          count(*) FILTER (WHERE x.cashier_user_id = sr.processed_by) AS own_n
+                     FROM sale_returns sr JOIN sales x ON x.id = sr.sale_id
+                    WHERE sr.branch_id = ${w.branchId} AND sr.created_at >= ${w.start} AND sr.created_at < ${w.end} GROUP BY 1)
+        SELECT u.id AS user_id, u.display_name, coalesce(s.n, 0)::int AS sales_count, coalesce(s.amount, 0)::text AS sales,
+               coalesce(r.returns_n, 0)::int AS returns_count, coalesce(r.returns_amount, 0)::text AS returns,
+               coalesce(r.voids_n, 0)::int AS voids_count, coalesce(r.voids_amount, 0)::text AS voids,
+               coalesce(r.own_n, 0)::int AS own_sales_refunded
+          FROM users u LEFT JOIN s ON s.user_id = u.id LEFT JOIN r ON r.user_id = u.id
+         WHERE s.user_id IS NOT NULL OR r.user_id IS NOT NULL
+         ORDER BY u.display_name`);
+      const total = (k: string) => rows.reduce((a, r) => a.plus(r[k] as string), new Dec(0));
+      const rate = (refunded: Dec, sales: Dec) => (sales.gt(0) ? refunded.div(sales) : null);
+      const branchRate = rate(total('returns').plus(total('voids')), total('sales'));
+      const data = rows.map((r) => {
+        const refunded = toDec(r.returns as string).plus(r.voids as string);
+        const mine = rate(refunded, toDec(r.sales as string));
+        const count = (r.returns_count as number) + (r.voids_count as number);
+        const flags = [
+          ...(mine && branchRate && branchRate.gt(0) && mine.gte(branchRate.times(2)) && count >= 3 ? ['HIGH_RATE'] : []),
+          ...((r.own_sales_refunded as number) >= 2 ? ['OWN_SALES'] : []),
+        ];
+        return { ...shape(r, ['sales', 'returns', 'voids']), refunded: money(refunded.toString()), refundRate: mine?.toFixed(4) ?? null, flags };
+      });
+      return {
+        data,
+        branch: { sales: money(total('sales').toString()), refunded: money(total('returns').plus(total('voids')).toString()), refundRate: branchRate?.toFixed(4) ?? null },
+      };
     });
   }
 

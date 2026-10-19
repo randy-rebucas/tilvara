@@ -62,6 +62,16 @@ const signOut = async () => {
 try {
   const headers = (await fetch(`${BASE}/sign-in`)).headers;
   check('admin pages carry a CSP that forbids framing and other origins', (headers.get('content-security-policy') ?? '').includes("frame-ancestors 'none'") && (headers.get('content-security-policy') ?? '').includes("default-src 'self'"));
+  // Scripts by nonce only (session 16): a fresh nonce per response, on every script the page sends.
+  const page = async () => {
+    const r = await fetch(`${BASE}/sign-in`);
+    const policy = r.headers.get('content-security-policy') ?? '';
+    return { policy, nonce: /'nonce-([^']+)'/.exec(policy)?.[1], html: await r.text() };
+  };
+  const [p1, p2] = [await page(), await page()];
+  const scripts = [...p1.html.matchAll(/<script\b[^>]*>/g)].map((m) => m[0]);
+  check('admin scripts run by nonce only: no unsafe-inline for scripts, strict-dynamic', /script-src [^;]*'strict-dynamic'/.test(p1.policy) && !/script-src [^;]*'unsafe-inline'/.test(p1.policy));
+  check('a fresh nonce per response, and every script the page sends carries it', Boolean(p1.nonce && p2.nonce && p1.nonce !== p2.nonce) && scripts.length > 0 && scripts.every((s) => s.includes(`nonce="${p1.nonce}"`)));
   const apiHeaders = (await fetch(`${API}/v1/health/live`)).headers;
   check('API answers carry HSTS and a no-content CSP', (apiHeaders.get('strict-transport-security') ?? '').includes('max-age=31536000') && (apiHeaders.get('content-security-policy') ?? '').includes("default-src 'none'"));
 

@@ -1,11 +1,11 @@
 import type { MessageKey } from '@/i18n/messages';
-import type { IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PrepTimes, ServiceChargeReport } from './api';
+import type { IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PrepTimes, RefundWatch, ServiceChargeReport } from './api';
 
 /**
  * Reports as CSV for a spreadsheet or the accountant. Money and quantities stay the API's exact
  * decimal strings (no ₱, no grouping, never through a float); headers are in the viewer's language.
  */
-export type CsvReport = 'sales' | 'products' | 'cashiers' | 'tenders' | 'tax' | 'statutory' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
+export type CsvReport = 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
 
 /** API path (under /v1) for each report, given the branch and range. */
 export function reportPath(report: CsvReport, q: { branchId: string; from: string; to: string; day: string }): string {
@@ -14,6 +14,7 @@ export function reportPath(report: CsvReport, q: { branchId: string; from: strin
     sales: `/reports/sales-summary?${range}`,
     products: `/reports/by-product?${range}`,
     cashiers: `/reports/by-cashier?${range}`,
+    refunds: `/reports/refund-watch?${range}`,
     tenders: `/reports/by-tender?${range}`,
     tax: `/reports/tax-summary?${range}`,
     statutory: `/reports/statutory-book?${range}`,
@@ -72,6 +73,13 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
     case 'cashiers': {
       const r = data as { data: { displayName: string | null; salesCount: number; sales: string; returnsProcessed: number; returns: string }[] };
       return [[t('csv.cashier'), t('csv.salesCount'), t('csv.sales'), t('csv.returnsCount'), t('csv.returns')], ...r.data.map((x) => [x.displayName ?? '', x.salesCount, x.sales, x.returnsProcessed, x.returns])];
+    }
+    case 'refunds': {
+      const r = data as RefundWatch;
+      return [
+        [t('csv.cashier'), t('csv.salesCount'), t('csv.sales'), t('csv.returnsCount'), t('csv.returns'), t('rep.voidsCol'), t('csv.voids'), t('rep.ownRefunds'), t('rep.refundRate'), t('rep.flags')],
+        ...r.data.map((x) => [x.displayName ?? '', x.salesCount, x.sales, x.returnsCount, x.returns, x.voidsCount, x.voids, x.ownSalesRefunded, x.refundRate ?? '', x.flags.join(' ')]),
+      ];
     }
     case 'tenders': {
       const r = data as { data: { method: string; tenders: number; collected: string; refundsCount: number; refunded: string; net: string }[] };
