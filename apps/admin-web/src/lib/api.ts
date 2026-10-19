@@ -433,6 +433,55 @@ export interface SupplierReturn {
   lines: { id: string; goodsReceiptLineId: string | null; variantId: string; quantity: string; creditUnitCost: string; creditValue: string }[];
 }
 
+// ---- supplier invoices and payables (ADR-0013 amendment) ----
+export type SupplierInvoiceStatus = 'OPEN' | 'PAID' | 'CANCELLED';
+export interface SupplierInvoiceRow {
+  id: string;
+  entryNumber: number;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  branchId: string;
+  supplier: { id: string; code: string; name: string };
+  totalAmount: string;
+  paidAmount: string;
+  balance: string;
+  status: SupplierInvoiceStatus;
+}
+export interface SupplierInvoice extends Omit<SupplierInvoiceRow, 'paidAmount' | 'balance'> {
+  legalEntityId: string;
+  netAmount: string;
+  vatAmount: string;
+  matchedAmount: string;
+  inputVat: string;
+  priceVariance: string;
+  paidAmount: string;
+  balance: string;
+  notes: string | null;
+  createdAt: string;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  journalEntryId: string | null;
+  reversalEntryId: string | null;
+  receipts: { goodsReceiptId: string; receiptNumber: number; matchedAmount: string; active: boolean }[];
+  payments: { id: string; paymentNumber: number; amount: string; paidOn: string; method: 'BANK_TRANSFER' | 'CHECK' | 'OTHER'; reference: string | null; createdAt: string }[];
+}
+export interface UninvoicedReceipt {
+  id: string;
+  receiptNumber: number;
+  supplierInvoiceRef: string | null;
+  receivedAt: string;
+  uninvoicedAmount: string;
+}
+type AgingBuckets = { current: string; days1to30: string; days31to60: string; days61to90: string; over90: string; total: string };
+export interface PayablesAging {
+  legalEntityId: string;
+  asOf: string;
+  suppliers: (AgingBuckets & { supplier: { id: string; code: string; name: string }; invoices: number })[];
+  totals: AgingBuckets;
+  ledgerBalance: string;
+}
+
 // ---- inventory (Phase 3) ----
 export interface TransferRow {
   id: string;
