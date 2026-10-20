@@ -53,6 +53,15 @@ interface World {
   supplierReturnId: string;
   supplierInvoiceId: string;
   supplierPaymentId: string;
+  priceOverrideId: string;
+  heldCartId: string;
+  customerId: string;
+  customerSaleId: string;
+  reservationId: string;
+  supplierItemId: string;
+  apiKeyId: string;
+  webhookId: string;
+  webhookDeliveryId: string;
   branch2Id: string;
   transferId: string;
   countId: string;
@@ -269,7 +278,33 @@ async function world(prefix: string): Promise<World> {
   const synced = ok<{ results: { status: string }[] }>(await http().post('/v1/sync/sales').set(terminalHeaders).send({ sales: [offline(1, '22.00'), offline(2, '1.00')] }), 200);
   if (synced.results.map((r) => r.status).join() !== 'RECORDED,QUARANTINED') throw new Error(`fixture sync → ${JSON.stringify(synced.results)}`);
   const quarantined = ok<{ data: { id: string }[] }>(await http().get('/v1/sync/transactions').query({ status: 'QUARANTINED' }).set(auth), 200).data[0]!;
+  // Session 20 (ADR-0018): a customer who bought two gift wraps (untracked: stock stays as it is), returned
+  // one as store credit and spent ₱10 of it on another wrap; the consent they gave is on record. Half of the
+  // ₱30.00 line comes back as ₱15.01: returns round each tax bucket on its own (LEFTOVER, Phase 4 slice 4).
+  const wrap = ok<{ variants: { id: string }[] }>(await http().post('/v1/products').set(auth).send({ name: 'Gift wrap', productType: 'SERVICE', taxCategoryId: taxId, uomId, trackInventory: false, variants: [{ sku: uniq('WRAP'), price: '15.00' }] }));
+  const wrapId = wrap.variants[0]!.id;
+  ok(await http().post(`/v1/price-lists/${priceList.id}/prices`).set(auth).send({ items: [{ variantId: wrapId, amount: '15.00' }] }));
+  const customer = ok(await http().post('/v1/customers').set(auth).send({ displayName: `${prefix} Customer`, phone: '09170000000', marketingConsent: true, consentSource: 'COUNTER' }));
+  const customerSale = ok<{ id: string; lines: { id: string }[] }>(
+    await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
+      .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), customerId: customer.id, lines: [{ variantId: wrapId, quantity: '2' }], tenders: [{ method: 'CASH', tendered: '30.00' }] }),
+  );
+  ok(await http().post(`/v1/sales/${customerSale.id}/returns`).set(auth).set('Idempotency-Key', randomUUID())
+    .send({ cashierSessionId: openSession.id, kind: 'RETURN', reason: 'Fixture credit', refundTo: 'STORE_CREDIT', lines: [{ saleLineId: customerSale.lines[0]!.id, quantity: '1', disposition: 'DAMAGED' }] }));
+  ok(await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
+    .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), customerId: customer.id, lines: [{ variantId: wrapId, quantity: '1' }], tenders: [{ method: 'STORE_CREDIT', amount: '10.00' }, { method: 'CASH', tendered: '5.00' }] }));
+  // Session 20: one unit of the item set aside for the customer, and the supplier's catalog entry for it.
+  const reservation = ok(await http().post('/v1/stock/reservations').set(auth).send({ branchId: branch.id, variantId, quantity: '1', note: 'Fixture hold', customerId: customer.id }));
+  const supplierItem = ok(await http().post(`/v1/suppliers/${supplier.id}/items`).set(auth).send({ variantId, supplierSku: 'SUP-COLA', unitCost: '11.00', preferred: true }));
+  // Session 20 (ADR-0019): on a plan with API access, a read-only key, a webhook and its test ping.
+  await owner.query(`SELECT platform_set_subscription($1, 'enterprise', 'ACTIVE', null, null)`, [t.tenantId]);
+  const apiKey = ok(await http().post('/v1/api-keys').set(auth).send({ name: 'Fixture', scopes: ['org.read'] }));
+  const webhook = ok(await http().post('/v1/webhooks').set(auth).send({ url: 'https://hooks.example.ph/fixture', topics: ['sale.completed'] }));
+  const webhookPing = ok(await http().post(`/v1/webhooks/${webhook.id}/ping`).set(auth));
   const openSessionCash = (await http().get(`/v1/cashier-sessions/${openSession.id}`).set(auth)).body.expectedCash as string;
+  // Session 20: a price approved for the item (not used), and a cart held on the open shift.
+  const override = ok(await http().post('/v1/price-overrides').set(auth).send({ branchId: branch.id, variantId, unitPrice: '19.00', reason: 'Fixture' }));
+  const held = ok(await http().post('/v1/held-carts').set(auth).send({ cashierSessionId: openSession.id, label: 'Fixture', lines: [{ variantId, sku: 'X', name: 'Cola', quantity: '1' }] }));
   // Phase 6 slice 6: support access and a data export request (the worker does not run here).
   const grant = ok(await http().post('/v1/support-access').set(auth).send({ purpose: 'Fixture support access', hours: 2 }));
   const dataExport = ok(await http().post('/v1/data-exports').set(auth), 202);
@@ -306,6 +341,15 @@ async function world(prefix: string): Promise<World> {
     supplierReturnId: supplierReturn.id,
     supplierInvoiceId: supplierInvoice.id,
     supplierPaymentId: paid.payments[0]!.id,
+    priceOverrideId: override.id,
+    heldCartId: held.id,
+    customerId: customer.id,
+    customerSaleId: customerSale.id,
+    reservationId: reservation.id,
+    supplierItemId: supplierItem.id,
+    apiKeyId: apiKey.id,
+    webhookId: webhook.id,
+    webhookDeliveryId: webhookPing.id,
     branch2Id: branch2.id,
     transferId: transfer.id,
     countId: count.id,
@@ -413,6 +457,7 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/cash-movements/:id': () => http().get(`/v1/cash-movements/${a.cashMovementId}`).set(auth),
     'POST /v1/sales/:id/returns': () =>
       http().post(`/v1/sales/${a.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, kind: 'VOID', reason: 'steal' }),
+    'POST /v1/sales/:id/returns/preview': () => http().post(`/v1/sales/${a.saleId}/returns/preview`).set(auth).send({ lines: [{ saleLineId: randomUUID(), quantity: '1' }] }),
     'GET /v1/sales/:id/receipt': () => http().get(`/v1/sales/${a.saleId}/receipt`).set(auth),
     'GET /v1/payment-intents/:id': () => http().get(`/v1/payment-intents/${a.paymentIntentId}`).set(auth),
     'POST /v1/payment-intents/:id/reconcile': () => http().post(`/v1/payment-intents/${a.paymentIntentId}/reconcile`).set(auth),
@@ -497,6 +542,28 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/support-access/:id/revoke': () => http().post(`/v1/support-access/${a.supportGrantId}/revoke`).set(auth).send({ reason: 'sabotage' }),
     // B's owner is not Tilvara staff: A's grant is as good as absent.
     'POST /v1/support/grants/:id/open': () => http().post(`/v1/support/grants/${a.supportGrantId}/open`).set(auth),
+    'GET /v1/customers/:id': () => http().get(`/v1/customers/${a.customerId}`).set(auth),
+    'PATCH /v1/customers/:id': () => http().patch(`/v1/customers/${a.customerId}`).set(auth).send({ displayName: 'pwned' }),
+    'POST /v1/customers/:id/consent': () => http().post(`/v1/customers/${a.customerId}/consent`).set(auth).send({ marketingConsent: false, source: 'REQUEST' }),
+    'POST /v1/customers/:id/archive': () => http().post(`/v1/customers/${a.customerId}/archive`).set(auth),
+    'POST /v1/customers/:id/anonymise': () => http().post(`/v1/customers/${a.customerId}/anonymise`).set(auth).send({ reason: 'sabotage' }),
+    'GET /v1/customers/:id/sales': () => http().get(`/v1/customers/${a.customerId}/sales`).set(auth),
+    'GET /v1/customers/:id/store-credit': () => http().get(`/v1/customers/${a.customerId}/store-credit`).set(auth),
+    'POST /v1/customers/:id/export': () => http().post(`/v1/customers/${a.customerId}/export`).set(auth),
+    'POST /v1/api-keys/:id/revoke': () => http().post(`/v1/api-keys/${a.apiKeyId}/revoke`).set(auth),
+    'PATCH /v1/webhooks/:id': () => http().patch(`/v1/webhooks/${a.webhookId}`).set(auth).send({ enabled: false }),
+    'POST /v1/webhooks/:id/rotate-secret': () => http().post(`/v1/webhooks/${a.webhookId}/rotate-secret`).set(auth),
+    'POST /v1/webhooks/:id/ping': () => http().post(`/v1/webhooks/${a.webhookId}/ping`).set(auth),
+    'GET /v1/webhooks/:id/deliveries': () => http().get(`/v1/webhooks/${a.webhookId}/deliveries`).set(auth),
+    'POST /v1/webhook-deliveries/:id/retry': () => http().post(`/v1/webhook-deliveries/${a.webhookDeliveryId}/retry`).set(auth),
+    'POST /v1/stock/reservations/:id/release': () => http().post(`/v1/stock/reservations/${a.reservationId}/release`).set(auth).send({ reason: 'sabotage' }),
+    'GET /v1/suppliers/:id/items': () => http().get(`/v1/suppliers/${a.supplierId}/items`).set(auth),
+    'POST /v1/suppliers/:id/items': () => http().post(`/v1/suppliers/${a.supplierId}/items`).set(auth).send({ variantId: b.variantId }),
+    'PATCH /v1/supplier-items/:id': () => http().patch(`/v1/supplier-items/${a.supplierItemId}`).set(auth).send({ unitCost: '0.01' }),
+    'POST /v1/supplier-items/:id/archive': () => http().post(`/v1/supplier-items/${a.supplierItemId}/archive`).set(auth),
+    'GET /v1/variants/:id/suppliers': () => http().get(`/v1/variants/${a.variantId}/suppliers`).set(auth),
+    'POST /v1/held-carts/:id/resume': () => http().post(`/v1/held-carts/${a.heldCartId}/resume`).set(auth).send({ cashierSessionId: b.openSessionId }),
+    'POST /v1/held-carts/:id/discard': () => http().post(`/v1/held-carts/${a.heldCartId}/discard`).set(auth),
     'GET /v1/data-exports/:id': () => http().get(`/v1/data-exports/${a.exportId}`).set(auth),
     'POST /v1/data-exports/:id/link': () => http().post(`/v1/data-exports/${a.exportId}/link`).set(auth),
     // A genuine link naming A's export but B's business opens nothing.
@@ -532,10 +599,30 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['take a payment on A session', () => http().post('/v1/payment-intents').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, clientTransactionId: randomUUID(), method: 'CARD', amount: '1.00' })],
     ['tender A payment in a B sale', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'INTENT', paymentIntentId: a.paymentIntentId }] })],
     ['list A session payments', () => http().get('/v1/payment-intents').query({ cashierSessionId: a.openSessionId }).set(auth)],
+    ['held carts of the A register', () => http().get('/v1/held-carts').query({ registerId: a.registerId }).set(auth)],
+    ['hold a cart on the A shift', () => http().post('/v1/held-carts').set(auth).send({ cashierSessionId: a.openSessionId, label: 'x', lines: [{ variantId: b.variantId, sku: 'X', name: 'x', quantity: '1' }] })],
+    ['approve a price at the A branch', () => http().post('/v1/price-overrides').set(auth).send({ branchId: a.branchId, variantId: b.variantId, unitPrice: '1.00', reason: 'x' })],
+    ['approve a price for an A item', () => http().post('/v1/price-overrides').set(auth).send({ branchId: b.branchId, variantId: a.variantId, unitPrice: '1.00', reason: 'x' })],
+    ['quote with an A approval', () => http().post('/v1/tax/quote').set(auth).send({ branchId: b.branchId, lines: [{ variantId: b.variantId, quantity: '1', priceOverrideId: a.priceOverrideId }] })],
+    ['exchange an A sale on the B shift', () => http().post('/v1/exchanges').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, saleId: a.saleId, reason: 'x', returnLines: [{ saleLineId: randomUUID(), quantity: '1', disposition: 'RESTOCK' }], sale: { clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] } })],
+    ['exchange a B sale on the A shift', () => http().post('/v1/exchanges').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, saleId: b.saleId, reason: 'x', returnLines: [{ saleLineId: randomUUID(), quantity: '1', disposition: 'RESTOCK' }], sale: { clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] } })],
+    ['reserve at the A branch', () => http().post('/v1/stock/reservations').set(auth).send({ branchId: a.branchId, variantId: b.variantId, quantity: '1', note: 'x' })],
+    ['reserve an A item at the B branch', () => http().post('/v1/stock/reservations').set(auth).send({ branchId: b.branchId, variantId: a.variantId, quantity: '1', note: 'x' })],
+    ['reserve for an A customer', () => http().post('/v1/stock/reservations').set(auth).send({ branchId: b.branchId, variantId: b.variantId, quantity: '1', note: 'x', customerId: a.customerId })],
+    ['reservations of the A branch', () => http().get('/v1/stock/reservations').query({ branchId: a.branchId }).set(auth)],
+    ['catalog an A item for a B supplier', () => http().post(`/v1/suppliers/${b.supplierId}/items`).set(auth).send({ variantId: a.variantId })],
+    ['sell to an A customer', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), customerId: a.customerId, lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
+    ['spend an A customer’s credit', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), customerId: a.customerId, lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'STORE_CREDIT', amount: '1.00' }, { method: 'CASH', tendered: '100.00' }] })],
+    ['refund a B sale as credit to an A customer', () => http().post(`/v1/sales/${b.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, kind: 'RETURN', reason: 'x', refundTo: 'STORE_CREDIT', customerId: a.customerId, lines: [{ saleLineId: randomUUID(), quantity: '1', disposition: 'DAMAGED' }] })],
     ['refund a B sale from the A drawer', () => http().post(`/v1/sales/${b.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, kind: 'VOID', reason: 'x' })],
     ...(['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book', ...RESTAURANT_REPORTS] as const).map(
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
+    ...(['by-category', 'discounts', 'purchases-by-supplier'] as const).map(
+      (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
+    ),
+    ['payment exceptions of the A branch', () => http().get('/v1/reports/payment-exceptions').query({ branchId: a.branchId }).set(auth)],
+    ['consolidated report of the A entity', () => http().get('/v1/reports/by-branch').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
     ['open orders of the A branch', () => http().get('/v1/reports/open-orders').query({ branchId: a.branchId, day: today() }).set(auth)],
     ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
     ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
@@ -631,7 +718,7 @@ function strings(v: unknown, out: string[] = []): string[] {
 const idsOf = (w: World) =>
   [w.t.tenantId, w.t.userId, w.entityId, w.branchId, w.registerId, w.terminalId, w.categoryId, w.productId, w.variantId, w.barcodeId,
    w.priceListId, w.defaultListId, w.roleId, w.cashierRoleId, w.invitationId, w.memberId, w.uomId, w.taxId,
-   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.supplierInvoiceId, w.supplierPaymentId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.zRegisterId, w.zReadingId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
+   w.supplierId, w.purchaseOrderId, w.draftOrderId, w.goodsReceiptId, w.supplierReturnId, w.supplierInvoiceId, w.supplierPaymentId, w.priceOverrideId, w.heldCartId, w.customerId, w.customerSaleId, w.reservationId, w.supplierItemId, w.apiKeyId, w.webhookId, w.webhookDeliveryId, w.branch2Id, w.transferId, w.countId, w.sheetId, w.zRegisterId, w.zReadingId, w.adjustmentId, w.journalEntryId, w.cashAccountId, w.dishId,
    w.stationId, w.areaId, w.tableId, w.modifierGroupId, w.modifierOptionId, w.menuId, w.draftVersionId,
    w.orderId, w.pendingItemId, w.firedItemId, w.ticketId, w.billId, w.checkSaleId, w.liveOrderId, w.liveItemId, w.supportGrantId, w.exportId];
 
@@ -683,6 +770,18 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect([po.status, po.notes]).toEqual(['DRAFT', null]);
     const inv = (await http().get(`/v1/supplier-invoices/${a.supplierInvoiceId}`).set(a.auth).expect(200)).body;
     expect([inv.status, inv.paidAmount, inv.payments.length]).toEqual(['OPEN', '10.00', 1]);
+    const cust = (await http().get(`/v1/customers/${a.customerId}`).set(a.auth).expect(200)).body;
+    expect([cust.displayName.endsWith('Customer'), cust.phone, cust.marketingConsent, cust.anonymisedAt, cust.archivedAt, cust.storeCredit.map((c: { balance: string }) => c.balance)]).toEqual([true, '09170000000', true, null, null, ['5.01']]);
+    const keys = (await http().get('/v1/api-keys').set(a.auth).expect(200)).body.data;
+    expect(keys.map((k: { id: string; revokedAt: string | null }) => [k.id, k.revokedAt])).toEqual([[a.apiKeyId, null]]);
+    const hooks = (await http().get('/v1/webhooks').set(a.auth).expect(200)).body.data;
+    expect(hooks.map((w: { id: string; enabled: boolean; url: string }) => [w.id, w.enabled, w.url])).toEqual([[a.webhookId, true, 'https://hooks.example.ph/fixture']]);
+    const holds = (await http().get('/v1/stock/reservations').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
+    expect(holds.map((r: { id: string; status: string }) => [r.id, r.status])).toEqual([[a.reservationId, 'ACTIVE']]);
+    const catalog = (await http().get(`/v1/suppliers/${a.supplierId}/items`).set(a.auth).expect(200)).body.data;
+    expect(catalog.map((i: { id: string; unitCost: string }) => [i.id, i.unitCost])).toEqual([[a.supplierItemId, '11.0000']]);
+    const carts = (await http().get('/v1/held-carts').query({ registerId: a.registerId }).set(a.auth).expect(200)).body.data;
+    expect(carts.map((c: { id: string; status: string }) => [c.id, c.status])).toEqual([[a.heldCartId, 'OPEN']]);
     const settings = (await http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(a.auth).expect(200)).body;
     expect([settings.dineInMenuId, settings.serviceChargeRate]).toEqual([a.menuId, '0.1']);
     const draft = (await http().get(`/v1/menu-versions/${a.draftVersionId}`).set(a.auth).expect(200)).body;
@@ -722,9 +821,10 @@ describe('Phase 1 cross-tenant sweep', () => {
       // Names by id: A's variant asked for alongside B's comes back as nothing.
       `/v1/variants?ids=${b.variantId},${a.variantId},${b.dishId}`,
       '/v1/sync/transactions', `/v1/sync/transactions?terminalId=${b.terminalId}`,
-      '/v1/pos/workstations', '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/sale-returns/${b.saleReturnId}`, `/v1/sale-returns/${b.saleReturnId}/receipt`, `/v1/cash-movements/${b.cashMovementId}`,`/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
+      '/v1/pos/workstations', `/v1/held-carts?registerId=${b.registerId}`, '/v1/api-keys', '/v1/webhooks', `/v1/webhooks/${b.webhookId}/deliveries`, `/v1/stock/reservations?branchId=${b.branchId}&status=ALL`, `/v1/suppliers/${b.supplierId}/items`, `/v1/variants/${b.variantId}/suppliers`, '/v1/customers', '/v1/customers?q=Customer', `/v1/customers/${b.customerId}`, `/v1/customers/${b.customerId}/sales`, `/v1/customers/${b.customerId}/store-credit`, `/v1/sales/${b.customerSaleId}/receipt`, '/v1/cashier-sessions', `/v1/cashier-sessions/${b.closedSessionId}`, '/v1/sales', `/v1/sales?cashierSessionId=${a.closedSessionId}`, `/v1/sales/${b.saleId}`, `/v1/sales/${b.saleId}/receipt`, `/v1/sales/${b.saleId}/returns`, `/v1/sale-returns/${b.saleReturnId}`, `/v1/sale-returns/${b.saleReturnId}/receipt`, `/v1/cash-movements/${b.cashMovementId}`,`/v1/payment-intents/${b.paymentIntentId}`, `/v1/payment-intents?cashierSessionId=${b.openSessionId}`,
       `/v1/stock/balances?branchId=${b.branchId}`, `/v1/reports/cashier-sessions/${b.closedSessionId}`,
-      ...['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/stock/movements?branchId=${b.branchId}`,
+      ...['sales-summary', 'by-product', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book', 'by-category', 'discounts', 'purchases-by-supplier'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`),
+      '/v1/reports/by-branch?from=2026-01-01&to=2026-12-31', `/v1/reports/payment-exceptions?branchId=${b.branchId}`, `/v1/stock/movements?branchId=${b.branchId}`,
       '/v1/suppliers', `/v1/suppliers/${b.supplierId}`, '/v1/purchase-orders', `/v1/purchase-orders?branchId=${a.branchId}`, `/v1/purchase-orders/${b.purchaseOrderId}`,
       `/v1/goods-receipts?branchId=${b.branchId}`, `/v1/goods-receipts/${b.goodsReceiptId}`, `/v1/supplier-returns?branchId=${b.branchId}`, `/v1/supplier-returns/${b.supplierReturnId}`,
       `/v1/supplier-invoices?legalEntityId=${b.entityId}`, `/v1/supplier-invoices/${b.supplierInvoiceId}`, `/v1/supplier-payments/${b.supplierPaymentId}`,

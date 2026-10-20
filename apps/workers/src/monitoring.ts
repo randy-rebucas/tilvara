@@ -17,6 +17,12 @@ export class WorkerMonitor {
     labelNames: ['outcome'],
   });
   readonly batches = this.registry.counter({ name: 'onepos_worker_batches_total', help: 'Non-empty batches claimed.' });
+  /** Outbound webhooks (ADR-0019): delivered, retried later, or given up on (DEAD). */
+  readonly webhooks = this.registry.counter({
+    name: 'onepos_worker_webhook_deliveries_total',
+    help: 'Webhook deliveries attempted by this worker, by outcome: delivered, retried, dead.',
+    labelNames: ['outcome'],
+  });
   readonly loopErrors = this.registry.counter({
     name: 'onepos_worker_loop_errors_total',
     help: 'Worker loop iterations that failed (database unreachable, claim failed…).',
@@ -52,6 +58,12 @@ export class WorkerMonitor {
       this.pool.set({ state: 'idle' }, db.idleCount);
       this.pool.set({ state: 'waiting' }, db.waitingCount);
     });
+  }
+
+  recordWebhooks(r: { delivered: number; retried: number; dead: number }): void {
+    if (r.delivered) this.webhooks.inc({ outcome: 'delivered' }, r.delivered);
+    if (r.retried) this.webhooks.inc({ outcome: 'retried' }, r.retried);
+    if (r.dead) this.webhooks.inc({ outcome: 'dead' }, r.dead);
   }
 
   recordBatch(r: RunResult): void {

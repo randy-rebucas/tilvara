@@ -11,7 +11,10 @@ import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 
-export type ReportTab = 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
+export type ReportTab =
+  | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z'
+  | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge'
+  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments';
 const PATHS: Record<ReportTab, string> = {
   sales: '/reports/sales',
   products: '/reports/products',
@@ -27,9 +30,20 @@ const PATHS: Record<ReportTab, string> = {
   prep: '/reports/prep-times',
   open: '/reports/open-orders',
   charge: '/reports/service-charge',
+  category: '/reports/categories',
+  branches: '/reports/branches',
+  discounts: '/reports/discounts',
+  purchases: '/reports/purchases',
+  payments: '/reports/payments',
 };
+/** All branches at once: no branch to pick. */
+const CONSOLIDATED: readonly ReportTab[] = ['branches'];
+/** As things stand now: no dates to pick. */
+const UNDATED: readonly ReportTab[] = ['payments'];
 const GROUPS = {
   sales: ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'z'],
+  // Session 20 (SPEC §6.10): across categories and branches, discounts and price changes, purchasing, payments.
+  analysis: ['category', 'branches', 'discounts', 'purchases', 'payments'],
   restaurant: ['items', 'usage', 'voids', 'prep', 'open', 'charge'],
 } as const satisfies Record<string, readonly ReportTab[]>;
 
@@ -94,23 +108,24 @@ export async function ReportsChrome({ tab, scope, error, children }: {
   const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : 'rep.lede')} />
+      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : 'rep.lede')} />
       {/* On paper (or a saved PDF): which report, branch and range, and when it was printed. */}
       {branch && (
         <p className="hidden text-[0.9375rem] print:block" data-testid="print-heading">
-          <b>{t(`rep.tab.${tab}` as MessageKey)}</b> · {branch.name} · {tab === 'open' ? day : from === to ? from : `${from} – ${to}`} · {t('rep.printedAt', { at: formatDateTime(new Date().toISOString(), lang) })}
+          <b>{t(`rep.tab.${tab}` as MessageKey)}</b> · {CONSOLIDATED.includes(tab) ? t('rep.allBranches') : branch.name}
+          {!UNDATED.includes(tab) && <> · {tab === 'open' ? day : from === to ? from : `${from} – ${to}`}</>} · {t('rep.printedAt', { at: formatDateTime(new Date().toISOString(), lang) })}
         </p>
       )}
       <div className="contents print:hidden">
-      {restaurant && <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />}
+      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => g !== 'restaurant' || restaurant).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
-      <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />
+      {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />}
       {branch && (
         <div className="flex flex-col gap-2">
           {/* A plain GET form: the range lives in the URL, so a report can be bookmarked or shared. */}
           <form method="get" action={PATHS[tab]} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="branch" value={branch.id} />
-            {tab === 'open' ? (
+            {UNDATED.includes(tab) ? null : tab === 'open' ? (
               <div className="field">
                 <label htmlFor="day">{t('rep.closeOf')}</label>
                 <input id="day" name="day" type="date" className="input" defaultValue={day} />
@@ -127,7 +142,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
                 </div>
               </>
             )}
-            <button className="btn">{t('common.show')}</button>
+            {!UNDATED.includes(tab) && <button className="btn">{t('common.show')}</button>}
             {!error && tab !== 'z' && (
               <a href={`/reports/export?${params(tab, { report: tab })}`} className="btn" download>
                 <Download aria-hidden className="size-4" /> {t('rep.csv')}
@@ -135,7 +150,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
             )}
             {!error && <PrintButton />}
           </form>
-          {tab !== 'open' && (
+          {tab !== 'open' && !UNDATED.includes(tab) && (
             <nav aria-label={t('rep.presets')} className="flex flex-wrap gap-1.5">
               {datePresets(today).map((p) => {
                 const on = p.from === from && p.to === to;

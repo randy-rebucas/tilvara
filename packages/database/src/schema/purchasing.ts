@@ -33,6 +33,39 @@ export const suppliers = pgTable(
   ],
 );
 
+// ------------------------------------------------------------------ supplier catalog (session 20)
+
+/**
+ * What a supplier calls an item and what it costs from them: their SKU and name, the last agreed unit
+ * cost (ex VAT, like receipts), and whether they are the preferred supplier for it (one per item).
+ * Purchase orders take the cost from here when a line gives none, and show the supplier's SKU.
+ */
+export const supplierItems = pgTable(
+  'supplier_items',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    supplierSku: text('supplier_sku'),
+    supplierItemName: text('supplier_item_name'),
+    unitCost: money('unit_cost'),
+    preferred: boolean('preferred').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => [
+    unique('supplier_items_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.supplierId], foreignColumns: [suppliers.tenantId, suppliers.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    uniqueIndex('supplier_items_active_unique').on(t.tenantId, t.supplierId, t.variantId).where(sql`${t.archivedAt} IS NULL`),
+    uniqueIndex('supplier_items_one_preferred').on(t.tenantId, t.variantId).where(sql`${t.preferred} AND ${t.archivedAt} IS NULL`),
+    index('supplier_items_variant_idx').on(t.tenantId, t.variantId),
+    check('supplier_items_cost_check', sql`${t.unitCost} IS NULL OR ${t.unitCost} >= 0`),
+  ],
+);
+
 // ------------------------------------------------------------------ purchase orders
 
 /** DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED; DRAFT/APPROVED → CANCELLED (trigger-enforced). */

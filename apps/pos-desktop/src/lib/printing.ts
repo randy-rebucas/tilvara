@@ -46,7 +46,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       .filter(([k]) => !SETTLEMENT.includes(k))
       .map(([k, v]) => ({ label: k === 'vatAmount' ? (r.totals.vatLabel ?? 'VAT') : (TOTAL_LABELS[k] ?? k), amount: peso(signedTotal(k, v)), ...((k === 'amountDue' || k === 'refund') && { emphasis: true }) })),
     payments: [
-      ...r.tenders.map((t) => ({ label: t.method, amount: peso(t.amount) })),
+      ...r.tenders.map((t) => ({ label: tenderLabel(t), amount: peso(t.amount) })),
       ...SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k).map(([, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v) }))),
     ],
     blocks: r.statutory.map((s) => ({
@@ -55,7 +55,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
-    footer: [...(r.reason ? [`Reason: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
+    footer: [...(r.customer ? [`Customer: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`Reason: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
   };
 }
 
@@ -106,3 +106,7 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
     footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `Cashier: ${r.cashierName} · ${r.register.name}`],
   };
 }
+
+/** How a tender reads on a receipt: an exchange credit names the return it came from. */
+export const tenderLabel = (t: { method: string; exchangeReturnNumber?: number }) =>
+  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method;

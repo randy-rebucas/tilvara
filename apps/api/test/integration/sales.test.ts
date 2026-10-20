@@ -94,7 +94,7 @@ async function assertReconciles(s: Store, saleId: string) {
     expect(cash.map((r) => Number(r.amount))).toEqual(ct.n ? [Number(ct.applied)] : []);
     const { rows: [el] } = await c.query(
       `SELECT coalesce(sum(t.amount), 0) AS tendered, coalesce(sum(p.amount), 0) AS intents, count(*) FILTER (WHERE p.sale_id = t.sale_id)::int AS stamped, count(t.id)::int AS n
-         FROM sale_tenders t LEFT JOIN payment_intents p ON p.id = t.payment_intent_id WHERE t.sale_id = $1 AND t.method <> 'CASH'`,
+         FROM sale_tenders t LEFT JOIN payment_intents p ON p.id = t.payment_intent_id WHERE t.sale_id = $1 AND t.method IN ('CARD', 'QR', 'EWALLET')`,
       [saleId],
     );
     expect([Number(el.tendered), el.stamped]).toEqual([Number(el.intents), el.n]);

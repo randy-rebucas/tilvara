@@ -26,6 +26,21 @@ const metricsToken = {
   METRICS_TOKEN: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(32, 'must be at least 32 characters').optional()),
 };
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost']);
+
+/**
+ * Outbound webhooks (session 20, ADR-0019), for the API (shows a new endpoint's secret) and the worker
+ * (signs each delivery). The signing secret of an endpoint is HMAC(WEBHOOK_SIGNING_KEY, id:salt), so
+ * both must have the same key. WEBHOOK_ALLOW_INSECURE lets an endpoint use http or a private address
+ * (development and tests only; production refuses it).
+ */
+const webhooks = {
+  WEBHOOK_SIGNING_KEY: z.string().min(32, 'must be at least 32 characters').default('dev-only-webhook-signing-key-change-me-0000'),
+  WEBHOOK_ALLOW_INSECURE: z.enum(['true', 'false']).optional().transform((v) => v === 'true'),
+};
+const webhookIssues = (cfg: { WEBHOOK_SIGNING_KEY: string; WEBHOOK_ALLOW_INSECURE: boolean }): string[] => [
+  ...(DEV_SECRET_MARKERS.some((m) => cfg.WEBHOOK_SIGNING_KEY.toLowerCase().includes(m)) ? ['WEBHOOK_SIGNING_KEY: development placeholder used in production'] : []),
+  ...(cfg.WEBHOOK_ALLOW_INSECURE ? ['WEBHOOK_ALLOW_INSECURE: webhooks to http or private addresses cannot be allowed in production'] : []),
+];
 const metricsTokenIssue = (cfg: { METRICS_HOST: string; METRICS_TOKEN?: string | undefined }, port: number): string[] =>
   port !== 0 && !cfg.METRICS_TOKEN && !LOOPBACK_HOSTS.has(cfg.METRICS_HOST)
     ? [`METRICS_TOKEN: required in production when METRICS_HOST (${cfg.METRICS_HOST}) is not a loopback address`]
@@ -102,6 +117,7 @@ export const serverEnvSchema = z.object({
   ...fileStorage,
   /** How long a data-export download link works (signed by the API). */
   DATA_EXPORT_LINK_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+  ...webhooks,
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -131,6 +147,9 @@ export const workerEnvSchema = z.object({
   ...fileStorage,
   /** Days a finished data export stays downloadable before the worker deletes the file. */
   DATA_EXPORT_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(7),
+  ...webhooks,
+  /** One webhook POST may take this long before it counts as failed and is retried. */
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(10_000),
 });
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 
@@ -145,7 +164,7 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');
   }
-  if (isProd(env)) issues.push(...metricsTokenIssue(parsed.data, parsed.data.WORKER_METRICS_PORT));
+  if (isProd(env)) issues.push(...metricsTokenIssue(parsed.data, parsed.data.WORKER_METRICS_PORT), ...webhookIssues(parsed.data));
   if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
@@ -193,7 +212,7 @@ export function productionIssues(cfg: ServerEnv): string[] {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
   if (cfg.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
-  issues.push(...metricsTokenIssue(cfg, cfg.API_METRICS_PORT));
+  issues.push(...metricsTokenIssue(cfg, cfg.API_METRICS_PORT), ...webhookIssues(cfg));
   return issues;
 }
 

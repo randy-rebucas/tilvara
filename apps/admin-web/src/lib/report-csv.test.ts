@@ -48,4 +48,21 @@ describe('report CSV', () => {
     }, t as never);
     expect(rows[1]).toEqual(['Ana', 4, '400.00', 0, '0.00', 3, '300.00', 3, '0.7500', 'HIGH_RATE OWN_SALES']);
   });
+
+  it('session 20 reports: the consolidated report has no branch in its path; discounts keep who approved', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+    expect(reportPath('branches', q)).toBe('/reports/by-branch?from=2026-10-01&to=2026-10-20');
+    expect(reportPath('payments', q)).toBe('/reports/payment-exceptions?branchId=b');
+    const rows = reportRows('discounts', {
+      data: [{ saleId: 's', reference: 'R1-000002', completedAt: '2026-10-20T01:00:00Z', name: 'Cola', quantity: '1', listUnitPrice: '22.4', unitPrice: '20', discount: '0.00', priceChange: '2.40', cashierName: 'Ana', approvedByName: 'Jun', approvalMethod: 'CREDENTIALS', priceReason: 'Dented can' }],
+      byCashier: [], totals: { lines: 1, discount: '0.00', priceChange: '2.40' },
+    }, t);
+    expect(rows[1]).toEqual(['R1-000002', '2026-10-20T01:00:00Z', 'Cola', '1', '22.4', '20', '0.00', '2.40', 'Ana', 'Jun', 'Dented can']);
+    const branches = reportRows('branches', {
+      from: '2026-10-20', to: '2026-10-20',
+      data: [{ branchId: 'b', code: 'B1', name: 'One', salesCount: 2, sales: '10.00', returnsCount: 0, returns: '0.00', netSales: '10.00', vatAmount: '1.07', netExVat: '8.93', discount: '0.00', statutoryDiscount: '0.00' }],
+      totals: { salesCount: 2, returnsCount: 0, sales: '10.00', returns: '0.00', netSales: '10.00', vatAmount: '1.07', netExVat: '8.93', discount: '0.00', statutoryDiscount: '0.00' },
+    }, t);
+    expect(branches.at(-1)).toEqual(['All branches', 2, '10.00', 0, '0.00', '10.00', '1.07', '8.93', '0.00', '0.00']);
+  });
 });

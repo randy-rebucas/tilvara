@@ -38,6 +38,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
         <Serial className="mt-1 block">
           {branch?.code ?? '—'} · {register ? `${register.code} ${register.name}` : '—'} · {person(sale.cashierUserId)} · {formatDateTime(sale.completedAt, lang)}
           {sale.offlineReference && ` · ${t('doc.offline', { ref: sale.offlineReference })}`}
+          {sale.customerId && <> · <Link href={`/customers/${sale.customerId}`} className="underline">{t('doc.customer')}</Link></>}
         </Serial>
       </div>
 

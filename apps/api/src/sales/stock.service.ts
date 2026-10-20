@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { reservedAt } from '../inventory/reservations.service.js';
 import { and, branches, eq, inArray, productVariants, sql, stockAdjustments, stockBalances, stockMovements, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { stockChangePosting } from '@1pos/accounting';
@@ -140,10 +141,14 @@ export class StockService extends TenantService {
        WHERE b.branch_id = ${branchId}
          ${variantIds ? sql`AND b.variant_id IN (${sql.join(variantIds.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
        ORDER BY v.sku`);
+    const reserved = await reservedAt(db, branchId, variantIds);
     return rows.map((r) => ({
       variantId: r.variant_id,
       sku: r.sku,
       quantity: toDec(r.quantity).toString(),
+      // Session 20: set aside for customers; what is left to sell.
+      reserved: (reserved.get(r.variant_id) ?? toDec('0')).toString(),
+      available: toDec(r.quantity).minus(reserved.get(r.variant_id) ?? 0).toString(),
       avgCost: toDec(r.avg_cost).toFixed(4),
       value: toDec(r.value).toFixed(2),
       updatedAt: new Date(r.updated_at).toISOString(),

@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-19 (session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-20 (session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,45 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 20 — the audit's gaps
+The user picked six gaps from the session 19 audit and answered four questions. The mobile app is left as is. The work went in the audit's order. A price override is approved by a manager re-entering their credentials. Store credit is built and flagged for the accountant (question 11 in `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Migrations 0072–0079; the dev DB is migrated to 0079.
+- **Counter controls** (ADR-0017, 0072/0073):
+  - held carts: park under a name, serve the next customer, resume; Close shift mentions open ones; lines and SC/PWD details are cleared on resume/discard;
+  - line and sale discounts within `sales.discount` (`discountRate` in `@1pos/tax`);
+  - manager price override: a `price_overrides` row approved by a second person's email and password, consumed by `computeCart`, `sales.price_override`;
+  - exchanges: a return and the new sale in one transaction, with the credit as a tender and the receipt naming the return;
+  - returns of another register's sale (register picker in History) and a refund preview.
+- **Customers** (ADR-0018, 0074/0075):
+  - profiles, search, purchase history (only sales the reader may read);
+  - a customer on a sale and on the receipt;
+  - marketing consent with an append-only history;
+  - data download (audited), correction (audited by field name), and anonymising (refused while credit is owed);
+  - store credit: refund to credit and a `STORE_CREDIT` tender, per (customer, legal entity), never below zero (trigger with an advisory lock), posting to `CUSTOMER_STORE_CREDIT` 2300. Admin `/customers`, till customer panel. Privacy register §15.
+- **Stock reservations** (0076/0077): available = on hand − reserved; BLOCK counter sales respect them; admin Inventory → Reservations, plus reserved/available columns. **Supplier catalog**: supplier SKU, item name, agreed cost and preferred supplier per item; the cost pre-fills purchase order lines and the PO shows the SKU.
+- **Analysis reports**: sales by category, by branch and consolidated, discounts and overrides, purchases by supplier, payment exceptions across shifts; CSV for each (admin Reports → Analysis).
+- **API keys and webhooks** (ADR-0019, 0078/0079):
+  - read-only keys (`ApiKey tlv_…`, hash only, scopes → permission codes, GET only, plan feature `api_access`);
+  - thin signed webhooks fanned out from the outbox by the worker, with backoff, DEAD, "Send again" and an alert;
+  - refusal of private/http addresses (checked again at delivery, no redirects);
+  - admin Subscription → Integrations and a deliveries page. Privacy register §16 and retention rows.
+- **Fixes found on the way:**
+  - `sales_tender_covers` missed store credit;
+  - an ORDER BY alias inside an expression;
+  - the till's workstation list read the wrong response shape;
+  - the analysis group showed the restaurant lede;
+  - line buttons overlapped at 390 px;
+  - the integrations list showed key prefixes uppercased (`Serial`), which misreads a case-sensitive key;
+  - `support-onboarding.test.ts` hard-coded the export's excluded tables; it now reads `EXPORT_EXCLUDED_TABLES`;
+  - billing tests widened for the Docker VM clock running ~1 s off.
+- **Environment:** a worker started on 2026-10-19 21:20 from a build before the webhook code was still running on the dev DB. It consumed sale events without fanning them out, so I stopped it (PIDs 15156/3772); start a fresh one with `pnpm --filter @1pos/workers start`.
+- **Verified (session 20):**
+  - `pnpm build` 14/14; `pnpm typecheck` 24/24; `pnpm lint` clean; unit `pnpm test` 24/24 tasks (api 55, admin 28, POS 19, database 20, config 16, workers 3, tax 35, accounting 16, …);
+  - integration `pnpm test:integration` on the final code: database **33/33**, workers **26/26**, api **392/393**. The one failure was the export-tables test above; after the fix, `support-onboarding.test.ts` passed **17/17** on its own. The full API suite was not re-run after that one-file fix;
+  - E2E on API :4322 (rate limits off, `WEBHOOK_ALLOW_INSECURE=true`), worker, admin `next start` :3322 and POS preview :3332:
+    - new `test:e2e:web:integrations` **34/34** and `web:backoffice` **49/49**, on the final build;
+    - earlier in the session, before the integrations slice: new `pos:controls` **33/33**, `web:customers` **21/21**, `web:analysis` **12/12**, `web:inventory-extras` **13/13**; regression `pos` 41/41, `pos:extras` 15/15, `web:reports` 24/24, `web:stock` 22/22.
+  - Not re-run: restaurant, floor, tables, kitchen, service, offline, onboarding, security, account, drawers, guide, payables, desktop.
 
 ## Session 19 — full audit
 The user asked for a full audit, a separate document of missing or incomplete features, and for everything built to work. The document is `docs/AUDIT-2026-10-19.md`. New untracked gaps are in LEFTOVER under "Audit 2026-10-19". No migration.
@@ -1033,7 +1072,9 @@ Note: the integration run preceded the final POS-only UI edits; API/database cod
 MFA (TOTP) for privileged roles · password reset (needs real email adapter) · Redis rate limiter (in-memory now; single instance only) · real email provider · OTel SDK + exporter · typed response schemas in OpenAPI · `onepos_worker` DB role · admin UI: product edit/variants, custom-role editor, member role editing, price-list create · Filipino copy native review · CI (needs remote). Lockout reveals account existence via 429 (accepted). Node `crypto.argon2` still experimental in Node.
 
 ## Next task (start here)
-1. Commit if not yet committed (`git status`).
+1. Commit if not yet committed (`git status`; session 20 left everything uncommitted). Re-run the full API integration suite once (session 20 re-ran only the one file it fixed) and the E2E suites marked "Not re-run" in session 20, since `record()`, the receipt and the till changed.
+   - Session 20 decisions for the user: whether cashiers may add customers (`customers.manage` on the cashier template); store credit treatment (accountant question 11).
+   - Session 20 leftovers that need no decision: webhook DNS pinning before production; held cart auto-discard and webhook delivery purge (once the DPO confirms the periods).
 2. **Phase 6** (ADR-0016). Slices 1–6 and 8 are done (8 in session 13). Slice 7 (deployment) needs D1/D3; slice 9 needs D4–D6. With no decision made, the next work needing none is in LEFTOVER.md:
    - slice 8 privacy gaps: purge jobs (sessions, reset tokens, invitations, outbox) once the DPO confirms the periods, log redaction of personal fields with a test, account closure, profile edit, an audited account-disable command;
    - slice 5 performance items.

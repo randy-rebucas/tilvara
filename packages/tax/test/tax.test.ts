@@ -108,6 +108,14 @@ describe('VAT seller', () => {
     expect(r.lines[0]).toMatchObject({ discount: '112.00', vatableSales: '900.00', vatAmount: '108.00', amountDue: '1008.00' });
   });
 
+  it('a discount rate is a share of the gross, rounded per line like an amount', () => {
+    // 10 % of ₱1,120 = ₱112: the same line as the ₱112 amount above.
+    expect(calculateTax(VAT, [line({ discountRate: '0.1' })]).lines[0]).toMatchObject({ discount: '112.00', vatableSales: '900.00', vatAmount: '108.00', amountDue: '1008.00' });
+    // 15 % of 3 × ₱16.50 = 7.425 → 7.43 (HALF_UP); the whole line at a rate of 1.
+    expect(calculateTax(VAT, [line({ unitPrice: '16.50', quantity: '3', discountRate: '0.15' })]).lines[0]).toMatchObject({ gross: '49.50', discount: '7.43', amountDue: '42.07' });
+    expect(calculateTax(VAT, [line({ discountRate: '1' })]).lines[0]).toMatchObject({ discount: '1120.00', amountDue: '0.00' });
+  });
+
   it('rounds per line to centavos and derives VAT by subtraction', () => {
     const r = calculateTax(VAT, [line({ unitPrice: '16.50' })]);
     // 16.50 / 1.12 = 14.7321… → 14.73; VAT = 1.77
@@ -164,6 +172,10 @@ describe('refusals', () => {
   it.each([
     ['statutory + ordinary discount on one line', () => calculateTax(VAT, [line({ discount: '1.00', statutory: { scheme: SC } })]), 'DISCOUNT_STACKING_NOT_ALLOWED'],
     ['discount above the line', () => calculateTax(VAT, [line({ discount: '1120.01' })]), 'DISCOUNT_EXCEEDS_LINE'],
+    ['statutory + discount rate on one line', () => calculateTax(VAT, [line({ discountRate: '0.1', statutory: { scheme: SC } })]), 'DISCOUNT_STACKING_NOT_ALLOWED'],
+    ['discount amount and rate together', () => calculateTax(VAT, [line({ discount: '1.00', discountRate: '0.1' })]), 'INVALID_LINE'],
+    ['discount rate above 1', () => calculateTax(VAT, [line({ discountRate: '1.01' })]), 'INVALID_LINE'],
+    ['zero discount rate', () => calculateTax(VAT, [line({ discountRate: '0' })]), 'INVALID_LINE'],
     ['zero quantity', () => calculateTax(VAT, [line({ quantity: '0' })]), 'INVALID_LINE'],
     ['negative price', () => calculateTax(VAT, [line({ unitPrice: '-1' })]), 'INVALID_LINE'],
     ['float-ish garbage', () => calculateTax(VAT, [line({ unitPrice: '1e3' })]), 'INVALID_LINE'],

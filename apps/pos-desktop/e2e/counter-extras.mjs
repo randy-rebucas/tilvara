@@ -67,7 +67,7 @@ try {
   check('This shift offers to find an earlier sale', await shown('Find an earlier sale'));
   await fill('findNumber', '999');
   await clickText('Find');
-  check('an unknown number says so', await shown('No sale with that number on this register.'));
+  check('an unknown number says so', await shown('No sale with that number on that register.'));
   await fill('findNumber', String(sale.saleNumber));
   await clickText('Find');
   check('the earlier sale opens with its receipt', await shown('Iced tea', 10000) && (await text()).includes('R1-000001'));

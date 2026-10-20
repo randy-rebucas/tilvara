@@ -1,19 +1,20 @@
-import { MonitorUp, Minus, Plus, ScanLine, Trash2 } from 'lucide-react';
+import { MonitorUp, Minus, PauseCircle, Plus, ScanLine, Trash2, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
-import { isPositive, isZero } from '../lib/money';
+import { gte, isPositive, isZero, peso, sub } from '../lib/money';
 import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
 import { openCustomerDisplay, usePublishDisplay, type DisplayState } from '../lib/customer-display';
-import type { LookupItem, Quote, Receipt as ReceiptData } from '../types';
+import type { CounterCustomer, LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
 import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './Payment';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { OfflineReceipt } from './Till';
 import { Callout, Field, Money, Note } from './ui';
+import { CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
 
 interface CartLine {
   id: string;
@@ -23,6 +24,22 @@ interface CartLine {
   quantity: string;
   wholeUnits: boolean;
   statutory?: { scheme: 'SC' | 'PWD'; beneficiary: string };
+  /** Session 20: an ordinary discount (needs `sales.discount`) and a manager-approved price. */
+  discount?: LineDiscount;
+  override?: LineOverride;
+}
+
+/** What the API takes for a cart line (quote, sale, held cart); the quote sends only the SC/PWD scheme. */
+function lineBody(l: CartLine, forQuote = false) {
+  return {
+    id: l.id,
+    variantId: l.variantId,
+    quantity: l.quantity,
+    ...(l.statutory && { statutory: forQuote ? { scheme: l.statutory.scheme } : l.statutory }),
+    ...(l.discount?.kind === 'RATE' && { discountRate: rateOf(l.discount.percent) }),
+    ...(l.discount?.kind === 'AMOUNT' && { discount: l.discount.amount }),
+    ...(l.override && { priceOverrideId: l.override.id }),
+  };
 }
 interface Beneficiary {
   ref: string;
@@ -44,7 +61,16 @@ interface ProductHit {
  * Items and prices come from the till's snapshot, priced by the same tax engine the server re-runs
  * at sync; the sale is kept on the till under this checkout's transaction id.
  */
-export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; cashierUserId: string; active?: boolean }) {
+export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd }: {
+  shift: Shift;
+  cashierUserId: string;
+  active?: boolean;
+  /** From /me (any scope): hints for which controls to offer; the server decides. */
+  permissions?: string[];
+  /** An exchange started from This shift: the refund pays for the cart first (session 20). */
+  exchange?: ExchangeStart | null;
+  onExchangeEnd?: () => void;
+}) {
   const { t } = useT();
   const till = useTill();
   const snap = till.status?.snapshot;
@@ -58,10 +84,32 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
   const [quoting, setQuoting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [hits, setHits] = useState<ProductHit[] | null>(null);
-  const [scDraft, setScDraft] = useState<string | null>(null);
+  /** The line whose SC/PWD, discount or price form is open. */
+  const [panel, setPanel] = useState<{ lineId: string; kind: 'sc' | 'discount' | 'price' } | null>(null);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
+  const [held, setHeld] = useState<HeldCart[]>([]);
+  const [showHeld, setShowHeld] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const canDiscount = permissions.includes('sales.discount');
+  const canApprovePrice = permissions.includes('sales.price_override');
+  // The customer on the sale (ADR-0018) and the store credit they hold with this branch's company.
+  const [customer, setCustomer] = useState<CounterCustomer | null>(null);
+  const [pickingCustomer, setPickingCustomer] = useState(false);
+  const [usingCredit, setUsingCredit] = useState(false);
+  const creditHere = customer?.storeCredit.find((c) => c.legalEntityId === shift.branch.legalEntityId)?.balance ?? '0.00';
   const due = quote?.totals.amountDue ?? '0.00';
-  const pay = usePayment({ shift, due, setNotice });
+  // Store credit pays first, up to what is due; an exchange's refund likewise (the rest is paid, or comes back as change).
+  const credit = usingCredit && !exchange && isPositive(creditHere) ? (gte(creditHere, due) ? due : toDec(creditHere).toFixed(2)) : '0.00';
+  const payable = exchange ? (gte(exchange.refund, due) ? '0.00' : sub(due, exchange.refund)) : sub(due, credit);
+  const pay = usePayment({ shift, due: payable, setNotice });
+
+  const loadHeld = () =>
+    api<{ data: HeldCart[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`)
+      .then((r) => setHeld(r.data))
+      .catch(() => undefined);
+  useEffect(() => {
+    if (!offline) void loadHeld();
+  }, [shift.register.id, offline]);
 
   const focusScan = () => requestAnimationFrame(() => scanRef.current?.focus());
   useEffect(() => {
@@ -85,6 +133,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
       try {
         if (offline) {
           if (cart.some((l) => l.statutory)) throw new OfflineRefusal(t('till.offlineSc'));
+          if (cart.some((l) => l.discount || l.override)) throw new OfflineRefusal(t('till.offlineDiscount'));
           const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity })));
           if (live) {
             setQuote(offlineQuote(r, cart));
@@ -94,7 +143,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
         }
         const q = await api<Quote>('POST', '/v1/tax/quote', {
           branchId: shift.branch.id,
-          lines: cart.map((l) => ({ id: l.id, variantId: l.variantId, quantity: l.quantity, ...(l.statutory && { statutory: { scheme: l.statutory.scheme } }) })),
+          lines: cart.map((l) => lineBody(l, true)),
         });
         if (live) {
           setQuote(q);
@@ -216,13 +265,93 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
     const existing = beneficiaries.find((b) => b.scheme === scheme && b.idNumber === idNumber);
     const ref = existing?.ref ?? `b${beneficiaries.length + 1}`;
     if (!existing) setBeneficiaries((b) => [...b, { ref, scheme, name, idNumber }]);
-    setCart((c) => c.map((l) => (l.id === lineId ? { ...l, statutory: { scheme, beneficiary: ref } } : l)));
-    setScDraft(null);
+    patchLine(lineId, (l) => {
+      // SC/PWD and an ordinary discount never stack on one line (the tax engine refuses it).
+      const { discount: _, ...rest } = l;
+      return { ...rest, statutory: { scheme, beneficiary: ref } };
+    });
+    setPanel(null);
     focusScan();
   }
 
   function clearStatutory(lineId: string) {
-    setCart((c) => c.map((l) => (l.id === lineId ? { id: l.id, variantId: l.variantId, sku: l.sku, name: l.name, quantity: l.quantity, wholeUnits: l.wholeUnits } : l)));
+    patchLine(lineId, (l) => {
+      const { statutory: _, ...rest } = l;
+      return rest;
+    });
+  }
+
+  function patchLine(lineId: string, patch: (l: CartLine) => CartLine) {
+    setCart((c) => c.map((l) => (l.id === lineId ? patch(l) : l)));
+  }
+  function setDiscount(lineId: string, d: LineDiscount | null) {
+    patchLine(lineId, (l) => {
+      const { discount: _, ...rest } = l;
+      return d ? { ...rest, discount: d } : rest;
+    });
+    setPanel(null);
+    focusScan();
+  }
+  function setOverride(lineId: string, o: LineOverride | null) {
+    patchLine(lineId, (l) => {
+      const { override: _, ...rest } = l;
+      return o ? { ...rest, override: o } : rest;
+    });
+    setPanel(null);
+    focusScan();
+  }
+
+  /** Park this cart at the register (online only) and start a new one. */
+  async function hold(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const label = String(new FormData(e.currentTarget).get('holdLabel') ?? '').trim();
+    if (!label) return;
+    try {
+      await api('POST', '/v1/held-carts', {
+        cashierSessionId: shift.sessionId,
+        label,
+        lines: cart.map((l) => ({ ...lineBody(l), name: l.name, sku: l.sku, wholeUnits: l.wholeUnits })),
+        beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)),
+        ...(quote && { amountDue: quote.totals.amountDue }),
+      }, { 'idempotency-key': uuid() });
+      setHolding(false);
+      newSale();
+      setNotice({ kind: 'info', text: t('hold.done', { label }) });
+      void loadHeld();
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    }
+  }
+
+  async function resume(id: string) {
+    try {
+      const r = await api<{ lines: HeldLine[]; beneficiaries: Beneficiary[] }>('POST', `/v1/held-carts/${id}/resume`, { cashierSessionId: shift.sessionId });
+      setCart(r.lines.map((l) => ({
+        id: l.id ?? uuid(), variantId: l.variantId, sku: l.sku, name: l.name, quantity: l.quantity, wholeUnits: l.wholeUnits ?? false,
+        ...(l.statutory && { statutory: l.statutory }),
+        ...(l.discountRate && { discount: { kind: 'RATE' as const, percent: toDec(l.discountRate).times(100).toString() } }),
+        ...(l.discount && { discount: { kind: 'AMOUNT' as const, amount: l.discount } }),
+        // The approval travels with the line; once it has expired the quote says so and it can be removed.
+        ...(l.priceOverrideId && { override: { id: l.priceOverrideId, unitPrice: '', approvedByName: null } }),
+      })));
+      setBeneficiaries(r.beneficiaries);
+      setShowHeld(false);
+      setNotice(null);
+      void loadHeld();
+      focusScan();
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      void loadHeld();
+    }
+  }
+
+  async function discard(id: string) {
+    try {
+      await api('POST', `/v1/held-carts/${id}/discard`);
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    }
+    void loadHeld();
   }
 
   async function completeOffline() {
@@ -243,20 +372,28 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
   async function complete() {
     if (!quote) return;
     if (offline) return completeOffline();
+    const lines = cart.map((l) => lineBody(l));
+    const used = beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref));
+    const withCustomer = { ...(customer && { customerId: customer.id }) };
+    const creditTender = isPositive(credit) ? [{ method: 'STORE_CREDIT' as const, amount: credit }] : [];
     const saleId = await pay.submit(
       (body, key) =>
-        api<{ id: string }>(
-          'POST',
-          '/v1/sales',
-          {
-            cashierSessionId: shift.sessionId,
-            ...body,
-            lines: cart.map((l) => ({ id: l.id, variantId: l.variantId, quantity: l.quantity, ...(l.statutory && { statutory: l.statutory }) })),
-            beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)),
-            expectedAmountDue: due,
-          },
-          { 'idempotency-key': key },
-        ),
+        exchange
+          ? api<{ sale: { id: string } }>(
+              'POST',
+              '/v1/exchanges',
+              {
+                cashierSessionId: shift.sessionId, saleId: exchange.saleId, reason: exchange.reason, returnLines: exchange.returnLines, expectedRefund: exchange.refund,
+                sale: { clientTransactionId: body.clientTransactionId, lines, beneficiaries: used, tenders: body.tenders, expectedAmountDue: due, ...withCustomer },
+              },
+              { 'idempotency-key': key },
+            ).then((r) => r.sale)
+          : api<{ id: string }>(
+              'POST',
+              '/v1/sales',
+              { cashierSessionId: shift.sessionId, ...body, tenders: [...creditTender, ...body.tenders], lines, beneficiaries: used, expectedAmountDue: due, ...withCustomer },
+              { 'idempotency-key': key },
+            ),
       () => setCart((c) => [...c]),
       () => till.reportUnreachable(),
     );
@@ -279,8 +416,13 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
   usePublishDisplay(shown);
 
   function newSale() {
+    if (exchange) onExchangeEnd?.();
+    setCustomer(null);
+    setUsingCredit(false);
+    setPickingCustomer(false);
     setCart([]);
     setBeneficiaries([]);
+    setPanel(null);
     pay.reset();
     setReceipt(null);
     setOfflineReceipt(null);
@@ -325,6 +467,8 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
   }
 
   const quoteLine = (id: string) => quote?.lines.find((l) => l.id === id);
+  const isOpen = (lineId: string, kind: 'sc' | 'discount' | 'price') => panel?.lineId === lineId && panel.kind === kind;
+  const toggle = (lineId: string, kind: 'sc' | 'discount' | 'price') => setPanel(isOpen(lineId, kind) ? null : { lineId, kind });
 
   return (
     <div className={`mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px] ${cart.length > 0 ? 'pb-28 lg:pb-5' : ''}`}>
@@ -351,6 +495,55 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
         </p>
 
         {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
+
+        {exchange && <ExchangeBanner exchange={exchange} total={quote?.totals.amountDue} onCancel={newSale} />}
+
+        {/* A customer on the sale needs the server: not offered offline. */}
+        {!offline && (customer ? (
+          <div className="no-print flex flex-wrap items-center gap-2 rounded-[5px] border border-hair bg-white px-3 py-2" data-testid="sale-customer">
+            <UserRound className="size-4 text-muted" aria-hidden />
+            <span className="font-semibold">{customer.displayName}</span>
+            {customer.phone && <span className="serial text-[0.8125rem] text-muted">{customer.phone}</span>}
+            {isPositive(creditHere) && <span className="chip bg-green">{t('custc.credit', { amount: peso(creditHere) })}</span>}
+            <span className="ml-auto flex gap-2">
+              {isPositive(creditHere) && !exchange && (
+                <button type="button" className="btn btn-sm" aria-pressed={usingCredit} onClick={() => setUsingCredit(!usingCredit)}>
+                  {usingCredit ? t('custc.dropCredit') : t('custc.useCredit')}
+                </button>
+              )}
+              <button type="button" className="btn btn-sm" onClick={() => { setCustomer(null); setUsingCredit(false); }}>{t('custc.remove')}</button>
+            </span>
+          </div>
+        ) : pickingCustomer ? (
+          <CustomerPanel canAdd={permissions.includes('customers.manage')} onPick={(c) => { setCustomer(c); setPickingCustomer(false); focusScan(); }} onCancel={() => setPickingCustomer(false)} />
+        ) : (permissions.includes('customers.read') || permissions.includes('customers.manage')) && (
+          <button type="button" className="no-print btn btn-sm justify-self-start" onClick={() => setPickingCustomer(true)}>
+            <UserRound className="size-4" aria-hidden /> {t('custc.button')}
+          </button>
+        ))}
+
+        {!offline && !exchange && (cart.length > 0 || held.length > 0) && (
+          <div className="no-print flex flex-wrap items-center gap-2">
+            {cart.length > 0 && pay.intents.length === 0 && !holding && (
+              <button type="button" className="btn btn-sm" onClick={() => setHolding(true)}>
+                <PauseCircle className="size-4" aria-hidden /> {t('hold.button')}
+              </button>
+            )}
+            {held.length > 0 && (
+              <button type="button" className="btn btn-sm" aria-pressed={showHeld} onClick={() => setShowHeld(!showHeld)}>
+                {t('hold.listButton', { n: String(held.length) })}
+              </button>
+            )}
+          </div>
+        )}
+        {holding && (
+          <form className="no-print grid gap-3 rounded-[5px] border border-hair bg-white p-4 sm:grid-cols-[1fr_auto_auto] sm:items-end" onSubmit={hold}>
+            <Field id="holdLabel" name="holdLabel" required maxLength={60} autoFocus label={t('hold.label')} hint={t('hold.labelHint')} />
+            <button className="btn btn-primary sm:mb-[2px]">{t('hold.confirm')}</button>
+            <button type="button" className="btn sm:mb-[2px]" onClick={() => setHolding(false)}>{t('common.cancel')}</button>
+          </form>
+        )}
+        {showHeld && held.length > 0 && <HeldCartsPanel carts={held} cartEmpty={cart.length === 0} timezone={shift.branch.timezone} onResume={resume} onDiscard={discard} />}
 
         {hits && (
           <Note className="p-4">
@@ -380,13 +573,30 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
                 const b = l.statutory && beneficiaries.find((x) => x.ref === l.statutory!.beneficiary);
                 return (
                   <li key={l.id} className="row-rule px-3 py-3">
-                    <div className="grid grid-cols-[1fr_auto] items-start gap-3 sm:grid-cols-[1fr_auto_auto]">
+                    {/* Line controls sit beside the name only on wide screens; below that they wrap on their own row. */}
+                    <div className="grid grid-cols-[1fr_auto] items-start gap-3 xl:grid-cols-[1fr_auto_auto]">
                       <div className="min-w-0">
                         <p className="font-semibold">{l.name}</p>
                         <p className="serial text-[0.75rem] text-muted">
                           {l.sku}
                           {q && <> · <Money value={q.unitPrice} /></>}
                         </p>
+                        {(l.discount || l.override) && q && (
+                          <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]">
+                            {l.override && (
+                              <span className="chip bg-orange-soft">
+                                {t('price.chip')} <Money value={q.unitPrice} />
+                                {q.listUnitPrice && <>{' · '}<span className="line-through"><Money value={q.listUnitPrice} /></span></>}
+                                {l.override.approvedByName && <>{' · '}{t('price.by', { name: l.override.approvedByName })}</>}
+                              </span>
+                            )}
+                            {l.discount && q.discount && isPositive(q.discount) && (
+                              <span className="chip bg-blue">
+                                {l.discount.kind === 'RATE' ? `−${l.discount.percent}%` : t('disc.chipAmount')} · −<Money value={q.discount} />
+                              </span>
+                            )}
+                          </p>
+                        )}
                         {b && (
                           <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]">
                             <span className="chip bg-blue">{b.scheme}</span>
@@ -396,7 +606,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
                           </p>
                         )}
                       </div>
-                      <div className="col-span-2 row-start-2 flex items-center gap-1 sm:col-span-1 sm:row-start-auto">
+                      <div className="col-span-2 row-start-2 flex flex-wrap items-center gap-1 xl:col-span-1 xl:row-start-auto">
                         {l.wholeUnits ? (
                           <>
                             <button className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={l.quantity === '1'} onClick={() => setQty(l.id, toDec(l.quantity).minus(1).toString())}>
@@ -416,10 +626,20 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
                             onBlur={(e) => /^\d{1,6}(\.\d{1,4})?$/.test(e.target.value) && toDec(e.target.value).gt(0) && setQty(l.id, e.target.value)}
                           />
                         )}
-                        {/* Discounts need the server: not offered offline (ADR-0015 §1). */}
+                        {/* Discounts and price changes need the server: not offered offline (ADR-0015 §1). */}
                         {!l.statutory && !offline && (
-                          <button className="btn btn-sm" aria-pressed={scDraft === l.id} onClick={() => setScDraft(scDraft === l.id ? null : l.id)}>
+                          <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'sc')} onClick={() => toggle(l.id, 'sc')}>
                             {t('sell.sc')}
+                          </button>
+                        )}
+                        {canDiscount && !l.statutory && !offline && (
+                          <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'discount')} onClick={() => toggle(l.id, 'discount')}>
+                            {t('disc.button')}
+                          </button>
+                        )}
+                        {!offline && (
+                          <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'price')} onClick={() => (l.override ? setOverride(l.id, null) : toggle(l.id, 'price'))}>
+                            {l.override ? t('price.undo') : t('price.button')}
                           </button>
                         )}
                         {/* Kept apart from the other row controls: one mis-tap must not drop a line. */}
@@ -429,14 +649,28 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
                       </div>
                       <div className="text-right">
                         <Money value={q?.amountDue} className="text-[1.0625rem] font-semibold" />
-                        {q && isPositive(q.statutoryDiscount) && (
+                        {q && (isPositive(q.statutoryDiscount) || (q.discount !== undefined && isPositive(q.discount))) && (
                           <p className="money text-[0.75rem] text-muted line-through">
                             <Money value={q.gross} />
                           </p>
                         )}
                       </div>
                     </div>
-                    {scDraft === l.id && (
+                    {isOpen(l.id, 'discount') && (
+                      <DiscountPanel lineId={l.id} current={l.discount} onApply={(d) => setDiscount(l.id, d)} onRemove={() => setDiscount(l.id, null)} onCancel={() => setPanel(null)} />
+                    )}
+                    {isOpen(l.id, 'price') && (
+                      <PricePanel
+                        lineId={l.id}
+                        branchId={shift.branch.id}
+                        variantId={l.variantId}
+                        listPrice={q?.unitPrice}
+                        canApprove={canApprovePrice}
+                        onApproved={(o) => setOverride(l.id, o)}
+                        onCancel={() => setPanel(null)}
+                      />
+                    )}
+                    {isOpen(l.id, 'sc') && (
                       <form className="mt-3 grid gap-3 rounded-[5px] border border-hair bg-white p-4" onSubmit={(e) => applyStatutory(l.id, e)}>
                         <p className="font-semibold">{t('sell.scTitle')}</p>
                         <p className="text-[0.8125rem] text-muted">{t('sell.scHint')}</p>
@@ -453,7 +687,7 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
                         </div>
                         <div className="flex gap-2">
                           <button className="btn btn-primary">{t('sell.apply')}</button>
-                          <button type="button" className="btn" onClick={() => setScDraft(null)}>{t('common.cancel')}</button>
+                          <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
                         </div>
                       </form>
                     )}
@@ -471,6 +705,18 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
           <p className="money text-[2.5rem] font-semibold leading-tight" aria-live="polite">
             <Money value={due} />
           </p>
+          {exchange && quote && (
+            <p className="mt-1 flex justify-between text-[0.9375rem]">
+              <span className="text-muted">{t('exch.credit')}</span>
+              <Money value={`-${exchange.refund}`} />
+            </p>
+          )}
+          {isPositive(credit) && quote && (
+            <p className="mt-1 flex justify-between text-[0.9375rem]" data-testid="credit-applied">
+              <span className="text-muted">{t('custc.creditApplied')}</span>
+              <Money value={`-${credit}`} />
+            </p>
+          )}
           {quoting && <p className="text-[0.8125rem] text-muted">{t('totals.updating')}</p>}
           {quote && <TotalsBreakdown quote={quote} />}
           {quote?.requiresProfessionalReview && <div className="mt-3"><Callout kind="warn">{t('sell.pendingReview')}</Callout></div>}
@@ -479,9 +725,9 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
         <PaymentPanel
           pay={pay}
           priced={cart.length > 0 && !!quote && !quoting}
-          submitLabel={offline ? t('till.offlineSubmit') : t('pay.complete')}
+          submitLabel={offline ? t('till.offlineSubmit') : exchange ? t('exch.complete') : t('pay.complete')}
           onSubmit={complete}
-          canSubmit={cart.length > 0 && !(offline && cart.some((l) => l.statutory))}
+          canSubmit={cart.length > 0 && !(offline && (cart.some((l) => l.statutory || l.discount || l.override) || exchange))}
           cashOnly={offline}
         />
       </aside>
@@ -502,6 +748,20 @@ export function Sell({ shift, cashierUserId, active = true }: { shift: Shift; ca
       )}
     </div>
   );
+}
+
+/** A held cart's line as the server gives it back on resume. */
+interface HeldLine {
+  id?: string;
+  variantId: string;
+  sku: string;
+  name: string;
+  quantity: string;
+  wholeUnits?: boolean;
+  statutory?: { scheme: 'SC' | 'PWD'; beneficiary: string };
+  discountRate?: string;
+  discount?: string;
+  priceOverrideId?: string;
 }
 
 /** A refusal the till makes itself, before pricing (e.g. a discount while offline). */

@@ -77,7 +77,7 @@ export default async function OrderPage({ params }: { params: Promise<{ id: stri
           rows={order.lines}
           rowKey={(l) => l.id}
           columns={[
-            { header: t('prod.sku'), cell: (l) => <Serial className="text-ink">{l.sku}</Serial> },
+            { header: t('prod.sku'), cell: (l) => <Serial className="text-ink">{l.sku}{l.supplierSku && <span className="block text-muted">{t('pur.supplierSku')} {l.supplierSku}</span>}</Serial> },
             { header: t('common.item'), cell: (l) => l.name },
             { header: t('pur.ordered'), num: true, cell: (l) => qty(l.quantity) },
             { header: t('pur.received'), num: true, cell: (l) => qty(l.receivedQuantity) },

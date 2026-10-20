@@ -182,6 +182,43 @@ export class AuthService {
     return this.completeLogin(claims.userId, tenantId, meta, memberships, true);
   }
 
+  /**
+   * A second person confirming an action at someone else's counter (a price override, session 20):
+   * the same checks as signing in — lockout, password, the account active, the 6-digit code when they
+   * use two-step sign-in — without opening a session. Failures count towards their lockout. Answers
+   * 403 rather than 401, so the cashier's own sign-in is not taken for expired. Returns the user id.
+   */
+  async verifySecondPerson(email: string, password: string, code: string | undefined): Promise<string> {
+    const refused = () => new AppError('APPROVER_INVALID_CREDENTIALS', 'Email or password is incorrect', HttpStatus.FORBIDDEN);
+    const { rows } = await this.database.pool.query<{ user_id: string; password_hash: string; status: string; locked_until: Date | null }>(
+      'SELECT * FROM auth_get_login_record($1)',
+      [email],
+    );
+    const rec = rows[0];
+    if (!rec) {
+      await this.passwords.verifyAgainstDummy(password);
+      throw refused();
+    }
+    assertNotLocked(rec.locked_until);
+    const ok = await this.passwords.verify(password, rec.password_hash);
+    if (!ok || rec.status !== 'ACTIVE') {
+      if (!ok) await this.recordLoginResult(rec.user_id, false);
+      throw refused();
+    }
+    const factor = await this.mfaFactor(rec.user_id);
+    if (factor?.confirmed) {
+      if (code === undefined) throw new AppError('APPROVER_CODE_REQUIRED', 'Enter the code from the approver\'s authenticator app', HttpStatus.FORBIDDEN);
+      const step = matchTotp(this.secrets.open(factor.secret_ciphertext!), code);
+      const used = step !== null && (await this.scalarPool<boolean>('SELECT auth_mfa_use_step($1, $2) AS v', [rec.user_id, step]));
+      if (!used) {
+        await this.recordLoginResult(rec.user_id, false);
+        throw new AppError('APPROVER_INVALID_CODE', 'That code is not right. Try the newest code from the app.', HttpStatus.FORBIDDEN);
+      }
+    }
+    await this.recordLoginResult(rec.user_id, true);
+    return rec.user_id;
+  }
+
   private pickTenant(memberships: MembershipSummary[], requested?: string): string | null {
     if (requested) {
       if (!memberships.some((m) => m.tenantId === requested)) throw this.notMember();

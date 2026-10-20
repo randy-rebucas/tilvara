@@ -95,12 +95,22 @@ describe('loadServerEnv', () => {
       JWT_ACCESS_SECRET: 'x'.repeat(48),
       MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
       REDIS_URL: 'redis://cache.internal:6379/0',
+      WEBHOOK_SIGNING_KEY: 'w'.repeat(40),
     });
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
       'PAYMENT_PROVIDER: the dev payment simulator cannot be used in production',
       'FILE_STORAGE_DRIVER: the dev file storage (a local folder) cannot be used in production (object storage waits for D1)',
     ]);
+  });
+
+  it('webhooks (session 20): a real signing key in production, and never http or private addresses there', () => {
+    const dev = loadServerEnv(base);
+    expect(dev.WEBHOOK_ALLOW_INSECURE).toBe(false);
+    expect(productionIssues(dev)).toContain('WEBHOOK_SIGNING_KEY: development placeholder used in production');
+    expect(productionIssues(loadServerEnv({ ...base, WEBHOOK_ALLOW_INSECURE: 'true' }))).toContain('WEBHOOK_ALLOW_INSECURE: webhooks to http or private addresses cannot be allowed in production');
+    expect(() => loadServerEnv({ ...base, WEBHOOK_SIGNING_KEY: 'short' })).toThrow(/WEBHOOK_SIGNING_KEY/);
+    expect(() => loadWorkerEnv({ NODE_ENV: 'production', DATABASE_URL: base.DATABASE_URL, WORKER_DATABASE_URL: base.DATABASE_URL })).toThrow(/WEBHOOK_SIGNING_KEY: development placeholder/);
   });
 
   it('data exports (ADR-0016 slice 6): links last 10 minutes by default; the worker refuses dev storage in production', () => {

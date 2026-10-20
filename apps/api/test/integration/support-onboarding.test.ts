@@ -1,5 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
-import { DevFileStorage, withTenant, writeDataExport } from '@1pos/database';
+import { DevFileStorage, EXPORT_EXCLUDED_TABLES, withTenant, writeDataExport } from '@1pos/database';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -358,7 +358,8 @@ describe('data export (ADR-0016 slice 6)', () => {
 
     const { rows: tables } = await owner.query<{ table_name: string }>(
       `SELECT DISTINCT table_name FROM information_schema.columns WHERE table_schema = 'public' AND column_name = 'tenant_id'
-         AND table_name NOT IN ('idempotency_records', 'outbox_events', 'sequence_counters') ORDER BY 1`,
+         AND NOT (table_name = ANY($1)) ORDER BY 1`,
+      [Object.keys(EXPORT_EXCLUDED_TABLES)],
     );
     const names = [...zip.keys()];
     expect(names.slice(0, 3)).toEqual(['README.txt', 'manifest.json', 'members.csv']);

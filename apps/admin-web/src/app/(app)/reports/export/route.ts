@@ -4,7 +4,7 @@ import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
 import { reportPath, reportRows, toCsv, type CsvReport } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
 
-const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'items', 'usage', 'voids', 'prep', 'open', 'charge'];
+const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'items', 'usage', 'voids', 'prep', 'open', 'charge', 'category', 'branches', 'discounts', 'purchases', 'payments'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 

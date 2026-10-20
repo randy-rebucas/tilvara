@@ -114,7 +114,7 @@ export class CashService extends TenantService {
           const session = open.find((s) => s.registerId === register.id);
           return {
             register: { id: register.id, code: register.code, name: register.name },
-            branch: { id: branch.id, code: branch.code, name: branch.name, timezone: branch.timezone },
+            branch: { id: branch.id, code: branch.code, name: branch.name, timezone: branch.timezone, legalEntityId: branch.legalEntityId },
             openSession: session ? { id: session.id, openedBy: session.openedBy, mine: session.openedBy === auth.userId, openedAt: session.openedAt } : null,
           };
         }),

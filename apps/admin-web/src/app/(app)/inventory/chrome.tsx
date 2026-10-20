@@ -4,9 +4,10 @@ import { ScopePicker, SubNav } from '@/components/scope';
 import { apiOrNull, type Branch } from '@/lib/api';
 import { getT } from '@/i18n/server';
 
-export type InventoryTab = 'stock' | 'transfers' | 'counts' | 'movements' | 'settings';
+export type InventoryTab = 'stock' | 'reservations' | 'transfers' | 'counts' | 'movements' | 'settings';
 const PATHS: Record<InventoryTab, string> = {
   stock: '/inventory',
+  reservations: '/inventory/reservations',
   transfers: '/inventory/transfers',
   counts: '/inventory/counts',
   movements: '/inventory/movements',
@@ -32,6 +33,7 @@ export async function InventoryChrome({ tab, branches, branch, children }: { tab
         active={tab}
         items={[
           { key: 'stock', href: `${PATHS.stock}${q}`, label: t('inv.tab.stock') },
+          { key: 'reservations', href: `${PATHS.reservations}${q}`, label: t('inv.tab.reservations') },
           { key: 'transfers', href: `${PATHS.transfers}${q}`, label: t('inv.tab.transfers') },
           { key: 'counts', href: `${PATHS.counts}${q}`, label: t('inv.tab.counts') },
           { key: 'movements', href: `${PATHS.movements}${q}`, label: t('inv.tab.movements') },

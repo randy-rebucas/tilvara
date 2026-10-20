@@ -12,7 +12,8 @@ export const servesTables = (me: Me) => me.activeTenant?.businessType !== 'RETAI
 
 export interface Workstation {
   register: { id: string; code: string; name: string };
-  branch: { id: string; code: string; name: string; timezone: string };
+  /** legalEntityId: whose store credit a customer can spend here (ADR-0018). */
+  branch: { id: string; code: string; name: string; timezone: string; legalEntityId?: string };
   openSession: { id: string; openedBy: string; mine: boolean; openedAt: string } | null;
 }
 
@@ -35,9 +36,14 @@ export interface QuoteLine {
   unitPrice: string;
   quantity: string;
   gross: string;
+  /** Ordinary discount on the line (online only). */
+  discount?: string;
   statutoryDiscount: string;
   amountDue: string;
   vatTreatment: string;
+  /** An approved price change: the list price it replaced. */
+  priceOverrideId?: string | null;
+  listUnitPrice?: string;
 }
 
 export interface Totals {
@@ -81,7 +87,19 @@ export interface SaleSummary {
   returnCount?: number;
 }
 
+/** A customer at the counter (ADR-0018): who, and the store credit they hold with each company. */
+export interface CounterCustomer {
+  id: string;
+  displayName: string;
+  phone: string | null;
+  code: string | null;
+  marketingConsent: boolean;
+  storeCredit: { legalEntityId: string; balance: string }[];
+  canManage: boolean;
+}
+
 export interface SaleDetail extends Omit<SaleSummary, 'tenderMethods' | 'voided' | 'returnCount'> {
+  customerId?: string | null;
   lines: { id: string; name: string; sku: string; quantity: string; returnedQuantity: string; amountDue: string }[];
 }
 
@@ -218,9 +236,12 @@ export interface Receipt {
   /** Non-item charges such as the service charge, each printed on its own line. */
   charges?: { kind: string; label: string; amount: string; flag: string }[];
   totals: Record<string, string>;
-  tenders: { method: string; amount: string; tendered?: string; change?: string }[];
+  /** `exchangeReturnNumber`: this cash is the refund of that return, put towards the sale (an exchange). */
+  tenders: { method: string; amount: string; tendered?: string; change?: string; exchangeReturnNumber?: number }[];
   statutory: { label: string; name: string; idNumber: string; discount: string; signatureLine: boolean }[];
   legend: string | null;
   /** A return or void slip: why the goods came back. */
   reason?: string;
+  /** The customer the sale was rung up for (ADR-0018), with their TIN when they gave one. */
+  customer?: { name: string; tin?: string };
 }

@@ -505,6 +505,62 @@
       "when": 1792380538153,
       "tag": "0071_business_type_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1792417486255,
+      "tag": "0072_bouncy_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1792417543429,
+      "tag": "0073_counter_controls_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1792423070337,
+      "tag": "0074_customers",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1792423101854,
+      "tag": "0075_customers_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1792428452322,
+      "tag": "0076_reservations_supplier_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1792428454816,
+      "tag": "0077_reservations_supplier_items_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1792430717120,
+      "tag": "0078_integrations",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1792430719268,
+      "tag": "0079_integrations_rls",
+      "breakpoints": true
     }
   ]
 }

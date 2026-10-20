@@ -2,7 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
 import { peso } from '../lib/money';
-import type { Receipt as ReceiptData, SaleDetail, SaleSummary } from '../types';
+import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } from '../types';
+import type { ExchangeStart } from './CounterTools';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { Callout, Field, Money, Note } from './ui';
@@ -10,18 +11,26 @@ import { Callout, Field, Money, Note } from './ui';
 const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr' };
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 
-/** Sales of this shift; managers can void (same shift) or return items with a cash refund. */
-export function History({ shift, permissions }: { shift: Shift; permissions: string[] }) {
+/**
+ * Sales of this shift; managers can void (same shift), return items with a cash refund, or start an
+ * exchange (the refund pays for new items rung up on Sell). Earlier sales are found by register and number.
+ */
+export function History({ shift, permissions, onExchange }: { shift: Shift; permissions: string[]; onExchange?: (x: ExchangeStart) => void }) {
   const { t } = useT();
   const [sales, setSales] = useState<SaleSummary[] | null>(null);
   const [selected, setSelected] = useState<{ detail: SaleDetail; receipt: ReceiptData } | null>(null);
   /** The refund/void slip just made, shown (and printable) until the cashier goes back to the sale. */
   const [slip, setSlip] = useState<ReceiptData | null>(null);
-  const [mode, setMode] = useState<'void' | 'return' | null>(null);
+  const [mode, setMode] = useState<'void' | 'return' | 'exchange' | null>(null);
+  /** The refund an exchange would give, shown before the new items are chosen. */
+  const [preview, setPreview] = useState<ExchangeStart | null>(null);
+  const [registers, setRegisters] = useState<Workstation['register'][]>([shift.register]);
+  const [findRegister, setFindRegister] = useState(shift.register.id);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
   const [key, setKey] = useState(uuid);
   const canVoid = permissions.includes('sales.void');
   const canReturn = permissions.includes('sales.refund');
+  const canExchange = canReturn && permissions.includes('sales.create') && Boolean(onExchange);
 
   const load = () =>
     api<{ data: SaleSummary[] }>('GET', `/v1/sales?cashierSessionId=${shift.sessionId}`)
@@ -29,6 +38,12 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
       .catch((e) => setMessage({ kind: 'error', text: e instanceof ApiFailure ? e.error.message : t('common.error') }));
   useEffect(() => {
     void load();
+    // A sale rung up at another register of this branch can come back here too.
+    if (canVoid || canReturn) {
+      void api<{ data: Workstation[] }>('GET', '/v1/pos/workstations')
+        .then((r) => setRegisters(r.data.filter((w) => w.branch.id === shift.branch.id).map((w) => w.register)))
+        .catch(() => undefined);
+    }
   }, []);
 
   async function open(id: string) {
@@ -36,6 +51,7 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
     setSelected({ detail, receipt });
     setSlip(null);
     setMode(null);
+    setPreview(null);
     setMessage(null);
   }
 
@@ -44,7 +60,7 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
     const n = Number.parseInt(String(new FormData(e.currentTarget).get('findNumber') ?? '').trim(), 10);
     if (!Number.isInteger(n) || n <= 0) return setMessage({ kind: 'error', text: t('history.notFound') });
     try {
-      const r = await api<{ data: SaleSummary[] }>('GET', `/v1/sales?registerId=${shift.register.id}&saleNumber=${n}&limit=1`);
+      const r = await api<{ data: SaleSummary[] }>('GET', `/v1/sales?registerId=${findRegister}&saleNumber=${n}&limit=1`);
       if (!r.data[0]) return setMessage({ kind: 'error', text: t('history.notFound') });
       await open(r.data[0].id);
     } catch (err) {
@@ -57,22 +73,38 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
     if (!selected || !mode) return;
     const f = new FormData(e.currentTarget);
     const lines =
-      mode === 'return'
+      mode !== 'void'
         ? selected.detail.lines
-            .map((l) => ({ saleLineId: l.id, quantity: String(f.get(`qty-${l.id}`) ?? '').trim(), disposition: f.get(`dmg-${l.id}`) ? 'DAMAGED' : 'RESTOCK' }))
+            .map((l) => ({ saleLineId: l.id, quantity: String(f.get(`qty-${l.id}`) ?? '').trim(), disposition: (f.get(`dmg-${l.id}`) ? 'DAMAGED' : 'RESTOCK') as 'RESTOCK' | 'DAMAGED' }))
             .filter((l) => l.quantity && l.quantity !== '0')
         : undefined;
+    if (mode === 'exchange') {
+      if (!lines?.length) return setMessage({ kind: 'error', text: t('history.exchangeNone') });
+      try {
+        const r = await api<{ refund: string }>('POST', `/v1/sales/${selected.detail.id}/returns/preview`, { lines });
+        const items = lines.map((l) => ({ name: selected.detail.lines.find((x) => x.id === l.saleLineId)!.name, quantity: l.quantity }));
+        setPreview({ saleId: selected.detail.id, saleNumber: selected.detail.saleNumber, reason: String(f.get('reason') ?? '').trim(), returnLines: lines, refund: r.refund, items });
+        setMessage(null);
+      } catch (err) {
+        setMessage({ kind: 'error', text: err instanceof ApiFailure ? withReference(err.error.message, err) : t('common.error') });
+      }
+      return;
+    }
     try {
       const r = await api<{ id: string; amountDue: string; returnNumber: number }>(
         'POST',
         `/v1/sales/${selected.detail.id}/returns`,
-        { cashierSessionId: shift.sessionId, kind: mode === 'void' ? 'VOID' : 'RETURN', reason: String(f.get('reason') ?? ''), ...(lines && { lines }) },
+        {
+          cashierSessionId: shift.sessionId, kind: mode === 'void' ? 'VOID' : 'RETURN', reason: String(f.get('reason') ?? ''), ...(lines && { lines }),
+          // A sale with a customer can be refunded as their store credit instead of cash (ADR-0018).
+          ...(f.get('toCredit') === 'on' && { refundTo: 'STORE_CREDIT' }),
+        },
         { 'idempotency-key': key },
       );
       setKey(uuid());
       await open(selected.detail.id);
       // After reloading the sale (which clears messages), confirm the refund and show its slip to hand over.
-      setMessage({ kind: 'info', text: t('history.refund', { amount: peso(r.amountDue) }) });
+      setMessage({ kind: 'info', text: t(f.get('toCredit') === 'on' ? 'history.creditGiven' : 'history.refund', { amount: peso(r.amountDue) }) });
       void api<ReceiptData>('GET', `/v1/sale-returns/${r.id}/receipt`).then(setSlip).catch(() => undefined);
       void load();
     } catch (err) {
@@ -94,6 +126,14 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
           <form className="no-print row-rule grid gap-2 px-3 pb-3 pt-2" onSubmit={find}>
             <p className="font-semibold">{t('history.findTitle')}</p>
             <p className="text-[0.8125rem] text-muted">{t('history.findHint')}</p>
+            {registers.length > 1 && (
+              <div className="field">
+                <label htmlFor="findRegister">{t('history.register')}</label>
+                <select id="findRegister" name="findRegister" className="input" value={findRegister} onChange={(e) => setFindRegister(e.target.value)}>
+                  {registers.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <Field id="findNumber" name="findNumber" inputMode="numeric" label={t('history.findNumber')} placeholder="000123" />
               <button className="btn mb-[2px]">{t('history.find')}</button>
@@ -132,13 +172,14 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
           <>
             <div className="no-print flex flex-wrap gap-2">
               {canVoid && <button className="btn btn-danger" aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
-              {canReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => setMode('return')}>{t('history.return')}</button>}
+              {canReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
+              {canExchange && <button className="btn" aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
               {!canVoid && !canReturn && <Callout kind="info">{t('history.managerOnly')}</Callout>}
             </div>
             {mode && (
               <Note className="no-print p-5">
                 <form className="grid gap-3" onSubmit={submit}>
-                  {mode === 'return' &&
+                  {mode !== 'void' &&
                     selected.detail.lines.map((l) => (
                       <div key={l.id} className="grid items-end gap-3 sm:grid-cols-[1fr_120px_auto]">
                         <p>
@@ -154,10 +195,23 @@ export function History({ shift, permissions }: { shift: Shift; permissions: str
                       </div>
                     ))}
                   <Field id="reason" name="reason" required label={t('history.reason')} />
+                  {mode !== 'exchange' && selected.detail.customerId && (
+                    <label className="flex items-center gap-2 text-[0.875rem]">
+                      <input type="checkbox" name="toCredit" /> {t('history.toCredit')}
+                    </label>
+                  )}
                   <div>
-                    <button className={`btn ${mode === 'void' ? 'btn-danger' : 'btn-primary'}`}>{mode === 'void' ? t('history.void') : t('history.return')}</button>
+                    <button className={`btn ${mode === 'void' ? 'btn-danger' : mode === 'exchange' ? '' : 'btn-primary'}`}>
+                      {mode === 'void' ? t('history.void') : mode === 'exchange' ? t('history.previewRefund') : t('history.return')}
+                    </button>
                   </div>
                 </form>
+                {mode === 'exchange' && preview && (
+                  <div className="mt-4 grid gap-3 border-t border-hair-soft pt-4">
+                    <p className="flex justify-between text-[1.0625rem] font-semibold"><span>{t('history.exchangeRefund', { amount: peso(preview.refund) })}</span></p>
+                    <button type="button" className="btn btn-primary justify-self-start" onClick={() => onExchange?.(preview)}>{t('history.chooseItems')}</button>
+                  </div>
+                )}
               </Note>
             )}
             {slip ? (

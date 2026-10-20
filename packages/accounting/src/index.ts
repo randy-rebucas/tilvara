@@ -18,6 +18,8 @@ export const DEFAULT_CHART = [
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
+  // Session 20 (ADR-0018): refunds given as store credit, owed to customers until spent. Pending the accountant.
+  { key: 'CUSTOMER_STORE_CREDIT', code: '2300', name: 'Customer store credit', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },
   { key: 'SALES', code: '4000', name: 'Sales', type: 'REVENUE' },
   { key: 'SALES_RETURNS', code: '4010', name: 'Sales returns', type: 'REVENUE' },
@@ -87,6 +89,8 @@ export interface SaleAmounts {
   cash: Amount;
   /** Collected by card/QR/e-wallet intents. */
   electronic: Amount;
+  /** Paid with the customer's store credit (ADR-0018): the liability goes down. */
+  storeCredit?: Amount;
   /** Cost of the goods that left stock (−Σ SALE movement values). */
   cogs: Amount;
 }
@@ -96,6 +100,7 @@ export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLi
   return balanced([
     dr('CASH_ON_HAND', a.cash, branchId),
     dr('PAYMENT_CLEARING', a.electronic, branchId),
+    dr('CUSTOMER_STORE_CREDIT', a.storeCredit ?? 0, branchId),
     dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('SALES', a.salesExVat, branchId),
     cr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
@@ -111,8 +116,9 @@ export interface SaleReturnAmounts {
   serviceCharge?: Amount;
   vatAmount: Amount;
   statutoryDiscount: Amount;
-  /** Refunded in cash (ADR-0011). */
+  /** Given back: in cash (ADR-0011), or as store credit when `refundTo` is STORE_CREDIT (ADR-0018). */
   refund: Amount;
+  refundTo?: 'CASH' | 'STORE_CREDIT';
   /** Value brought back into stock (Σ RETURN movement values; damaged goods bring none). */
   restocked: Amount;
 }
@@ -124,7 +130,7 @@ export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null
     dr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     dr('OUTPUT_VAT', a.vatAmount, branchId),
     cr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
-    cr('CASH_ON_HAND', a.refund, branchId),
+    cr(a.refundTo === 'STORE_CREDIT' ? 'CUSTOMER_STORE_CREDIT' : 'CASH_ON_HAND', a.refund, branchId),
     dr('INVENTORY', a.restocked, branchId),
     cr('COGS', a.restocked, branchId),
   ]);

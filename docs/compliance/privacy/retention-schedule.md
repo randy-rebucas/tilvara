@@ -25,6 +25,12 @@ period, counted from the end of the taxable year the record belongs to.
 |---|---|---|---|---|
 | Sales, returns, voids, tenders, payment events, cash movements and counts | Sales tables (append-only) | Fiscal period, then anonymise staff and customer fields | Tax records | ◐ Kept (cannot be deleted); anonymisation job ○ |
 | SC/PWD beneficiary name, ID number, TIN | `sale_beneficiaries`, `order_bill_beneficiaries` | Fiscal period, then anonymise | RR 5-2017 SC/PWD sales book | ◐ Kept; anonymisation ○ |
+| Customers: name, contact details, TIN, notes | `customers` | *Proposed:* 2 years after the last purchase, then anonymised (not while store credit is owed) | Purchase history, store credit, offers by consent | ◐ Manual "Remove personal details" ●; automatic anonymisation ○ |
+| Marketing consent history | `customer_consent_events` | As long as the customer row, plus the fiscal period (proof of consent) | Accountability for offers sent | ◐ Kept (append-only) |
+| Store credit entries | `customer_credit_entries` | Fiscal period (they post to the books) | Liability to the customer | ◐ Kept (append-only) |
+| Held carts: lines and SC/PWD name and ID number while parked | `held_carts` | Until resumed or discarded (lines and details cleared then; the row keeps the label, count and who) | Serving the next customer | ● Cleared on resume/discard (DB trigger). *Proposed:* discard carts left open more than 7 days ○ |
+| API keys and webhook endpoints | `api_keys`, `webhook_endpoints` | Until the business is deleted (revoked keys kept as evidence) | Integrations the business set up | ● Kept; the key itself is a hash only |
+| Webhook deliveries (ids only) | `webhook_deliveries` | *Proposed:* 30 days after delivered or given up | Proof of delivery, sending again | ○ Purge not built |
 | Takeaway customer names, order notes | `restaurant_orders` | *Proposed:* 90 days after the order closes, then cleared | Only needed to call the order out | ○ |
 | Journal, stock movements, purchasing, supplier returns | Books, stock, purchasing tables | Fiscal period | Tax and accounting records | ◐ Kept; anonymisation of supplier contacts ○ |
 | Supplier contact details | `suppliers` | While the business uses the supplier, plus the fiscal period of the last document | Purchasing records | ○ (archive only) |

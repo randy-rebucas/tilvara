@@ -27,6 +27,8 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
   const perms = me.activeTenant?.permissions ?? [];
   const canReorder = perms.includes('purchasing.manage') || perms.includes('inventory.adjust');
   const canAdjust = perms.includes('inventory.adjust');
+  // A Reserved column only when something is set aside (session 20).
+  const anyReserved = valuation?.data.some((r) => r.reserved && signOf(r.reserved) > 0) ?? false;
 
   return (
     <InventoryChrome tab="stock" branches={branches} branch={branch}>
@@ -55,6 +57,12 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
                 { header: t('prod.sku'), cell: (r) => <Serial className="text-ink">{r.sku}</Serial> },
                 { header: t('common.item'), cell: (r) => r.name },
                 { header: t('inv.onHand'), num: true, cell: (r) => <span className={signOf(r.quantity) < 0 ? 'text-red' : ''}>{qty(r.quantity)}</span> },
+                ...(anyReserved
+                  ? [
+                      { header: t('inv.reserved'), num: true, cell: (r: (typeof valuation.data)[number]) => (r.reserved && signOf(r.reserved) > 0 ? qty(r.reserved) : '') },
+                      { header: t('inv.available'), num: true, cell: (r: (typeof valuation.data)[number]) => <b>{qty(r.available ?? r.quantity)}</b> },
+                    ]
+                  : []),
                 { header: t('inv.avgCost'), num: true, cell: (r) => <span className="money">{peso(r.avgCost)}</span> },
                 { header: t('common.value'), num: true, cell: (r) => <span className="money font-semibold">{peso(r.value)}</span> },
               ]}
@@ -64,7 +72,7 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
                 figure: (r) => <span className="money font-semibold">{peso(r.value)}</span>,
               }}
               foot={{
-                cells: ['', t('common.total'), '', '', <span key="v" className="money">{peso(valuation.totalValue)}</span>],
+                cells: ['', t('common.total'), '', ...(anyReserved ? ['', ''] : []), '', <span key="v" className="money">{peso(valuation.totalValue)}</span>],
                 title: t('inv.stockValue'),
                 figure: <span className="money">{peso(valuation.totalValue)}</span>,
               }}

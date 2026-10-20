@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { ReceiptPrinter } from '../lib/devices';
 import { useTill } from '../lib/till';
-import { receiptToPrintable, SETTLEMENT, signedTotal, TOTAL_LABELS } from '../lib/printing';
+import { receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
 
@@ -77,7 +77,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
         <div className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
           {data.tenders.map((tn, i) => (
             <p key={i} className="flex justify-between">
-              <span>{tn.method}</span>
+              <span>{tenderLabel(tn)}</span>
               <Money value={tn.amount} />
             </p>
           ))}
@@ -96,6 +96,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
             {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{t('receipt.signature')}</p>}
           </div>
         ))}
+        {data.customer && <p className="mt-3">Customer: {data.customer.name}{data.customer.tin ? ` · TIN ${data.customer.tin}` : ''}</p>}
         {data.reason && <p className="mt-3">Reason: {data.reason}</p>}
         {data.legend && <p className="mt-3 text-muted">{data.legend}</p>}
         <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.transaction.cashier} · {data.transaction.register}</p>

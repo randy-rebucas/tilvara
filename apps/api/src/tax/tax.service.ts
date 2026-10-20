@@ -26,6 +26,7 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { dbNow, effectiveNow } from '../common/clock.js';
 import { engineProfile, insertProfile, profilesInForce, profileView } from './tax-profiles.js';
+import { overridesForCart } from './price-overrides.js';
 
 /** Clock-skew tolerance for "effective now"; the DB trigger allows 5 minutes. */
 const BACKDATE_TOLERANCE_MS = 60_000;
@@ -42,6 +43,10 @@ export interface LineMeta {
   priceId: string;
   priceListId: string;
   trackInventory: boolean;
+  /** The approved price change this line is sold at (session 20), else null. */
+  priceOverrideId: string | null;
+  /** With an override: the list price it replaced. */
+  listUnitPrice?: string;
 }
 
 export type CartComputation = Awaited<ReturnType<TaxService['computeCart']>>;
@@ -136,7 +141,7 @@ export class TaxService extends TenantService {
     const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };
     this.assertCan(auth, 'sales.create', scope);
     if (branch.archivedAt) throw archived('Branch');
-    if (input.lines.some((l) => l.discount && !toDec(l.discount).isZero())) this.assertCan(auth, 'sales.discount', scope);
+    if (input.lines.some((l) => (l.discount && !toDec(l.discount).isZero()) || l.discountRate)) this.assertCan(auth, 'sales.discount', scope);
 
     const profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
     if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
@@ -167,6 +172,8 @@ export class TaxService extends TenantService {
     const schemes = await this.schemesInForce(db, schemeCodes, at);
 
     const prices = await this.pricing.effectivePrices(db, branch.id, variantIds, at);
+    // Approved prices replace the list price for their line (an offline re-pricing never carries one).
+    const overrides = await overridesForCart(db, auth, branch.id, at, input.lines);
 
     const meta: LineMeta[] = [];
     let currency: string | undefined;
@@ -189,13 +196,16 @@ export class TaxService extends TenantService {
         if (!scheme) throw unprocessable('UNKNOWN_SCHEME', `No discount scheme ${l.statutory.scheme} is in force`, { line: lineId });
         statutory = { scheme, ...(l.statutory.share && { share: l.statutory.share }) };
       }
+      const override = l.priceOverrideId ? overrides.get(l.priceOverrideId)! : null;
+      const unitPrice = override ? override.unitPrice : price.amount;
       lines.push({
         id: lineId,
-        unitPrice: price.amount,
+        unitPrice,
         quantity: l.quantity,
         priceIncludesTax: price.pricesIncludeTax,
         vatTreatment: item.vatTreatment,
         ...(l.discount && { discount: l.discount }),
+        ...(l.discountRate && { discountRate: l.discountRate }),
         ...(statutory && { statutory }),
       });
       meta.push({
@@ -204,12 +214,14 @@ export class TaxService extends TenantService {
         name: item.variantName ? `${item.productName} — ${item.variantName}` : item.productName,
         taxCategoryCode: item.taxCategoryCode,
         vatTreatment: item.vatTreatment,
-        unitPrice: toDec(price.amount).toString(),
+        unitPrice: toDec(unitPrice).toString(),
         quantity: l.quantity,
         priceIncludesTax: price.pricesIncludeTax,
         priceId: price.priceId,
         priceListId: price.priceListId,
         trackInventory: item.trackInventory,
+        priceOverrideId: override?.id ?? null,
+        ...(override && { listUnitPrice: toDec(price.amount).toString() }),
       });
     }
     if (!currency || !isCurrencyCode(currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${currency} is not supported`);

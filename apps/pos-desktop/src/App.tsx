@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ExchangeStart } from './components/CounterTools';
 import { BusinessPicker, SignIn } from './components/Auth';
 import { CloseShift } from './components/CloseShift';
 import { History } from './components/History';
@@ -45,6 +46,8 @@ function Counter() {
   const { t } = useT();
   const [stage, setStage] = useState<Stage>({ name: 'signin' });
   const [tab, setTab] = useState<Tab>('sell');
+  /** An exchange started from This shift, finished on Sell (session 20). */
+  const [exchange, setExchange] = useState<ExchangeStart | null>(null);
 
   useEffect(() => session.onSignedOut(() => setStage({ name: 'signin' })), []);
 
@@ -185,7 +188,7 @@ function Counter() {
     >
       {/* Kept mounted: a cart and its authorized card/QR payments survive a look at the shift history. */}
       <div hidden={tab !== 'sell'}>
-        <Sell shift={shift} cashierUserId={me.userId} active={tab === 'sell'} />
+        <Sell shift={shift} cashierUserId={me.userId} active={tab === 'sell'} permissions={permissions} exchange={exchange} onExchangeEnd={() => setExchange(null)} />
       </div>
       {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
       {tableService && (
@@ -193,7 +196,7 @@ function Counter() {
           <Tables place={{ branch: shift.branch, shift }} permissions={permissions} active={tab === 'tables'} />
         </div>
       )}
-      {tab === 'history' && <History shift={shift} permissions={permissions} />}
+      {tab === 'history' && <History shift={shift} permissions={permissions} onExchange={(x) => { setExchange(x); setTab('sell'); }} />}
       {tab === 'close' && <CloseShift shift={shift} onClosed={() => setStage({ name: 'register', me })} />}
     </Shell>
   );

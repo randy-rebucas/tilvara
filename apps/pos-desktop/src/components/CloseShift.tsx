@@ -88,6 +88,11 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
   const [fieldError, setFieldError] = useState<string | undefined>();
   // Card/QR charges that belong to no sale: the server refuses to close until each is settled.
   const [outstanding, setOutstanding] = useState<Outstanding[]>([]);
+  // Carts parked at this register stay for the next shift; the cashier is told, not stopped.
+  const [heldCount, setHeldCount] = useState(0);
+  useEffect(() => {
+    void api<{ data: unknown[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`).then((r) => setHeldCount(r.data.length)).catch(() => undefined);
+  }, [shift.register.id]);
 
   const reload = () => api<SessionView>('GET', `/v1/cashier-sessions/${shift.sessionId}`).then(setView).catch(() => setError(t('common.error')));
   useEffect(() => {
@@ -149,6 +154,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
             </p>
           </>
         )}
+        {!closed && heldCount > 0 && <Callout kind="info">{t('close.heldCarts', { n: String(heldCount) })}</Callout>}
         {error && <Callout kind={outstanding.length ? 'warn' : 'error'}>{error}</Callout>}
         {!closed && unsettled.length > 0 && (
           <ul className="grid gap-2" aria-label={t('close.unsettledPayments')}>

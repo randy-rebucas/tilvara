@@ -171,6 +171,17 @@ themselves with backoff.
 The worker loop keeps failing: it cannot claim events, usually because the database is unreachable or the
 worker's role lost a grant after a migration. The worker log says `worker loop error` with the database error.
 
+### OneposWebhookDeliveriesDead
+A business's webhook endpoint (ADR-0019) failed every attempt for a delivery: 8 attempts over about a day
+(30 s doubling to a 6 h cap), and the delivery is `DEAD`. This is usually the business's receiver (down,
+answering 4xx/5xx, too slow past `WEBHOOK_TIMEOUT_MS`, or not on a public https address), not ours.
+1. The worker log says `webhook delivery dead` with the delivery and endpoint ids and the last status code.
+2. Nothing is lost: the delivery row keeps the event (ids only). The business sees it on Subscription →
+   Integrations with its last error, and presses "Send again" once their receiver is fixed (audited).
+3. Many endpoints failing at once points at us instead: check outbound network from the worker host and
+   that `WEBHOOK_SIGNING_KEY` is the same on the API and the worker (a mismatch makes every receiver
+   reject the signature).
+
 ## Operations
 
 ### OneposVarianceAwaitingApproval

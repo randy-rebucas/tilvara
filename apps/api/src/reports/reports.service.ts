@@ -6,6 +6,7 @@ import { notFound, TenantService, type ConflictMap } from '../common/tenant-serv
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { expectedCash, loadSession } from '../sales/cash.service.js';
+import { reservedAt } from '../inventory/reservations.service.js';
 
 export interface ReportRange {
   branchId: string;
@@ -284,9 +285,17 @@ export class ReportsService extends TenantService {
          ORDER BY b.value DESC, v.sku`);
       const { rows: [ledger] } = await db.execute<Row>(sql`SELECT coalesce(sum(value), 0)::text AS value FROM stock_movements WHERE branch_id = ${branch.id}`);
       const total = rows.reduce((a, r) => a.plus(r.value as string), toDec('0'));
+      // Session 20: what is set aside for customers, and what is left to sell (reservations move no value).
+      const reserved = await reservedAt(db, branch.id);
       return {
         branchId: branch.id,
-        data: rows.map((r) => ({ variantId: r.variant_id, sku: r.sku, name: r.name, quantity: qty(r.quantity as string), avgCost: toDec(r.avg_cost as string).toFixed(4), value: money(r.value as string) })),
+        data: rows.map((r) => {
+          const held = reserved.get(r.variant_id as string) ?? toDec('0');
+          return {
+            variantId: r.variant_id, sku: r.sku, name: r.name, quantity: qty(r.quantity as string), avgCost: toDec(r.avg_cost as string).toFixed(4), value: money(r.value as string),
+            reserved: held.toString(), available: toDec(r.quantity as string).minus(held).toString(),
+          };
+        }),
         totalValue: total.toFixed(2),
         ledgerValue: money(ledger!.value as string),
       };

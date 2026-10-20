@@ -7,7 +7,7 @@ import { FormError, SelectField, TextField } from '@/components/fields';
 import { compact, LineItems, readLines, type VariantOption } from '@/components/line-items';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
-import type { Branch, GoodsReceipt, PurchaseOrder, Supplier } from '@/lib/api';
+import type { Branch, GoodsReceipt, PurchaseOrder, Supplier, SupplierItem } from '@/lib/api';
 import { peso, qty, signOf, subtractQty } from '@/lib/format';
 
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null; submitLabel: string; close: () => void }) {
@@ -86,7 +86,8 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
       supplierId: f.get('supplierId'),
       ...(expectedOn ? { expectedOn } : {}),
       supplierRef: orNull(text(f, 'supplierRef')),
-      lines: readLines(f, ['variantId', 'quantity', 'unitCost']),
+      // A blank cost is left out: the supplier's catalog cost is used (session 20).
+      lines: readLines(f, ['variantId', 'quantity', 'unitCost']).map(compact),
     }, { idempotencyKey: key, refresh: false });
     if (r.ok) {
       close();
@@ -107,7 +108,7 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
           { name: 'quantity', label: t('common.quantity'), kind: 'decimal', placeholder: '0' },
-          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: '0.00' },
+          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: t('pur.catalogCost') },
         ]}
         options={variants}
         fieldError={fieldError}
@@ -137,7 +138,8 @@ function DraftFields({ close, order, suppliers, variants }: { close: () => void;
       supplierId: f.get('supplierId'),
       expectedOn: orNull(text(f, 'expectedOn')),
       supplierRef: orNull(text(f, 'supplierRef')),
-      lines: readLines(f, ['variantId', 'quantity', 'unitCost']),
+      // A blank cost is left out: the supplier's catalog cost is used (session 20).
+      lines: readLines(f, ['variantId', 'quantity', 'unitCost']).map(compact),
     });
     if (r.ok) close();
   }
@@ -152,7 +154,7 @@ function DraftFields({ close, order, suppliers, variants }: { close: () => void;
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
           { name: 'quantity', label: t('common.quantity'), kind: 'decimal', placeholder: '0' },
-          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: '0.00' },
+          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: t('pur.catalogCost') },
         ]}
         initial={order.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost }))}
         options={options}
@@ -287,4 +289,54 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
 export function ReceiveForm({ order }: { order: PurchaseOrder }) {
   const { t } = useT();
   return <Disclosure label={t('pur.receive')}>{(close) => <ReceiveFields close={close} order={order} />}</Disclosure>;
+}
+
+// ---------------------------------------------------------------- supplier catalog (session 20)
+/** Add an item to a supplier's catalog, or correct one (`item` given). */
+function SupplierItemFields({ close, supplierId, variants, item }: { close: () => void; supplierId: string; variants: VariantOption[]; item?: SupplierItem }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const cost = text(f, 'unitCost');
+    const body = {
+      supplierSku: orNull(text(f, 'supplierSku')),
+      supplierItemName: orNull(text(f, 'supplierItemName')),
+      unitCost: cost === '' ? null : cost,
+      preferred: f.get('preferred') === 'on',
+    };
+    const r = item
+      ? await submit('PATCH', `/api/v1/supplier-items/${item.id}`, body)
+      : await submit('POST', `/api/v1/suppliers/${supplierId}/items`, { variantId: f.get('variantId'), ...body });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+      {!item && (
+        <div className="sm:col-span-2">
+          <SelectField label={t('common.item')} name="variantId">
+            {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+          </SelectField>
+        </div>
+      )}
+      <TextField label={`${t('pur.supplierSku')} (${t('common.optional')})`} name="supplierSku" maxLength={64} defaultValue={item?.supplierSku ?? ''} error={fieldError('supplierSku')} />
+      <TextField label={`${t('pur.catalogCostLabel')} (${t('common.optional')})`} name="unitCost" inputMode="decimal" placeholder="0.00" defaultValue={item?.unitCost ? item.unitCost.replace(/(\.\d{2})0+$/, '$1') : ''} error={fieldError('unitCost')} />
+      <TextField label={`${t('pur.supplierItemName')} (${t('common.optional')})`} name="supplierItemName" maxLength={200} defaultValue={item?.supplierItemName ?? ''} error={fieldError('supplierItemName')} />
+      <label className="flex items-center gap-2 self-end pb-3 text-[0.875rem]">
+        <input type="checkbox" name="preferred" defaultChecked={item?.preferred ?? false} /> {t('pur.preferred')}
+      </label>
+      <Actions pending={pending} general={general(error)} submitLabel={item ? t('common.save') : t('common.add')} close={close} />
+    </form>
+  );
+}
+
+export function AddSupplierItemForm(props: { supplierId: string; variants: VariantOption[] }) {
+  const { t } = useT();
+  return <Disclosure label={t('pur.addCatalogItem')}>{(close) => <SupplierItemFields close={close} {...props} />}</Disclosure>;
+}
+
+export function EditSupplierItemForm({ item, supplierId }: { item: SupplierItem; supplierId: string }) {
+  const { t } = useT();
+  return <Disclosure label={t('pur.editCatalogItem')} kind="edit">{(close) => <SupplierItemFields close={close} supplierId={supplierId} variants={[]} item={item} />}</Disclosure>;
 }

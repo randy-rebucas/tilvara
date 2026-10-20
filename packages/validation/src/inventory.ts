@@ -112,3 +112,25 @@ export type CancelCountSheetInput = z.infer<typeof cancelCountSheetSchema>;
 
 export const countSheetListQuerySchema = z.object({ branchId: z.uuid(), status: z.enum(['OPEN', 'POSTED', 'CANCELLED']).optional() });
 export type CountSheetListQuery = z.infer<typeof countSheetListQuerySchema>;
+
+// ------------------------------------------------------------------ reservations (session 20)
+
+/** Set stock aside at a branch; never more than is available (on hand − what is already reserved). */
+export const createReservationSchema = z.object({
+  branchId: z.uuid(),
+  variantId: z.uuid(),
+  quantity: z.string().trim().regex(/^\d{1,14}(\.\d{1,4})?$/, 'Use a plain decimal string such as "1"').refine((v) => Number(v) > 0, 'Quantity must be greater than zero'),
+  /** For whom or why: "Maria, pick-up Saturday", "Display". */
+  note: z.string().trim().min(1).max(200),
+  customerId: z.uuid().optional(),
+  /** It stops counting at this moment (ISO); omitted: until released. */
+  expiresAt: z.iso.datetime({ offset: true }).optional(),
+});
+export type CreateReservationInput = z.infer<typeof createReservationSchema>;
+
+export const reservationListQuerySchema = z.object({ branchId: z.uuid(), status: z.enum(['ACTIVE', 'ALL']).default('ACTIVE') });
+export type ReservationListQuery = z.infer<typeof reservationListQuerySchema>;
+
+/** Sold, collected, or no longer wanted. */
+export const releaseReservationSchema = z.object({ reason: z.string().trim().min(1).max(200) });
+export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;

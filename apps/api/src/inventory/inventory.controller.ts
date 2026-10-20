@@ -1,5 +1,11 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import {
+  createReservationSchema,
+  releaseReservationSchema,
+  reservationListQuerySchema,
+  type CreateReservationInput,
+  type ReleaseReservationInput,
+  type ReservationListQuery,
   branchQuerySchema,
   cancelCountSheetSchema,
   countSheetLinesSchema,
@@ -28,6 +34,7 @@ import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { InventoryService } from './inventory.service.js';
+import { ReservationsService } from './reservations.service.js';
 
 const id = new ZodPipe(idParamSchema);
 
@@ -35,7 +42,28 @@ const id = new ZodPipe(idParamSchema);
 @RequireTenant()
 @Controller()
 export class InventoryController {
-  constructor(@Inject(InventoryService) private readonly inventory: InventoryService) {}
+  constructor(
+    @Inject(InventoryService) private readonly inventory: InventoryService,
+    @Inject(ReservationsService) private readonly reservations: ReservationsService,
+  ) {}
+
+  // reservations (session 20)
+  @Idempotent()
+  @Post('stock/reservations')
+  reserve(@Auth() auth: AuthContext, @Body(new ZodPipe(createReservationSchema)) body: CreateReservationInput) {
+    return this.reservations.create(auth, body);
+  }
+
+  @Get('stock/reservations')
+  listReservations(@Auth() auth: AuthContext, @Query(new ZodPipe(reservationListQuerySchema)) q: ReservationListQuery) {
+    return this.reservations.list(auth, q);
+  }
+
+  @HttpCode(200)
+  @Post('stock/reservations/:id/release')
+  release(@Auth() auth: AuthContext, @Param('id', id) reservationId: string, @Body(new ZodPipe(releaseReservationSchema)) body: ReleaseReservationInput) {
+    return this.reservations.release(auth, reservationId, body);
+  }
 
   /** Inventory evidence: Idempotency-Key is mandatory. */
   @Idempotent({ required: true })

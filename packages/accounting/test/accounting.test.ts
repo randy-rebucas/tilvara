@@ -50,6 +50,15 @@ describe('posting rules', () => {
     expect(net(lines)).toEqual({ SALES_RETURNS: '20.00', OUTPUT_VAT: '2.40', CASH_ON_HAND: '-22.40', INVENTORY: '12.00', COGS: '-12.00' });
   });
 
+  it('store credit (ADR-0018): a refund given as credit is owed to the customer; spending it settles that', () => {
+    const issued = saleReturnPosting({ salesExVat: '20.00', vatAmount: '2.40', statutoryDiscount: '0', refund: '22.40', refundTo: 'STORE_CREDIT', restocked: '12.00' });
+    expect(net(issued)).toEqual({ SALES_RETURNS: '20.00', OUTPUT_VAT: '2.40', CUSTOMER_STORE_CREDIT: '-22.40', INVENTORY: '12.00', COGS: '-12.00' });
+    // A ₱56.00 sale paid ₱22.40 from the credit and ₱33.60 in cash.
+    const spent = salePosting({ salesExVat: '56.00', vatAmount: '0', statutoryDiscount: '0', cash: '33.60', electronic: '0', storeCredit: '22.40', cogs: '40.00' });
+    expect(net(spent)).toEqual({ CASH_ON_HAND: '33.60', CUSTOMER_STORE_CREDIT: '22.40', SALES: '-56.00', COGS: '40.00', INVENTORY: '-40.00' });
+    expect(DEFAULT_CHART.find((a) => a.key === 'CUSTOMER_STORE_CREDIT')).toMatchObject({ code: '2300', type: 'LIABILITY' });
+  });
+
   it('goods receipt: owed at cost; a revaluation of units sold short goes to COGS', () => {
     // 5 @ 13.00 = 65.00 owed; the ledger recorded 62.40 (2 units had left at 11.70).
     const lines = goodsReceiptPosting({ stockValue: '62.40', stockAtCost: '65.00', nonStock: '150.00' });

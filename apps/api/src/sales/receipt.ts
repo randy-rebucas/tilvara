@@ -47,11 +47,14 @@ export interface ReceiptInput {
     vatExemptSales: string;
     beneficiaryId: string | null;
   }[];
-  tenders: { method: string; amount: string; tendered: string; change: string }[];
+  /** `exchangeReturnNumber`: this cash is the refund of that return, put towards this sale (an exchange). */
+  tenders: { method: string; amount: string; tendered: string; change: string; exchangeReturnNumber?: number | null }[];
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
   /** Charges that are not items (service charge, ADR-0014 §9); included in the sale totals. */
   /** `gross` is the charge ex VAT (its sales); `amountDue` adds its VAT. */
   charges?: { kind: string; rate: string; gross: string; amountDue: string; vatTreatment: string }[];
+  /** The customer the sale was rung up for (ADR-0018): printed with their TIN when they gave one. */
+  customer?: { name: string; tin: string | null } | null;
 }
 
 const CHARGE_LABELS: Record<string, string> = { SERVICE_CHARGE: 'Service charge' };
@@ -253,8 +256,9 @@ export function buildReceipt(r: ReceiptInput) {
       tendered: r.sale.amountTendered,
       change: r.sale.changeDue,
     },
-    tenders: r.tenders.map((t) => ({ method: t.method, amount: t.amount, ...(t.method === 'CASH' && { tendered: t.tendered, change: t.change }) })),
+    tenders: r.tenders.map((t) => ({ method: t.method, amount: t.amount, ...(t.method === 'CASH' && { tendered: t.tendered, change: t.change }), ...(t.exchangeReturnNumber && { exchangeReturnNumber: t.exchangeReturnNumber }) })),
     statutory,
+    ...(r.customer && { customer: { name: r.customer.name, ...(r.customer.tin && { tin: r.customer.tin }) } }),
     legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
   };
 }

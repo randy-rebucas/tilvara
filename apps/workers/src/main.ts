@@ -6,6 +6,7 @@ import pg from 'pg';
 import { buildHandlers, DevWorkerMailer, expireDataExports } from './handlers.js';
 import { WorkerMonitor } from './monitoring.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
+import { WebhookDispatcher } from './webhook-dispatcher.js';
 
 async function main(): Promise<void> {
   const env = loadWorkerEnv();
@@ -27,6 +28,9 @@ async function main(): Promise<void> {
     batchSize: env.OUTBOX_BATCH,
     leaseSeconds: env.OUTBOX_LEASE_SECONDS,
     logger,
+  });
+  const webhooks = new WebhookDispatcher({
+    pool, workerId, signingKey: env.WEBHOOK_SIGNING_KEY, allowInsecure: env.WEBHOOK_ALLOW_INSECURE, timeoutMs: env.WEBHOOK_TIMEOUT_MS, logger,
   });
   const monitor = new WorkerMonitor(pool, workerId, process.env.ONEPOS_VERSION ?? 'dev');
   let metrics: MetricsServer | null = null;
@@ -50,6 +54,9 @@ async function main(): Promise<void> {
       const r = await processor.runOnce();
       monitor.recordBatch(r);
       if (r.claimed > 0) logger.info('outbox batch', { ...r });
+      const w = await webhooks.runOnce();
+      monitor.recordWebhooks(w);
+      if (w.claimed > 0) logger.info('webhook batch', { ...w });
       if (Date.now() - lastPurge > 3_600_000) {
         const { rows } = await pool.query<{ n: number }>('SELECT platform_purge_expired_idempotency() AS n');
         lastPurge = Date.now();
@@ -57,7 +64,7 @@ async function main(): Promise<void> {
         const expired = await expireDataExports(pool, storage, logger);
         if (expired) logger.info('expired data exports', { count: expired });
       }
-      if (r.claimed === 0) await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS));
+      if (r.claimed === 0 && w.claimed === 0) await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS));
     } catch (err) {
       monitor.loopErrors.inc();
       logger.error('worker loop error', { error: err instanceof Error ? err.message.split('\nparams:')[0] : 'unknown' });

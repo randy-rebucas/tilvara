@@ -39,13 +39,23 @@ export const createTaxProfileSchema = z
   });
 export type CreateTaxProfileInput = z.infer<typeof createTaxProfileSchema>;
 
-export const taxQuoteLineSchema = z.object({
+/** One discount form per line (the amount or the rate). */
+export const oneDiscountForm = <T extends { discount?: string | undefined; discountRate?: string | undefined }>(l: T) =>
+  !(l.discount !== undefined && l.discountRate !== undefined);
+const oneDiscountMessage = { message: 'Give the discount as an amount or a rate, not both', path: ['discountRate'] };
+
+/** A cart line before refinements (extended by checkout lines). */
+export const taxQuoteLineObject = z.object({
   /** Client line id (echoed back); defaults to the line's position. */
   id: z.string().trim().min(1).max(64).optional(),
   variantId: z.uuid(),
   quantity: quantitySchema,
-  /** Ordinary discount for the whole line, on the price-list basis. */
+  /** Ordinary discount for the whole line, on the price-list basis. Needs `sales.discount`. */
   discount: amountSchema.optional(),
+  /** Ordinary discount as a fraction of the line (e.g. "0.10" = 10 %), computed on the server. Needs `sales.discount`. */
+  discountRate: rateSchema.refine((v) => Number(v) > 0, 'Discount must be above zero').or(z.literal('1')).optional(),
+  /** An approved price for this item (`POST /v1/price-overrides`), used instead of the list price. */
+  priceOverrideId: z.uuid().optional(),
   statutory: z
     .object({
       scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
@@ -54,6 +64,8 @@ export const taxQuoteLineSchema = z.object({
     })
     .optional(),
 });
+export const taxQuoteLineSchema = taxQuoteLineObject.refine(oneDiscountForm, oneDiscountMessage);
+export const oneDiscountRefinement = [oneDiscountForm, oneDiscountMessage] as const;
 
 export const taxQuoteSchema = z.object({
   branchId: z.uuid(),

@@ -43,6 +43,8 @@ export interface TaxLineInput {
   vatTreatment: VatTreatment;
   /** Ordinary discount for the whole line, on the same basis as the price. */
   discount?: string;
+  /** Ordinary discount as a fraction of the line's gross, in (0, 1]; rounded like any amount. Not with `discount`. */
+  discountRate?: string;
   /** Statutory discount (SC/PWD…) for `share` of the line (default the whole line). */
   statutory?: { scheme: DiscountScheme; share?: string };
 }
@@ -240,7 +242,17 @@ export function calculateTax(ctx: TaxContext, inputs: readonly TaxLineInput[]): 
     const quantity = nonNegative(line.quantity, 'quantity', line.id);
     if (quantity.isZero()) throw new TaxError('INVALID_LINE', 'quantity must be positive', line.id);
     const gross = r(unitPrice.times(quantity));
-    const discount = r(nonNegative(line.discount ?? '0', 'discount', line.id));
+    if (line.discount !== undefined && line.discountRate !== undefined) {
+      throw new TaxError('INVALID_LINE', 'Give a discount amount or a discount rate, not both', line.id);
+    }
+    let discount: Dec;
+    if (line.discountRate !== undefined) {
+      const rate = nonNegative(line.discountRate, 'discountRate', line.id);
+      if (rate.isZero() || rate.gt(1)) throw new TaxError('INVALID_LINE', 'discountRate must be in (0, 1]', line.id);
+      discount = r(gross.times(rate));
+    } else {
+      discount = r(nonNegative(line.discount ?? '0', 'discount', line.id));
+    }
     if (discount.gt(gross)) throw new TaxError('DISCOUNT_EXCEEDS_LINE', 'Discount exceeds the line amount', line.id);
     if (line.statutory && !discount.isZero()) {
       throw new TaxError('DISCOUNT_STACKING_NOT_ALLOWED', 'A statutory discount cannot be combined with another discount on the same line', line.id);

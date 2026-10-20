@@ -43,7 +43,8 @@ export type SupplierListQuery = z.infer<typeof supplierListQuerySchema>;
 
 // ------------------------------------------------------------------ purchase orders
 
-const poLine = z.object({ variantId: z.uuid(), quantity: quantitySchema, unitCost: amountSchema });
+/** `unitCost` omitted: the supplier's catalog cost for the item (session 20), else refused. */
+const poLine = z.object({ variantId: z.uuid(), quantity: quantitySchema, unitCost: amountSchema.optional() });
 
 export const createPurchaseOrderSchema = z
   .object({
@@ -210,3 +211,20 @@ export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSch
 
 export const payablesAgingQuerySchema = z.object({ legalEntityId: z.uuid(), asOf: z.iso.date().optional() });
 export type PayablesAgingQuery = z.infer<typeof payablesAgingQuerySchema>;
+
+// ------------------------------------------------------------------ supplier catalog (session 20)
+
+const itemFields = {
+  supplierSku: z.string().trim().max(64).nullable().optional(),
+  supplierItemName: z.string().trim().max(200).nullable().optional(),
+  /** Ex VAT, per unit of the item, as on receipts. */
+  unitCost: amountSchema.nullable().optional(),
+  /** The supplier to order this item from first (one per item; setting it moves it here). */
+  preferred: z.boolean().optional(),
+};
+
+export const createSupplierItemSchema = z.object({ variantId: z.uuid(), ...itemFields });
+export type CreateSupplierItemInput = z.infer<typeof createSupplierItemSchema>;
+
+export const updateSupplierItemSchema = z.object(itemFields).refine((v) => Object.values(v).some((x) => x !== undefined), 'Nothing to update');
+export type UpdateSupplierItemInput = z.infer<typeof updateSupplierItemSchema>;

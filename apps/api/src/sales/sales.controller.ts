@@ -5,11 +5,17 @@ import {
   cashMovementSchema,
   closeCashierSessionSchema,
   createCheckSchema,
+  createExchangeSchema,
+  createHeldCartSchema,
+  createPriceOverrideSchema,
+  heldCartListQuerySchema,
+  resumeHeldCartSchema,
   createSaleReturnSchema,
   createSaleSchema,
   idParamSchema,
   openCashierSessionSchema,
   previewCheckSchema,
+  previewSaleReturnSchema,
   saleListQuerySchema,
   stockAdjustmentSchema,
   stockQuerySchema,
@@ -18,16 +24,24 @@ import {
   type CashMovementInput,
   type CloseCashierSessionInput,
   type CreateCheckInput,
+  type CreateExchangeInput,
+  type CreateHeldCartInput,
+  type CreatePriceOverrideInput,
+  type HeldCartListQuery,
+  type ResumeHeldCartInput,
   type CreateSaleInput,
   type CreateSaleReturnInput,
   type OpenCashierSessionInput,
   type PreviewCheckInput,
+  type PreviewSaleReturnInput,
   type SaleListQuery,
   type StockAdjustmentInput,
   type StockQuery,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
+import { RateLimit } from '../infrastructure/rate-limit.guard.js';
+import { CounterService } from './counter.service.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { CashService } from './cash.service.js';
 import { SalesService } from './sales.service.js';
@@ -45,6 +59,7 @@ export class SalesController {
     @Inject(SalesService) private readonly sales: SalesService,
     @Inject(StockService) private readonly stock: StockService,
     @Inject(ReturnsService) private readonly returns: ReturnsService,
+    @Inject(CounterService) private readonly counter: CounterService,
   ) {}
 
   @Get('pos/workstations')
@@ -109,6 +124,47 @@ export class SalesController {
     return this.sales.previewCheck(auth, billId, body);
   }
 
+  /** Return lines of an earlier sale and sell new items in one go (session 20). Idempotency-Key is mandatory. */
+  @Idempotent({ required: true })
+  @Post('exchanges')
+  createExchange(@Auth() auth: AuthContext, @Body(new ZodPipe(createExchangeSchema)) body: CreateExchangeInput) {
+    return this.sales.exchange(auth, body);
+  }
+
+  /**
+   * A price change on one item, approved by the cashier (if they may) or by a manager signing in on the
+   * spot. Rate-limited like a sign-in: per address, and per approver account named in the body.
+   */
+  @RateLimit({ bucket: 'price-override', limit: 20, windowSeconds: 600 }, { bucket: 'price-override-account', limit: 10, windowSeconds: 600, by: 'account' })
+  @Post('price-overrides')
+  createPriceOverride(@Auth() auth: AuthContext, @Body(new ZodPipe(createPriceOverrideSchema)) body: CreatePriceOverrideInput) {
+    return this.counter.createPriceOverride(auth, body);
+  }
+
+  // held carts (session 20)
+  @Get('held-carts')
+  listHeldCarts(@Auth() auth: AuthContext, @Query(new ZodPipe(heldCartListQuerySchema)) q: HeldCartListQuery) {
+    return this.counter.listHeldCarts(auth, q);
+  }
+
+  @Idempotent()
+  @Post('held-carts')
+  holdCart(@Auth() auth: AuthContext, @Body(new ZodPipe(createHeldCartSchema)) body: CreateHeldCartInput) {
+    return this.counter.holdCart(auth, body);
+  }
+
+  @HttpCode(200)
+  @Post('held-carts/:id/resume')
+  resumeCart(@Auth() auth: AuthContext, @Param('id', id) cartId: string, @Body(new ZodPipe(resumeHeldCartSchema)) body: ResumeHeldCartInput) {
+    return this.counter.resumeCart(auth, cartId, body.cashierSessionId);
+  }
+
+  @HttpCode(200)
+  @Post('held-carts/:id/discard')
+  discardCart(@Auth() auth: AuthContext, @Param('id', id) cartId: string) {
+    return this.counter.discardCart(auth, cartId);
+  }
+
   @Get('sales')
   listSales(@Auth() auth: AuthContext, @Query(new ZodPipe(saleListQuerySchema)) q: SaleListQuery) {
     return this.sales.list(auth, q);
@@ -124,6 +180,13 @@ export class SalesController {
   @Post('sales/:id/returns')
   createReturn(@Auth() auth: AuthContext, @Param('id', id) saleId: string, @Body(new ZodPipe(createSaleReturnSchema)) body: CreateSaleReturnInput) {
     return this.returns.create(auth, saleId, body);
+  }
+
+  /** What returning these lines would refund (session 20); records nothing. */
+  @HttpCode(200)
+  @Post('sales/:id/returns/preview')
+  previewReturn(@Auth() auth: AuthContext, @Param('id', id) saleId: string, @Body(new ZodPipe(previewSaleReturnSchema)) body: PreviewSaleReturnInput) {
+    return this.returns.preview(auth, saleId, body);
   }
 
   @Get('sales/:id/returns')

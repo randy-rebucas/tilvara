@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
-import { rateSchema, taxQuoteLineSchema } from './tax.js';
+import { oneDiscountRefinement, rateSchema, taxQuoteLineObject } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
@@ -13,10 +13,13 @@ export const tendersSchema = z
     z.discriminatedUnion('method', [
       z.object({ method: z.literal('CASH'), tendered: amountSchema }),
       z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
+      /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
+      z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
     ]),
   )
   .min(1)
-  .max(10);
+  .max(10)
+  .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale');
 export type TendersInput = z.infer<typeof tendersSchema>;
 
 // ------------------------------------------------------------------ cashier sessions
@@ -54,16 +57,18 @@ export type CashierSessionListQuery = z.infer<typeof cashierSessionListQuerySche
 
 // ------------------------------------------------------------------ sales
 
-export const saleLineSchema = taxQuoteLineSchema.extend({
-  statutory: z
-    .object({
-      scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
-      share: rateSchema.or(z.literal('1')).optional(),
-      /** `ref` of an entry in `beneficiaries`. */
-      beneficiary: ref,
-    })
-    .optional(),
-});
+export const saleLineSchema = taxQuoteLineObject
+  .extend({
+    statutory: z
+      .object({
+        scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
+        share: rateSchema.or(z.literal('1')).optional(),
+        /** `ref` of an entry in `beneficiaries`. */
+        beneficiary: ref,
+      })
+      .optional(),
+  })
+  .refine(...oneDiscountRefinement);
 
 export const saleBeneficiarySchema = z.object({
   ref,
@@ -73,6 +78,33 @@ export const saleBeneficiarySchema = z.object({
   idNumber: z.string().trim().min(1).max(64),
   tin: z.string().trim().regex(/^\d{9}(\d{3}|\d{5})?$/, 'TIN is 9 digits (optionally with branch code)').nullable().optional(),
 });
+
+/** Beneficiary refs and line ids of a cart: unique, used, and matching their lines' scheme. */
+function checkSaleRefs(v: { lines: z.infer<typeof saleLineSchema>[]; beneficiaries: z.infer<typeof saleBeneficiarySchema>[] }, ctx: z.RefinementCtx) {
+  const refs = new Set<string>();
+  for (const [i, b] of v.beneficiaries.entries()) {
+    if (refs.has(b.ref)) ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Duplicate beneficiary ref' });
+    refs.add(b.ref);
+  }
+  const lineIds = new Set<string>();
+  for (const [i, l] of v.lines.entries()) {
+    if (l.id) {
+      if (lineIds.has(l.id)) ctx.addIssue({ code: 'custom', path: ['lines', i, 'id'], message: 'Duplicate line id' });
+      lineIds.add(l.id);
+    }
+    if (!l.statutory) continue;
+    const b = v.beneficiaries.find((x) => x.ref === l.statutory!.beneficiary);
+    if (!b) ctx.addIssue({ code: 'custom', path: ['lines', i, 'statutory', 'beneficiary'], message: 'Unknown beneficiary ref' });
+    else if (b.scheme !== l.statutory.scheme) {
+      ctx.addIssue({ code: 'custom', path: ['lines', i, 'statutory', 'scheme'], message: 'Line scheme does not match the beneficiary' });
+    }
+  }
+  for (const [i, b] of v.beneficiaries.entries()) {
+    if (!v.lines.some((l) => l.statutory?.beneficiary === b.ref)) {
+      ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Beneficiary is not used by any line' });
+    }
+  }
+}
 
 export const createSaleSchema = z
   .object({
@@ -84,32 +116,11 @@ export const createSaleSchema = z
     tenders: tendersSchema,
     /** The total the cashier saw; if the server total differs (price changed), the sale is refused. */
     expectedAmountDue: amountSchema.optional(),
+    /** The customer it is rung up for (ADR-0018); required to pay with their store credit. */
+    customerId: z.uuid().optional(),
   })
-  .superRefine((v, ctx) => {
-    const refs = new Set<string>();
-    for (const [i, b] of v.beneficiaries.entries()) {
-      if (refs.has(b.ref)) ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Duplicate beneficiary ref' });
-      refs.add(b.ref);
-    }
-    const lineIds = new Set<string>();
-    for (const [i, l] of v.lines.entries()) {
-      if (l.id) {
-        if (lineIds.has(l.id)) ctx.addIssue({ code: 'custom', path: ['lines', i, 'id'], message: 'Duplicate line id' });
-        lineIds.add(l.id);
-      }
-      if (!l.statutory) continue;
-      const b = v.beneficiaries.find((x) => x.ref === l.statutory!.beneficiary);
-      if (!b) ctx.addIssue({ code: 'custom', path: ['lines', i, 'statutory', 'beneficiary'], message: 'Unknown beneficiary ref' });
-      else if (b.scheme !== l.statutory.scheme) {
-        ctx.addIssue({ code: 'custom', path: ['lines', i, 'statutory', 'scheme'], message: 'Line scheme does not match the beneficiary' });
-      }
-    }
-    for (const [i, b] of v.beneficiaries.entries()) {
-      if (!v.lines.some((l) => l.statutory?.beneficiary === b.ref)) {
-        ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Beneficiary is not used by any line' });
-      }
-    }
-  });
+  .superRefine(checkSaleRefs)
+  .refine((v) => v.customerId !== undefined || !v.tenders.some((t) => t.method === 'STORE_CREDIT'), { message: 'Store credit needs the customer on the sale', path: ['customerId'] });
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 
 export const createPaymentIntentSchema = z.object({
@@ -144,8 +155,12 @@ export const createSaleReturnSchema = z
       .optional(),
     /** The refund the cashier saw; refused if the server computes a different amount. */
     expectedRefund: amountSchema.optional(),
+    /** CASH (the default) or STORE_CREDIT for a customer (ADR-0018): the sale's customer, or `customerId`. */
+    refundTo: z.enum(['CASH', 'STORE_CREDIT']).default('CASH'),
+    customerId: z.uuid().optional(),
   })
   .superRefine((v, ctx) => {
+    if (v.customerId && v.refundTo !== 'STORE_CREDIT') ctx.addIssue({ code: 'custom', path: ['customerId'], message: 'A customer is only named for a refund as store credit' });
     if (v.kind === 'VOID' && v.lines) ctx.addIssue({ code: 'custom', path: ['lines'], message: 'A void reverses the whole sale; do not list lines' });
     if (v.kind === 'RETURN' && !v.lines?.length) ctx.addIssue({ code: 'custom', path: ['lines'], message: 'List the lines being returned' });
     const ids = new Set<string>();
@@ -155,6 +170,124 @@ export const createSaleReturnSchema = z
     }
   });
 export type CreateSaleReturnInput = z.infer<typeof createSaleReturnSchema>;
+
+/** What returning these lines would refund, priced like the return itself; records nothing (session 20). */
+export const previewSaleReturnSchema = z.object({
+  lines: z
+    .array(
+      z.object({
+        saleLineId: z.uuid(),
+        quantity: z.string().trim().regex(/^\d{1,14}(\.\d{1,4})?$/, 'Use a plain decimal string such as "1"').refine((v) => Number(v) > 0, 'Quantity must be greater than zero'),
+        disposition: z.enum(['RESTOCK', 'DAMAGED']).default('RESTOCK'),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+export type PreviewSaleReturnInput = z.infer<typeof previewSaleReturnSchema>;
+
+// ------------------------------------------------------------------ counter controls (session 20)
+
+/**
+ * Ask for a price change on one item at the counter. Without `email`, the person asking must hold
+ * `sales.price_override` at the branch (they approve it themself). With it, a manager who holds it
+ * approves on the spot with their own email and password (and their 6-digit code when they use
+ * two-step sign-in). `email` is top-level so the per-account rate limit counts the approver.
+ */
+export const createPriceOverrideSchema = z
+  .object({
+    branchId: z.uuid(),
+    variantId: z.uuid(),
+    /** The new unit price, on the same basis as the list price (VAT-inclusive or not). */
+    unitPrice: amountSchema,
+    reason: z.string().trim().min(1).max(200),
+    email: z.string().trim().toLowerCase().max(254).pipe(z.email()).optional(),
+    password: z.string().min(1).max(128).optional(),
+    code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code').optional(),
+  })
+  .refine((v) => (v.email === undefined) === (v.password === undefined), { message: 'Give the approver email and password together', path: ['password'] })
+  .refine((v) => v.code === undefined || v.email !== undefined, { message: 'A code goes with the approver email', path: ['code'] });
+export type CreatePriceOverrideInput = z.infer<typeof createPriceOverrideSchema>;
+
+/** A parked cart: its lines as the counter holds them; nothing is priced or reserved until it is resumed. */
+export const createHeldCartSchema = z
+  .object({
+    cashierSessionId: z.uuid(),
+    /** What the cashier calls it ("Lady in blue", a phone number's last digits…). */
+    label: z.string().trim().min(1).max(60),
+    lines: z
+      .array(
+        saleLineSchema.and(
+          z.object({
+            /** Shown in the list of held carts; the price comes back from the server on resume. */
+            name: z.string().trim().min(1).max(300),
+            sku: z.string().trim().min(1).max(64),
+            /** The counter steps the quantity by whole units (+/−) rather than typing a weight. */
+            wholeUnits: z.boolean().optional(),
+          }),
+        ),
+      )
+      .min(1)
+      .max(200),
+    beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
+    amountDue: amountSchema.optional(),
+  })
+  .superRefine((v, ctx) => {
+    for (const [i, l] of v.lines.entries()) {
+      if (l.statutory && !v.beneficiaries.some((b) => b.ref === l.statutory!.beneficiary)) {
+        ctx.addIssue({ code: 'custom', path: ['lines', i, 'statutory', 'beneficiary'], message: 'Unknown beneficiary ref' });
+      }
+    }
+  });
+export type CreateHeldCartInput = z.infer<typeof createHeldCartSchema>;
+
+export const heldCartListQuerySchema = z.object({ registerId: z.uuid() });
+export type HeldCartListQuery = z.infer<typeof heldCartListQuerySchema>;
+
+/** Resume onto the cashier's own open shift on the cart's register. */
+export const resumeHeldCartSchema = z.object({ cashierSessionId: z.uuid() });
+export type ResumeHeldCartInput = z.infer<typeof resumeHeldCartSchema>;
+
+/**
+ * An exchange (SPEC §6.3): return some lines of an earlier sale and sell new items in one go, on
+ * the cashier's own shift. The refund pays for the new sale first; the customer pays any rest with
+ * `sale.tenders`, or gets the difference back in cash when the new items cost less.
+ */
+export const createExchangeSchema = z.object({
+  cashierSessionId: z.uuid(),
+  /** The earlier sale the items come back from (same branch). */
+  saleId: z.uuid(),
+  reason: z.string().trim().min(1).max(200),
+  returnLines: z
+    .array(
+      z.object({
+        saleLineId: z.uuid(),
+        quantity: z.string().trim().regex(/^\d{1,14}(\.\d{1,4})?$/, 'Use a plain decimal string such as "1"').refine((v) => Number(v) > 0, 'Quantity must be greater than zero'),
+        disposition: z.enum(['RESTOCK', 'DAMAGED']),
+      }),
+    )
+    .min(1)
+    .max(200),
+  expectedRefund: amountSchema.optional(),
+  sale: z.object({
+    clientTransactionId: ref,
+    lines: z.array(saleLineSchema).min(1).max(200),
+    beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
+    /** What the customer pays on top of the refund (none when the refund covers the new items). */
+    tenders: z
+      .array(
+        z.discriminatedUnion('method', [
+          z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+          z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
+        ]),
+      )
+      .max(10)
+      .default([]),
+    expectedAmountDue: amountSchema.optional(),
+    customerId: z.uuid().optional(),
+  }).superRefine(checkSaleRefs),
+});
+export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;
 
 export const saleListQuerySchema = z.object({
   cashierSessionId: z.uuid().optional(),
@@ -221,6 +354,13 @@ export const reportRangeSchema = z
   .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
   .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days per report', path: ['to'] });
 export type ReportRangeQuery = z.infer<typeof reportRangeSchema>;
+
+/** Every branch the person may report on, each in its own local days; optionally one legal entity (session 20). */
+export const consolidatedRangeSchema = z
+  .object({ from: localDate, to: localDate, legalEntityId: z.uuid().optional() })
+  .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
+  .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days per report', path: ['to'] });
+export type ConsolidatedRangeQuery = z.infer<typeof consolidatedRangeSchema>;
 
 /** One local business day at a branch (e.g. open orders at its close). */
 export const reportDaySchema = z.object({ branchId: z.uuid(), day: localDate });

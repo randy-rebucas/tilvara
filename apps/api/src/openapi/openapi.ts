@@ -169,11 +169,12 @@ export function buildOpenApi(version = '0.1.0'): Json {
         'money and quantities are decimal strings. See docs/api/CONVENTIONS.md.',
     },
     servers: [{ url: 'http://127.0.0.1:4320', description: 'Local development' }],
-    security: [{ bearer: [] }],
+    security: [{ bearer: [] }, { apiKey: [] }],
     components: {
       securitySchemes: {
         bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
         terminal: { type: 'apiKey', in: 'header', name: 'Authorization', description: '`Terminal <credential>` with the X-Terminal-Id header (offline sync, ADR-0015).' },
+        apiKey: { type: 'apiKey', in: 'header', name: 'Authorization', description: '`ApiKey tlv_…`: a business’s read-only key (ADR-0019). GET only, within its scopes; plans with API access.' },
       },
       schemas: { Error: errorEnvelope },
     },

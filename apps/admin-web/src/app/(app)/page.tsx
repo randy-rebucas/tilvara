@@ -44,6 +44,12 @@ export default async function OverviewPage() {
     apiOrNull<List<{ id: string }>>('/sales?limit=1'),
   ]);
   // Drawers counted short or over wait for a manager (Drawer counts); only managers are told.
+  const perms = me.activeTenant?.permissions ?? [];
+  // One page of customers: up to 100 counted, "100+" beyond.
+  const customerPage = perms.some((p) => p === 'customers.read' || p === 'customers.manage')
+    ? await apiOrNull<{ data: { id: string }[]; nextCursor: string | null }>('/customers?limit=100')
+    : null;
+  const customerCount = customerPage ? `${customerPage.data.length}${customerPage.nextCursor ? '+' : ''}` : null;
   const drawersWaiting = me.activeTenant?.permissions.includes('cash.reconcile')
     ? ((await apiOrNull<List<{ id: string }>>('/cashier-sessions?status=CLOSED'))?.data.length ?? 0)
     : 0;
@@ -75,6 +81,10 @@ export default async function OverviewPage() {
     { denom: 'violet' as const, label: t('overview.branches'), value: branches ? active(branches).length : null, serial: active(branches).map((b) => b.code).slice(0, 3).join(' · ') || '—', href: '/locations' },
     { denom: 'orange' as const, label: t('overview.registers'), value: registers ? active(registers).length : null, serial: t('overview.terminals', { n: pairedTerminals }), href: '/locations' },
     { denom: 'green' as const, label: t('overview.team'), value: members ? activeMembers : null, serial: t('overview.pending', { n: pendingInvites }), href: '/team' },
+    // Customers have no band tab (the band is full): this tile is the way in.
+    ...(perms.some((p) => p === 'customers.read' || p === 'customers.manage')
+      ? [{ denom: 'green' as const, label: t('overview.customers'), value: customerCount, serial: t('overview.customersSerial'), href: '/customers' }]
+      : []),
   ];
 
   const branchName = active(branches)[0]?.name;
@@ -136,7 +146,7 @@ export default async function OverviewPage() {
         </aside>
 
         <section className="min-w-0">
-          <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+          <div className={`grid grid-cols-2 gap-3.5 ${kpis.length > 4 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
             {kpis.map((k) => (
               <Link key={k.label} href={k.href} className="group">
                 <Note denom={k.denom} className="h-full px-4 py-4 pr-6 transition-shadow group-hover:shadow-md" as="div">

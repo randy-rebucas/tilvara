@@ -1,11 +1,14 @@
 import type { MessageKey } from '@/i18n/messages';
-import type { IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PrepTimes, RefundWatch, ServiceChargeReport } from './api';
+import type { ByBranch, ByCategory, DiscountsReport, IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PaymentExceptions, PrepTimes, PurchasesBySupplier, RefundWatch, ServiceChargeReport } from './api';
 
 /**
  * Reports as CSV for a spreadsheet or the accountant. Money and quantities stay the API's exact
  * decimal strings (no ₱, no grouping, never through a float); headers are in the viewer's language.
  */
-export type CsvReport = 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge';
+export type CsvReport =
+  | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory'
+  | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge'
+  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments';
 
 /** API path (under /v1) for each report, given the branch and range. */
 export function reportPath(report: CsvReport, q: { branchId: string; from: string; to: string; day: string }): string {
@@ -24,6 +27,11 @@ export function reportPath(report: CsvReport, q: { branchId: string; from: strin
     prep: `/reports/prep-times?${range}`,
     open: `/reports/open-orders?branchId=${q.branchId}&day=${q.day}`,
     charge: `/reports/service-charge?${range}`,
+    category: `/reports/by-category?${range}`,
+    branches: `/reports/by-branch?from=${q.from}&to=${q.to}`,
+    discounts: `/reports/discounts?${range}`,
+    purchases: `/reports/purchases-by-supplier?${range}`,
+    payments: `/reports/payment-exceptions?branchId=${q.branchId}`,
   };
   return paths[report];
 }
@@ -144,6 +152,42 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       return [
         [t('common.date'), t('csv.checks'), t('csv.returnsCount'), t('csv.base'), t('csv.chargedExVat'), t('csv.chargedVat'), t('csv.returnedExVat'), t('csv.netExVat'), t('csv.netAmountDue')],
         ...r.days.map((d) => [d.day, d.checks, d.returns, d.base, d.charged.exVat, d.charged.vat, d.returned.exVat, d.net.exVat, d.net.amountDue]),
+      ];
+    }
+    case 'category': {
+      const r = data as ByCategory;
+      return [
+        [t('rep.category'), t('csv.netQty'), t('csv.sales'), t('csv.returns'), t('rep.netSales'), t('rep.revenueExVat'), t('rep.cogs'), t('rep.grossProfit')],
+        ...r.data.map((x) => [x.path.join(' > ') || t('rep.noCategory'), x.netQuantity, x.sales, x.returns, x.netSales, x.revenueExVat, x.cogs, x.grossProfit]),
+      ];
+    }
+    case 'branches': {
+      const r = data as ByBranch;
+      return [
+        [t('common.branch'), t('csv.salesCount'), t('csv.sales'), t('csv.returnsCount'), t('csv.returns'), t('rep.netSales'), t('csv.vatAmount'), t('rep.revenueExVat'), t('csv.discount'), t('csv.statutoryDiscount')],
+        ...r.data.map((x) => [`${x.code} ${x.name}`, x.salesCount, x.sales, x.returnsCount, x.returns, x.netSales, x.vatAmount, x.netExVat, x.discount, x.statutoryDiscount]),
+        [t('rep.allBranches'), r.totals.salesCount, r.totals.sales, r.totals.returnsCount, r.totals.returns, r.totals.netSales, r.totals.vatAmount, r.totals.netExVat, r.totals.discount, r.totals.statutoryDiscount],
+      ];
+    }
+    case 'discounts': {
+      const r = data as DiscountsReport;
+      return [
+        [t('cust.receipt'), t('cust.when'), t('common.item'), t('common.quantity'), t('rep.listPrice'), t('rep.soldAt'), t('csv.discount'), t('rep.priceChange'), t('csv.cashier'), t('rep.approvedBy'), t('common.reason')],
+        ...r.data.map((l) => [l.reference, l.completedAt, l.name, l.quantity, l.listUnitPrice, l.unitPrice, l.discount, l.priceChange, l.cashierName ?? '', l.approvedByName ?? '', l.priceReason ?? '']),
+      ];
+    }
+    case 'purchases': {
+      const r = data as PurchasesBySupplier;
+      return [
+        [t('rep.supplier'), t('rep.receipts'), t('rep.received'), t('rep.returnedToSupplier'), t('rep.netReceived'), t('rep.invoices'), t('rep.invoiced')],
+        ...r.data.map((x) => [`${x.code} ${x.name}`, x.receipts, x.received, x.returned, x.netReceived, x.invoices, x.invoiced]),
+      ];
+    }
+    case 'payments': {
+      const r = data as PaymentExceptions;
+      return [
+        [t('rep.problem'), t('csv.method'), t('rep.takenAt'), t('rep.shift'), t('rep.amount')],
+        ...r.data.map((x) => [t(`rep.problem.${x.problem}` as MessageKey), x.method, x.createdAt, `${x.registerCode} ${x.cashierName ?? ''}`.trim(), x.amount]),
       ];
     }
   }

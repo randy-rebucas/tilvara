@@ -193,6 +193,17 @@ describe('schema isolation catalog', () => {
     const userSecrets = await q(`SELECT 1 FROM information_schema.column_privileges
        WHERE grantee = 'onepos_worker' AND table_name = 'users' AND column_name IN ('password_hash', 'failed_login_count', 'locked_until', 'privileged_since')`);
     expect(userSecrets).toEqual([]);
+    // Webhooks (ADR-0019): the worker fans out, claims and settles deliveries; the API resolves API keys. Nobody else.
+    const { rows: hooks } = await pool.query<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(`
+      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
+             has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly
+        FROM unnest(ARRAY['webhook_enqueue(uuid)', 'webhook_claim(text, int, int)', 'webhook_settle(uuid, text, boolean, int, text, int)', 'auth_api_key(text, text)']) AS f`);
+    expect(hooks).toEqual([
+      { fn: 'webhook_enqueue(uuid)', app: false, worker: true, readonly: false },
+      { fn: 'webhook_claim(text, int, int)', app: false, worker: true, readonly: false },
+      { fn: 'webhook_settle(uuid, text, boolean, int, text, int)', app: false, worker: true, readonly: false },
+      { fn: 'auth_api_key(text, text)', app: true, worker: false, readonly: false },
+    ]);
     // Only the worker may drive the outbox.
     const [claim] = await q<{ app: boolean; worker: boolean }>(`SELECT
        has_function_privilege('onepos_app', 'outbox_claim(text, int, int)', 'EXECUTE') AS app,

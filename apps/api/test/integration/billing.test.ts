@@ -32,9 +32,10 @@ describe('subscription lifecycle', () => {
     const t = await signup(app, 'trial');
     const res = await http().get('/v1/subscription').set(bearer(t.access)).expect(200);
     expect(res.body).toMatchObject({ plan: { code: 'growth' }, status: 'TRIALING', access: 'FULL', usage: { maxUsers: 1, maxBranches: 0 } });
+    // The trial ends 14 days after sign-up on the database clock, which may run a little ahead of this host's (Docker VM).
     const days = (new Date(res.body.trialEndsAt).getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(13.9);
-    expect(days).toBeLessThanOrEqual(14);
+    expect(days).toBeLessThanOrEqual(14 + 60 / 86_400);
   });
 
   it('becomes read-only (not deleted) when the trial lapses', async () => {
@@ -53,7 +54,8 @@ describe('subscription lifecycle', () => {
     const entityId = await withEntity(t);
     await setSubscription(t, 'growth', 'PAST_DUE', new Date(Date.now() + 86_400_000));
     await http().post('/v1/branches').set(bearer(t.access)).send({ legalEntityId: entityId, code: 'B1', name: 'B' }).expect(201);
-    await setSubscription(t, 'growth', 'PAST_DUE', new Date(Date.now() - 1000));
+    // A minute back, not a second: the check uses the database clock, which may differ from this host's by about a second.
+    await setSubscription(t, 'growth', 'PAST_DUE', new Date(Date.now() - 60_000));
     await http().post('/v1/branches').set(bearer(t.access)).send({ legalEntityId: entityId, code: 'B2', name: 'B', birBranchCode: '00002' }).expect(402);
     await setSubscription(t, 'growth', 'CANCELED');
     await http().post('/v1/categories').set(bearer(t.access)).send({ name: 'x' }).expect(402);

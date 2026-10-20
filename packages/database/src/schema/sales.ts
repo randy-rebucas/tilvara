@@ -24,6 +24,7 @@ import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers, terminals } from './organization.js';
 import { tenants } from './platform.js';
 import { taxProfiles } from './tax.js';
+import { customers } from './customers.js';
 
 const money = (name: string) => numeric(name, { precision: 20, scale: 4 });
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -197,9 +198,13 @@ export const sales = pgTable(
     /** Review flags from sync: PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED. */
     offlineFlags: text('offline_flags').array().notNull().default(sql`'{}'::text[]`),
     completedAt: timestamp('completed_at', { withTimezone: true }).notNull().defaultNow(),
+    /** The customer the sale was rung up for (session 20, ADR-0018), if any. */
+    customerId: uuid('customer_id'),
   },
   (t) => [
     unique('sales_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.customerId], foreignColumns: [customers.tenantId, customers.id] }),
+    index('sales_customer_idx').on(t.tenantId, t.customerId, t.completedAt.desc()).where(sql`${t.customerId} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
     foreignKey({ columns: [t.tenantId, t.terminalId], foreignColumns: [terminals.tenantId, terminals.id] }),
     check('sales_origin_check', sql`(${t.origin} = 'ONLINE' AND ${t.terminalId} IS NULL AND ${t.offlineReference} IS NULL) OR (${t.origin} = 'OFFLINE' AND ${t.terminalId} IS NOT NULL AND ${t.offlineReference} IS NOT NULL)`),
@@ -269,9 +274,14 @@ export const saleLines = pgTable(
     taxSnapshot: jsonb('tax_snapshot').notNull(),
     /** A priced modifier's line points to the line of the item it modifies (ADR-0014 §3). */
     parentLineId: uuid('parent_line_id'),
+    /** The approved price change this line was sold at (session 20); `unit_price` is the approved price, `price_id` the list price it replaced. */
+    priceOverrideId: uuid('price_override_id'),
   },
   (t) => [
     unique('sale_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.priceOverrideId], foreignColumns: [priceOverrides.tenantId, priceOverrides.id] }),
+    // An approval prices one line of one sale.
+    uniqueIndex('sale_lines_price_override_once').on(t.tenantId, t.priceOverrideId).where(sql`${t.priceOverrideId} IS NOT NULL`),
     unique('sale_lines_sale_id_unique').on(t.tenantId, t.saleId, t.id),
     foreignKey({ columns: [t.tenantId, t.saleId, t.parentLineId], foreignColumns: [t.tenantId, t.saleId, t.id] }),
     unique('sale_lines_number_unique').on(t.tenantId, t.saleId, t.lineNo),
@@ -282,6 +292,86 @@ export const saleLines = pgTable(
     index('sale_lines_sale_idx').on(t.tenantId, t.saleId),
     check('sale_lines_quantity_positive', sql`${t.quantity} > 0`),
     check('sale_lines_beneficiary_share', sql`(${t.beneficiaryId} IS NULL) = (${t.schemeShare} IS NULL)`),
+  ],
+);
+
+// ------------------------------------------------------------------ counter controls (session 20)
+
+/**
+ * A manager-approved price for one item at one branch, asked for by a cashier. Append-only. The
+ * approver either holds `sales.price_override` and asked themself, or signed in on the spot
+ * (CREDENTIALS). Valid for 30 minutes; a sale line uses it once (`sale_lines_price_override_once`).
+ */
+export const priceOverrides = pgTable(
+  'price_overrides',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    /** The list price in force when it was approved. */
+    priceId: uuid('price_id').notNull(),
+    listUnitPrice: money('list_unit_price').notNull(),
+    unitPrice: money('unit_price').notNull(),
+    reason: text('reason').notNull(),
+    requestedBy: uuid('requested_by').notNull(),
+    approvedBy: uuid('approved_by').notNull(),
+    approvalMethod: text('approval_method').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique('price_overrides_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    foreignKey({ columns: [t.tenantId, t.priceId], foreignColumns: [productPrices.tenantId, productPrices.id] }),
+    index('price_overrides_branch_idx').on(t.tenantId, t.branchId, t.createdAt.desc()),
+    check('price_overrides_price_check', sql`${t.unitPrice} >= 0 AND ${t.listUnitPrice} >= 0 AND ${t.unitPrice} <> ${t.listUnitPrice}`),
+    check('price_overrides_reason_check', sql`length(trim(${t.reason})) > 0`),
+    check('price_overrides_method_check', sql`${t.approvalMethod} IN ('SELF','CREDENTIALS')`),
+    check('price_overrides_self_check', sql`(${t.approvalMethod} = 'SELF') = (${t.approvedBy} = ${t.requestedBy})`),
+    check('price_overrides_expiry_check', sql`${t.expiresAt} > ${t.createdAt}`),
+  ],
+);
+
+export const HELD_CART_STATUSES = ['OPEN', 'RESUMED', 'DISCARDED'] as const;
+export type HeldCartStatus = (typeof HELD_CART_STATUSES)[number];
+
+/**
+ * A cart parked at a register so the next customer can be served (SPEC §6.3 held carts). Not a
+ * financial record: no price, tax or stock is fixed until it is resumed and checked out like any cart.
+ * Resuming or discarding it clears `lines` and `beneficiaries` (SC/PWD names), so personal data does
+ * not outlive the cart.
+ */
+export const heldCarts = pgTable(
+  'held_carts',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    registerId: uuid('register_id').notNull(),
+    cashierSessionId: uuid('cashier_session_id').notNull(),
+    heldBy: uuid('held_by').notNull(),
+    label: text('label').notNull(),
+    lines: jsonb('lines').notNull(),
+    beneficiaries: jsonb('beneficiaries').notNull().default(sql`'[]'::jsonb`),
+    lineCount: integer('line_count').notNull(),
+    /** The total the cashier saw when parking it (for the list only; re-priced on resume). */
+    amountDue: money('amount_due'),
+    status: text('status').$type<HeldCartStatus>().notNull().default('OPEN'),
+    closedBy: uuid('closed_by'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('held_carts_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
+    foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
+    index('held_carts_open_idx').on(t.tenantId, t.registerId, t.createdAt).where(sql`${t.status} = 'OPEN'`),
+    check('held_carts_status_check', sql`${t.status} IN ('OPEN','RESUMED','DISCARDED')`),
+    check('held_carts_closed_check', sql`(${t.status} = 'OPEN') = (${t.closedAt} IS NULL) AND (${t.closedAt} IS NULL) = (${t.closedBy} IS NULL)`),
+    check('held_carts_label_check', sql`length(trim(${t.label})) BETWEEN 1 AND 60`),
+    check('held_carts_line_count_check', sql`${t.lineCount} BETWEEN 1 AND 200`),
   ],
 );
 
@@ -356,7 +446,7 @@ export const paymentEvents = pgTable(
   ],
 );
 
-export const TENDER_METHODS = ['CASH', ...PAYMENT_METHODS] as const;
+export const TENDER_METHODS = ['CASH', ...PAYMENT_METHODS, 'STORE_CREDIT'] as const;
 
 export const saleTenders = pgTable(
   'sale_tenders',
@@ -371,14 +461,23 @@ export const saleTenders = pgTable(
     amount: money('amount').notNull(),
     tendered: money('tendered').notNull(),
     change: money('change').notNull(),
+    /**
+     * An exchange (session 20): this cash tender is the refund of that return, put towards the new
+     * sale instead of leaving the drawer. Both documents move cash as usual (REFUND out, SALE in), so
+     * the drawer and the books net to what really changed hands.
+     */
+    exchangeReturnId: uuid('exchange_return_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('sale_tenders_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.exchangeReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
+    uniqueIndex('sale_tenders_exchange_once').on(t.tenantId, t.exchangeReturnId).where(sql`${t.exchangeReturnId} IS NOT NULL`),
+    check('sale_tenders_exchange_cash', sql`${t.exchangeReturnId} IS NULL OR ${t.method} = 'CASH'`),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     index('sale_tenders_sale_idx').on(t.tenantId, t.saleId),
-    check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET')`),
-    check('sale_tenders_intent_check', sql`(${t.method} = 'CASH') = (${t.paymentIntentId} IS NULL)`),
+    check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET','STORE_CREDIT')`),
+    check('sale_tenders_intent_check', sql`(${t.method} IN ('CASH','STORE_CREDIT')) = (${t.paymentIntentId} IS NULL)`),
     check('sale_tenders_no_electronic_change', sql`${t.method} = 'CASH' OR ${t.change} = 0`),
     foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
     uniqueIndex('sale_tenders_intent_once').on(t.tenantId, t.paymentIntentId).where(sql`${t.paymentIntentId} IS NOT NULL`),
@@ -422,7 +521,7 @@ export const saleReturns = pgTable(
     index('sale_returns_sale_idx').on(t.tenantId, t.saleId),
     check('sale_returns_kind_check', sql`${t.kind} IN ('VOID','RETURN')`),
     check('sale_returns_reason_check', sql`length(trim(${t.reason})) > 0`),
-    check('sale_returns_refund_method_check', sql`${t.refundMethod} IN ('CASH')`),
+    check('sale_returns_refund_method_check', sql`${t.refundMethod} IN ('CASH','STORE_CREDIT')`),
     check(
       'sale_returns_buckets_check',
       sql`${t.amountDue} = ${t.vatableSales} + ${t.vatAmount} + ${t.vatExemptSales} + ${t.zeroRatedSales} + ${t.percentageTaxSales} - ${t.statutoryDiscount}`,
@@ -449,6 +548,47 @@ export const saleReturnLines = pgTable(
     index('sale_return_lines_line_idx').on(t.tenantId, t.saleLineId),
     check('sale_return_lines_quantity_positive', sql`${t.quantity} > 0`),
     check('sale_return_lines_disposition_check', sql`${t.disposition} IN ('RESTOCK','DAMAGED')`),
+  ],
+);
+
+// ------------------------------------------------------------------ store credit (session 20, ADR-0018)
+
+/**
+ * A customer's store credit with one legal entity (the business that owes it): Σ amount = balance,
+ * never below zero (a trigger takes a per-customer lock and checks). Append-only. RETURN: a refund
+ * given as credit (+); REDEEM: credit spent on a sale (−). The books carry the same amounts in
+ * CUSTOMER_STORE_CREDIT, posted with the return or the sale.
+ */
+export const customerCreditEntries = pgTable(
+  'customer_credit_entries',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    customerId: uuid('customer_id').notNull(),
+    kind: text('kind').notNull(),
+    amount: money('amount').notNull(),
+    saleId: uuid('sale_id'),
+    saleReturnId: uuid('sale_return_id'),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('customer_credit_entries_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.customerId], foreignColumns: [customers.tenantId, customers.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
+    foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
+    index('customer_credit_entries_customer_idx').on(t.tenantId, t.customerId, t.legalEntityId, t.createdAt),
+    uniqueIndex('customer_credit_entries_return_once').on(t.tenantId, t.saleReturnId).where(sql`${t.saleReturnId} IS NOT NULL`),
+    uniqueIndex('customer_credit_entries_sale_once').on(t.tenantId, t.saleId).where(sql`${t.saleId} IS NOT NULL`),
+    check('customer_credit_entries_kind_check', sql`${t.kind} IN ('RETURN','REDEEM')`),
+    check(
+      'customer_credit_entries_link_check',
+      sql`(${t.kind} = 'RETURN' AND ${t.amount} > 0 AND ${t.saleReturnId} IS NOT NULL AND ${t.saleId} IS NULL) OR (${t.kind} = 'REDEEM' AND ${t.amount} < 0 AND ${t.saleId} IS NOT NULL AND ${t.saleReturnId} IS NULL)`,
+    ),
   ],
 );
 

@@ -10,12 +10,15 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   idempotency_records: 'request replay cache, purged after a day; holds copies of API answers, not records',
   outbox_events: 'internal delivery queue of the worker',
   sequence_counters: 'next numbers of the document series; every document carries its own number',
+  webhook_deliveries: 'delivery queue of the worker; each carries an event of ids only, already in the records',
 };
 
 /** Columns never exported (the worker has no grant on them either). */
 export const EXPORT_SECRET_COLUMNS: Record<string, readonly string[]> = {
   terminals: ['credential_hash'],
   member_invitations: ['token_hash'],
+  api_keys: ['key_hash'],
+  webhook_endpoints: ['signing_salt'],
 };
 
 export const EXPORT_FORMAT_VERSION = 1;

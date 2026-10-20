@@ -12,6 +12,7 @@ import { recordAudit } from '../audit/audit.js';
 import { ALLOW_READ_ONLY_BUSINESS, AuthContext, AuthedRequest, IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from './auth-context.js';
 import { Grant, hasPermission } from './authorization.js';
 import { InvalidTokenError, TokenService } from './token.service.js';
+import { API_KEY_FORMAT, hashApiKey } from '../integrations/integrations.service.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -44,6 +45,7 @@ export class AuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<AuthedRequest>();
     const header = req.header('authorization');
+    if (header?.startsWith('ApiKey ')) return this.apiKeySession(req, header.slice(7).trim(), targets);
     if (!header?.startsWith('Bearer ')) throw unauthenticated();
 
     let claims;
@@ -203,6 +205,42 @@ export class AuthGuard implements CanActivate {
     if (missing.length > 0) {
       throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
     }
+    return true;
+  }
+
+  /**
+   * A business's API key (ADR-0019): resolved by its prefix and hash (the runtime role never reads
+   * hashes), only while the plan includes `api_access`. Read-only: every write is refused. Its scopes
+   * are business-wide grants of a few `*.read` permissions; nothing else is reachable.
+   */
+  private async apiKeySession(req: AuthedRequest, key: string, targets: Parameters<Reflector['getAllAndOverride']>[1]): Promise<boolean> {
+    const m = API_KEY_FORMAT.exec(key);
+    if (!m) throw unauthenticated();
+    const { rows } = await this.database.pool.query<{ key_id: string; tenant_id: string; name: string; scopes: string[]; created_by: string; tenant_status: string }>(
+      'SELECT * FROM auth_api_key($1, $2)',
+      [m[1], hashApiKey(key)],
+    );
+    const r = rows[0];
+    if (!r || !['ACTIVE', 'SUSPENDED'].includes(r.tenant_status)) throw unauthenticated();
+    const features = await withTenant(this.database.pool, r.tenant_id, async (_db, client) =>
+      (await client.query<{ features: string[] }>('SELECT p.features FROM subscriptions s JOIN plans p ON p.code = s.plan_code')).rows[0]?.features ?? [],
+    );
+    if (!features.includes('api_access')) throw new AppError('ENTITLEMENT_REQUIRED', 'This plan does not include API access', HttpStatus.FORBIDDEN, { feature: 'api_access' });
+    if (!SAFE_METHODS.has(req.method)) throw new AppError('API_KEY_READ_ONLY', 'API keys can only read', HttpStatus.FORBIDDEN);
+    const grants: Grant[] = r.scopes.filter(isPermissionCode).map((permission) => ({ permission, scopeType: 'TENANT', scopeId: null }));
+    const auth: AuthContext = {
+      userId: r.created_by,
+      sessionId: `api-key:${r.key_id}`,
+      correlationId: req.correlationId,
+      tenant: { tenantId: r.tenant_id, membershipId: null, status: r.tenant_status, grants },
+      mfa: { enrolled: false, sessionVerified: true, required: false, dueAt: null },
+      apiKey: { keyId: r.key_id, name: r.name },
+    };
+    req.auth = auth;
+    enrichLogContext({ tenantId: r.tenant_id });
+    const required = this.reflector.getAllAndOverride<PermissionCode[]>(REQUIRED_PERMISSIONS, targets) ?? [];
+    const missing = required.filter((p) => !hasPermission(grants, p));
+    if (missing.length > 0) throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
     return true;
   }
 

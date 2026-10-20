@@ -17,6 +17,8 @@ export interface AuthContext {
   } | null;
   /** Set when the token is a support session (ADR-0016 slice 6): read-only, under a grant. */
   support?: { grantId: string; staffName: string; expiresAt: Date };
+  /** Set for a request made with a business's API key (ADR-0019): read-only, its scopes only; `userId` is who made the key. */
+  apiKey?: { keyId: string; name: string };
   /** Two-step sign-in state of this user and session (ADR-0016). */
   mfa: {
     enrolled: boolean;

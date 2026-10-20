@@ -2,7 +2,7 @@ import { encodeEscPos, toText } from '@1pos/escpos';
 import { describe, expect, it } from 'vitest';
 import type { Receipt } from '../types';
 import { escposDrawer, escposPrinter } from './devices';
-import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable } from './printing';
+import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable, tenderLabel } from './printing';
 
 const receipt: Receipt = {
   notice: 'THIS IS NOT AN OFFICIAL INVOICE',
@@ -107,5 +107,20 @@ describe('ESC/POS printer port', () => {
     const sent: Uint8Array[] = [];
     await escposDrawer(async (b) => void sent.push(b)).open();
     expect(Buffer.from(sent[0]!).toString('hex')).toBe('1b401b700019fa');
+  });
+});
+
+describe('tender labels (session 20)', () => {
+  it('names an exchange credit by its return, store credit in words, the rest by method', () => {
+    expect(tenderLabel({ method: 'CASH', exchangeReturnNumber: 12 })).toBe('EXCHANGE CREDIT (RETURN #000012)');
+    expect(tenderLabel({ method: 'STORE_CREDIT' })).toBe('STORE CREDIT');
+    expect(tenderLabel({ method: 'CARD' })).toBe('CARD');
+  });
+
+  it('prints the customer on the receipt when the sale has one', () => {
+    const text = toText(receiptToPrintable({ ...receipt, customer: { name: 'Rosa Lim', tin: '123-456-789' } }), 48);
+    expect(text).toContain('Customer: Rosa Lim');
+    expect(text).toContain('TIN 123-456-789');
+    expect(toText(receiptToPrintable(receipt), 48)).not.toContain('Customer:');
   });
 });

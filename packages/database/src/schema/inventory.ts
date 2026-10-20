@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { bigint, boolean, check, foreignKey, index, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
 import { branches } from './organization.js';
+import { customers } from './customers.js';
 
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
 
@@ -241,5 +242,48 @@ export const reorderPoints = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     check('reorder_points_check', sql`${t.reorderPoint} >= 0 AND (${t.reorderQuantity} IS NULL OR ${t.reorderQuantity} > 0)`),
+  ],
+);
+
+// ------------------------------------------------------------------ reservations (session 20, SPEC §10)
+
+export const RESERVATION_STATUSES = ['ACTIVE', 'RELEASED'] as const;
+export type ReservationStatus = (typeof RESERVATION_STATUSES)[number];
+
+/**
+ * Stock set aside at a branch (a customer's order, a layaway, a display piece) so it is not sold to
+ * someone else: available = on hand − active reservations. It moves no stock and posts nothing; the
+ * goods leave with their sale as usual. ACTIVE → RELEASED once (sold, collected or cancelled), or it
+ * stops counting at `expires_at`.
+ */
+export const stockReservations = pgTable(
+  'stock_reservations',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    quantity: qty('quantity').notNull(),
+    note: text('note').notNull(),
+    customerId: uuid('customer_id'),
+    status: text('status').$type<ReservationStatus>().notNull().default('ACTIVE'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    releasedBy: uuid('released_by'),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    releaseReason: text('release_reason'),
+  },
+  (t) => [
+    unique('stock_reservations_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    foreignKey({ columns: [t.tenantId, t.customerId], foreignColumns: [customers.tenantId, customers.id] }),
+    index('stock_reservations_active_idx').on(t.tenantId, t.branchId, t.variantId).where(sql`${t.status} = 'ACTIVE'`),
+    check('stock_reservations_quantity_positive', sql`${t.quantity} > 0`),
+    check('stock_reservations_note_check', sql`length(trim(${t.note})) BETWEEN 1 AND 200`),
+    check('stock_reservations_status_check', sql`${t.status} IN ('ACTIVE','RELEASED')`),
+    check('stock_reservations_released_check', sql`(${t.status} = 'RELEASED') = (${t.releasedAt} IS NOT NULL) AND (${t.releasedAt} IS NULL) = (${t.releasedBy} IS NULL) AND (${t.releasedAt} IS NULL) = (${t.releaseReason} IS NULL)`),
+    check('stock_reservations_expiry_check', sql`${t.expiresAt} IS NULL OR ${t.expiresAt} > ${t.createdAt}`),
   ],
 );

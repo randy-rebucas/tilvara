@@ -55,8 +55,9 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Source | The cashier, from the customer's ID at the counter |
 | Basis | For the business: legal obligation (Sec. 12(c)); if sensitive (README §2), processing provided for by law (Sec. 13(b)). Tilvara: processing on the business's instructions |
 | Recipients | The business's authorised staff; its accountant through reports and exports; the BIR when the business files |
-| Tables | `sale_beneficiaries`, `order_bill_beneficiaries` (append-only); for 24 hours, copies of API answers in `idempotency_records` |
-| Retention | Fiscal records: at least 5 years (schedule), then anonymised (job not built) |
+| Tables | `sale_beneficiaries`, `order_bill_beneficiaries` (append-only); for 24 hours, copies of API answers in `idempotency_records`; while a cart is parked at a register, `held_carts.beneficiaries` (session 20: cleared the moment the cart is resumed or discarded) |
+| Retention | Fiscal records: at least 5 years (schedule), then anonymised (job not built). A held cart's copy: until it is resumed or discarded (enforced by the database); a cart left open stays until someone discards it |
+| Notes | Price changes at the counter (`price_overrides`, session 20) record which staff member asked and which approved, by account id, with the reason typed; the approver's email and password are checked once and never stored |
 
 ### 4. Restaurant orders — PIP
 | | |
@@ -155,3 +156,31 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Data | Legal entity name, trade name, TIN, registered address (personal data when the business is a sole proprietor), branch addresses, plan and subscription status |
 | Basis | Contract; legal obligation for receipts and tax |
 | Tables | `legal_entities`, `branches`, `tenants`, `subscriptions` |
+
+### 15. Customers, their consent and store credit — PIP (session 20, ADR-0018)
+| | |
+|---|---|
+| Purpose | Know who bought what (receipts, returns, after-sales), keep a customer's store credit, and send offers only to customers who agreed |
+| People | The business's customers who give their name |
+| Data | Name (required); optional customer number, phone, email, TIN (business buyers), address, notes; marketing consent yes/no with its history (when, how: at the counter, in the back office, at the customer's request, who recorded it); the customer on each sale; store credit entries |
+| Source | The customer, through the cashier or a manager |
+| Basis | For the business: contract (Sec. 12(b)) for the purchase and store credit; **consent** (Sec. 12(a)) for offers, asked separately and withdrawable at any time (a withdrawal is recorded at once by anyone who can open the customer) |
+| Recipients | The business's staff who hold `customers.read`/`customers.manage`; purchase history only to those who may read those sales; the business's data export |
+| Tables | `customers`, `customer_consent_events` (append-only), `customer_credit_entries` (append-only), `sales.customer_id` |
+| Rights | Access: "Download their data" (JSON of profile, consent history, purchases, credit; audited). Correction: "Correct details" (audited by field name, not value). Erasure: "Remove personal details" blanks every personal field for good (refused while store credit is owed); sales stay for the fiscal period without the name |
+| Retention | *Proposed:* anonymise a customer 2 years after their last purchase, unless store credit is owed (DPO to confirm). Today: kept until the business anonymises them |
+| Notes | Notes must never hold health, beliefs or ID numbers (the form says so). The audit log names changed fields, never their values |
+
+### 16. Integrations: API keys and webhooks — PIP (session 20, ADR-0019)
+| | |
+|---|---|
+| Purpose | Let a business connect its own systems (bookkeeping, e-commerce, dashboards): a read-only key, and messages to an address it chooses when a sale or stock event happens |
+| People | The member who made a key or webhook (named on the key); indirectly, customers and staff whose records a key may read within its scopes |
+| Data | Key name, prefix, scopes, who made it, when made, expires, last used, revoked and by whom; the key's SHA-256 hash (never readable by the app). Webhook address, description, topics, on/off, a signing salt (the secret is derived, never stored). Deliveries: topic, the event's ids (sale, branch, register, variant), tries, last HTTP status or error, times |
+| Source | The business's owner/admin (`integrations.manage`); the outbox (events) |
+| Basis | For the business: contract with its own processors; for Tilvara: processor on the business's instruction (Sec. 12(b)) |
+| Recipients | The system holding the key (reads within the scopes); the webhook address's operator (ids only, no names, contacts or amounts tendered) |
+| Tables | `api_keys`, `webhook_endpoints`, `webhook_deliveries` |
+| Rights | A key or webhook is not personal data of a customer; a key's reads are the business's own access to its records (the business answers access requests under §15 and §5) |
+| Retention | Keys and endpoints: until the business is deleted (revoked keys are kept as evidence). *Proposed:* purge delivered/dead `webhook_deliveries` after 30 days (not built yet; DPO to confirm) |
+| Notes | The business must have its own agreement with whoever receives the data (the screen says a key reads the records it is given). Audit rows name a key by prefix and a webhook by host only |

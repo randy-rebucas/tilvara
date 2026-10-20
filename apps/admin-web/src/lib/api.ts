@@ -301,6 +301,77 @@ export interface Supplier {
   paymentTermsDays: number;
   archivedAt: string | null;
 }
+/** A customer (ADR-0018). The list carries the summary; one customer adds the rest. */
+export interface CustomerSummary {
+  id: string;
+  code: string | null;
+  displayName: string;
+  phone: string | null;
+  email: string | null;
+  tin: string | null;
+  marketingConsent: boolean;
+  archivedAt: string | null;
+  anonymisedAt: string | null;
+  createdAt: string;
+}
+export interface Customer extends CustomerSummary {
+  address: string | null;
+  notes: string | null;
+  marketingConsentAt: string | null;
+  updatedAt: string;
+  storeCredit: { legalEntityId: string; legalEntityName: string | null; balance: string }[];
+  canManage: boolean;
+}
+export interface CustomerSale {
+  id: string;
+  saleNumber: number;
+  reference: string;
+  branchId: string;
+  completedAt: string;
+  amountDue: string;
+}
+export interface CreditEntry {
+  id: string;
+  legalEntityId: string;
+  branchId: string;
+  kind: 'RETURN' | 'REDEEM';
+  amount: string;
+  saleId: string | null;
+  saleReturnId: string | null;
+  createdAt: string;
+}
+/** A supplier's catalog entry for an item (session 20). */
+export interface SupplierItem {
+  id: string;
+  supplierId: string;
+  variantId: string;
+  supplierSku: string | null;
+  supplierItemName: string | null;
+  unitCost: string | null;
+  preferred: boolean;
+  sku: string;
+  name: string;
+  supplierCode: string;
+  supplierName: string;
+}
+/** Stock set aside at a branch (session 20). */
+export interface Reservation {
+  id: string;
+  branchId: string;
+  variantId: string;
+  sku: string;
+  name: string;
+  quantity: string;
+  note: string;
+  customerId: string | null;
+  status: 'ACTIVE' | 'RELEASED';
+  expiresAt: string | null;
+  expired: boolean;
+  createdAt: string;
+  createdByName: string | null;
+  releasedAt: string | null;
+  releaseReason: string | null;
+}
 export type OrderStatus = 'DRAFT' | 'APPROVED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED' | 'CANCELLED';
 export interface PurchaseOrderRow {
   id: string;
@@ -327,6 +398,8 @@ export interface PurchaseOrder extends Omit<PurchaseOrderRow, 'supplierName'> {
     variantId: string;
     sku: string;
     name: string;
+    /** What the supplier calls it (their catalog, session 20). */
+    supplierSku?: string | null;
     quantity: string;
     unitCost: string;
     lineValue: string;
@@ -388,6 +461,8 @@ export interface Sale extends Buckets {
   lines: (Buckets & { id: string; lineNo: number; variantId: string; name: string; quantity: string; unitPrice: string; amountDue: string; returnedQuantity: string; parentLineId: string | null })[];
   charges: { id: string; kind: string; rate: string; amountDue: string }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
+  /** The customer it was rung up for (ADR-0018). */
+  customerId?: string | null;
 }
 export interface SaleReturnDoc extends Buckets {
   id: string;
@@ -580,7 +655,7 @@ export interface LowStockRow {
 }
 export interface Valuation {
   branchId: string;
-  data: { variantId: string; sku: string; name: string; quantity: string; avgCost: string; value: string }[];
+  data: { variantId: string; sku: string; name: string; quantity: string; avgCost: string; value: string; reserved?: string; available?: string }[];
   totalValue: string;
   ledgerValue: string;
 }
@@ -706,6 +781,32 @@ export interface ByCashier {
 }
 export interface ByTender {
   data: { method: string; tenders: number; collected: string; refundsCount: number; refunded: string; net: string }[];
+}
+/** Session 20 reports (SPEC §6.10). */
+type Figures = { sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string };
+export interface ByCategory {
+  data: (Figures & { categoryId: string | null; name: string | null; path: string[]; netQuantity: string })[];
+  top: (Figures & { categoryId: string | null; name: string | null })[];
+  totals: Figures;
+}
+export interface ByBranch {
+  from: string;
+  to: string;
+  data: { branchId: string; code: string; name: string; salesCount: number; sales: string; returnsCount: number; returns: string; netSales: string; vatAmount: string; netExVat: string; discount: string; statutoryDiscount: string }[];
+  totals: { salesCount: number; returnsCount: number; sales: string; returns: string; netSales: string; vatAmount: string; netExVat: string; discount: string; statutoryDiscount: string };
+}
+export interface DiscountsReport {
+  data: { saleId: string; reference: string; completedAt: string; name: string; quantity: string; listUnitPrice: string; unitPrice: string; discount: string; priceChange: string; cashierName: string | null; approvedByName: string | null; approvalMethod: 'SELF' | 'CREDENTIALS' | null; priceReason: string | null }[];
+  byCashier: { userId: string; displayName: string | null; lines: number; discount: string; priceChange: string }[];
+  totals: { lines: number; discount: string; priceChange: string };
+}
+export interface PurchasesBySupplier {
+  data: { supplierId: string; code: string; name: string; receipts: number; received: string; supplierReturns: number; returned: string; netReceived: string; invoices: number; invoiced: string }[];
+  totals: { received: string; returned: string; netReceived: string; invoiced: string };
+}
+export interface PaymentExceptions {
+  data: { id: string; method: string; amount: string; status: string; createdAt: string; cashierSessionId: string; shiftStatus: string; registerCode: string; cashierName: string | null; ageSeconds: number; problem: 'NO_ANSWER' | 'WAITING' | 'NOT_IN_A_SALE' }[];
+  totals: { count: number; amount: string };
 }
 export interface TaxSummary {
   data: (Omit<SaleBuckets, 'gross' | 'discount'> & { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string })[];

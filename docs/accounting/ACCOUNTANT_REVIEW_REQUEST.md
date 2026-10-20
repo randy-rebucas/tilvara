@@ -61,6 +61,7 @@ Policies: moving-average cost per branch and item; negative stock is allowed and
 8. **Non-VAT (percentage tax) sellers**: sales are credited at the full price and no output VAT is posted; percentage tax is not accrued. Should we accrue percentage tax monthly?
 9. **Period close** is per legal entity and month. Is that sufficient, or do you need a year-end close (income summary to retained earnings) in the product?
 10. **Account numbering** (1xxx assets … 5xxx expenses): fine as a default for small PH retailers?
+11. **Store credit (session 20, ADR-0018).** A return refunded as store credit posts like a cash refund but credits *2300 Customer store credit* (liability) instead of cash; spending it debits that account instead of cash. Output VAT is reversed when the goods come back and charged again on the sale that uses the credit. Is that the right VAT treatment? Should unspent credit ever expire (breakage income), and if so after how long? Is one liability account per legal entity enough, or do you need it per branch?
 
 ## 4. What we will do with your answers
 Each answer becomes either a change to `@1pos/accounting` (with tests) or a recorded decision in ADR-0013. Nothing changes in posted books retroactively: corrections are made by new entries.

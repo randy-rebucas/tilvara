@@ -3,12 +3,12 @@ import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier, type SupplierItem } from '@/lib/api';
 import { formatDate, formatDateTime, formatTin, peso } from '@/lib/format';
-import { branchLabel, docNo, isUuid } from '@/lib/options';
+import { branchLabel, docNo, isUuid, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
-import { EditSupplierForm } from '../../forms';
+import { AddSupplierItemForm, EditSupplierForm, EditSupplierItemForm } from '../../forms';
 
 export const metadata = { title: 'Supplier' };
 
@@ -19,14 +19,17 @@ export default async function SupplierPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [me, supplier, orders, branches] = await Promise.all([
+  const [me, supplier, orders, branches, catalog] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<Supplier>(`/suppliers/${id}`),
     apiOrNull<{ data: PurchaseOrderRow[] }>(`/purchase-orders?supplierId=${id}`),
     apiOrNull<{ data: Branch[] }>('/branches'),
+    apiOrNull<{ data: SupplierItem[] }>(`/suppliers/${id}/items`),
   ]);
   if (!supplier) notFound();
   const canManage = me.activeTenant?.permissions.includes('purchasing.manage') ?? false;
+  const products = canManage && !supplier?.archivedAt ? await allProducts() : null;
+  const listed = new Set(catalog?.data.map((i) => i.variantId));
   const open = orders?.data.filter((o) => OPEN.includes(o.status)).length ?? 0;
 
   return (
@@ -65,6 +68,43 @@ export default async function SupplierPage({ params }: { params: Promise<{ id: s
           </>
         )}
       </div>
+
+      {/* What this supplier calls each item and charges for it (session 20): orders take the cost from here. */}
+      <section>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <h2 className="section-title pt-2">{t('pur.catalog')}</h2>
+          {products && <AddSupplierItemForm supplierId={supplier.id} variants={variantOptions(products.data).filter((v) => !listed.has(v.id))} />}
+        </div>
+        <Note denom="gold" className="pr-2">
+          {catalog && catalog.data.length > 0 ? (
+            <RecordTable
+              rows={catalog.data}
+              rowKey={(i) => i.id}
+              columns={[
+                { header: t('prod.sku'), cell: (i) => <Serial className="text-ink">{i.sku}</Serial> },
+                { header: t('common.item'), cell: (i) => <span>{i.name}{i.preferred && <span className="tag ml-2">{t('pur.preferred')}</span>}</span> },
+                { header: t('pur.supplierSku'), cell: (i) => <Serial className="text-ink">{i.supplierSku ?? '—'}</Serial> },
+                { header: t('pur.catalogCostLabel'), num: true, cell: (i) => <span className="money">{i.unitCost ? peso(i.unitCost) : '—'}</span> },
+                ...(canManage
+                  ? [{ header: '', cell: (i: SupplierItem) => (
+                      <span className="inline-flex flex-wrap gap-2">
+                        <EditSupplierItemForm item={i} supplierId={supplier.id} />
+                        <ActionButton url={`/api/v1/supplier-items/${i.id}/archive`} label={t('pur.removeCatalogItem')} />
+                      </span>
+                    ) }]
+                  : []),
+              ]}
+              stacked={{
+                title: (i) => i.name,
+                meta: (i) => <Serial>{i.sku} · {t('pur.supplierSku')} {i.supplierSku ?? '—'}{i.preferred ? ` · ${t('pur.preferred')}` : ''}</Serial>,
+                figure: (i) => <span className="money font-semibold">{i.unitCost ? peso(i.unitCost) : '—'}</span>,
+              }}
+            />
+          ) : (
+            <Empty>{catalog ? t('pur.catalogEmpty') : t('common.noAccess')}</Empty>
+          )}
+        </Note>
+      </section>
 
       <section>
         <h2 className="section-title mb-3">{t('pur.orders')}</h2>

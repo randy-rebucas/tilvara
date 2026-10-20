@@ -16,6 +16,10 @@ import {
   createPurchaseOrderSchema,
   createSupplierReturnSchema,
   createSupplierSchema,
+  createSupplierItemSchema,
+  updateSupplierItemSchema,
+  type CreateSupplierItemInput,
+  type UpdateSupplierItemInput,
   endPurchaseOrderSchema,
   goodsReceiptListQuerySchema,
   idParamSchema,
@@ -43,6 +47,7 @@ import { PayablesService } from './payables.service.js';
 import { PurchaseOrdersService } from './purchase-orders.service.js';
 import { ReceivingService } from './receiving.service.js';
 import { SuppliersService } from './suppliers.service.js';
+import { SupplierItemsService } from './supplier-items.service.js';
 
 const id = new ZodPipe(idParamSchema);
 
@@ -55,7 +60,35 @@ export class PurchasingController {
     @Inject(PurchaseOrdersService) private readonly orders: PurchaseOrdersService,
     @Inject(ReceivingService) private readonly receiving: ReceivingService,
     @Inject(PayablesService) private readonly payables: PayablesService,
+    @Inject(SupplierItemsService) private readonly catalog: SupplierItemsService,
   ) {}
+
+  // supplier catalog (session 20)
+  @Get('suppliers/:id/items')
+  listSupplierItems(@Auth() auth: AuthContext, @Param('id', id) supplierId: string) {
+    return this.catalog.list(auth, supplierId);
+  }
+
+  @Post('suppliers/:id/items')
+  createSupplierItem(@Auth() auth: AuthContext, @Param('id', id) supplierId: string, @Body(new ZodPipe(createSupplierItemSchema)) body: CreateSupplierItemInput) {
+    return this.catalog.create(auth, supplierId, body);
+  }
+
+  @Patch('supplier-items/:id')
+  updateSupplierItem(@Auth() auth: AuthContext, @Param('id', id) itemId: string, @Body(new ZodPipe(updateSupplierItemSchema)) body: UpdateSupplierItemInput) {
+    return this.catalog.update(auth, itemId, body);
+  }
+
+  @HttpCode(200)
+  @Post('supplier-items/:id/archive')
+  archiveSupplierItem(@Auth() auth: AuthContext, @Param('id', id) itemId: string) {
+    return this.catalog.archive(auth, itemId);
+  }
+
+  @Get('variants/:id/suppliers')
+  variantSuppliers(@Auth() auth: AuthContext, @Param('id', id) variantId: string) {
+    return this.catalog.forVariant(auth, variantId);
+  }
 
   // suppliers
   @Idempotent()

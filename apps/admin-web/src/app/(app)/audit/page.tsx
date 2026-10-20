@@ -25,7 +25,7 @@ interface AuditRow {
 type Query = { from?: string; to?: string; action?: string; actor?: string; type?: string; record?: string; cursor?: string };
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 /** Action families to narrow by (prefixes; the API matches "starts with"). */
-const FAMILIES = ['sale', 'cash', 'stock', 'goods', 'supplier', 'purchase', 'order', 'member', 'role', 'invitation', 'product', 'price', 'journal', 'period', 'terminal', 'support', 'data_export'] as const;
+const FAMILIES = ['sale', 'cash', 'stock', 'goods', 'supplier', 'purchase', 'order', 'member', 'role', 'invitation', 'product', 'price', 'journal', 'period', 'terminal', 'support', 'data_export', 'held_cart', 'customer', 'api_key', 'webhook'] as const;
 
 /** Where a record lives in the admin, when it has a page. */
 function recordHref(type: string, id: string | null): string | null {

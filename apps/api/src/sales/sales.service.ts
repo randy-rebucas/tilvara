@@ -5,8 +5,11 @@ import {
   desc,
   eq,
   saleBeneficiaries,
+  customerCreditEntries,
+  customers,
   saleCharges,
   saleLines,
+  saleReturns,
   sales,
   saleTenders,
   branches,
@@ -31,7 +34,7 @@ import {
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
-import type { CreateCheckInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput } from '@1pos/validation';
+import type { CreateCheckInput, CreateExchangeInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput } from '@1pos/validation';
 import { dbNow } from '../common/clock.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -41,7 +44,9 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TaxService, unprocessable, type CartComputation } from '../tax/tax.service.js';
-import { loadSession } from './cash.service.js';
+import { expectedCash, loadSession } from './cash.service.js';
+import { ReturnsService } from './returns.service.js';
+import { activeCustomer, creditBalance } from '../customers/customers.service.js';
 import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
@@ -108,6 +113,8 @@ interface RecordLine extends Buckets {
   snapshot: unknown;
   /** Index (in `lines`) of the item a priced modifier belongs to. */
   parentIndex: number | null;
+  /** An approved price change (session 20). */
+  priceOverrideId?: string | null;
   allocation?: { billLineId: string; share: Fraction };
 }
 
@@ -135,6 +142,8 @@ interface PricedSale {
   orderBillId: string | null;
   /** A sale rung up offline and recorded at sync (ADR-0015 §5). */
   offline?: { terminalId: string; reference: string; flags: OfflineFlag[]; completedAt: Date };
+  /** The customer it was rung up for (ADR-0018); needed to pay with store credit. */
+  customerId?: string | null;
   /**
    * A counter sale: refused when the branch's negative-stock policy is BLOCK and a tracked item would
    * go below zero. Checks (food already served) and offline sales (already handed over) are never
@@ -187,6 +196,7 @@ function pricedFromCart(cart: CartComputation, input: Pick<CreateSaleInput, 'lin
         schemeShare: statutory ? (l.snapshot.scheme?.share ?? '1') : null,
         snapshot: l.snapshot,
         parentIndex: null,
+        priceOverrideId: l.priceOverrideId,
       };
     }),
     beneficiaries: input.beneficiaries.map((b) => {
@@ -203,12 +213,15 @@ export class SalesService extends TenantService {
   protected readonly conflicts: ConflictMap = {
     sales_register_client_tx_unique: ['DUPLICATE_TRANSACTION', 'This register already recorded a sale with this transaction id'],
     terminal_transactions_txn_unique: ['DUPLICATE_TRANSACTION', 'This terminal already delivered this transaction'],
+    sale_lines_price_override_once: ['PRICE_OVERRIDE_USED', 'This approved price was already used on a sale'],
+    sale_tenders_exchange_once: ['ALREADY_EXCHANGED', 'This return already paid for an exchange'],
   };
 
   constructor(
     @Inject(TenantDb) tenantDb: TenantDb,
     @Inject(TaxService) private readonly tax: TaxService,
     @Inject(ENV) private readonly env: ServerEnv,
+    @Inject(ReturnsService) private readonly returns: ReturnsService,
   ) {
     super(tenantDb);
   }
@@ -229,9 +242,44 @@ export class SalesService extends TenantService {
           ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
         })),
       });
-      const priced = { ...pricedFromCart(cart, input), enforceStock: true };
+      const customerId = input.customerId ? (await activeCustomer(db, input.customerId)).id : null;
+      const priced = { ...pricedFromCart(cart, input), enforceStock: true, customerId };
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
+    });
+  }
+
+  /**
+   * An exchange (SPEC §6.3, session 20): a return of lines of an earlier sale and a new sale, in one
+   * transaction on the cashier's own shift. The refund is tendered first on the new sale as cash
+   * (`sale_tenders.exchange_return_id`); the customer pays the rest with `sale.tenders`, or takes the
+   * difference back as change. Both documents move the drawer as they always do (REFUND out, SALE in),
+   * so the drawer, the books and every report net to the cash that really changed hands, and the
+   * return and the sale stay ordinary documents (their own numbers, postings and slips).
+   */
+  exchange(auth: AuthContext, input: CreateExchangeInput) {
+    return this.mutate(auth, async (db) => {
+      const session = await this.checkoutSession(db, auth, input.cashierSessionId, input.sale.clientTransactionId);
+      const back = await this.returns.record(db, auth, input.saleId, {
+        cashierSessionId: session.id, kind: 'RETURN', reason: input.reason, lines: input.returnLines, refundTo: 'CASH',
+        ...(input.expectedRefund !== undefined && { expectedRefund: input.expectedRefund }),
+      }, { exchange: true });
+      const cart = await this.tax.computeCart(db, auth, {
+        branchId: session.branchId,
+        lines: input.sale.lines.map(({ statutory, ...l }) => ({
+          ...l,
+          ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
+        })),
+      });
+      const customerId = input.sale.customerId ? (await activeCustomer(db, input.sale.customerId)).id : null;
+      const priced = { ...pricedFromCart(cart, input.sale), enforceStock: true, customerId };
+      const refund = toDec(back.amountDue);
+      const sale = await this.record(db, auth, session, input.sale, priced, refund.gt(0) ? { saleReturnId: back.id, amount: refund.toString() } : undefined);
+      // The refund went out before the new sale came in: only the net may not exceed the drawer.
+      const drawer = toDec(await expectedCash(db, session.id));
+      if (drawer.lt(0)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the difference', { shortBy: drawer.negated().toFixed(2) });
+      await this.audit(db, auth, 'sale.exchanged', 'sale', sale.id, { originalSaleId: input.saleId, saleReturnId: back.id, returnNumber: back.returnNumber, refund: refund.toFixed(2), amountDue: toDec(sale.amountDue).toFixed(2) });
+      return { sale: await this.view(db, sale), saleReturn: await this.returns.view(db, back) };
     });
   }
 
@@ -504,6 +552,8 @@ export class SalesService extends TenantService {
     session: Awaited<ReturnType<typeof loadSession>>['session'],
     input: { clientTransactionId: string; tenders: TendersInput; expectedAmountDue?: string | undefined },
     priced: PricedSale,
+    /** An exchange: the refund of this return, tendered as cash before anything the customer pays. */
+    exchangeCredit?: { saleReturnId: string; amount: string },
   ): Promise<SaleRow> {
     const tenantId = tenantOf(auth).tenantId;
     const due = toDec(priced.totals.amountDue);
@@ -536,20 +586,35 @@ export class SalesService extends TenantService {
     const electronic = intents.reduce((a, p) => a.plus(p.amount), new Dec(0));
     if (electronic.gt(due)) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: due.toFixed(2) });
 
+    // Store credit (ADR-0018) next: the customer's balance with this legal entity, never more than is left to pay.
+    const creditTender = input.tenders.find((t): t is Extract<TendersInput[number], { method: 'STORE_CREDIT' }> => t.method === 'STORE_CREDIT');
+    const storeCredit = creditTender ? toDec(creditTender.amount) : new Dec(0);
+    if (creditTender) {
+      if (!priced.customerId) throw unprocessable('STORE_CREDIT_NEEDS_CUSTOMER', 'Store credit needs the customer on the sale');
+      if (storeCredit.gt(due.minus(electronic))) throw unprocessable('OVERPAYMENT', 'Store credit is more than what is left to pay', { amountDue: due.minus(electronic).toFixed(2) });
+      // One redemption per customer at a time (the insert trigger takes the same lock and re-checks).
+      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`credit:${priced.customerId}:${priced.legalEntityId}`}, 0))`);
+      const balance = await creditBalance(db, priced.customerId, priced.legalEntityId);
+      if (balance.lt(storeCredit)) throw new AppError('INSUFFICIENT_STORE_CREDIT', 'The customer has less store credit than that', HttpStatus.CONFLICT, { balance: balance.toFixed(2) });
+    }
+
     // Cash covers the rest; only the last cash tender may give change.
-    let remaining = due.minus(electronic);
-    const cashTenders = input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : []));
-    const cash = cashTenders.map(({ t, i }) => {
+    let remaining = due.minus(electronic).minus(storeCredit);
+    const cashTenders: { t: { tendered: string }; i: number; exchangeReturnId?: string }[] = [
+      ...(exchangeCredit ? [{ t: { tendered: exchangeCredit.amount }, i: -1, exchangeReturnId: exchangeCredit.saleReturnId }] : []),
+      ...input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : [])),
+    ];
+    const cash = cashTenders.map(({ t, i, exchangeReturnId }) => {
       if (remaining.isZero() && !due.isZero()) throw unprocessable('UNNECESSARY_TENDER', 'The sale is already paid', { tender: i });
       const tendered = toDec(t.tendered);
       const applied = Dec.min(tendered, remaining);
       remaining = remaining.minus(applied);
-      return { tendered, applied, change: tendered.minus(applied) };
+      return { tendered, applied, change: tendered.minus(applied), exchangeReturnId: exchangeReturnId ?? null };
     });
     if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: due.toFixed(2) });
     if (cash.slice(0, -1).some((t) => t.change.gt(0))) throw unprocessable('UNNECESSARY_TENDER', 'Only the last tender may give change');
     const cashApplied = cash.reduce((a, t) => a.plus(t.applied), new Dec(0));
-    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic);
+    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit));
     const change = tendered.minus(due);
 
     const saleNumber = await nextNumber(db, tenantId, session.registerId, 'SALE');
@@ -572,6 +637,7 @@ export class SalesService extends TenantService {
         requiresProfessionalReview: priced.requiresProfessionalReview,
         taxSnapshot: priced.taxSnapshot,
         orderBillId: priced.orderBillId,
+        customerId: priced.customerId ?? null,
         ...(priced.offline && {
           origin: 'OFFLINE',
           terminalId: priced.offline.terminalId,
@@ -614,6 +680,7 @@ export class SalesService extends TenantService {
         schemeShare: l.schemeShare,
         taxSnapshot: l.snapshot,
         parentLineId: l.parentIndex === null ? null : lineIds[l.parentIndex]!,
+        priceOverrideId: l.priceOverrideId ?? null,
       }) as typeof saleLines.$inferInsert;
     for (const pass of [false, true]) {
       const batch = priced.lines.map((l, i) => ({ l, i })).filter(({ l }) => (l.parentIndex !== null) === pass);
@@ -634,11 +701,18 @@ export class SalesService extends TenantService {
 
     await db.insert(saleTenders).values([
       ...intents.map((p) => ({ tenantId, saleId: sale!.id, method: p.method, paymentIntentId: p.id, amount: p.amount, tendered: p.amount, change: '0' })),
-      ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString() })),
+      ...(creditTender ? [{ tenantId, saleId: sale!.id, method: 'STORE_CREDIT', amount: storeCredit.toString(), tendered: storeCredit.toString(), change: '0' }] : []),
+      ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString(), exchangeReturnId: t.exchangeReturnId })),
     ]);
     for (const p of intents) {
       await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, p.id));
       await db.insert(paymentEvents).values({ tenantId, paymentIntentId: p.id, type: 'CONSUMED', detail: { saleId: sale!.id }, createdBy: auth.userId });
+    }
+    if (creditTender) {
+      await db.insert(customerCreditEntries).values({
+        tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, customerId: priced.customerId!, kind: 'REDEEM',
+        amount: storeCredit.negated().toString(), saleId: sale!.id, createdBy: auth.userId,
+      });
     }
     // Net cash into the drawer = the cash part of the sale (tendered minus change).
     if (cash.length) {
@@ -685,6 +759,7 @@ export class SalesService extends TenantService {
         statutoryDiscount: priced.totals.statutoryDiscount,
         cash: cashApplied,
         electronic,
+        storeCredit,
         cogs: moved.reduce((a, m) => a.minus(m.value), new Dec(0)),
       }, session.branchId),
       createdBy: auth.userId,
@@ -692,6 +767,8 @@ export class SalesService extends TenantService {
 
     await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, {
       saleNumber, amountDue: due.toFixed(2), registerId: session.registerId,
+      ...(priced.customerId && { customerId: priced.customerId }),
+      ...(creditTender && { storeCredit: storeCredit.toFixed(2) }),
       ...(priced.orderBillId && { orderBillId: priced.orderBillId }),
       ...(priced.offline && { origin: 'OFFLINE', terminalId: priced.offline.terminalId, offlineReference: priced.offline.reference, flags: priced.offline.flags }),
     });
@@ -729,6 +806,9 @@ export class SalesService extends TenantService {
         () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, id)),
         () => db.select().from(saleCharges).where(eq(saleCharges.saleId, id)),
       );
+      const [customer] = sale.customerId ? await db.select({ name: customers.displayName, tin: customers.tin }).from(customers).where(eq(customers.id, sale.customerId)) : [];
+      const exchangeIds = tenders.flatMap((t) => (t.exchangeReturnId ? [t.exchangeReturnId] : []));
+      const exchanged = exchangeIds.length ? await db.select({ id: saleReturns.id, returnNumber: saleReturns.returnNumber }).from(saleReturns).where(inArray(saleReturns.id, exchangeIds)) : [];
       const snapshot = sale.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
       return buildReceipt({
         invoicingMode: entity!.invoicingMode,
@@ -755,9 +835,13 @@ export class SalesService extends TenantService {
           vatExemptSales: l.vatExemptSales,
           beneficiaryId: l.beneficiaryId,
         })),
-        tenders: tenders.map((t) => ({ method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),
+        tenders: tenders.map((t) => ({
+          method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change),
+          exchangeReturnNumber: t.exchangeReturnId ? (exchanged.find((r) => r.id === t.exchangeReturnId)?.returnNumber ?? null) : null,
+        })),
         beneficiaries,
         charges: charges.map((c) => ({ kind: c.kind, rate: toDec(c.rate).toString(), gross: c.gross, amountDue: c.amountDue, vatTreatment: c.vatTreatment })),
+        customer: customer ?? null,
       });
     });
   }
@@ -818,7 +902,7 @@ export class SalesService extends TenantService {
     );
     const [lines, tenders, beneficiaries, charges] = await inSequence(
       () => db.select().from(saleLines).where(eq(saleLines.saleId, s.id)).orderBy(saleLines.lineNo),
-      () => db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)),
+      () => db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)).orderBy(saleTenders.createdAt, saleTenders.id),
       () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, s.id)),
       () => db.select().from(saleCharges).where(eq(saleCharges.saleId, s.id)),
     );

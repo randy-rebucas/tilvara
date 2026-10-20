@@ -226,5 +226,14 @@ Full audit (session 19): ✅ done ([AUDIT-2026-10-19.md](AUDIT-2026-10-19.md)).
 - ✅ Tests: `test:e2e:web:payables` (28), `test:e2e:pos:extras` (15), integration additions in `payables`, `sales`, `menu`.
 - ⬜ Untracked gaps found (customer management, held carts, exchanges, price override, reservations, reports, …) moved to LEFTOVER "Audit 2026-10-19".
 
+Audit gaps (session 20): ✅ done, in the audit's order. The user chose: mobile app left as is, manager re-enters credentials for a price override, and store credit built and flagged for the accountant.
+- ✅ Counter controls (ADR-0017): held carts, exchanges (return + new sale in one go), line/sale discounts within `sales.discount`, manager price override (second person's credentials, `sales.price_override`), and returns of another register's sale.
+- ✅ Customers (ADR-0018): profiles, search, purchase history, a customer on a sale and on the receipt, marketing consent with its history, data download, correction, anonymising, and store credit (refund to credit, spend as a tender; `CUSTOMER_STORE_CREDIT` liability).
+- ✅ Stock reservations (available = on hand − reserved; counter sales respect them under BLOCK) and supplier catalog references (supplier SKU, item name, last agreed cost and a preferred supplier; the cost pre-fills purchase order lines).
+- ✅ Analysis reports: sales by category, by branch and consolidated, discounts and overrides, purchases by supplier, payment exceptions; CSV for each.
+- ✅ API keys and webhooks (ADR-0019): read-only scoped keys on plans with `api_access`, signed thin webhooks fanned out from the outbox, retries, DEAD + send again, admin Subscription → Integrations.
+- ✅ Tests: integration `counter-controls`, `customers`, `analysis-reports`, `reservations-catalog`, `integrations`, workers `webhooks`, isolation/ledger additions; E2E `test:e2e:pos:controls`, `test:e2e:web:customers`, `test:e2e:web:analysis`, `test:e2e:web:inventory-extras`, `test:e2e:web:integrations`.
+- ⬜ Left open (LEFTOVER "Audit 2026-10-19"): automatic discard of held carts, customer anonymisation job, webhook DNS pinning and delivery purge, cashier adding customers (user's call), customer AR.
+
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

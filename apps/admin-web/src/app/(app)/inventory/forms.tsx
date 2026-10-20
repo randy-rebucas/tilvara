@@ -271,3 +271,44 @@ export function CountForm(props: { branchId: string; variants: VariantOption[] }
   const { t } = useT();
   return <Disclosure label={t('inv.newCount')}>{(close) => <CountFields close={close} {...props} />}</Disclosure>;
 }
+
+// ---------------------------------------------------------------- reservations (session 20)
+/** Set stock aside for a customer or a reason; never more than is available. */
+function ReserveFields({ close, branchId, variants }: { close: () => void; branchId: string; variants: VariantOption[] }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const until = text(f, 'expiresOn');
+    const r = await submit('POST', '/api/v1/stock/reservations', {
+      branchId,
+      variantId: f.get('variantId'),
+      quantity: text(f, 'quantity'),
+      note: text(f, 'note'),
+      // Until the end of that day in Manila.
+      ...(until ? { expiresAt: `${until}T23:59:59+08:00` } : {}),
+    }, { idempotent: true });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+      <div className="sm:col-span-2">
+        <SelectField label={t('common.item')} name="variantId">
+          {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+        </SelectField>
+      </div>
+      <TextField label={t('common.quantity')} name="quantity" inputMode="decimal" required error={fieldError('quantity')} />
+      <TextField label={`${t('inv.reserveUntil')} (${t('common.optional')})`} name="expiresOn" type="date" error={fieldError('expiresAt')} />
+      <div className="sm:col-span-2 lg:col-span-4">
+        <TextField label={t('inv.reserveFor')} name="note" required maxLength={200} placeholder={t('inv.reserveForHint')} error={fieldError('note')} />
+      </div>
+      <Actions pending={pending} general={general(error)} submitLabel={t('inv.reserve')} close={close} />
+    </form>
+  );
+}
+
+export function ReserveForm(props: { branchId: string; variants: VariantOption[] }) {
+  const { t } = useT();
+  return <Disclosure label={t('inv.reserve')}>{(close) => <ReserveFields close={close} {...props} />}</Disclosure>;
+}

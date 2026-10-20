@@ -22,6 +22,7 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { activeSupplier } from './suppliers.service.js';
+import { withCatalogCosts } from './supplier-items.service.js';
 
 type OrderRow = typeof purchaseOrders.$inferSelect;
 
@@ -76,7 +77,7 @@ export class PurchaseOrdersService extends TenantService {
           createdBy: auth.userId,
         })
         .returning();
-      await this.insertLines(db, tenantId, order!.id, input.lines);
+      await this.insertLines(db, tenantId, order!.id, await withCatalogCosts(db, input.supplierId, input.lines));
       await this.audit(db, auth, 'purchase_order.created', 'purchase_order', order!.id, { poNumber, lines: input.lines.length });
       return this.view(db, order!);
     });
@@ -92,7 +93,7 @@ export class PurchaseOrdersService extends TenantService {
       if (lines) {
         await assertVariants(db, lines.map((l) => l.variantId));
         await db.delete(purchaseOrderLines).where(eq(purchaseOrderLines.purchaseOrderId, id));
-        await this.insertLines(db, tenantOf(auth).tenantId, id, lines);
+        await this.insertLines(db, tenantOf(auth).tenantId, id, await withCatalogCosts(db, input.supplierId ?? order.supplierId, lines));
       }
       await this.audit(db, auth, 'purchase_order.updated', 'purchase_order', id, { fields: Object.keys(input) });
       return this.view(db, updated!);
@@ -181,7 +182,7 @@ export class PurchaseOrdersService extends TenantService {
     return this.can(auth, 'purchasing.manage', scope) || this.can(auth, 'inventory.read', scope);
   }
 
-  private async insertLines(db: Database, tenantId: string, orderId: string, lines: CreatePurchaseOrderInput['lines']) {
+  private async insertLines(db: Database, tenantId: string, orderId: string, lines: (CreatePurchaseOrderInput['lines'][number] & { unitCost: string })[]) {
     await db.insert(purchaseOrderLines).values(lines.map((l, i) => ({ tenantId, purchaseOrderId: orderId, lineNo: i + 1, variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost })));
   }
 
@@ -199,8 +200,9 @@ export class PurchaseOrdersService extends TenantService {
   async view(db: Database, order: OrderRow) {
     const [[supplier], { rows: lines }, { rows: receipts }] = await inSequence(
       () => db.select({ id: suppliers.id, code: suppliers.code, name: suppliers.name }).from(suppliers).where(eq(suppliers.id, order.supplierId)),
-      () => db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string }>(sql`
+      () => db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string; supplier_sku: string | null }>(sql`
         SELECT l.id, l.line_no, l.variant_id, v.sku, p.name, l.quantity::text, l.unit_cost::text,
+               (SELECT si.supplier_sku FROM supplier_items si WHERE si.tenant_id = l.tenant_id AND si.supplier_id = ${order.supplierId} AND si.variant_id = l.variant_id AND si.archived_at IS NULL) AS supplier_sku,
                coalesce(sum(g.quantity), 0)::text AS received, coalesce(sum(g.rejected_quantity), 0)::text AS rejected
           FROM purchase_order_lines l
           JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
@@ -224,6 +226,7 @@ export class PurchaseOrdersService extends TenantService {
         variantId: l.variant_id,
         sku: l.sku,
         name: l.name,
+        supplierSku: l.supplier_sku,
         quantity: ordered.toString(),
         unitCost: toDec(l.unit_cost).toFixed(4),
         lineValue: ordered.times(l.unit_cost).toFixed(2),

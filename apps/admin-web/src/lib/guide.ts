@@ -16,6 +16,7 @@ export type GuideTopic =
   | 'purchasing'
   | 'restaurant'
   | 'reports'
+  | 'customers'
   | 'books'
   | 'offline'
   | 'drawers'
@@ -47,6 +48,8 @@ export interface GuideSection {
 }
 
 const area = (href: string) => NAV_ITEMS.find((i) => i.href === href)!;
+/** Customers (ADR-0018) have no band tab; this stands in for one in the guide. */
+export const CUSTOMERS_AREA: NavItem = { href: '/customers', key: 'cust.title', needs: ['customers.read', 'customers.manage'] };
 
 /** `n` keys `guide.<id>.<kind>1…n`; `only` marks lines by their number. */
 const lines = (id: GuideTopic, kind: 's' | 't', n: number, only: Record<number, Only> = {}): GuideLine[] =>
@@ -74,17 +77,19 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('start', 'guide.start.title', 'none', 6, 3),
   section('products', 'nav.products', 'blue', 5, 2, { area: area('/products'), only: { t: { 1: 'weight' } } }),
   section('prices', 'nav.prices', 'blue', 4, 2, { area: area('/prices') }),
-  section('inventory', 'nav.inventory', 'gold', 5, 4, { area: area('/inventory'), only: { t: { 3: 'restaurant' } } }),
-  section('purchasing', 'nav.purchasing', 'gold', 7, 2, { area: area('/purchasing') }),
+  section('inventory', 'nav.inventory', 'gold', 5, 5, { area: area('/inventory'), only: { t: { 3: 'restaurant' } } }),
+  section('purchasing', 'nav.purchasing', 'gold', 7, 3, { area: area('/purchasing') }),
   section('restaurant', 'nav.restaurant', 'none', 6, 2, { area: area('/restaurant') }),
-  section('reports', 'nav.reports', 'none', 5, 2, { area: area('/reports/sales'), only: { s: { 5: 'restaurant' } } }),
+  section('reports', 'nav.reports', 'none', 5, 3, { area: area('/reports/sales'), only: { s: { 5: 'restaurant' } } }),
+  // No band tab (the band is full): reached from the Overview and from each sale; who may open it is its own rule.
+  section('customers', 'cust.title', 'green', 5, 2, { area: CUSTOMERS_AREA }),
   section('books', 'nav.books', 'ink', 5, 2, { area: area('/books') }),
   section('offline', 'off.title', 'orange', 3, 1, { area: area('/offline-sales') }),
   // Same managers (cash.reconcile) as offline sales; no tab of its own (the band is full), reached from there and the overview.
   section('drawers', 'drawers.title', 'orange', 3, 2, { area: area('/offline-sales'), href: '/shifts' }),
   section('locations', 'nav.locations', 'violet', 5, 3, { area: area('/locations') }),
   section('team', 'nav.team', 'green', 4, 2, { area: area('/team') }),
-  section('subscription', 'nav.subscription', 'none', 4, 1, { area: area('/subscription') }),
+  section('subscription', 'nav.subscription', 'none', 5, 1, { area: area('/subscription') }),
   section('account', 'guide.account.title', 'none', 4, 2),
   section('till', 'guide.till.title', 'orange', 4, 1, { only: { s: { 4: 'restaurant' } } }),
 ];
@@ -115,6 +120,7 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
   ['/restaurant', 'restaurant'],
   ['/reports', 'reports'],
   ['/sales', 'reports'],
+  ['/customers', 'customers'],
   ['/shifts', 'drawers'],
   ['/books', 'books'],
   ['/offline-sales', 'offline'],

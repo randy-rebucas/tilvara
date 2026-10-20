@@ -1,7 +1,7 @@
-import { eq, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, type FileStorage } from '@1pos/database';
+import { eq, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
-import type { Logger, OutboxHandler } from './outbox-processor.js';
+import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
 
 export interface WorkerMailer {
   send(message: { to: string; subject: string; text: string; template: string }): Promise<void>;
@@ -28,7 +28,7 @@ export interface ExportOptions {
 export const exportKey = (tenantId: string, exportId: string) => `exports/${tenantId}/${exportId}.zip`;
 
 export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Record<string, OutboxHandler> {
-  return {
+  return withWebhooks({
     /** Welcome email to the owner. RLS guarantees we can only read users of this event's tenant. */
     'tenant.onboarded': async (event, db) => {
       const ownerUserId = String(event.payload.ownerUserId ?? '');
@@ -44,7 +44,25 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
     'stock.low': stockAlertHandler(mailer, 'low'),
     'stock.below_zero': stockAlertHandler(mailer, 'below_zero'),
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
-  };
+  });
+}
+
+/**
+ * Every event a webhook may listen for is also fanned out to the business's endpoints (ADR-0019), in
+ * the handler's transaction: the delivery rows commit with the event's completion, once per endpoint.
+ */
+export function withWebhooks(handlers: Record<string, OutboxHandler>): Record<string, OutboxHandler> {
+  const out = { ...handlers };
+  for (const topic of WEBHOOK_TOPICS) {
+    const inner = handlers[topic];
+    const run = inner ? (typeof inner === 'function' ? inner : inner.run) : null;
+    const fanOut: OutboxHandlerFn = async (event, db, ctx) => {
+      if (run) await run(event, db, ctx);
+      await ctx.client.query('SELECT webhook_enqueue($1)', [event.id]);
+    };
+    out[topic] = inner && typeof inner !== 'function' ? { isolation: inner.isolation, run: fanOut } : fanOut;
+  }
+  return out;
 }
 
 /**

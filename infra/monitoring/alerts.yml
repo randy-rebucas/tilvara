@@ -154,6 +154,13 @@ groups:
         annotations:
           summary: The worker loop keeps failing (database unreachable or claim errors).
           runbook_url: docs/operations/monitoring.md#oneposworkerlooperrors
+      - alert: OneposWebhookDeliveriesDead
+        expr: sum(increase(onepos_worker_webhook_deliveries_total{outcome="dead"}[1h])) > 0
+        labels:
+          severity: info
+        annotations:
+          summary: A business's webhook endpoint gave up after its retries (DEAD deliveries); the business sends them again once fixed.
+          runbook_url: docs/operations/monitoring.md#oneposwebhookdeliveriesdead
 
   - name: onepos-operations
     rules:
