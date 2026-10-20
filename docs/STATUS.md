@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-20 (session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-20 (session 21 — the audit's three decisions: offline sales after a lapse, plan features, shift close with open bills. Session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,19 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 21 — the audit's three decisions
+The user picked the recommended option for each. Migration 0080; the dev DB is migrated to 0080.
+- **Offline sales after a lapse or suspension:**
+  - every till snapshot is stamped `business_writable` (active business, subscription allows writes);
+  - `SalesService.recordOffline` records a sale on a stamped snapshot rung within its window even if the business has since lapsed or been suspended, audited `offline_sale.recorded_while_read_only`;
+  - a sale on an unstamped snapshot, or past the window, waits with `SUBSCRIPTION_READ_ONLY`/`TENANT_SUSPENDED`, which the admin's offline review now explains, and is recorded by "Record again" after renewal or reactivation.
+- **Plan features:** the seed stands. `advanced_reports` (by category, by branch, discounts, purchases by supplier, payment exceptions) needs Growth/Enterprise; the admin shows why on the Analysis tabs. The sales, items, cashiers, refunds, tenders, tax, sales book and Z reports stay on every plan. `multi_entity` gates a second legal entity on top of the entity limit.
+- **Shift close with open bills:**
+  - refused with `OPEN_BILLS`: every live order at the branch when this is its last open shift, otherwise bills part-paid on this shift;
+  - the till lists them; a manager (`cash.reconcile`) closes anyway with a reason (`openBillsReason`, audited `cashier_session.closed_with_open_bills`);
+  - counter guide tip `guide.close.t4`.
+- **Verified (session 21):** see below.
 
 ## Session 20 — the audit's gaps
 The user picked six gaps from the session 19 audit and answered four questions. The mobile app is left as is. The work went in the audit's order. A price override is approved by a manager re-entering their credentials. Store credit is built and flagged for the accountant (question 11 in `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). Migrations 0072–0079; the dev DB is migrated to 0079.

@@ -134,7 +134,8 @@ describe('the restaurant service cycle (SPEC restaurant scenarios 1–10)', () =
     const settled = (await http().get(`/v1/restaurant/orders/${orderId}`).set(r.server).expect(200)).body;
     expect([settled.status, settled.bill.status]).toEqual(['SETTLED', 'SETTLED']);
     expect(code(await check(r, bill.id, {}).expect(409))).toBe('BILL_NOT_ACTIVE');
-    await http().post('/v1/restaurant/orders').set(r.server).send({ branchId: r.branchId, orderType: 'DINE_IN', tableId: r.t1 }).expect(201); // the table is free
+    const next = (await http().post('/v1/restaurant/orders').set(r.server).send({ branchId: r.branchId, orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body; // the table is free
+    await http().post(`/v1/restaurant/orders/${next.id}/cancel`).set(r.server).set(key()).send({ reason: 'Seated elsewhere' }).expect(200); // nothing left open at the close
 
     // Σ checks = the bill, bucket by bucket (lines and charges).
     const sums = await sql<Record<string, string>>(r, `
@@ -177,6 +178,49 @@ describe('the restaurant service cycle (SPEC restaurant scenarios 1–10)', () =
     // Close the shift: the drawer holds the float plus what the table paid.
     const close = (await http().post(`/v1/cashier-sessions/${r.session}/close`).set(r.server).send({ countedCash: '1473.00' }).expect(200)).body;
     expect(close.status).toBe('RECONCILED');
+  });
+});
+
+describe('closing a shift with bills still to pay (session 21 decision)', () => {
+  it('refuses and lists them; with another shift open only a bill part-paid here holds it; a manager may close anyway with a reason (audited)', async () => {
+    const r = await restaurant('bill-close');
+    // T1: billed and half paid at this shift. T2: ordered, not billed.
+    const a = await servedOrder(r, r.t1, [{ variantId: r.tea, quantity: '2' }]);
+    const bill = (await billOrder(r, a).expect(201)).body;
+    await check(r, bill.id, { allocations: [{ billLineId: bill.lines[0].id, quantity: '1' }] }).expect(201);
+    const b = await servedOrder(r, r.t2, [{ variantId: r.tea, quantity: '1' }]);
+    const close = (who: Headers, session: string, body: Record<string, unknown> = {}) =>
+      http().post(`/v1/cashier-sessions/${session}/close`).set(who).send({ countedCash: '0.00', ...body });
+
+    // The only shift at the branch: every live order holds it.
+    const refused = (await close(r.server, r.session).expect(409)).body.error;
+    expect(refused.code).toBe('OPEN_BILLS');
+    expect(refused.details.orders.map((o: { orderId: string; status: string; tableCode: string; paidOnThisShift: boolean }) => [o.orderId, o.status, o.tableCode, o.paidOnThisShift]))
+      .toEqual([[a, 'BILLED', 'T1', true], [b, 'OPEN', 'T2', false]]);
+    expect(refused.details.orders[0]).toMatchObject({ billId: bill.id, paid: '49.50' }); // tea ₱45 + 10 % service charge
+
+    // Another register's shift opens: T2 can be paid there; T1 was part-paid here and still holds this one.
+    const r2 = (await http().post('/v1/registers').set(r.auth).send({ branchId: r.branchId, code: 'R2', name: 'Bar' }).expect(201)).body.id as string;
+    const other = (await http().post('/v1/cashier-sessions').set(r.manager).send({ registerId: r2, openingFloat: '500.00' }).expect(201)).body.id as string;
+    expect((await close(r.server, r.session).expect(409)).body.error.details.orders.map((o: { orderId: string }) => o.orderId)).toEqual([a]);
+
+    // The cashier cannot override; the manager can, with a reason.
+    expect((await close(r.server, r.session, { openBillsReason: 'End of my shift' }).expect(403)).body.error.code).toBe('FORBIDDEN');
+    await close(r.manager, r.session, { openBillsReason: '' }).expect(400);
+    const expected = (await http().get(`/v1/cashier-sessions/${r.session}`).set(r.manager).expect(200)).body.expectedCash as string;
+    const closed = (await close(r.manager, r.session, { countedCash: expected, openBillsReason: 'T1 pays the rest at the bar' }).expect(200)).body;
+    expect(closed.status).toBe('RECONCILED');
+    expect(await sql(r, `SELECT metadata FROM audit_logs WHERE action = 'cashier_session.closed_with_open_bills' AND resource_id = $1`, [r.session]))
+      .toEqual([{ metadata: { reason: 'T1 pays the rest at the bar', orders: [{ orderId: a, orderNumber: 1, paidOnThisShift: true }] } }]);
+
+    // The bar is now the last shift: both tables hold it until paid.
+    expect((await close(r.manager, other).expect(409)).body.error.details.orders.map((o: { orderId: string }) => o.orderId)).toEqual([a, b]);
+    await check(r, bill.id, { cashierSessionId: other }, r.manager).expect(201);
+    const billB = (await billOrder(r, b, {}, r.manager).expect(201)).body;
+    await check(r, billB.id, { cashierSessionId: other }, r.manager).expect(201);
+    const barCash = (await http().get(`/v1/cashier-sessions/${other}`).set(r.manager).expect(200)).body.expectedCash as string;
+    expect((await close(r.manager, other, { countedCash: barCash }).expect(200)).body.status).toBe('RECONCILED');
+    expect(await asOwnerInTenant(owner, r.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 });
 

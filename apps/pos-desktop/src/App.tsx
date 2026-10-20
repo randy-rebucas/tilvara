@@ -197,7 +197,7 @@ function Counter() {
         </div>
       )}
       {tab === 'history' && <History shift={shift} permissions={permissions} onExchange={(x) => { setExchange(x); setTab('sell'); }} />}
-      {tab === 'close' && <CloseShift shift={shift} onClosed={() => setStage({ name: 'register', me })} />}
+      {tab === 'close' && <CloseShift shift={shift} canOverride={permissions.includes('cash.reconcile')} onClosed={() => setStage({ name: 'register', me })} />}
     </Shell>
   );
 }

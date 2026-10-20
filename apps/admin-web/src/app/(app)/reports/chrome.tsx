@@ -3,7 +3,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
-import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
+import { api, apiOrNull, ApiError, type Branch, type Me, type Subscription } from '@/lib/api';
 import { hasRestaurant } from '@/lib/business-type';
 import { RestaurantOff } from '@/components/restaurant-off';
 import { PrintButton } from '@/components/print-button';
@@ -76,6 +76,8 @@ export async function loadReport<T>(path: string): Promise<{ data: T; error?: un
     return { data: await api<T>(path) };
   } catch (e) {
     if (!(e instanceof ApiError)) throw e;
+    // Analysis reports on a plan without them (also caught up front in ReportsChrome when the plan is readable).
+    if (e.code === 'ENTITLEMENT_REQUIRED') return { error: (await getT()).t('rep.notOnPlan') };
     // A refused range carries the specific rule in its issues ("from" after "to", over 366 days).
     const issues = (e.details?.issues as { message: string }[] | undefined)?.map((i) => i.message).join(' ');
     return { error: issues || e.message };
@@ -83,7 +85,7 @@ export async function loadReport<T>(path: string): Promise<{ data: T; error?: un
 }
 
 /** Header, report groups and tabs, branch picker, the date form with quick ranges, and the CSV download. */
-export async function ReportsChrome({ tab, scope, error, children }: {
+export async function ReportsChrome({ tab, scope, error: reportError, children }: {
   tab: ReportTab;
   scope: Awaited<ReturnType<typeof reportScope>>;
   error?: string;
@@ -102,6 +104,9 @@ export async function ReportsChrome({ tab, scope, error, children }: {
       </div>
     );
   }
+  // Analysis is the plan's `advanced_reports` (Growth and Enterprise): the group stays visible, with the reason.
+  const notOnPlan = group === 'analysis' && (await apiOrNull<Subscription>('/subscription'))?.plan.features.includes('advanced_reports') === false;
+  const error = notOnPlan ? t('rep.notOnPlan') : reportError;
   const params = (k: ReportTab, extra: Record<string, string> = {}) =>
     new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }), ...extra });
   const keep = (k: ReportTab) => `${PATHS[k]}?${params(k)}`;
@@ -170,7 +175,7 @@ export async function ReportsChrome({ tab, scope, error, children }: {
         </div>
       )}
       </div>
-      {!branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone="error">{error}</Callout> : children}
+      {!branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone={notOnPlan || error === t('rep.notOnPlan') ? 'warn' : 'error'}>{error}</Callout> : children}
     </div>
   );
 }

@@ -272,6 +272,68 @@ describe('sync', () => {
   });
 });
 
+describe('a business that lapsed or was suspended while the till was offline (session 21 decision)', () => {
+  const setSubscription = (s: S, status: string) => owner.query(`SELECT platform_set_subscription($1, 'growth', $2, null, null)`, [s.tenantId, status]);
+  const setTenantStatus = (s: S, status: string) => sql(s, `UPDATE tenants SET status = $2 WHERE id = $1`, [s.tenantId, status]);
+  const stamped = (s: S, snap: Snapshot) => sql<{ business_writable: boolean }>(s, `SELECT business_writable FROM terminal_snapshots WHERE id = $1`, [snap.snapshotId]);
+
+  it('a lapse: sales rung on a snapshot issued while active are recorded and audited; later snapshots and an expired one wait until renewal', async () => {
+    const s = await shop('off-lapse');
+    const active = await snapshot(s);
+    const old = await snapshot(s);
+    // `old` was issued while active but more than the offline window (24 h) ago (prices back-dated as above).
+    await sql(s, `
+      ALTER TABLE product_prices DISABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
+      UPDATE product_prices SET effective_from = effective_from - interval '2 days';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
+      UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${old.snapshotId}';
+      ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles ENABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots ENABLE TRIGGER terminal_snapshots_append_only;`);
+    await setSubscription(s, 'CANCELED');
+    const lapsed = await snapshot(s);
+    expect(await stamped(s, active)).toEqual([{ business_writable: true }]);
+    expect(await stamped(s, lapsed)).toEqual([{ business_writable: false }]);
+
+    const [onActive, onLapsed, onOld] = [sale(s, active), sale(s, lapsed), sale(s, old)];
+    const res = (await sync(s.t1, [onActive, onLapsed, onOld]).expect(200)).body.results;
+    expect(res.map((r: { status: string; code?: string }) => [r.status, r.code])).toEqual([
+      ['RECORDED', undefined], ['QUARANTINED', 'SUBSCRIPTION_READ_ONLY'], ['QUARANTINED', 'SUBSCRIPTION_READ_ONLY'],
+    ]);
+    expect(await sql(s, `SELECT resource_id, metadata->>'reason' AS reason FROM audit_logs WHERE action = 'offline_sale.recorded_while_read_only'`))
+      .toEqual([{ resource_id: res[0].saleId, reason: 'SUBSCRIPTION_READ_ONLY' }]);
+    // A retry while still lapsed is refused; after renewal both are recorded.
+    const waiting = (await http().get('/v1/sync/transactions?status=QUARANTINED').set(s.manager).expect(200)).body.data as { id: string; localReference: string }[];
+    expect(waiting.map((w) => w.localReference).sort()).toEqual([onLapsed.localReference, onOld.localReference].sort());
+    expect((await http().post(`/v1/sync/transactions/${waiting[0]!.id}/retry`).set(s.manager).expect(409)).body.error.details.code).toBe('SUBSCRIPTION_READ_ONLY');
+    await setSubscription(s, 'ACTIVE');
+    for (const w of waiting) expect((await http().post(`/v1/sync/transactions/${w.id}/retry`).set(s.manager).expect(200)).body.status).toBe('RECORDED');
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales`)).toEqual([{ n: 3 }]);
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('a suspension: the snapshot issued before it still records; one issued after waits, and cannot be retried until the business is active', async () => {
+    const s = await shop('off-suspend');
+    const before = await snapshot(s);
+    await setTenantStatus(s, 'SUSPENDED');
+    try {
+      const after = await snapshot(s);
+      expect(await stamped(s, after)).toEqual([{ business_writable: false }]);
+      const res = (await sync(s.t1, [sale(s, before), sale(s, after)]).expect(200)).body.results;
+      expect(res.map((r: { status: string; code?: string }) => [r.status, r.code])).toEqual([['RECORDED', undefined], ['QUARANTINED', 'TENANT_SUSPENDED']]);
+      const [q] = await sql<{ id: string }>(s, `SELECT id FROM terminal_transactions WHERE status = 'QUARANTINED'`);
+      expect((await http().post(`/v1/sync/transactions/${q!.id}/retry`).set(s.manager).expect(403)).body.error.code).toBe('TENANT_SUSPENDED');
+      await setTenantStatus(s, 'ACTIVE');
+      expect((await http().post(`/v1/sync/transactions/${q!.id}/retry`).set(s.manager).expect(200)).body.status).toBe('RECORDED');
+      expect(await audit(s)).toEqual(CLEAN);
+    } finally {
+      await setTenantStatus(s, 'ACTIVE');
+    }
+  });
+});
+
 describe('till health', () => {
   it('managers see when each till was last heard from; a till gone quiet during an open shift is reported silent', async () => {
     const s = await shop('off-health');

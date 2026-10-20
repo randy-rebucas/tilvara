@@ -1,9 +1,10 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { branches, categories, eq, isNull, sql } from '@1pos/database';
+import { branches, categories, eq, isNull, sql, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import type { ConsolidatedRangeQuery } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { hasPermission } from '../auth/authorization.js';
+import { assertFeature } from '../billing/entitlements.js';
 import { notFound } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -19,11 +20,22 @@ const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a.plus((r[k] as st
  * (consolidated), discounts and price changes, purchases by supplier, and card/QR payments that
  * still need someone. Same rules as the other reports: local business days of each branch, sales
  * counted when completed and returns when processed, every figure traceable to its rows.
+ *
+ * These are the plan's `advanced_reports` (session 21 decision: Growth and Enterprise). The everyday
+ * and statutory reports (sales, items, cashiers, tenders, tax, sales book, stock, Z/X) stay on every plan.
  */
 @Injectable()
 export class AnalysisReportsService extends ReportsService {
   constructor(@Inject(TenantDb) tenantDb: TenantDb) {
     super(tenantDb);
+  }
+
+  /** Every analysis report reads through here (directly or via `run`): the plan check comes first. */
+  protected override read<T>(auth: AuthContext, fn: (db: Database) => Promise<T>): Promise<T> {
+    return super.read(auth, async (db) => {
+      await assertFeature(db, 'advanced_reports');
+      return fn(db);
+    });
   }
 
   /**

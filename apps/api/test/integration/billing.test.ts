@@ -139,3 +139,37 @@ describe('plan limits', () => {
     expect([fifth.status, fifth.body.error.code]).toEqual([403, 'ENTITLEMENT_LIMIT_REACHED']);
   });
 });
+
+describe('plan features (session 21 decision)', () => {
+  it('analysis reports need advanced_reports (Growth, Enterprise); the everyday and statutory reports stay on Starter', async () => {
+    const t = await signup(app, 'advrep');
+    const entityId = await withEntity(t);
+    const branchId = (await http().post('/v1/branches').set(bearer(t.access)).send({ legalEntityId: entityId, code: 'B1', name: 'B' }).expect(201)).body.id as string;
+    const day = new Date().toISOString().slice(0, 10);
+    const range = `branchId=${branchId}&from=${day}&to=${day}`;
+    const analysis = [`by-category?${range}`, `by-branch?from=${day}&to=${day}`, `discounts?${range}`, `purchases-by-supplier?${range}`, `payment-exceptions?branchId=${branchId}`];
+    const everyday = [`sales-summary?${range}`, `by-product?${range}`, `tax-summary?${range}`, `statutory-book?${range}`, `refund-watch?${range}`];
+    await setSubscription(t, 'starter', 'ACTIVE');
+    for (const path of analysis) {
+      const res = await http().get(`/v1/reports/${path}`).set(bearer(t.access));
+      expect([path, res.status, res.body.error?.code, res.body.error?.details?.feature]).toEqual([path, 403, 'ENTITLEMENT_REQUIRED', 'advanced_reports']);
+    }
+    for (const path of everyday) expect([path, (await http().get(`/v1/reports/${path}`).set(bearer(t.access))).status]).toEqual([path, 200]);
+    await setSubscription(t, 'growth', 'ACTIVE');
+    for (const path of analysis) expect([path, (await http().get(`/v1/reports/${path}`).set(bearer(t.access))).status]).toEqual([path, 200]);
+  });
+
+  it('a second legal entity needs multi_entity, even on a plan whose entity limit would allow it', async () => {
+    const t = await signup(app, 'multient');
+    await withEntity(t);
+    // A plan with room for three entities but without the feature (the seeded Starter stops at its limit first).
+    const code = uniq('noentities').toLowerCase();
+    await owner.query(`INSERT INTO plans (code, name, monthly_price, currency, limits, features, active)
+                       VALUES ($1, 'Test', '0', 'PHP', '{"maxLegalEntities":3,"maxBranches":3,"maxRegisters":3,"maxUsers":3}', '[]', false)`, [code]);
+    await setSubscription(t, code, 'ACTIVE');
+    const second = { registeredName: 'Y Corp', vatStatus: 'NON_VAT' };
+    expect((await http().post('/v1/legal-entities').set(bearer(t.access)).send(second).expect(403)).body.error).toMatchObject({ code: 'ENTITLEMENT_REQUIRED', details: { feature: 'multi_entity' } });
+    await setSubscription(t, 'growth', 'ACTIVE');
+    await http().post('/v1/legal-entities').set(bearer(t.access)).send(second).expect(201);
+  });
+});

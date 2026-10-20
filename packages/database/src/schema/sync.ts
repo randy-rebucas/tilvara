@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { registers, terminals } from './organization.js';
 import { cashierSessions, sales } from './sales.js';
 
@@ -15,6 +15,12 @@ export const terminalSnapshots = pgTable(
     terminalId: uuid('terminal_id').notNull(),
     registerId: uuid('register_id').notNull(),
     asOf: timestamp('as_of', { withTimezone: true }).notNull(),
+    /**
+     * The business was active and its subscription allowed writes when the snapshot was issued. Sales
+     * rung on it within its window are recorded even if the business lapses or is suspended before
+     * they arrive (session 21 decision); snapshots issued before this column count as not writable.
+     */
+    businessWritable: boolean('business_writable').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

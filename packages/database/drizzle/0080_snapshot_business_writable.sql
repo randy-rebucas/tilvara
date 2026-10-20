@@ -1,0 +1,1 @@
+ALTER TABLE "terminal_snapshots" ADD COLUMN "business_writable" boolean DEFAULT false NOT NULL;

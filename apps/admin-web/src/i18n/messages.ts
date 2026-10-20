@@ -1039,6 +1039,8 @@ export const en = {
   'off.why.PERIOD_CLOSED': 'The sale falls in a month whose books are closed. Reopen the month, then record it again.',
   'off.why.FORBIDDEN': 'The cashier no longer has permission to sell at this branch.',
   'off.why.NOT_FOUND': 'An item on the sale was archived or removed.',
+  'off.why.SUBSCRIPTION_READ_ONLY': 'The subscription had lapsed, and the till rang this sale on a price list issued after the lapse or past that list’s offline window. Renew, then record it again.',
+  'off.why.TENANT_SUSPENDED': 'The business was suspended, and the till rang this sale on a price list issued after the suspension or past that list’s offline window. Once the business is active again, record it again.',
   'rep.title': 'Reports',
   'rep.lede': 'Restaurant reports per branch, in the branch’s local days. Every figure comes from the recorded sales, stock movements and kitchen tickets.',
   'rep.tab.items': 'Item performance',
@@ -1668,6 +1670,7 @@ export const en = {
   // Session 20: reports added in session 20 (SPEC §6.10).
   'rep.group.analysis': 'Analysis',
   'rep.analysisLede': 'Across categories and branches, discounts and price changes, purchasing and payments. Every figure comes from the recorded documents.',
+  'rep.notOnPlan': 'Analysis reports are part of the Growth and Enterprise plans. The sales, tax, sales book and Z-reading reports stay available on every plan.',
   'rep.tab.category': 'By category',
   'rep.tab.branches': 'By branch',
   'rep.tab.discounts': 'Discounts and prices',
@@ -2779,6 +2782,8 @@ export const fil: Record<MessageKey, string> = {
   'off.why.PERIOD_CLOSED': 'Ang benta ay nasa buwang sarado na ang libro. Buksan ulit ang buwan, saka itala ulit.',
   'off.why.FORBIDDEN': 'Wala nang pahintulot ang cashier na magbenta sa branch na ito.',
   'off.why.NOT_FOUND': 'Na-archive o tinanggal ang isang item sa benta.',
+  'off.why.SUBSCRIPTION_READ_ONLY': 'Lapsed na ang subscription, at ang benta ay ginawa ng till sa price list na ibinigay pagkatapos ng lapse o lampas na sa offline window nito. Mag-renew, saka itala ulit.',
+  'off.why.TENANT_SUSPENDED': 'Suspendido ang negosyo, at ang benta ay ginawa ng till sa price list na ibinigay pagkatapos ng suspensyon o lampas na sa offline window nito. Kapag aktibo na ulit ang negosyo, itala ulit.',
   'rep.title': 'Mga ulat',
   'rep.lede': 'Mga ulat ng restawran bawat branch, ayon sa lokal na araw ng branch. Galing ang bawat numero sa naitalang benta, galaw ng stock at kitchen ticket.',
   'rep.tab.items': 'Kita bawat item',
@@ -3407,6 +3412,7 @@ export const fil: Record<MessageKey, string> = {
   // Session 20: reports added in session 20.
   'rep.group.analysis': 'Pagsusuri',
   'rep.analysisLede': 'Sa mga kategorya at branch, diskwento at pagbabago ng presyo, pagbili at bayad. Bawat numero ay mula sa mga naitalang dokumento.',
+  'rep.notOnPlan': 'Kasama ang mga analysis report sa Growth at Enterprise plan. Magagamit pa rin sa bawat plan ang mga ulat ng benta, buwis, sales book at Z-reading.',
   'rep.tab.category': 'Bawat kategorya',
   'rep.tab.branches': 'Bawat branch',
   'rep.tab.discounts': 'Diskwento at presyo',

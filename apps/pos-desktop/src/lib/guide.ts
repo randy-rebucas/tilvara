@@ -32,7 +32,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('start', 'guide.start.title', 4, 2),
   section('sell', 'nav.sell', 5, 7),
   section('shift', 'nav.history', 4, 4),
-  section('close', 'nav.close', 3, 3),
+  section('close', 'nav.close', 3, 4),
   section('tables', 'nav.tables', 5, 3, true),
   section('kitchen', 'kds.entryTitle', 3, 3, true),
   section('till', 'guide.till.title', 4, 2),

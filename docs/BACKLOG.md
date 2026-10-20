@@ -235,5 +235,10 @@ Audit gaps (session 20): ✅ done, in the audit's order. The user chose: mobile 
 - ✅ Tests: integration `counter-controls`, `customers`, `analysis-reports`, `reservations-catalog`, `integrations`, workers `webhooks`, isolation/ledger additions; E2E `test:e2e:pos:controls`, `test:e2e:web:customers`, `test:e2e:web:analysis`, `test:e2e:web:inventory-extras`, `test:e2e:web:integrations`.
 - ⬜ Left open (LEFTOVER "Audit 2026-10-19"): automatic discard of held carts, customer anonymisation job, webhook DNS pinning and delivery purge, cashier adding customers (user's call), customer AR.
 
+Audit decisions (session 21): ✅ done. The user chose the recommended option for each.
+- ✅ Offline sales after a lapse or suspension: recorded when rung on a snapshot issued while the business could write and within its window (migration 0080 `terminal_snapshots.business_writable`); the others wait with `SUBSCRIPTION_READ_ONLY`/`TENANT_SUSPENDED`, now worded in the admin.
+- ✅ Plan contents kept as seeded and enforced: `advanced_reports` (the five analysis reports) and `multi_entity` (a second legal entity) on Growth and Enterprise, `api_access` on Enterprise.
+- ✅ Shift close with open restaurant bills: refused (`OPEN_BILLS`, listed at the till); a manager overrides with a reason, audited.
+
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

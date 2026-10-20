@@ -126,7 +126,11 @@ export class SyncService extends TenantService {
         .from(cashierSessions)
         .innerJoin(users, eq(users.id, cashierSessions.openedBy))
         .where(and(eq(cashierSessions.registerId, row.register.id), eq(cashierSessions.status, 'OPEN')));
-      const [snap] = await db.insert(terminalSnapshots).values({ tenantId: t.tenantId, terminalId: t.terminalId, registerId: row.register.id, asOf }).returning({ id: terminalSnapshots.id });
+      const { rows: [access] } = await db.execute<{ writable: boolean }>(sql`
+        SELECT app_subscription_write_allowed() AND (SELECT status FROM tenants) = 'ACTIVE' AS writable`);
+      const [snap] = await db.insert(terminalSnapshots)
+        .values({ tenantId: t.tenantId, terminalId: t.terminalId, registerId: row.register.id, asOf, businessWritable: access?.writable === true })
+        .returning({ id: terminalSnapshots.id });
       return {
         snapshotId: snap!.id,
         asOf: asOf.toISOString(),
@@ -280,17 +284,17 @@ export class SyncService extends TenantService {
     if (known) return this.replay(known, env, payloadHash);
 
     const snapshot = await withTenant(this.database.pool, t.tenantId, async (db) => {
-      const [own] = await db.select({ asOf: terminalSnapshots.asOf }).from(terminalSnapshots)
+      const [own] = await db.select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable }).from(terminalSnapshots)
         .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminalSnapshots.terminalId, t.terminalId)));
-      if (own) return { asOf: own.asOf, recoveredFrom: null };
+      if (own) return { asOf: own.asOf, writable: own.writable, recoveredFrom: null };
       // Recovery (session 16): a till revoked and set up again on the same register still holds sales
       // rung up under its old credential. Their snapshot is the revoked terminal's; nobody else's is accepted.
       const [old] = await db
-        .select({ asOf: terminalSnapshots.asOf, terminalId: terminalSnapshots.terminalId })
+        .select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable, terminalId: terminalSnapshots.terminalId })
         .from(terminalSnapshots)
         .innerJoin(terminals, eq(terminals.id, terminalSnapshots.terminalId))
         .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminals.registerId, t.registerId), eq(terminals.status, 'REVOKED')));
-      return old ? { asOf: old.asOf, recoveredFrom: old.terminalId } : undefined;
+      return old ? { asOf: old.asOf, writable: old.writable, recoveredFrom: old.terminalId } : undefined;
     });
     if (snapshot?.recoveredFrom) {
       // Delivered by the old credential before it was revoked: answer what was recorded then.
@@ -301,7 +305,7 @@ export class SyncService extends TenantService {
       if (!snapshot) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
       const cashier = await this.cashierAuth(t, env.cashierUserId);
       const r = await this.sales.recordOffline(cashier, env, {
-        ...this.offlineContext(t, snapshot.asOf, env, payloadHash),
+        ...this.offlineContext(t, snapshot, env, payloadHash),
         ...(snapshot.recoveredFrom && { recoveredFrom: snapshot.recoveredFrom }),
       });
       return { terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq, status: 'RECORDED', ...r, replayed: false };
@@ -316,8 +320,8 @@ export class SyncService extends TenantService {
     }
   }
 
-  private offlineContext(t: TerminalPrincipal, asOf: Date, env: OfflineSale, payloadHash: string, quarantinedId?: string): OfflineContext {
-    return { terminalId: t.terminalId, registerId: t.registerId, snapshotAsOf: asOf, windowHours: this.env.OFFLINE_WINDOW_HOURS, payload: env, payloadHash, ...(quarantinedId && { quarantinedId }) };
+  private offlineContext(t: TerminalPrincipal, snap: { asOf: Date; writable: boolean }, env: OfflineSale, payloadHash: string, quarantinedId?: string): OfflineContext {
+    return { terminalId: t.terminalId, registerId: t.registerId, snapshotAsOf: snap.asOf, snapshotWritable: snap.writable, windowHours: this.env.OFFLINE_WINDOW_HOURS, payload: env, payloadHash, ...(quarantinedId && { quarantinedId }) };
   }
 
   /** The shift's cashier, as an active member with their grants now; the sale is recorded as them. */
@@ -442,13 +446,13 @@ export class SyncService extends TenantService {
     const t = { terminalId: d.terminalId, tenantId: d.tenantId, registerId: '', correlationId: auth.correlationId };
     const result = await this.read(auth, async (db) => {
       const [term] = await db.select({ registerId: terminals.registerId }).from(terminals).where(eq(terminals.id, d.terminalId));
-      const [snap] = await db.select({ asOf: terminalSnapshots.asOf }).from(terminalSnapshots).where(eq(terminalSnapshots.id, env.snapshotId));
-      return { registerId: term!.registerId, asOf: snap?.asOf };
+      const [snap] = await db.select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable }).from(terminalSnapshots).where(eq(terminalSnapshots.id, env.snapshotId));
+      return { registerId: term!.registerId, snap };
     });
     try {
-      if (!result.asOf) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
+      if (!result.snap) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
       const cashier = await this.cashierAuth(t, env.cashierUserId);
-      const r = await this.sales.recordOffline(cashier, env, this.offlineContext({ ...t, registerId: result.registerId }, result.asOf, env, d.payloadHash, d.id));
+      const r = await this.sales.recordOffline(cashier, env, this.offlineContext({ ...t, registerId: result.registerId }, result.snap, env, d.payloadHash, d.id));
       await this.tenantDb.run(auth, (db) => this.audit(db, auth, 'offline_sale.retried', 'terminal_transaction', id, { saleId: r.saleId }));
       return this.get(auth, id);
     } catch (e) {

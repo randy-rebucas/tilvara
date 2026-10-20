@@ -41,6 +41,8 @@ export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 export const closeCashierSessionSchema = z.object({
   countedCash: amountSchema,
   note: z.string().trim().max(500).nullable().optional(),
+  /** A manager (`cash.reconcile`) closing despite open restaurant bills (OPEN_BILLS) says why; audited. */
+  openBillsReason: z.string().trim().min(1).max(500).optional(),
 });
 export type CloseCashierSessionInput = z.infer<typeof closeCashierSessionSchema>;
 

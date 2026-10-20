@@ -23,7 +23,7 @@ import type {
 } from '@1pos/validation';
 import { createHash, randomBytes } from 'node:crypto';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { assertWithinLimit } from '../billing/entitlements.js';
+import { assertFeature, assertWithinLimit, usageOf } from '../billing/entitlements.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -76,6 +76,8 @@ export class OrgService extends TenantService {
     this.assertCan(auth, 'org.manage');
     return this.mutate(auth, async (db) => {
       await assertWithinLimit(db, 'maxLegalEntities');
+      // A second (live) entity is the plan's `multi_entity` feature, on top of its entity limit.
+      if ((await usageOf(db, 'maxLegalEntities')) > 0) await assertFeature(db, 'multi_entity');
       const { vatStatus, roundingMode, ...entity } = input;
       const tenantId = tenantOf(auth).tenantId;
       const [row] = await db.insert(legalEntities).values({ ...entity, tenantId }).returning();

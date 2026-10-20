@@ -38,6 +38,7 @@ import type { CreateCheckInput, CreateExchangeInput, CreateSaleInput, PreviewChe
 import { dbNow } from '../common/clock.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
+import { readOnlyReason } from '../billing/entitlements.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -157,6 +158,8 @@ export interface OfflineContext {
   terminalId: string;
   registerId: string;
   snapshotAsOf: Date;
+  /** The business could write when the snapshot was issued (`terminal_snapshots.business_writable`). */
+  snapshotWritable: boolean;
   windowHours: number;
   /** The quarantined delivery being retried, if any (it becomes RECORDED with the sale). */
   quarantinedId?: string;
@@ -356,9 +359,16 @@ export class SalesService extends TenantService {
    * charged or refuses (TOTAL_MISMATCH); flagged, never refused, when prices moved meanwhile, the
    * snapshot had expired or the device clock was off. The delivery row (RECORDED) commits with the sale.
    * Any refusal leaves nothing; the caller quarantines the envelope.
+   *
+   * A business that has since lapsed or been suspended (session 21 decision): the sale is still recorded
+   * when its snapshot was issued while the business could write and it was rung within that snapshot's
+   * window, so a till that was offline at the moment of the lapse loses nothing. Anything else is refused
+   * with the business's read-only reason. Such a sale is audited (`offline_sale.recorded_while_read_only`).
    */
   recordOffline(auth: AuthContext, env: OfflineSale, ctx: OfflineContext) {
     return this.mutate(auth, async (db) => {
+      const readOnly = await readOnlyReason(db, tenantOf(auth).status);
+      if (readOnly && !ctx.snapshotWritable) throw readOnly;
       const session = await this.checkoutSession(db, auth, env.cashierSessionId, env.terminalTxnId);
       if (session.registerId !== ctx.registerId) {
         throw new AppError('WRONG_REGISTER', 'This shift is on another register than the terminal', HttpStatus.CONFLICT);
@@ -378,6 +388,7 @@ export class SalesService extends TenantService {
       const sameAsThen = then && then.taxProfile.id === cart.taxProfile.id && then.lines.every((l, i) => l.priceId === cart.lines[i]!.priceId);
       if (!sameAsThen) flags.push('PRICE_CHANGED');
       if (completedAt.getTime() > ctx.snapshotAsOf.getTime() + ctx.windowHours * 3_600_000) flags.push('SNAPSHOT_EXPIRED');
+      if (readOnly && flags.includes('SNAPSHOT_EXPIRED')) throw readOnly;
 
       const priced = pricedFromCart(cart, input);
       priced.offline = { terminalId: ctx.terminalId, reference: env.localReference, flags, completedAt };
@@ -407,9 +418,14 @@ export class SalesService extends TenantService {
           terminalId: ctx.terminalId, revokedTerminalId: ctx.recoveredFrom, localReference: env.localReference,
         });
       }
+      if (readOnly) {
+        await this.audit(db, auth, 'offline_sale.recorded_while_read_only', 'sale', sale.id, {
+          terminalId: ctx.terminalId, reason: readOnly.code, snapshotAsOf: ctx.snapshotAsOf.toISOString(), localReference: env.localReference,
+        });
+      }
       const [reg] = await db.select({ code: registers.code }).from(registers).where(eq(registers.id, session.registerId));
       return { saleId: sale.id, saleNumber: sale.saleNumber, reference: `${reg!.code}-${String(sale.saleNumber).padStart(6, '0')}`, flags };
-    });
+    }, { allowReadOnlyBusiness: ctx.snapshotWritable });
   }
 
   /** The calendar date of an instant in the branch's timezone (DB arithmetic). */
