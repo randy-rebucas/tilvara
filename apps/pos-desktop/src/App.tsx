@@ -13,7 +13,7 @@ import { useT } from './i18n';
 import type { GuideTopic } from './lib/guide';
 import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
-import { servesTables, type Me } from './types';
+import { restaurantOnPlan, servesTables, type Me } from './types';
 
 type Stage =
   | { name: 'signin' }
@@ -77,9 +77,9 @@ function Counter() {
     );
   }
   if (stage.name === 'register') {
-    // A retail business has no restaurant service (business type), whatever the person may do.
-    const kitchen = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
-    const floor = servesTables(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
+    // A retail business, or a plan without it, has no restaurant service, whatever the person may do.
+    const kitchen = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
+    const floor = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
       <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me) }}>
         <RegisterPicker

@@ -8,7 +8,7 @@ import { rejectCrossSite } from '@/lib/csrf';
  * forwards to the API. Only an allow-listed set of resources is reachable through it.
  */
 const ALLOWED =
-  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|stock|accounts|journal-entries|accounting|kitchen-stations|dining-areas|restaurant-tables|modifier-groups|modifier-options|menus|menu-versions|sync\/(?:transactions|terminals)|support-access|api-keys|webhooks|webhook-deliveries|business|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance)(\/|$)/;
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|barcodes|price-lists|catalog|members|roles|invitations|subscription|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|kitchen-stations|dining-areas|restaurant-tables|modifier-groups|modifier-options|menus|menu-versions|sync\/(?:transactions|terminals)|support-access|api-keys|webhooks|webhook-deliveries|business|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance)(\/|$)/;
 
 async function forward(request: NextRequest, path: string[]) {
   const joined = path.join('/');

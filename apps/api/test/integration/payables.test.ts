@@ -253,3 +253,154 @@ describe('payables aging', () => {
     expect(await audit(s)).toEqual(CLEAN);
   });
 });
+
+/** Net (debit − credit) of a system account over the entity's whole journal. */
+const gl = (s: Shop, key: string) =>
+  asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query<{ v: string }>(
+    `SELECT coalesce(sum(l.debit - l.credit), 0)::numeric(20,2)::text AS v FROM journal_lines l JOIN journal_entries e ON e.id = l.journal_entry_id
+       JOIN accounts a ON a.id = l.account_id WHERE e.legal_entity_id = $1 AND a.system_key = $2`, [s.le, key])).rows[0]!.v);
+const payMany = (s: Shop, body: Record<string, unknown>, auth: Auth = s.accountant, key = randomUUID()) =>
+  http().post('/v1/supplier-payments').set(auth).set('Idempotency-Key', key).send({ supplierId: s.supplierId, paidOn: day(), method: 'BANK_TRANSFER', ...body });
+const voidPayment = (id: string, auth: Auth, reason = 'Paid the wrong supplier') =>
+  http().post(`/v1/supplier-payments/${id}/void`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason });
+const note = (id: string, body: Record<string, unknown>, auth: Auth) =>
+  http().post(`/v1/supplier-invoices/${id}/notes`).set(auth).set('Idempotency-Key', randomUUID()).send({ noteDate: day(), vatAmount: '0', reason: 'Agreed with the supplier', ...body });
+const getInvoice = async (s: Shop, id: string) => (await http().get(`/v1/supplier-invoices/${id}`).set(s.auth).expect(200)).body;
+const tryAs = (s: Shop, q: string) => asOwnerInTenant(owner, s.tenantId, (c) => c.query(q)).then(() => null, (e: Error) => e.message);
+
+describe('supplier payments over several invoices, and voids (session 22)', () => {
+  it('one payment settles invoices of two branches: one entry, balanced per branch; mismatches and overpayment refused', async () => {
+    const s = await shop('ap-multi');
+    const b2 = (await http().post('/v1/branches').set(s.auth).send({ legalEntityId: s.le, code: 'B2', name: 'Two', birBranchCode: '00002' }).expect(201)).body.id as string;
+    const r1 = await receive(s, [{ variantId: s.cola, quantity: '10', unitCost: '10.00' }]);
+    const r2 = (await http().post('/v1/goods-receipts').set(s.auth).set('Idempotency-Key', randomUUID())
+      .send({ branchId: b2, supplierId: s.supplierId, lines: [{ variantId: s.rice, quantity: '2', unitCost: '50.00' }] }).expect(201)).body;
+    const a = (await invoice(s, { invoiceNumber: 'M-1', goodsReceiptIds: [r1.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
+    const b = (await invoice(s, { invoiceNumber: 'M-2', goodsReceiptIds: [r2.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
+    const pepsi = await s.supplier('PEPSI');
+    const rp = await receive(s, [{ variantId: s.cola, quantity: '1', unitCost: '10.00' }], pepsi);
+    const c = (await invoice(s, { supplierId: pepsi, invoiceNumber: 'P-1', goodsReceiptIds: [rp.id], netAmount: '10.00', vatAmount: '0' }).expect(201)).body;
+
+    // Refusals: another supplier's invoice, more than one invoice owes, an invoice twice, no posting rights.
+    expect((await payMany(s, { allocations: [{ supplierInvoiceId: a.id, amount: '10.00' }, { supplierInvoiceId: c.id, amount: '1.00' }] }).expect(422)).body.error)
+      .toMatchObject({ code: 'INVOICE_MISMATCH', details: { supplierInvoiceIds: [c.id] } });
+    expect((await payMany(s, { allocations: [{ supplierInvoiceId: a.id, amount: '112.01' }, { supplierInvoiceId: b.id, amount: '1.00' }] }).expect(422)).body.error)
+      .toMatchObject({ code: 'OVERPAYMENT', details: { balance: '112.00', supplierInvoiceId: a.id } });
+    await payMany(s, { allocations: [{ supplierInvoiceId: a.id, amount: '1.00' }, { supplierInvoiceId: a.id, amount: '1.00' }] }).expect(400);
+    await payMany(s, { allocations: [{ supplierInvoiceId: a.id, amount: '1.00' }] }, s.officer).expect(403);
+    await payMany(s, { allocations: [{ supplierInvoiceId: randomUUID(), amount: '1.00' }] }).expect(404);
+
+    const key = randomUUID();
+    const body = { reference: 'BDO 9001', allocations: [{ supplierInvoiceId: a.id, amount: '112.00' }, { supplierInvoiceId: b.id, amount: '50.00' }] };
+    const paid = (await payMany(s, body, s.accountant, key).expect(201)).body;
+    expect(paid).toMatchObject({ amount: '162.00', status: 'RECORDED', supplierInvoiceId: null, invoiceNumber: null, supplier: { code: 'COKE' }, branchId: s.branchId });
+    expect(paid.allocations.map((x: { invoiceNumber: string; amount: string }) => [x.invoiceNumber, x.amount])).toEqual([['M-1', '112.00'], ['M-2', '50.00']]);
+    // The same key again answers the same payment; nothing new is recorded.
+    expect((await payMany(s, body, s.accountant, key).expect(201)).body.id).toBe(paid.id);
+    expect(await getInvoice(s, a.id)).toMatchObject({ status: 'PAID', balance: '0.00', payments: [{ id: paid.id, amount: '112.00', paymentAmount: '162.00' }] });
+    expect(await getInvoice(s, b.id)).toMatchObject({ status: 'OPEN', balance: '62.00', payments: [{ id: paid.id, amount: '50.00' }] });
+
+    // One entry, each branch's payables against the bank on its own lines.
+    const e = (await http().get(`/v1/journal-entries/${paid.journalEntryId}`).set(s.auth).expect(200)).body as { lines: { systemKey: string; debit: string; credit: string; branchId: string }[] };
+    const byBranch = (br: string) => Object.fromEntries(e.lines.filter((l) => l.branchId === br).map((l) => [l.systemKey, (Number(l.debit) - Number(l.credit)).toFixed(2)]));
+    expect(byBranch(s.branchId)).toEqual({ ACCOUNTS_PAYABLE: '112.00', CASH_IN_BANK: '-112.00' });
+    expect(byBranch(b2)).toEqual({ ACCOUNTS_PAYABLE: '50.00', CASH_IN_BANK: '-50.00' });
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('a mistaken payment is voided once, with a reason: its entry reversed, the invoice open again; never reversed by hand', async () => {
+    const s = await shop('ap-void');
+    const r = await receive(s, [{ variantId: s.cola, quantity: '10', unitCost: '10.00' }]);
+    const inv = (await invoice(s, { invoiceNumber: 'V-1', goodsReceiptIds: [r.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
+    const payment = (await pay(inv.id, { amount: '112.00' }, s.accountant).expect(201)).body.payments[0];
+    const detail = (await http().get(`/v1/supplier-payments/${payment.id}`).set(s.auth).expect(200)).body;
+    expect(detail).toMatchObject({ supplierInvoiceId: inv.id, invoiceNumber: 'V-1', status: 'RECORDED' });
+
+    // Its entry is undone by voiding the payment, never by a reversal by hand.
+    expect((await http().post(`/v1/journal-entries/${detail.journalEntryId}/reverse`).set(s.auth).set('Idempotency-Key', randomUUID()).send({ memo: 'Oops' }).expect(422)).body.error.code).toBe('CANCEL_THE_DOCUMENT');
+    await voidPayment(payment.id, s.officer).expect(403);
+    await voidPayment(payment.id, s.accountant, ' ').expect(400);
+
+    const voided = (await voidPayment(payment.id, s.accountant).expect(200)).body;
+    expect(voided).toMatchObject({ status: 'VOIDED', voidReason: 'Paid the wrong supplier', reversalEntryId: expect.any(String) });
+    expect(await entryNet(s, voided.reversalEntryId)).toEqual({ ACCOUNTS_PAYABLE: '-112.00', CASH_IN_BANK: '112.00' });
+    expect((await voidPayment(payment.id, s.accountant).expect(409)).body.error.code).toBe('ALREADY_VOIDED');
+    expect(await getInvoice(s, inv.id)).toMatchObject({ status: 'OPEN', paidAmount: '0.00', balance: '112.00', payments: [{ id: payment.id, status: 'VOIDED' }] });
+    expect(await gl(s, 'ACCOUNTS_PAYABLE')).toBe('-112.00');
+    const aging = (await http().get('/v1/reports/payables-aging').query({ legalEntityId: s.le }).set(s.accountant).expect(200)).body;
+    expect([aging.totals.total, aging.ledgerBalance]).toEqual(['112.00', '112.00']);
+
+    // Paid again, correctly.
+    await pay(inv.id, { amount: '112.00', method: 'CHECK' }, s.accountant).expect(201);
+    expect(await getInvoice(s, inv.id)).toMatchObject({ status: 'PAID', balance: '0.00' });
+
+    expect(await tryAs(s, `UPDATE supplier_payments SET amount = 1 WHERE id = '${payment.id}'`)).toMatch(/only voided, once/);
+    expect(await tryAs(s, `UPDATE supplier_payments SET voided_at = NULL, voided_by = NULL, void_reason = NULL WHERE id = '${payment.id}'`)).toMatch(/only voided, once/);
+    expect(await tryAs(s, `DELETE FROM supplier_payments WHERE id = '${payment.id}'`)).toMatch(/never deleted/);
+    expect(await tryAs(s, `UPDATE supplier_payment_allocations SET amount = 1 WHERE supplier_payment_id = '${payment.id}'`)).not.toBeNull();
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+});
+
+describe('supplier credit and debit notes (session 22)', () => {
+  it('a return after invoicing is credited: the stranded GRNI cleared, the VAT given back; an allowance is a variance; a debit note owes more', async () => {
+    const s = await shop('ap-notes');
+    const r = await receive(s, [{ variantId: s.cola, quantity: '10', unitCost: '10.00' }]);
+    const inv = (await invoice(s, { invoiceNumber: 'N-1', goodsReceiptIds: [r.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
+    // Two colas go back after the invoice: the return debits GRNI ₱20 that no invoice clears.
+    await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID())
+      .send({ branchId: s.branchId, supplierId: s.supplierId, goodsReceiptId: r.id, reason: 'Leaking', lines: [{ goodsReceiptLineId: r.lines[0]!.id, variantId: s.cola, quantity: '2' }] }).expect(201);
+    expect(await gl(s, 'GRNI')).toBe('20.00');
+
+    await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-1', netAmount: '20.00', vatAmount: '2.40' }, s.cashier).expect(403);
+    expect((await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-1', netAmount: '200.00' }, s.officer).expect(422)).body.error).toMatchObject({ code: 'CREDIT_EXCEEDS_BALANCE', details: { balance: '112.00' } });
+    expect((await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-1', netAmount: '1.00', noteDate: day(1) }, s.officer).expect(422)).body.error.code).toBe('DATE_IN_FUTURE');
+    await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-1', netAmount: '0' }, s.officer).expect(400);
+
+    const credited = (await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-1', netAmount: '20.00', vatAmount: '2.40', reason: 'Two leaking colas returned' }, s.officer).expect(201)).body;
+    expect(credited).toMatchObject({ creditedAmount: '22.40', balance: '89.60', status: 'OPEN' });
+    const cm = credited.adjustments[0];
+    expect(cm).toMatchObject({ kind: 'CREDIT', noteNumber: 'CM-1', totalAmount: '22.40', inputVat: '2.40', grniCleared: '20.00', entryNumber: 1 });
+    expect(await gl(s, 'GRNI')).toBe('0.00');
+    const noteEntries = async () => (await http().get('/v1/journal-entries').query({ legalEntityId: s.le, sourceType: 'SUPPLIER_NOTE' }).set(s.auth).expect(200)).body.data as { id: string; sourceId: string }[];
+    const cmEntry = (await noteEntries()).find((x) => x.sourceId === cm.id)!;
+    expect(await entryNet(s, cmEntry.id)).toEqual({ ACCOUNTS_PAYABLE: '22.40', INPUT_VAT: '-2.40', GRNI: '-20.00' });
+    expect((await http().get(`/v1/supplier-notes/${cm.id}`).set(s.accountant).expect(200)).body).toMatchObject({ invoiceNumber: 'N-1', grniCleared: '20.00' });
+
+    // An allowance: nothing is left stranded, so the rest is a price variance.
+    const allowance = (await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-2', netAmount: '5.00', vatAmount: '0.60' }, s.accountant).expect(201)).body.adjustments[1];
+    expect(allowance).toMatchObject({ grniCleared: '0.00', entryNumber: 2 });
+    expect(await entryNet(s, (await noteEntries()).find((x) => x.sourceId === allowance.id)!.id)).toEqual({ ACCOUNTS_PAYABLE: '5.60', INPUT_VAT: '-0.60', PURCHASE_PRICE_VARIANCE: '-5.00' });
+    // A debit note: the supplier left freight off the invoice.
+    const debited = (await note(inv.id, { kind: 'DEBIT', noteNumber: 'DM-1', netAmount: '10.00', vatAmount: '1.20', reason: 'Freight' }, s.accountant).expect(201)).body;
+    expect(debited).toMatchObject({ creditedAmount: '28.00', debitedAmount: '11.20', balance: '95.20' });
+    expect(await entryNet(s, (await noteEntries()).find((x) => x.sourceId === debited.adjustments[2].id)!.id)).toEqual({ PURCHASE_PRICE_VARIANCE: '10.00', INPUT_VAT: '1.20', ACCOUNTS_PAYABLE: '-11.20' });
+
+    // The balance is what may be paid; then no credit fits; the books and the aging agree.
+    expect((await pay(inv.id, { amount: '95.21' }, s.accountant).expect(422)).body.error.code).toBe('OVERPAYMENT');
+    await pay(inv.id, { amount: '95.20' }, s.accountant).expect(201);
+    expect(await getInvoice(s, inv.id)).toMatchObject({ status: 'PAID', balance: '0.00' });
+    expect((await note(inv.id, { kind: 'CREDIT', noteNumber: 'CM-3', netAmount: '0.01' }, s.accountant).expect(422)).body.error.code).toBe('CREDIT_EXCEEDS_BALANCE');
+    expect(await gl(s, 'ACCOUNTS_PAYABLE')).toBe('0.00');
+    expect((await http().get('/v1/supplier-invoices').query({ legalEntityId: s.le, status: 'PAID' }).set(s.auth).expect(200)).body.data).toMatchObject([{ id: inv.id, notesAmount: '-16.80', balance: '0.00' }]);
+
+    // A note is corrected by an opposite note, never by reversing its entry by hand.
+    expect((await http().post(`/v1/journal-entries/${cmEntry.id}/reverse`).set(s.auth).set('Idempotency-Key', randomUUID()).send({ memo: 'Oops' }).expect(422)).body.error.code).toBe('CANCEL_THE_DOCUMENT');
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('an invoice with notes cannot be cancelled; a cancelled invoice takes none; notes stay as recorded', async () => {
+    const s = await shop('ap-notes2');
+    const r = await receive(s, [{ variantId: s.cola, quantity: '1', unitCost: '50.00' }]);
+    const inv = (await invoice(s, { invoiceNumber: 'N-2', goodsReceiptIds: [r.id], netAmount: '50.00', vatAmount: '6.00' }).expect(201)).body;
+    const withNote = (await note(inv.id, { kind: 'DEBIT', noteNumber: 'DM-9', netAmount: '5.00' }, s.auth).expect(201)).body;
+    expect((await cancel(inv.id, s.auth).expect(409)).body.error.code).toBe('INVOICE_HAS_NOTES');
+    const r2 = await receive(s, [{ variantId: s.cola, quantity: '1', unitCost: '50.00' }]);
+    const other = (await invoice(s, { invoiceNumber: 'N-3', goodsReceiptIds: [r2.id], netAmount: '50.00', vatAmount: '6.00' }).expect(201)).body;
+    await cancel(other.id, s.auth).expect(200);
+    expect((await note(other.id, { kind: 'CREDIT', noteNumber: 'CM-9', netAmount: '1.00' }, s.auth).expect(409)).body.error.code).toBe('INVALID_STATE');
+    expect(await tryAs(s, `UPDATE supplier_notes SET reason = 'changed' WHERE id = '${withNote.adjustments[0].id}'`)).not.toBeNull();
+    expect(await tryAs(s, `DELETE FROM supplier_notes WHERE id = '${withNote.adjustments[0].id}'`)).not.toBeNull();
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+});

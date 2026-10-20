@@ -31,7 +31,11 @@ export const signupSchema = z.object({
   businessType: businessTypeSchema.default('HYBRID'),
 });
 
-export const businessUpdateSchema = z.object({ businessType: businessTypeSchema });
+/** The business's name (as people see it; receipts print the legal entity's names) and/or its type. */
+export const businessUpdateSchema = z
+  .object({ name: z.string().trim().min(1).max(200), businessType: businessTypeSchema })
+  .partial()
+  .refine((v) => v.name !== undefined || v.businessType !== undefined, 'Nothing to update');
 export type BusinessUpdateInput = z.infer<typeof businessUpdateSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 

@@ -17,6 +17,7 @@
   --color-muted: #555962;
   --color-hair: #cfc9b8;
   --color-hair-soft: #e7e1d1;
+  --color-table-head: #fbf9f3;
   --color-blue: #2a5da8;
   --color-blue-deep: #1f4885;
   --color-blue-ink: #dce6f5;
@@ -110,6 +111,35 @@
   .callout-warn { background: var(--color-amber-bg); border-color: #ead3a6; color: #6b4a12; }
   .callout-error { background: #fbeceb; border-color: #efc8c6; color: var(--color-red); }
   .row-rule + .row-rule { border-top: 1px solid var(--color-hair-soft); }
+  /* A pickable row (a sale in the shift list) answers the pointer faintly, like an admin table row. */
+  .row-pick { transition: background-color 120ms ease-out; }
+  .row-pick:hover, .row-pick[aria-current="true"] { background: var(--color-table-head); }
+
+  /* Text links inside a note: a hairline underline until hovered, so they read as words, not default links. */
+  .note .underline { text-decoration-color: var(--color-hair); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: text-decoration-color 120ms ease-out; }
+  .note .underline:hover { text-decoration-color: currentColor; }
+
+  /* Auth notes (DESIGN.md, Auth Face): the tear line between the face and its stub, and the
+     microprinted name along the face's foot. */
+  .perf {
+    height: 9px; margin: 0 14px;
+    background-image: radial-gradient(circle at center, var(--color-hair) 1.3px, transparent 1.8px);
+    background-size: 9px 9px; background-repeat: repeat-x; background-position: center;
+  }
+  @media (min-width: 1024px) {
+    .perf { width: 9px; height: auto; margin: 14px 0; background-repeat: repeat-y; }
+  }
+  .microprint {
+    font-family: var(--font-serial); font-size: 6.5px; font-weight: 500; line-height: 1;
+    letter-spacing: 0.24em; text-transform: uppercase; white-space: nowrap; overflow: hidden;
+    color: var(--color-muted); opacity: 0.6; user-select: none;
+  }
+}
+
+/* The rosette is engraved once, on arrival; without motion it is simply there. */
+@media (prefers-reduced-motion: no-preference) {
+  .rosette g { stroke-dasharray: 1; stroke-dashoffset: 1; animation: engrave 1400ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+  @keyframes engrave { to { stroke-dashoffset: 0; } }
 }
 
 @media print {
@@ -117,6 +147,7 @@
   .printable, .printable * { visibility: visible; }
   .printable { position: absolute; inset: 0 auto auto 0; width: 80mm; box-shadow: none; border: 0; }
   .printable::before, .no-print { display: none; }
+  .rosette, .microprint, .perf { display: none; }
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Empty, Note, PageHeader } from '@/components/note';
+import { Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { apiOrNull, type Branch } from '@/lib/api';
 import { getT } from '@/i18n/server';
@@ -41,7 +41,7 @@ export async function InventoryChrome({ tab, branches, branch, children }: { tab
         ]}
       />
       <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?branch=${id}`} />
-      {branch ? children : <Note><Empty>{t('inv.noBranch')}</Empty></Note>}
+      {branch ? children : <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note>}
     </div>
   );
 }

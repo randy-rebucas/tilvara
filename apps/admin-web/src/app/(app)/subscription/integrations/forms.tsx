@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
-import { FormError, TextField } from '@/components/fields';
+import { FormError, SelectField, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { MessageKey } from '@/i18n/messages';
@@ -35,7 +35,12 @@ function KeyFields({ close }: { close: () => void }) {
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const r = await submit<{ key: string }>('POST', '/api/v1/api-keys', { name: String(f.get('keyName') ?? '').trim(), scopes: SCOPES.filter((s) => f.get(`scope-${s}`) === 'on') }, { idempotent: true });
+    const days = Number(f.get('validDays') ?? 0);
+    const r = await submit<{ key: string }>('POST', '/api/v1/api-keys', {
+      name: String(f.get('keyName') ?? '').trim(),
+      scopes: SCOPES.filter((s) => f.get(`scope-${s}`) === 'on'),
+      ...(days > 0 && { expiresAt: new Date(Date.now() + days * 86_400_000).toISOString() }),
+    }, { idempotent: true });
     if (r.ok) setMade(r.data.key);
   }
   if (made) return <ShownOnce label={t('int.keyMade')} value={made} onDone={close} />;
@@ -51,6 +56,10 @@ function KeyFields({ close }: { close: () => void }) {
         ))}
         {fieldError('scopes') && <p className="hint text-red!">{fieldError('scopes')}</p>}
       </fieldset>
+      <SelectField label={t('int.validFor')} name="validDays" defaultValue="0" hint={fieldError('expiresAt') ?? undefined}>
+        <option value="0">{t('int.validForever')}</option>
+        {[30, 90, 365].map((n) => <option key={n} value={n}>{t('int.validDays', { n })}</option>)}
+      </SelectField>
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn btn-primary" disabled={pending}>{t('int.createKey')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>

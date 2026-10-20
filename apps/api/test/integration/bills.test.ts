@@ -252,6 +252,22 @@ describe('splitting', () => {
     expect(paid).toEqual([{ n: toFixed4(bill.amountDue) }]);
     expect(await sql(r, `SELECT bill_line_id, sum(share_num::numeric / share_den)::numeric(10,4)::text AS s FROM order_bill_allocations GROUP BY 1 HAVING sum(share_num::numeric / share_den) > 1.0000001`)).toEqual([]);
   });
+
+  it('a dish split three ways consumes exactly what the whole dish would, even a trace amount', async () => {
+    const r = await restaurant('bill-trace');
+    // 1 g of beef in the tea: a third of it rounds to nothing at 4 dp on its own.
+    await http().post(`/v1/variants/${r.tea}/recipe`).set(r.auth).send({ ingredients: [{ variantId: r.beef, quantity: '0.001' }] }).expect(201);
+    const orderId = await servedOrder(r, r.t1, [{ variantId: r.tea, quantity: '1' }]);
+    const bill = (await billOrder(r, orderId).expect(201)).body;
+    const third = { billLineId: bill.lines[0].id, share: { num: 1, den: 3 } };
+    const checks = [
+      (await check(r, bill.id, { allocations: [third] }).expect(201)).body,
+      (await check(r, bill.id, { allocations: [third] }).expect(201)).body,
+      (await check(r, bill.id, {}).expect(201)).body,
+    ];
+    const used = await sql<{ q: string }>(r, `SELECT quantity::text AS q FROM stock_movements WHERE type = 'CONSUMPTION' AND variant_id = $1 AND sale_id = ANY($2::uuid[]) ORDER BY created_at`, [r.beef, checks.map((c) => c.id)]);
+    expect(used.map((u) => u.q)).toEqual(['-0.0003', '-0.0004', '-0.0003']);
+  });
 });
 
 describe('check preview', () => {
@@ -321,6 +337,36 @@ describe('SC/PWD, discounts and reopening', () => {
     expect((await http().get(`/v1/sales/${own.id}/receipt`).set(r.server).expect(200)).body.statutory).toMatchObject([{ scheme: 'SC', discount: '26.79', signatureLine: true }]);
     expect(code(await http().post(`/v1/restaurant/bills/${again.id}/void`).set(r.server).send({ reason: 'x' }).expect(409))).toBe('BILL_HAS_CHECKS');
     await check(r, again.id, {}).expect(201);
+    expect(await asOwnerInTenant(owner, r.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('comps and per-item discounts (session 22): an item rate replaces the order rate, never meets SC/PWD, needs sales.discount and is audited', async () => {
+    const r = await restaurant('bill-comp');
+    const orderId = await servedOrder(r, r.t1, [
+      { variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium] },
+      { variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium] },
+      { variantId: r.tea, quantity: '1' },
+    ]);
+    const items = (await http().get(`/v1/restaurant/orders/${orderId}`).set(r.server).expect(200)).body.items.filter((i: { kind: string }) => i.kind === 'ITEM');
+    const comp = { orderItemId: items[0].id, rate: '1', reason: 'Burger was overcooked' };
+    const tea = { orderItemId: items[2].id, rate: '0.20', reason: 'Regular customer' };
+    expect(code(await billOrder(r, orderId, { itemDiscounts: [comp] }).expect(403))).toBe('FORBIDDEN'); // cashier: no sales.discount
+    const lola = { ref: 'lola', scheme: 'SC', name: 'Lola Cruz', idNumber: 'OSCA-123' };
+    const stacked = { beneficiaries: [lola], statutory: [{ orderItemId: items[0].id, beneficiary: 'lola' }], itemDiscounts: [comp] };
+    expect(code(await billOrder(r, orderId, stacked, r.manager).expect(400))).toBe('VALIDATION_FAILED');
+    expect(code(await billOrder(r, orderId, { itemDiscounts: [{ ...comp, orderItemId: randomUUID() }] }, r.manager).expect(404))).toBe('NOT_FOUND');
+    expect(code(await billOrder(r, orderId, { itemDiscounts: [comp, { ...comp, rate: '0.5' }] }, r.manager).expect(400))).toBe('VALIDATION_FAILED');
+
+    // The comped burger is free; the other burger takes the order's 10 %; tea its own 20 %.
+    const bill = (await billOrder(r, orderId, { discountRate: '0.10', itemDiscounts: [comp, tea] }, r.manager).expect(201)).body;
+    expect(bill.lines.map((l: { discount: string; amountDue: string }) => [l.discount, l.amountDue]))
+      .toEqual([['150.00', '0.00'], ['15.00', '135.00'], ['9.00', '36.00']]);
+    const audit = await asOwnerInTenant(owner, r.tenantId, async (c) => (await c.query(`SELECT metadata FROM audit_logs WHERE action = 'order.billed' AND resource_id = $1`, [orderId])).rows);
+    expect(audit[0].metadata.itemDiscounts).toEqual([comp, tea]);
+
+    // Paid in one check; the books and the evidence agree.
+    const paid = (await check(r, bill.id, {}).expect(201)).body;
+    expect(paid.amountDue).toBe(bill.amountDue);
     expect(await asOwnerInTenant(owner, r.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 });

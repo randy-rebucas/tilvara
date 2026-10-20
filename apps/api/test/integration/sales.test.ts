@@ -557,13 +557,49 @@ describe('voids and returns (ADR-0011)', () => {
     });
   });
 
-  it('damaged goods are refunded but not restocked', async () => {
+  it('damaged goods are refunded, not restocked, and written off as waste (cost leaves COGS for Spoilage)', async () => {
     const s = await store('ret-damaged');
-    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5', unitCost: '12.00' }] }).expect(201);
     const session = await openSession(s);
     const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
-    await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Dented can', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201);
+    const r = (await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Dented can', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201)).body;
     expect(await balance(s, s.cola)).toBe('3');
+    const moves = await asOwnerInTenant(owner, s.t.tenantId, async (c) =>
+      (await c.query(`SELECT type, quantity::text AS q, value::text AS v FROM stock_movements WHERE variant_id = $1 AND type IN ('RETURN', 'WASTE') ORDER BY created_at, type`, [s.cola])).rows);
+    expect(moves.map((m) => [m.type, Number(m.q)])).toEqual([['RETURN', 1], ['WASTE', -1]]);
+    const glBy = (key: string) => asOwnerInTenant(owner, s.t.tenantId, async (c) =>
+      Number((await c.query(`SELECT coalesce(sum(l.debit - l.credit), 0) AS v FROM journal_lines l JOIN accounts a ON a.id = l.account_id WHERE a.system_key = $1`, [key])).rows[0].v));
+    expect(await glBy('INVENTORY_WASTE')).toBe(12);
+    expect(await glBy('COGS')).toBe(12);
+    const [audit] = await asOwnerInTenant(owner, s.t.tenantId, async (c) => (await c.query(`SELECT metadata FROM audit_logs WHERE action = 'sale.returned' AND metadata->>'saleReturnId' = $1`, [r.id])).rows);
+    expect(audit.metadata.wasteAdjustmentId).toEqual(expect.any(String));
+  });
+
+  it('what the sale took from stock decides what comes back, not whether the item is tracked now', async () => {
+    const s = await store('ret-track-flip');
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, reason: 'Opening', items: [{ variantId: s.cola, quantity: '5', unitCost: '12.00' }] }).expect(201);
+    const productOf = (variantId: string) => asOwnerInTenant(owner, s.t.tenantId, async (c) => (await c.query(`SELECT product_id FROM product_variants WHERE id = $1`, [variantId])).rows[0].product_id as string);
+    const cola = await productOf(s.cola);
+    const session = await openSession(s);
+    const tracked = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
+    // Sold while tracked, returned after tracking was switched off: the units still come back.
+    await http().patch(`/v1/products/${cola}`).set(s.auth).send({ trackInventory: false }).expect(200);
+    await ret(s.manager, tracked.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Wrong size', lines: [{ saleLineId: tracked.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
+    expect(await balance(s, s.cola)).toBe('4');
+    // Sold while untracked, returned after tracking was switched on: nothing left stock, nothing comes back.
+    const untracked = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    await http().patch(`/v1/products/${cola}`).set(s.auth).send({ trackInventory: true }).expect(200);
+    await ret(s.manager, untracked.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Wrong size', lines: [{ saleLineId: untracked.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
+    expect(await balance(s, s.cola)).toBe('4');
+  });
+
+  it('a whole-unit item comes back in whole units', async () => {
+    const s = await store('ret-whole');
+    const session = await openSession(s);
+    const sold = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
+    const half = await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: [{ saleLineId: sold.lines[0].id, quantity: '0.5', disposition: 'RESTOCK' }] }).expect(422);
+    expect(half.body.error.code).toBe('QUANTITY_NOT_ALLOWED');
+    await ret(s.manager, sold.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'x', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
   });
 
   it('returning an SC line refunds what the beneficiary paid (discount and VAT exemption carried over)', async () => {

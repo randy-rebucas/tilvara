@@ -88,6 +88,8 @@ export interface RoleTemplate {
   key: string;
   name: string;
   permissions: readonly PermissionCode[];
+  /** Restaurant service only: left out for a RETAIL business, added when it changes type. */
+  restaurant?: true;
 }
 
 const all = PERMISSIONS;
@@ -105,18 +107,33 @@ export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   { key: 'admin', name: 'Administrator', permissions: all.filter((p) => p !== 'subscription.manage') },
   { key: 'branch_manager', name: 'Branch Manager', permissions: BRANCH_MANAGER },
   /** A branch manager who also sets up menus, the floor and the kitchen (session 10; backfilled by migration 0049). */
-  { key: 'restaurant_manager', name: 'Restaurant Manager', permissions: [...BRANCH_MANAGER, 'restaurant.manage'] },
+  { key: 'restaurant_manager', name: 'Restaurant Manager', permissions: [...BRANCH_MANAGER, 'restaurant.manage'], restaurant: true },
   /** The kitchen display only: start, ready, bump, and marking items sold out (session 10; migration 0049). */
-  { key: 'kitchen_crew', name: 'Kitchen Crew', permissions: ['kitchen.operate'] },
+  { key: 'kitchen_crew', name: 'Kitchen Crew', permissions: ['kitchen.operate'], restaurant: true },
   {
     key: 'cashier',
     name: 'Cashier',
     permissions: ['catalog.read', 'sales.create', 'sales.read', 'cash.session', 'customers.read', 'restaurant.orders'],
   },
+  /**
+   * A cashier trusted with refunds, voids and discounts, and with adding customers (SPEC §4; session 22,
+   * migration 0081). Price overrides and drawer approvals stay with a manager.
+   */
+  {
+    key: 'senior_cashier',
+    name: 'Senior Cashier',
+    permissions: ['catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void', 'sales.discount', 'cash.session', 'customers.read', 'customers.manage', 'restaurant.orders'],
+  },
   {
     key: 'inventory_officer',
     name: 'Inventory Officer',
     permissions: ['catalog.read', 'inventory.read', 'inventory.adjust', 'inventory.transfer', 'purchasing.manage', 'reports.read'],
+  },
+  /** Suppliers, purchase orders, receiving, supplier returns and invoices; no stock corrections (SPEC §4; migration 0081). */
+  {
+    key: 'purchasing_officer',
+    name: 'Purchasing Officer',
+    permissions: ['catalog.read', 'inventory.read', 'purchasing.manage', 'reports.read'],
   },
   {
     key: 'accountant',
@@ -124,3 +141,7 @@ export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
     permissions: ['org.read', 'sales.read', 'inventory.read', 'reports.read', 'accounting.read', 'accounting.post', 'audit.read'],
   },
 ];
+
+/** The built-in roles a business of this type is given (a RETAIL business has no restaurant roles). */
+export const roleTemplatesFor = (businessType: 'RETAIL' | 'RESTAURANT' | 'HYBRID'): readonly RoleTemplate[] =>
+  businessType === 'RETAIL' ? ROLE_TEMPLATES.filter((t) => !t.restaurant) : ROLE_TEMPLATES;

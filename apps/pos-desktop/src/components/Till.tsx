@@ -5,6 +5,7 @@ import { useT } from '../i18n';
 import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
 import { offlineReceiptToPrintable } from '../lib/printing';
 import { useTill } from '../lib/till';
+import { AuthStub } from './AuthNote';
 import { Callout, Field, Money, Note } from './ui';
 
 const when = (ms: number | string) => new Date(ms).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
@@ -53,20 +54,16 @@ export function TillSetup({ onSkip }: { onSkip: () => void }) {
   }
 
   return (
-    <div className="mx-auto grid max-w-[560px] gap-4 px-4 py-10">
-      <h1 className="text-[1.75rem] font-bold">{t('till.setupTitle')}</h1>
-      <p className="text-muted">{t('till.setupHint')}</p>
-      <Note className="p-6">
-        <form className="grid gap-4" onSubmit={submit}>
-          <Field id="apiUrl" name="apiUrl" type="url" label={t('till.server')} hint={t('till.serverHint')} required defaultValue={apiUrl} autoComplete="off" spellCheck={false} />
-          <Field id="terminalId" name="terminalId" label={t('till.terminalId')} required autoComplete="off" spellCheck={false} />
-          <Field id="credential" name="credential" type="password" label={t('till.credential')} required autoComplete="off" />
-          {error && <Callout kind="error">{error}</Callout>}
-          <button className="btn btn-primary" disabled={busy}>{t('till.connect')}</button>
-          <button type="button" className="btn" onClick={onSkip}>{t('till.skip')}</button>
-        </form>
-      </Note>
-    </div>
+    <AuthStub denom="orange" title={t('till.setupTitle')} lede={t('till.setupHint')}>
+      <form className="grid gap-4" onSubmit={submit}>
+        <Field id="apiUrl" name="apiUrl" type="url" label={t('till.server')} hint={t('till.serverHint')} required defaultValue={apiUrl} autoComplete="off" spellCheck={false} />
+        <Field id="terminalId" name="terminalId" label={t('till.terminalId')} required autoComplete="off" spellCheck={false} />
+        <Field id="credential" name="credential" type="password" label={t('till.credential')} required autoComplete="off" />
+        {error && <Callout kind="error">{error}</Callout>}
+        <button className="btn btn-primary" disabled={busy}>{t('till.connect')}</button>
+        <button type="button" className="btn" onClick={onSkip}>{t('till.skip')}</button>
+      </form>
+    </AuthStub>
   );
 }
 

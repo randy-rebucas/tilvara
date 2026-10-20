@@ -91,7 +91,7 @@ try {
   // 2. Support access, given by the owner.
   await go('/subscription/support');
   const tabs = await evaluate(`[...document.querySelectorAll('nav[aria-label="Subscription sections"] a')].map((a) => a.textContent)`);
-  check('subscription has Plan · Your records · Support access tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Your records', 'Support access']));
+  check('subscription has Plan · Business · Your records · Support access · Integrations tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Business', 'Your records', 'Support access', 'Integrations']));
   check('the page says support cannot see the business unless allowed', await shown('Tilvara support cannot see your business unless you allow it here.'));
   await clickText('Give support access');
   await fill('purpose', 'Please check why the sample coffee price shows twice');

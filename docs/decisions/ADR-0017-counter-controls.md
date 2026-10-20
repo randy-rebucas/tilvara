@@ -25,3 +25,6 @@
 - A threshold above which a price change or discount needs a second person even for a manager (T5 thresholds are the user's call).
 - An exchange paid back to a card or QR (waits on PayMongo refunds, D6).
 - Held carts are never discarded automatically; the retention schedule proposes 7 days.
+
+## Amendment (2026-10-20, session 23) — an approved price has a quantity
+`POST /v1/price-overrides` takes `quantity` (required): the most the approved price may sell on its line. The quote and checkout refuse a larger line with `PRICE_OVERRIDE_QUANTITY` (details `approvedQuantity`); approvals from before migration 0084 have none (they expire within minutes). The till sends the line's quantity when asking, stops "+" at it, and no longer merges a scan of the same item into a discounted or manager-priced line (a new line at the list price starts instead).

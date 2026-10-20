@@ -1,6 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { inArray, priceOverrides, saleLines, type Database } from '@1pos/database';
 import type { AuthContext } from '../auth/auth-context.js';
+import { toDec } from '@1pos/money';
 import { AppError } from '../infrastructure/http-error.filter.js';
 
 const unprocessable = (code: string, message: string, details?: Record<string, unknown>) =>
@@ -12,7 +13,7 @@ export async function overridesForCart(
   auth: AuthContext,
   branchId: string,
   at: Date,
-  lines: readonly { variantId: string; priceOverrideId?: string | undefined; id?: string | undefined }[],
+  lines: readonly { variantId: string; quantity: string; priceOverrideId?: string | undefined; id?: string | undefined }[],
 ) {
   const ids = [...new Set(lines.flatMap((l) => (l.priceOverrideId ? [l.priceOverrideId] : [])))];
   const out = new Map<string, typeof priceOverrides.$inferSelect>();
@@ -27,6 +28,9 @@ export async function overridesForCart(
     if (o.branchId !== branchId || o.variantId !== l.variantId) throw unprocessable('PRICE_OVERRIDE_MISMATCH', 'This price was approved for another item or branch', { line });
     if (o.requestedBy !== auth.userId) throw unprocessable('PRICE_OVERRIDE_MISMATCH', 'This price was approved for another cashier', { line });
     if (o.expiresAt.getTime() <= at.getTime()) throw unprocessable('PRICE_OVERRIDE_EXPIRED', 'The approval for this price has expired; ask again', { line });
+    if (o.quantity !== null && toDec(l.quantity).gt(o.quantity)) {
+      throw unprocessable('PRICE_OVERRIDE_QUANTITY', `This price was approved for ${toDec(o.quantity).toString()}; ask again for more`, { line, approvedQuantity: toDec(o.quantity).toString() });
+    }
     out.set(o.id, o);
   }
   // An approval prices one sale line (the unique index is the backstop at checkout).

@@ -78,7 +78,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('products', 'nav.products', 'blue', 5, 2, { area: area('/products'), only: { t: { 1: 'weight' } } }),
   section('prices', 'nav.prices', 'blue', 4, 2, { area: area('/prices') }),
   section('inventory', 'nav.inventory', 'gold', 5, 5, { area: area('/inventory'), only: { t: { 3: 'restaurant' } } }),
-  section('purchasing', 'nav.purchasing', 'gold', 7, 3, { area: area('/purchasing') }),
+  section('purchasing', 'nav.purchasing', 'gold', 7, 5, { area: area('/purchasing') }),
   section('restaurant', 'nav.restaurant', 'none', 6, 2, { area: area('/restaurant') }),
   section('reports', 'nav.reports', 'none', 5, 3, { area: area('/reports/sales'), only: { s: { 5: 'restaurant' } } }),
   // No band tab (the band is full): reached from the Overview and from each sale; who may open it is its own rule.
@@ -94,19 +94,19 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('till', 'guide.till.title', 'orange', 4, 1, { only: { s: { 4: 'restaurant' } } }),
 ];
 
-const shows = (line: GuideLine, businessType: BusinessType) =>
-  line.only === 'restaurant' ? hasRestaurant(businessType) : line.only === 'weight' ? sellsByWeight(businessType) : true;
+const shows = (line: GuideLine, businessType: BusinessType, features?: readonly string[]) =>
+  line.only === 'restaurant' ? hasRestaurant(businessType, features) : line.only === 'weight' ? sellsByWeight(businessType) : true;
 
 /**
  * The guide as this business sees it: areas its type leaves out are gone, as are lines about them.
  * `permitted` is false when the person's role does not open the area (the section still shows, so
  * a cashier can read what a manager does).
  */
-export function guideFor(businessType: BusinessType, permissions: readonly string[]) {
-  return GUIDE_SECTIONS.filter((s) => !s.area || offered(s.area, businessType)).map((s) => ({
+export function guideFor(businessType: BusinessType, permissions: readonly string[], features?: readonly string[]) {
+  return GUIDE_SECTIONS.filter((s) => !s.area || offered(s.area, businessType, features)).map((s) => ({
     ...s,
-    steps: s.steps.filter((l) => shows(l, businessType)),
-    tips: s.tips.filter((l) => shows(l, businessType)),
+    steps: s.steps.filter((l) => shows(l, businessType, features)),
+    tips: s.tips.filter((l) => shows(l, businessType, features)),
     permitted: !s.area || permitted(s.area, permissions),
   }));
 }
@@ -137,8 +137,8 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
  * restaurant page in a retail shop shows a notice to change the type of business, so it opens the
  * Subscription part, which explains that (the guide has no restaurant part for a retail shop).
  */
-export function topicFor(path: string, businessType: BusinessType = 'HYBRID'): GuideTopic {
+export function topicFor(path: string, businessType: BusinessType = 'HYBRID', features?: readonly string[]): GuideTopic {
   const hit = TOPIC_BY_PATH.filter(([p]) => path === p || path.startsWith(`${p}/`)).sort((a, b) => b[0].length - a[0].length)[0];
   const topic = hit?.[1] ?? 'start';
-  return topic === 'restaurant' && !hasRestaurant(businessType) ? 'subscription' : topic;
+  return topic === 'restaurant' && !hasRestaurant(businessType, features) ? 'subscription' : topic;
 }

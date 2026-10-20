@@ -19,6 +19,7 @@ import {
   stockMovements,
   customerCreditEntries,
   users,
+  unitsOfMeasure,
   type Database,
   inSequence,
   mapInSequence,
@@ -37,6 +38,7 @@ import { expectedCash, loadSession } from './cash.service.js';
 import { saleReturnPosting } from '@1pos/accounting';
 import { activeCustomer } from '../customers/customers.service.js';
 import { post } from '../accounting/ledger.js';
+import { recordPreparedWaste } from '../restaurant/consumption.js';
 
 const BUCKETS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
@@ -54,7 +56,8 @@ const notNamed = (): never => {
 
 /**
  * Voids and returns (ADR-0011). Append-only documents against the original sale lines, refunded
- * in cash from an open drawer, with stock restored only for RESTOCK lines. Serialized per sale.
+ * in cash from an open drawer. What the sale took from stock comes back (RETURN); DAMAGED lines are
+ * then written off in a WASTE adjustment (Spoilage and waste). Serialized per sale.
  */
 @Injectable()
 export class ReturnsService extends TenantService {
@@ -133,8 +136,10 @@ export class ReturnsService extends TenantService {
     const serviceCharge = chargeParts.reduce((a, c) => a.plus(c.amounts.vatableSales).plus(c.amounts.vatExemptSales).plus(c.amounts.zeroRatedSales).plus(c.amounts.percentageTaxSales), new Dec(0));
 
     // Sorted by variant (lock order, ADR-0012 §7); the ledger trigger costs them at the sale's cost.
+    // Damaged goods come back too and are written off right after as waste, so their cost leaves
+    // COGS for Spoilage and waste (the stock nets to what it was).
     const restock = planned
-      .filter((p) => p.req.disposition === 'RESTOCK' && p.trackInventory)
+      .filter((p) => p.trackInventory)
       .sort((a, b) => (a.line.variantId < b.line.variantId ? -1 : a.line.variantId > b.line.variantId ? 1 : 0));
     let restockedValue = new Dec(0);
     if (restock.length) {
@@ -153,6 +158,17 @@ export class ReturnsService extends TenantService {
       ).returning({ value: stockMovements.value });
       restockedValue = moved.reduce((a, m) => a.plus(m.value), new Dec(0));
     }
+    const damaged = restock.filter((p) => p.req.disposition === 'DAMAGED');
+    const wasteAdjustmentId = damaged.length
+      ? await recordPreparedWaste(db, {
+          tenantId,
+          branchId: sale.branchId,
+          legalEntityId: sale.legalEntityId,
+          reason: `Damaged on ${input.kind === 'VOID' ? 'void' : 'return'} #${returnNumber} of sale #${sale.saleNumber}`,
+          userId: auth.userId,
+          items: damaged.map((p) => ({ variantId: p.line.variantId, quantity: p.quantity.toString(), tracked: true })),
+        })
+      : null;
     await post(db, {
       tenantId,
       legalEntityId: sale.legalEntityId,
@@ -193,6 +209,7 @@ export class ReturnsService extends TenantService {
       returnNumber,
       refund: refund.toFixed(2),
       reason: input.reason,
+      ...(wasteAdjustmentId && { wasteAdjustmentId }),
       ...(options.exchange && { exchange: true }),
       ...(creditCustomer && { refundTo: 'STORE_CREDIT', customerId: creditCustomer.id }),
     });
@@ -234,10 +251,11 @@ export class ReturnsService extends TenantService {
     sessionId: string | null,
   ) {
     const lines = await db
-      .select({ line: saleLines, trackInventory: products.trackInventory })
+      .select({ line: saleLines, soldBy: products.soldBy, allowsFraction: unitsOfMeasure.allowsFraction })
       .from(saleLines)
       .innerJoin(productVariants, eq(productVariants.id, saleLines.variantId))
       .innerJoin(products, eq(products.id, productVariants.productId))
+      .innerJoin(unitsOfMeasure, eq(unitsOfMeasure.id, products.uomId))
       .where(eq(saleLines.saleId, sale.id))
       .orderBy(saleLines.lineNo);
     const prior = await db.select().from(saleReturnLines).where(inArray(saleReturnLines.saleLineId, lines.map((l) => l.line.id)));
@@ -250,11 +268,14 @@ export class ReturnsService extends TenantService {
     }
 
     // Lines made from a recipe consumed their ingredients; cooked food never goes back on the shelf (ADR-0014 §4).
-    const consumedRows = await db
-      .selectDistinct({ saleLineId: stockMovements.saleLineId })
+    // What left stock with the sale decides what goes back, not whether the item is tracked now:
+    // a line with a SALE movement is restocked, one that consumed a recipe never is (ADR-0014 §4).
+    const movedRows = await db
+      .selectDistinct({ saleLineId: stockMovements.saleLineId, type: stockMovements.type })
       .from(stockMovements)
-      .where(and(eq(stockMovements.saleId, sale.id), eq(stockMovements.type, 'CONSUMPTION')));
-    const consumed = new Set(consumedRows.map((r) => r.saleLineId));
+      .where(and(eq(stockMovements.saleId, sale.id), inArray(stockMovements.type, ['SALE', 'CONSUMPTION'])));
+    const consumed = new Set(movedRows.filter((r) => r.type === 'CONSUMPTION').map((r) => r.saleLineId));
+    const tookStock = new Set(movedRows.filter((r) => r.type === 'SALE').map((r) => r.saleLineId));
 
     let requested: { saleLineId: string; quantity: string; disposition: 'RESTOCK' | 'DAMAGED' }[];
     if (kind === 'VOID') {
@@ -281,6 +302,10 @@ export class ReturnsService extends TenantService {
       const before = priorBy.get(found.line.id) ?? { quantity: new Dec(0), amounts: zero() };
       const remaining = sold.minus(before.quantity);
       const q = toDec(req.quantity);
+      // Whole-unit items come back in whole units; a check's share of one (0.3333) comes back whole.
+      if (found.soldBy === 'UNIT' && !found.allowsFraction && !q.isInteger() && !q.equals(remaining)) {
+        throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is returned in whole units', { saleLineId: req.saleLineId });
+      }
       if (q.gt(remaining)) {
         throw unprocessable('RETURN_EXCEEDS_SOLD', 'More than what is left to return on this line', { saleLineId: req.saleLineId, remaining: remaining.toString() });
       }
@@ -293,7 +318,7 @@ export class ReturnsService extends TenantService {
       }
       amounts.amountDue = amounts.vatableSales.plus(amounts.vatAmount).plus(amounts.vatExemptSales).plus(amounts.zeroRatedSales).plus(amounts.percentageTaxSales).minus(amounts.statutoryDiscount);
       for (const k of [...BUCKETS, 'amountDue'] as const) totals[k] = totals[k].plus(amounts[k]);
-      return { req, line: found.line, trackInventory: found.trackInventory, quantity: q, amounts };
+      return { req, line: found.line, trackInventory: tookStock.has(found.line.id), quantity: q, amounts };
     });
 
     // A charge (service charge) goes back in proportion to the items returned; the return that

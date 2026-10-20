@@ -199,6 +199,38 @@ export function supplierInvoicePosting(a: SupplierInvoiceAmounts, branchId?: str
   ]);
 }
 
+export interface SupplierNoteAmounts {
+  kind: 'CREDIT' | 'DEBIT';
+  /** The note's total: what is owed goes down (credit) or up (debit) by it. */
+  payable: Amount;
+  /** VAT on the note the entity claims or gives back (VAT-registered); 0 otherwise. */
+  inputVat: Amount;
+  /** Credit notes only: GRNI left by returns after invoicing that this note clears. */
+  grniCleared: Amount;
+}
+
+/**
+ * Supplier credit or debit note (session 22): a credit note lowers the payable, gives back the input
+ * VAT claimed, clears the GRNI returns after invoicing left, and the rest is a price variance; a debit
+ * note raises the payable against input VAT and the variance.
+ */
+export function supplierNotePosting(a: SupplierNoteAmounts, branchId?: string | null): PostingLine[] {
+  const payable = toDec(String(a.payable));
+  const variance = payable.minus(String(a.inputVat)).minus(a.kind === 'CREDIT' ? String(a.grniCleared) : '0');
+  return a.kind === 'CREDIT'
+    ? balanced([
+        dr('ACCOUNTS_PAYABLE', payable, branchId),
+        cr('INPUT_VAT', a.inputVat, branchId),
+        cr('GRNI', a.grniCleared, branchId),
+        cr('PURCHASE_PRICE_VARIANCE', variance, branchId),
+      ])
+    : balanced([
+        dr('PURCHASE_PRICE_VARIANCE', variance, branchId),
+        dr('INPUT_VAT', a.inputVat, branchId),
+        cr('ACCOUNTS_PAYABLE', payable, branchId),
+      ]);
+}
+
 /** Supplier payment: the payable settled from the bank. */
 export function supplierPaymentPosting(amount: Amount, branchId?: string | null): PostingLine[] {
   return balanced([dr('ACCOUNTS_PAYABLE', amount, branchId), cr('CASH_IN_BANK', amount, branchId)]);

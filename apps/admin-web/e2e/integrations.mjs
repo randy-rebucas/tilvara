@@ -124,6 +124,27 @@ try {
   await go('/subscription/integrations');
   check('the list shows when it was last used', await shown('Last used'));
 
+  // ---- session 22: a key that expires, and renaming the business ----
+  await clickText('New API key');
+  await fill('keyName', 'Auditor, 30 days');
+  await fill('validDays', '30');
+  await submitVisible('Create key');
+  await waitFor(`!!document.querySelector('[data-testid="shown-once"] code')`, 8000);
+  await clickText('I have copied it');
+  await go('/subscription/integrations');
+  check('a key made for 30 days shows when it expires', await evaluate(`[...document.querySelectorAll('main li')].some((li) => li.innerText.includes('Auditor, 30 days') && li.innerText.includes('Expires'))`));
+  const listed = (await (await fetch(`${API}/v1/api-keys`, { headers: { authorization: `Bearer ${tk}` } })).json()).data.find((k) => k.name === 'Auditor, 30 days');
+  const days = Math.round((Date.parse(listed.expiresAt) - Date.now()) / 86_400_000);
+  check('the API holds an expiry 30 days out', days === 30);
+  await evaluate(`window.confirm = () => true`);
+  await onCard('Auditor, 30 days', 'Revoke');
+  await shown('Revoked', 8000);
+  await go('/subscription/business');
+  await fill('businessName', 'Cruz Hardware & Tools');
+  await submitVisible('Save');
+  check('the business is renamed, and the band shows the new name', await shown('Name saved.', 8000) && await waitFor(`document.querySelector('header').innerText.includes('Cruz Hardware & Tools')`, 8000).then(() => true, () => false));
+  await go('/subscription/integrations');
+
   // ---- a webhook to the local receiver ----
   await clickText('New webhook');
   await fill('hookUrl', 'http://');
@@ -195,7 +216,8 @@ try {
   check('turned off, it says Off and offers no test', await waitFor(`[...document.querySelectorAll('main li')].some((li) => li.innerText.includes('Bookkeeping sync') && li.innerText.includes('Off') && !li.innerText.includes('Send a test'))`, 8000).then(() => true, () => false));
   await evaluate(`window.confirm = () => true`);
   await onCard('Bookkeeping', 'Revoke');
-  check('the revoked key says so', await shown('Revoked', 8000));
+  // Its own card (the 30-day key above is already revoked).
+  check('the revoked key says so', await waitFor(`[...document.querySelectorAll('main li')].some((li) => li.querySelector('p.font-semibold')?.textContent === 'Bookkeeping' && li.innerText.includes('Revoked'))`, 8000).then(() => true, () => false));
   check('and no longer reads', (await apiGet('/v1/branches', key)).status === 401);
 
   // ---- the guide, Filipino, phone width ----

@@ -10,6 +10,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { sourceHref } from '../../chrome';
 
+/** Undone through their document (cancel the invoice, void the payment, an opposite note), never by hand; the API refuses it too. */
+const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE'];
+
 export const metadata = { title: 'Journal entry' };
 
 export default async function EntryPage({ params }: { params: Promise<{ id: string }> }) {
@@ -49,7 +52,7 @@ export default async function EntryPage({ params }: { params: Promise<{ id: stri
 
       <div className="flex flex-wrap items-start gap-2">
         {source && <Link href={source} className="btn">{t('books.openSource')}</Link>}
-        {canPost && !entry.reversedBy && entry.sourceType !== 'REVERSAL' && (
+        {canPost && !entry.reversedBy && !NOT_REVERSIBLE.includes(entry.sourceType) && (
           <ReasonAction url={`/api/v1/journal-entries/${entry.id}/reverse`} label={t('books.reverse')} reasonLabel={t('books.why')} hint={t('books.reverseHint')} field="memo" danger idempotent />
         )}
       </div>

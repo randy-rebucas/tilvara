@@ -231,7 +231,8 @@ export class OrdersService extends TenantService {
       if (item.status === 'PENDING') throw conflict('ITEM_NOT_FIRED', 'This item was not sent to the kitchen; remove it instead');
       if (item.status === 'VOIDED') throw conflict('ALREADY_VOIDED', 'This item is already voided');
       if (item.kind === 'MODIFIER') await this.assertModifierMayGo(db, item);
-      const children = item.kind === 'ITEM' ? await db.select().from(orderItems).where(eq(orderItems.parentItemId, itemId)) : [];
+      // Choices already voided on their own were written off then (if wasted): never twice.
+      const children = item.kind === 'ITEM' ? await db.select().from(orderItems).where(and(eq(orderItems.parentItemId, itemId), ne(orderItems.status, 'VOIDED'))) : [];
       let wasteAdjustmentId: string | null = null;
       if (input.wasted) {
         const lines = [item, ...children].flatMap((x) => (x.variantId ? [{ variantId: x.variantId, quantity: x.quantity }] : []));

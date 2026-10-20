@@ -30,8 +30,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/subscription', key: 'nav.subscription', needs: ['subscription.manage', 'tenant.manage'] },
 ];
 
-/** The business offers this area (business type). */
-export const offered = (item: Pick<NavItem, 'restaurant'>, businessType: BusinessType) => !item.restaurant || hasRestaurant(businessType);
+/** The business offers this area (business type and, when known, the plan's features). */
+export const offered = (item: Pick<NavItem, 'restaurant'>, businessType: BusinessType, features?: readonly string[]) =>
+  !item.restaurant || hasRestaurant(businessType, features);
 
 /** The person's permissions open this area (UI hint only; the API enforces access). */
 export const permitted = (item: Pick<NavItem, 'needs'>, permissions: readonly string[]) =>

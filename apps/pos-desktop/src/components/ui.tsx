@@ -4,7 +4,7 @@ import { peso } from '../lib/money';
 import type { PaymentIntent } from '../types';
 
 /** Denomination colours (DESIGN.md): blue = catalog/prices, orange = registers, red = harm only. */
-type Denom = 'blue' | 'orange' | 'violet' | 'green';
+export type Denom = 'blue' | 'orange' | 'violet' | 'green';
 const DENOM: Record<Denom, string> = { blue: 'bg-blue', orange: 'bg-orange-soft', violet: 'bg-violet', green: 'bg-green' };
 
 export function Note({ denom, className = '', children, ...rest }: { denom?: Denom; className?: string; children: ReactNode } & React.HTMLAttributes<HTMLElement>) {
@@ -26,6 +26,19 @@ export function Field({ label, hint, error, id, className, ...input }: { label: 
           {error ?? hint}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * An empty list (DESIGN.md): left-aligned like the rows it stands in for, saying what belongs there
+ * or what to do first, with the way to it when there is one.
+ */
+export function Empty({ children, action, className = '' }: { children: ReactNode; action?: ReactNode; className?: string }) {
+  return (
+    <div className={`flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-4 py-5 ${className}`}>
+      <p className="min-w-0 max-w-[68ch] text-muted">{children}</p>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }

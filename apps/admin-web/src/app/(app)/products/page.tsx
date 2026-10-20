@@ -74,7 +74,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
                     <td className="whitespace-nowrap">
                       {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}
-                      {p.isSample && <span className="tag ml-1.5 text-orange!">{t('sample.tag')}</span>}
+                      {p.isSample && <span className="tag ml-1.5 border-blue/40 text-blue!">{t('sample.tag')}</span>}
                     </td>
                   </tr>
                 );

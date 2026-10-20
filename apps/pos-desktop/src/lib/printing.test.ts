@@ -60,8 +60,8 @@ describe('receipt for a thermal printer', () => {
     const doc = billToPrintable({
       ...z, id: 'b', orderId: 'o', billNumber: 7, status: 'ACTIVE', requiresProfessionalReview: false, vatAmount: '50.68', amountDue: '473.00',
       lines: [
-        { id: 'l1', parentLineId: null, name: 'Burger', quantity: '2', amountDue: '340.00', statutoryDiscount: '0', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false, seat: 2 },
-        { id: 'l2', parentLineId: 'l1', name: 'Cheese', quantity: '2', amountDue: '40.00', statutoryDiscount: '0', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false },
+        { id: 'l1', parentLineId: null, name: 'Burger', quantity: '2', amountDue: '340.00', statutoryDiscount: '0', discount: '34.00', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false, seat: 2 },
+        { id: 'l2', parentLineId: 'l1', name: 'Cheese', quantity: '2', amountDue: '40.00', statutoryDiscount: '0', discount: '0', beneficiaryId: null, paidShare: '0/1', paidQuantity: '0', fullyPaid: false },
       ],
       charges: [{ id: 'c', kind: 'SERVICE_CHARGE', rate: '0.1', amountDue: '43.00' }],
       checks: [{ id: 's', saleNumber: 1, amountDue: '236.50', completedAt: '' }], amountPaid: '236.50', amountRemaining: '236.50',
@@ -72,6 +72,7 @@ describe('receipt for a thermal printer', () => {
     expect(text).toContain('Bill 7 - T1'); // CP437 has no middle dot
     expect(text).toContain('2 x Burger (seat 2)');
     expect(text).toContain('+ Cheese');
+    expect(text).toMatch(/^Discount\s+-34\.00$/m);
     expect(text).toContain('Service charge 10%');
     expect(text).toContain('PHP 473.00');
     expect(text).toContain('Left to pay');

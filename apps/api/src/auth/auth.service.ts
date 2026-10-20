@@ -1,7 +1,7 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { membershipRoles, rolePermissions, roles, tenantMemberships, type BusinessType, type Tx } from '@1pos/database';
+import { membershipRoles, tenantMemberships, type BusinessType, type PlanFeature, type Tx } from '@1pos/database';
 import {
-  ROLE_TEMPLATES,
+  roleTemplatesFor,
   type AuthResponse,
   type LoginInput,
   type LoginResponse,
@@ -19,6 +19,7 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import type { AuthContext } from './auth-context.js';
 import { PasswordService } from './password.service.js';
+import { addRoleTemplates } from './role-templates.js';
 import { InvalidTokenError, TokenService } from './token.service.js';
 import { hashRecoveryCode, matchTotp, SecretBox } from './totp.js';
 
@@ -90,7 +91,7 @@ export class AuthService {
           ]);
           await tx.setTenant(tenantId);
           await tx.client.query('UPDATE tenants SET business_type = $1 WHERE id = $2', [input.businessType, tenantId]);
-          await this.seedTenantAccess(tx, tenantId, userId, meta.correlationId);
+          await this.seedTenantAccess(tx, tenantId, input.businessType, userId, meta.correlationId);
           await seedCatalogDefaults(tx.db, tenantId);
           await tx.client.query('SELECT platform_start_trial($1, $2, $3)', [tenantId, TRIAL_PLAN, TRIAL_DAYS]);
           await emitEvent(tx.db, {
@@ -346,15 +347,18 @@ export class AuthService {
   }
 
   /** The active business's name and type, read in its own context (support sessions have no membership row). */
-  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType }> {
+  /** The business's name, type and the features its plan includes (what the screens offer). */
+  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[] }> {
     return this.tenantDb.tx(
       async (tx) => {
         await tx.setTenant(tenantId);
-        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType }>(
-          'SELECT name, business_type FROM tenants WHERE id = $1',
+        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType; features: PlanFeature[] | null }>(
+          `SELECT t.name, t.business_type, p.features
+             FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id LEFT JOIN plans p ON p.code = s.plan_code
+            WHERE t.id = $1`,
           [tenantId],
         );
-        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'HYBRID' };
+        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'HYBRID', features: rows[0]?.features ?? [] };
       },
       { userId: auth.userId, correlationId: auth.correlationId },
     );
@@ -417,15 +421,8 @@ export class AuthService {
     };
   }
 
-  private async seedTenantAccess(tx: Tx, tenantId: string, userId: string, correlationId: string | undefined): Promise<void> {
-    const created = await tx.db
-      .insert(roles)
-      .values(ROLE_TEMPLATES.map((t) => ({ tenantId, key: t.key, name: t.name, isSystem: true })))
-      .returning({ id: roles.id, key: roles.key });
-    const idByKey = new Map(created.map((r) => [r.key, r.id]));
-    await tx.db.insert(rolePermissions).values(
-      ROLE_TEMPLATES.flatMap((t) => t.permissions.map((p) => ({ tenantId, roleId: idByKey.get(t.key)!, permissionCode: p }))),
-    );
+  private async seedTenantAccess(tx: Tx, tenantId: string, businessType: BusinessType, userId: string, correlationId: string | undefined): Promise<void> {
+    const idByKey = await addRoleTemplates(tx.db, tenantId, roleTemplatesFor(businessType));
     const [membership] = await tx.db
       .insert(tenantMemberships)
       .values({ tenantId, userId, status: 'ACTIVE' })
@@ -440,7 +437,7 @@ export class AuthService {
       resourceType: 'tenant',
       resourceId: tenantId,
       correlationId,
-      metadata: { ownerMembershipId: membership!.id, roles: created.map((r) => r.key) },
+      metadata: { ownerMembershipId: membership!.id, roles: [...idByKey.keys()] },
     });
   }
 

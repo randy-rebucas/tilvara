@@ -7,10 +7,10 @@ import type { BusinessType } from '@/lib/business-type';
 import { NAV_ITEMS, offered, permitted } from '@/lib/nav';
 
 /** Tabs follow the user's permissions and the business type (UI hint only; the API enforces access). */
-export function AppNav({ permissions, businessType }: { permissions: string[]; businessType: BusinessType }) {
+export function AppNav({ permissions, businessType, features }: { permissions: string[]; businessType: BusinessType; features?: string[] }) {
   const { t } = useT();
   const path = usePathname();
-  const visible = NAV_ITEMS.filter((i) => permitted(i, permissions) && offered(i, businessType));
+  const visible = NAV_ITEMS.filter((i) => permitted(i, permissions) && offered(i, businessType, features));
   return (
     // No gap in the band (lg+): the tabs' own padding separates them, and all twelve fit at 1440px.
     <nav aria-label="Main" className="-mx-1 flex min-w-0 gap-1 overflow-x-auto lg:gap-0">

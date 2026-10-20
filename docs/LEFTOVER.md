@@ -10,31 +10,34 @@ Every name people see was renamed: copy (EN and FIL), titles, emails, receipts, 
 
 ## Audit 2026-10-19 (session 19) — gaps no earlier list had
 Full write-up and evidence: [AUDIT-2026-10-19.md](AUDIT-2026-10-19.md). Fixed in the session: payables screens, journal labels, stock adjustment/waste form, entity/branch/register details, till pay in/out, returns of earlier sales, KDS sold out, payables list filter and aging day, invoice-entry reversal guard, search errors at the till, two test-suite defects.
-Session 20 built customers (ADR-0018), the till controls (held carts, exchanges, discounts, manager price override, returns of another register's sale; ADR-0017), stock reservations and supplier catalog references, the analysis reports (category, branch/consolidated, discounts and overrides, purchases by supplier, payment exceptions), and API keys and webhooks (ADR-0019). `customers.*`, `sales.price_override` and `integrations.manage` now grant what they say.
+Session 20 built customers (ADR-0018), the till controls (held carts, exchanges, discounts, manager price override, returns of another register's sale; ADR-0017), stock reservations and supplier catalog references, the analysis reports (category, branch/consolidated, discounts and overrides, purchases by supplier, payment exceptions), and API keys and webhooks (ADR-0019). `customers.*`, `sales.price_override` and `integrations.manage` now grant what they say. Session 21 settled the three decisions. Session 22 closed the remaining work items: webhook DNS pinning, API-key expiry in the admin, business rename, Senior Cashier and Purchasing Officer roles, roles/sample items/screens following the type and plan, editing pending order items and per-item comps at the till, supplier credit/debit notes, payments over several invoices and payment voids.
 - ⏳ **Mobile app** (SPEC §5.3): no app and no plan; the user chose to leave it as is (session 20). Scope and timing are the user's call.
 - ⏳ Cashiers hold `customers.read` but not `customers.manage`, so a cashier cannot add a new customer at the till (a branch manager can). Whether the cashier template gets it is the user's call (ADR-0018).
 - ⏳ Store credit posts to `CUSTOMER_STORE_CREDIT` (2300, liability); accountant question 11 asks them to confirm the account and its treatment on the books and the receipt. Customer accounts receivable (sales on account, statements, customer payments) is not built.
 - ⏳ Customer-specific VAT treatment (zero-rated/exempt buyers) — tax adviser.
 - ⬜ Held carts are never discarded automatically: a cart parked and forgotten keeps its lines (and any SC/PWD name and ID) until someone resumes or discards it. Proposed: discard after 7 days (processing register, retention row "Held carts"; DPO to confirm the period).
 - ⬜ Customers are never anonymised automatically (proposed 2 years after the last purchase; waits on the DPO like the other purge jobs).
-- ⬜ Webhook dispatcher: the worker checks that the host resolves only to public addresses, then `fetch` resolves it again. A DNS answer that changes in between (rebinding) could reach a private address. Before production, connect to the checked address (a custom `lookup`/agent that pins it) (ADR-0019, Not covered).
-- ⬜ `webhook_deliveries` is never purged (proposed 30 days after delivered/dead; retention schedule). API keys can be given an expiry through the API only (no field in the admin form).
-- ⬜ Restaurant: editing a pending order item at the till (`PATCH /v1/order-items/:id` has no caller); per-item comps on a bill.
-- ⬜ Shift close with open bills (session 21): the admin has no shift-close screen, so the manager override exists only at the till; `test:e2e:pos`/`test:e2e:service` were not re-run against the new OPEN_BILLS refusal (a script that closes the last shift with a table still open would now stop there).
+- ⏳ `webhook_deliveries` is never purged (proposed 30 days after delivered/dead; retention schedule) — waits on the DPO's periods like the other purge jobs.
+- ⬜ Restaurant: changing a pending item's *choices* at the till is still remove and re-add (quantity, course, seat and note change in place since session 22). Comps use `sales.discount`; a separate comp permission or a comp reason report is not built (reasons are in the `order.billed` audit row).
+- ⬜ Shift close with open bills (session 21): the admin has no shift-close screen, so the manager override exists only at the till. (`test:e2e:pos` 41/41 and `test:e2e:service` 22/22 re-run in session 22 against the refusal.)
 - ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: restaurant, multi_entity, advanced_reports; Enterprise: all four).
 - ⬜ Watch: `offline-sync.test.ts` failed once with `TAX_PROFILE_MISSING` in a full gate run (session 20) and passed on its own. The likely cause is the Docker VM clock running ~1 s off the host around a profile's effective time. Two billing tests failed the same way and their tolerance was widened. If it recurs, give the fixture's tax profile an earlier effective time.
-- ⬜ Business name cannot be changed after sign-up (`PATCH /v1/business` changes the type only); Senior Cashier / Purchasing Officer templates (§4).
 - ⬜ Offline sales after a lapse (session 21): a till that stays offline keeps selling on its last writable snapshot for up to `OFFLINE_WINDOW_HOURS` after a lapse or suspension, and those sales are recorded (audited `offline_sale.recorded_while_read_only`); that bound is the posture accepted. Snapshots issued before migration 0080 count as not writable.
 - ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
 - ⬜ Weighing-scale and barcode-scanner adapters (§5.2; manual weight, scale labels and keyboard-wedge work today).
+
+## Session 23 — till quantities and stock movements
+- ⏳ Damaged returns now move their cost from COGS to Spoilage and waste (RETURN then WASTE). Accountant to confirm this treatment (add to `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md` with the next batch of questions).
+- ⬜ Price approvals made before migration 0084 have no quantity (no limit); they expire within minutes, so nothing is left to do once the pilot starts on 0084. A till build older than session 23 cannot ask for a price (the API now requires `quantity`).
+- ⬜ Counter "+"/"−" and rescans have no E2E check (restaurant steppers do, in `tables`/`service`).
 
 ## Phase 0 — Repository & architecture
 - ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux)
 
 ## Business types (session 17)
-- ⬜ Sample items follow the type: `SAMPLE_ITEMS` is one café set for every business; a retail shop should get shop items (and a restaurant a menu).
-- ⬜ Role templates follow the type: a RETAIL business still gets Restaurant Manager and Kitchen Crew roles, and cashiers/branch managers still hold `restaurant.orders`/`kitchen.operate` (harmless: the screens and the server leave restaurant service out, but the role editor lists them).
-- ⬜ The admin and till do not hide features the *plan* lacks (Starter has no `restaurant`): `/me` carries the business type only, so a Starter owner of a HYBRID/RESTAURANT business still sees restaurant screens that answer `ENTITLEMENT_REQUIRED`. Add `features` to `/me` and gate on both.
+- ✅ Sample items follow the type (session 22): a RETAIL trial gets shop items, the others the café set.
+- ✅ Role templates follow the type (session 22): a RETAIL sign-up gets no Restaurant Manager / Kitchen Crew; changing to RESTAURANT/HYBRID adds them. ⬜ Cashier and branch-manager templates still hold `restaurant.orders`/`kitchen.operate` in a retail shop (harmless; the role editor lists them), and existing RETAIL businesses keep the restaurant roles they were given.
+- ✅ `/me` carries the plan's `features` (session 22); the admin hides the Restaurant area, its guide part, a second legal entity and integrations the plan lacks, with the reason; the till hides the kitchen display and server mode. ⬜ The till's Tables tab stays for a restaurant-type business after a downgrade on purpose (printed bills must still be paid).
 - ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; a BILLED one can still be paid (`createFromBill` does not check the type or plan, on purpose: refusing payment for food served is worse), other changes need switching back.
 - ⬜ Selling by weight is hidden for RESTAURANT on screens only (product form and list); the API still accepts `soldBy: WEIGHT` and scale labels from any business.
 
@@ -86,9 +89,9 @@ Slice 5 (admin UI):
 
 Phase-level:
 - ✅ Supplier invoices + accounts payable (GRNI → AP, input VAT): API in ab51583 (ADR-0013 amendment), admin screens session 19. Follow-ups:
-  - ⬜ credit/debit notes (a supplier return after invoicing leaves a GRNI debit); one payment across several invoices
+  - ✅ credit/debit notes, one payment across several invoices, voiding a mistaken payment, no manual reversal of payment or note entries (session 22, ADR-0013 amendment)
   - ⏳ EWT / BIR 2307 (accountant)
-  - ⬜ correcting a mistaken supplier payment: no void; a manual reversal of its entry is still allowed and leaves the invoice showing it paid (invoice entries are refused since session 19)
+  - ⬜ A note cannot be cancelled (an opposite note corrects it), and an invoice with notes cannot be cancelled; a credit note's GRNI is computed per invoice, not linked to a particular return. Accountant to confirm the treatment (question 12 in ACCOUNTANT_REVIEW_REQUEST)
 - ⬜ UoM conversions and purchase units
 - ⬜ Batch/expiry and serial tracking
 - ⬜ Landed cost

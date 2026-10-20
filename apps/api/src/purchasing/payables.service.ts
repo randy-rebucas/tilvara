@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { reversalOf, supplierInvoicePosting, supplierPaymentPosting, type PostingLine } from '@1pos/accounting';
+import { reversalOf, supplierInvoicePosting, supplierNotePosting, supplierPaymentPosting, type PostingLine } from '@1pos/accounting';
 import {
   and,
   asc,
@@ -15,6 +15,8 @@ import {
   sql,
   supplierInvoiceReceipts,
   supplierInvoices,
+  supplierNotes,
+  supplierPaymentAllocations,
   supplierPayments,
   supplierReturnLines,
   supplierReturns,
@@ -24,11 +26,14 @@ import {
 import { Dec, toDec } from '@1pos/money';
 import type {
   CancelSupplierInvoiceInput,
+  CreateSupplierBatchPaymentInput,
   CreateSupplierInvoiceInput,
+  CreateSupplierNoteInput,
   CreateSupplierPaymentInput,
   PayablesAgingQuery,
   SupplierInvoiceListQuery,
   UninvoicedReceiptsQuery,
+  VoidSupplierPaymentInput,
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { post } from '../accounting/ledger.js';
@@ -191,6 +196,9 @@ export class PayablesService extends TenantService {
       if (invoice.status === 'CANCELLED') throw new AppError('INVALID_STATE', 'The invoice is already cancelled', HttpStatus.CONFLICT, { status: invoice.status });
       const paid = await this.paidOn(db, invoice.id);
       if (paid.gt(0)) throw new AppError('INVOICE_HAS_PAYMENTS', 'A paid or part-paid invoice cannot be cancelled', HttpStatus.CONFLICT, { paid: money(paid) });
+      // A note's entry would stay behind: notes are corrected by an opposite note, not by cancelling the invoice.
+      const [note] = await db.select({ id: supplierNotes.id }).from(supplierNotes).where(eq(supplierNotes.supplierInvoiceId, invoice.id)).limit(1);
+      if (note) throw new AppError('INVOICE_HAS_NOTES', 'An invoice with credit or debit notes cannot be cancelled', HttpStatus.CONFLICT);
 
       // Status first: the receipts' trigger releases them only from a cancelled invoice.
       const [cancelled] = await db
@@ -225,33 +233,191 @@ export class PayablesService extends TenantService {
     });
   }
 
+  /** A payment of one invoice: the invoice as it now stands. */
   pay(auth: AuthContext, id: string, input: CreateSupplierPaymentInput) {
     return this.mutate(auth, async (db) => {
-      const invoice = await this.lockInvoice(db, id);
-      this.assertCan(auth, 'accounting.post', { legalEntityId: invoice.legalEntityId });
-      if (invoice.status === 'CANCELLED') throw new AppError('INVALID_STATE', 'A cancelled invoice cannot be paid', HttpStatus.CONFLICT, { status: invoice.status });
-      const [branch] = await db.select({ timezone: branches.timezone }).from(branches).where(eq(branches.id, invoice.branchId));
-      const today = await localToday(db, branch!.timezone);
-      if (input.paidOn > today) throw unprocessable('DATE_IN_FUTURE', 'The payment date is after today', { today });
-      if (input.paidOn < invoice.invoiceDate) throw unprocessable('PAID_BEFORE_INVOICE', 'The payment date is before the invoice date', { invoiceDate: invoice.invoiceDate });
-      const balance = toDec(invoice.totalAmount).minus(await this.paidOn(db, invoice.id));
-      if (toDec(input.amount).gt(balance)) throw unprocessable('OVERPAYMENT', 'More than the open balance of the invoice', { balance: money(balance) });
+      const [found] = await db.select({ supplierId: supplierInvoices.supplierId }).from(supplierInvoices).where(eq(supplierInvoices.id, id));
+      if (!found) throw notFound('Supplier invoice');
+      await this.recordPayment(db, auth, { ...input, supplierId: found.supplierId, allocations: [{ supplierInvoiceId: id, amount: input.amount }] });
+      const [invoice] = await db.select().from(supplierInvoices).where(eq(supplierInvoices.id, id));
+      return this.view(db, invoice!);
+    });
+  }
+
+  /** One payment to a supplier over several of its open invoices of one legal entity (session 22). */
+  payMany(auth: AuthContext, input: CreateSupplierBatchPaymentInput) {
+    return this.mutate(auth, async (db) => this.paymentView(db, await this.recordPayment(db, auth, input)));
+  }
+
+  /**
+   * Every invoice under its row lock (id order), each allocation within its open balance; one payment
+   * row, its allocations, and one entry: Dr payables, Cr bank, per branch of the invoices it settles.
+   */
+  private async recordPayment(db: Database, auth: AuthContext, input: CreateSupplierBatchPaymentInput) {
+    const allocations = [...input.allocations].sort((a, b) => a.supplierInvoiceId.localeCompare(b.supplierInvoiceId));
+    const invoices: InvoiceRow[] = [];
+    for (const a of allocations) invoices.push(await this.lockInvoice(db, a.supplierInvoiceId));
+    const entity = invoices[0]!.legalEntityId;
+    const foreign = invoices.filter((i) => i.supplierId !== input.supplierId || i.legalEntityId !== entity).map((i) => i.id);
+    if (foreign.length) throw unprocessable('INVOICE_MISMATCH', 'Every invoice must be from this supplier and of one legal entity', { supplierInvoiceIds: foreign });
+    this.assertCan(auth, 'accounting.post', { legalEntityId: entity });
+    const supplier = await findSupplier(db, input.supplierId);
+    for (const i of invoices) {
+      if (i.status === 'CANCELLED') throw new AppError('INVALID_STATE', 'A cancelled invoice cannot be paid', HttpStatus.CONFLICT, { status: i.status, supplierInvoiceId: i.id });
+    }
+    // The first invoice's branch dates the payment (and is its branch); all are of one entity.
+    const first = invoices.find((i) => i.id === input.allocations[0]!.supplierInvoiceId)!;
+    const [branch] = await db.select({ timezone: branches.timezone }).from(branches).where(eq(branches.id, first.branchId));
+    const today = await localToday(db, branch!.timezone);
+    if (input.paidOn > today) throw unprocessable('DATE_IN_FUTURE', 'The payment date is after today', { today });
+    for (const [k, a] of allocations.entries()) {
+      const i = invoices[k]!;
+      if (input.paidOn < i.invoiceDate) throw unprocessable('PAID_BEFORE_INVOICE', 'The payment date is before the invoice date', { invoiceDate: i.invoiceDate, supplierInvoiceId: i.id });
+      const balance = await this.openBalance(db, i);
+      if (toDec(a.amount).gt(balance)) throw unprocessable('OVERPAYMENT', 'More than the open balance of the invoice', { balance: money(balance), supplierInvoiceId: i.id });
+    }
+
+    const amount = allocations.reduce((s, a) => s.plus(a.amount), new Dec(0));
+    const tenantId = first.tenantId;
+    const paymentNumber = await nextNumber(db, tenantId, entity, 'SUPPLIER_PAYMENT');
+    const [payment] = await db
+      .insert(supplierPayments)
+      .values({
+        tenantId,
+        legalEntityId: entity,
+        branchId: first.branchId,
+        supplierId: supplier.id,
+        supplierInvoiceId: invoices.length === 1 ? first.id : null,
+        paymentNumber,
+        amount: amount.toFixed(4),
+        paidOn: input.paidOn,
+        method: input.method,
+        reference: input.reference ?? null,
+        createdBy: auth.userId,
+      })
+      .returning();
+    await db.insert(supplierPaymentAllocations).values(allocations.map((a) => ({ tenantId, supplierPaymentId: payment!.id, supplierInvoiceId: a.supplierInvoiceId, amount: toDec(a.amount).toFixed(4) })));
+    // Each branch's payables settled by its own lines, so every branch stays balanced.
+    const byBranch = new Map<string, Dec>();
+    for (const [k, a] of allocations.entries()) byBranch.set(invoices[k]!.branchId, (byBranch.get(invoices[k]!.branchId) ?? new Dec(0)).plus(a.amount));
+    const numbers = invoices.map((i) => i.invoiceNumber).join(', ');
+    await post(db, {
+      tenantId,
+      legalEntityId: entity,
+      branchId: first.branchId,
+      entryDate: input.paidOn,
+      sourceType: 'SUPPLIER_PAYMENT',
+      sourceId: payment!.id,
+      memo: `Payment #${paymentNumber} of supplier invoice${invoices.length > 1 ? 's' : ''} ${numbers}${input.reference ? ` (${input.reference})` : ''}`,
+      lines: [...byBranch].flatMap(([branchId, v]) => supplierPaymentPosting(money(v), branchId)),
+      createdBy: auth.userId,
+    });
+
+    await this.audit(db, auth, 'supplier_payment.recorded', 'supplier_payment', payment!.id, {
+      paymentNumber,
+      amount: money(amount),
+      allocations: allocations.map((a) => ({ supplierInvoiceId: a.supplierInvoiceId, amount: money(a.amount) })),
+    });
+    await emitEvent(db, { tenantId, topic: 'supplier_payment.recorded', payload: { supplierPaymentId: payment!.id, supplierInvoiceIds: allocations.map((a) => a.supplierInvoiceId) }, correlationId: auth.correlationId });
+    return payment!;
+  }
+
+  /**
+   * A mistaken payment (wrong amount, wrong supplier, a bounced check): voided once, with a reason, and
+   * its entry reversed on the branch's today. The invoices it settled are open again by its amounts.
+   */
+  voidPayment(auth: AuthContext, id: string, input: VoidSupplierPaymentInput) {
+    return this.mutate(auth, async (db) => {
+      const [payment] = await db.select().from(supplierPayments).where(eq(supplierPayments.id, id)).for('update');
+      if (!payment) throw notFound('Supplier payment');
+      this.assertCan(auth, 'accounting.post', { legalEntityId: payment.legalEntityId });
+      if (payment.voidedAt) throw new AppError('ALREADY_VOIDED', 'This payment is already voided', HttpStatus.CONFLICT);
+      const [voided] = await db
+        .update(supplierPayments)
+        .set({ voidedBy: auth.userId, voidedAt: sql`now()`, voidReason: input.reason })
+        .where(eq(supplierPayments.id, id))
+        .returning();
+      const [entry] = await db.select().from(journalEntries).where(and(eq(journalEntries.sourceType, 'SUPPLIER_PAYMENT'), eq(journalEntries.sourceId, id)));
+      if (entry) {
+        const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, entry.id));
+        await post(db, {
+          tenantId: payment.tenantId,
+          legalEntityId: payment.legalEntityId,
+          branchId: payment.branchId,
+          sourceType: 'REVERSAL',
+          reversesEntryId: entry.id,
+          memo: `Supplier payment #${payment.paymentNumber} voided: ${input.reason}`,
+          lines: reversalOf(lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }))),
+          createdBy: auth.userId,
+        });
+      }
+      await this.audit(db, auth, 'supplier_payment.voided', 'supplier_payment', id, { paymentNumber: payment.paymentNumber, amount: money(payment.amount), reason: input.reason });
+      await emitEvent(db, { tenantId: payment.tenantId, topic: 'supplier_payment.voided', payload: { supplierPaymentId: id }, correlationId: auth.correlationId });
+      return this.paymentView(db, voided!);
+    });
+  }
+
+  /**
+   * A supplier's credit or debit note against an open invoice (session 22). A credit note may not take
+   * the invoice below what is already paid; it first clears the GRNI that returns after invoicing left
+   * on the invoice's receipts (what they held when invoiced, less what they hold now, less what earlier
+   * notes cleared). VAT is claimed or given back as on the invoice; the rest is a price variance.
+   */
+  createNote(auth: AuthContext, invoiceId: string, input: CreateSupplierNoteInput) {
+    return this.mutate(auth, async (db) => {
+      const invoice = await this.lockInvoice(db, invoiceId);
+      const { branch } = await branchScope(db, invoice.branchId);
+      this.assertEnter(auth, { branchId: invoice.branchId, legalEntityId: invoice.legalEntityId });
+      if (invoice.status === 'CANCELLED') throw new AppError('INVALID_STATE', 'A cancelled invoice takes no notes', HttpStatus.CONFLICT, { status: invoice.status });
+      const today = await localToday(db, branch.timezone);
+      if (input.noteDate > today) throw unprocessable('DATE_IN_FUTURE', 'The note date is after today', { today });
+      if (input.noteDate < invoice.invoiceDate) throw unprocessable('NOTE_BEFORE_INVOICE', 'The note date is before the invoice date', { invoiceDate: invoice.invoiceDate });
+      const net = toDec(input.netAmount);
+      const vat = toDec(input.vatAmount);
+      const total = net.plus(vat);
+      if (input.kind === 'CREDIT') {
+        const balance = await this.openBalance(db, invoice);
+        if (total.gt(balance)) throw unprocessable('CREDIT_EXCEEDS_BALANCE', 'More than the open balance of the invoice', { balance: money(balance) });
+      }
+      const profile = (await profilesInForce(db, [invoice.legalEntityId])).get(invoice.legalEntityId);
+      if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
+      const inputVat = profile.vatStatus === 'VAT' ? vat : new Dec(0);
+
+      let grniCleared = new Dec(0);
+      if (input.kind === 'CREDIT') {
+        const receipts = await db
+          .select({ id: supplierInvoiceReceipts.goodsReceiptId, matched: supplierInvoiceReceipts.matchedAmount })
+          .from(supplierInvoiceReceipts)
+          .where(eq(supplierInvoiceReceipts.supplierInvoiceId, invoice.id));
+        const ids = receipts.map((r) => r.id).sort();
+        // The receipts' lock (returns take it too): what they hold cannot change underneath.
+        await mapInSequence(ids, (rid) => db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${rid}, 0))`));
+        const held = await grniHeld(db, ids);
+        const { rows } = await db.execute<{ v: string }>(sql`SELECT coalesce(sum(grni_cleared), 0)::text AS v FROM supplier_notes WHERE supplier_invoice_id = ${invoice.id}`);
+        const stranded = receipts.reduce((s, r) => s.plus(r.matched).minus(held.get(r.id)!), new Dec(0)).minus(rows[0]!.v);
+        grniCleared = Dec.max(new Dec(0), Dec.min(stranded, total.minus(inputVat)));
+      }
 
       const tenantId = invoice.tenantId;
-      const paymentNumber = await nextNumber(db, tenantId, invoice.legalEntityId, 'SUPPLIER_PAYMENT');
-      const [payment] = await db
-        .insert(supplierPayments)
+      const entryNumber = await nextNumber(db, tenantId, invoice.legalEntityId, 'SUPPLIER_NOTE');
+      const [note] = await db
+        .insert(supplierNotes)
         .values({
           tenantId,
           legalEntityId: invoice.legalEntityId,
           branchId: invoice.branchId,
           supplierId: invoice.supplierId,
           supplierInvoiceId: invoice.id,
-          paymentNumber,
-          amount: toDec(input.amount).toFixed(4),
-          paidOn: input.paidOn,
-          method: input.method,
-          reference: input.reference ?? null,
+          kind: input.kind,
+          entryNumber,
+          noteNumber: input.noteNumber,
+          noteDate: input.noteDate,
+          netAmount: net.toFixed(4),
+          vatAmount: vat.toFixed(4),
+          totalAmount: total.toFixed(4),
+          inputVat: inputVat.toFixed(4),
+          grniCleared: grniCleared.toFixed(4),
+          reason: input.reason,
           createdBy: auth.userId,
         })
         .returning();
@@ -259,17 +425,28 @@ export class PayablesService extends TenantService {
         tenantId,
         legalEntityId: invoice.legalEntityId,
         branchId: invoice.branchId,
-        entryDate: input.paidOn,
-        sourceType: 'SUPPLIER_PAYMENT',
-        sourceId: payment!.id,
-        memo: `Payment #${paymentNumber} of supplier invoice ${invoice.invoiceNumber}${input.reference ? ` (${input.reference})` : ''}`,
-        lines: supplierPaymentPosting(input.amount, invoice.branchId),
+        entryDate: input.noteDate,
+        sourceType: 'SUPPLIER_NOTE',
+        sourceId: note!.id,
+        memo: `Supplier ${input.kind === 'CREDIT' ? 'credit' : 'debit'} note ${input.noteNumber} on invoice ${invoice.invoiceNumber}, entry #${entryNumber}`,
+        lines: supplierNotePosting({ kind: input.kind, payable: total, inputVat, grniCleared }, invoice.branchId),
         createdBy: auth.userId,
       });
-
-      await this.audit(db, auth, 'supplier_payment.recorded', 'supplier_payment', payment!.id, { paymentNumber, supplierInvoiceId: invoice.id, amount: money(input.amount) });
-      await emitEvent(db, { tenantId, topic: 'supplier_payment.recorded', payload: { supplierPaymentId: payment!.id, supplierInvoiceId: invoice.id }, correlationId: auth.correlationId });
+      await this.audit(db, auth, 'supplier_note.recorded', 'supplier_note', note!.id, { kind: input.kind, entryNumber, noteNumber: input.noteNumber, supplierInvoiceId: invoice.id, total: money(total) });
+      await emitEvent(db, { tenantId, topic: 'supplier_note.recorded', payload: { supplierNoteId: note!.id, supplierInvoiceId: invoice.id }, correlationId: auth.correlationId });
       return this.view(db, invoice);
+    });
+  }
+
+  /** One note (the journal links a SUPPLIER_NOTE entry here), with the invoice it adjusts. */
+  getNote(auth: AuthContext, id: string) {
+    return this.read(auth, async (db) => {
+      const [note] = await db.select().from(supplierNotes).where(eq(supplierNotes.id, id));
+      if (!note) throw notFound('Supplier note');
+      const scope = { branchId: note.branchId, legalEntityId: note.legalEntityId };
+      if (!this.can(auth, 'purchasing.manage', scope)) this.assertCan(auth, 'accounting.read', scope);
+      const [invoice] = await db.select({ invoiceNumber: supplierInvoices.invoiceNumber }).from(supplierInvoices).where(eq(supplierInvoices.id, note.supplierInvoiceId));
+      return { ...noteView(note), invoiceNumber: invoice!.invoiceNumber };
     });
   }
 
@@ -283,16 +460,52 @@ export class PayablesService extends TenantService {
     });
   }
 
-  /** One payment (the journal links a SUPPLIER_PAYMENT entry here), with the invoice it settles. */
+  /** One payment (the journal links a SUPPLIER_PAYMENT entry here), with the invoices it settles. */
   getPayment(auth: AuthContext, id: string) {
     return this.read(auth, async (db) => {
       const [payment] = await db.select().from(supplierPayments).where(eq(supplierPayments.id, id));
       if (!payment) throw notFound('Supplier payment');
       const scope = { branchId: payment.branchId, legalEntityId: payment.legalEntityId };
       if (!this.can(auth, 'purchasing.manage', scope)) this.assertCan(auth, 'accounting.read', scope);
-      const [invoice] = await db.select({ invoiceNumber: supplierInvoices.invoiceNumber }).from(supplierInvoices).where(eq(supplierInvoices.id, payment.supplierInvoiceId));
-      return { ...payment, amount: money(payment.amount), invoiceNumber: invoice!.invoiceNumber };
+      return this.paymentView(db, payment);
     });
+  }
+
+  private async paymentView(db: Database, p: typeof supplierPayments.$inferSelect) {
+    const [allocations, [supplier], [entry]] = [
+      await db
+        .select({ supplierInvoiceId: supplierPaymentAllocations.supplierInvoiceId, invoiceNumber: supplierInvoices.invoiceNumber, branchId: supplierInvoices.branchId, amount: supplierPaymentAllocations.amount })
+        .from(supplierPaymentAllocations)
+        .innerJoin(supplierInvoices, eq(supplierInvoices.id, supplierPaymentAllocations.supplierInvoiceId))
+        .where(eq(supplierPaymentAllocations.supplierPaymentId, p.id))
+        .orderBy(asc(supplierInvoices.invoiceNumber)),
+      await db.select({ id: suppliers.id, code: suppliers.code, name: suppliers.name }).from(suppliers).where(eq(suppliers.id, p.supplierId)),
+      await db.select({ id: journalEntries.id }).from(journalEntries).where(and(eq(journalEntries.sourceType, 'SUPPLIER_PAYMENT'), eq(journalEntries.sourceId, p.id))),
+    ];
+    const [reversal] = entry ? await db.select({ id: journalEntries.id }).from(journalEntries).where(eq(journalEntries.reversesEntryId, entry.id)) : [];
+    return {
+      id: p.id,
+      legalEntityId: p.legalEntityId,
+      branchId: p.branchId,
+      supplier: supplier!,
+      paymentNumber: p.paymentNumber,
+      amount: money(p.amount),
+      paidOn: p.paidOn,
+      method: p.method,
+      reference: p.reference,
+      createdBy: p.createdBy,
+      createdAt: p.createdAt,
+      status: p.voidedAt ? 'VOIDED' : 'RECORDED',
+      voidedBy: p.voidedBy,
+      voidedAt: p.voidedAt,
+      voidReason: p.voidReason,
+      allocations: allocations.map((a) => ({ ...a, amount: money(a.amount) })),
+      /** A one-invoice payment's invoice and its number (older clients); null when it settles several. */
+      supplierInvoiceId: p.supplierInvoiceId,
+      invoiceNumber: allocations.length === 1 ? allocations[0]!.invoiceNumber : null,
+      journalEntryId: entry?.id ?? null,
+      reversalEntryId: reversal?.id ?? null,
+    };
   }
 
   listInvoices(auth: AuthContext, q: SupplierInvoiceListQuery) {
@@ -301,23 +514,23 @@ export class PayablesService extends TenantService {
       if (q.supplierId) await findSupplier(db, q.supplierId);
       const { rows } = await db.execute<{
         id: string; entry_number: number; invoice_number: string; invoice_date: string; due_date: string; branch_id: string; supplier_id: string;
-        supplier_code: string; supplier_name: string; total_amount: string; paid: string; status: string;
+        supplier_code: string; supplier_name: string; total_amount: string; notes: string; paid: string; status: string;
       }>(sql`
         SELECT * FROM (
           SELECT i.id, i.entry_number::int, i.invoice_number, i.invoice_date::text, i.due_date::text, i.branch_id, i.supplier_id,
                  s.code AS supplier_code, s.name AS supplier_name, i.total_amount::text,
-                 coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id), 0)::text AS paid, i.status
+                 ${NOTES_SQL}::text AS notes, ${PAID_SQL}::text AS paid, i.status
             FROM supplier_invoices i JOIN suppliers s ON s.id = i.supplier_id
            WHERE i.legal_entity_id = ${q.legalEntityId}
              ${q.supplierId ? sql`AND i.supplier_id = ${q.supplierId}` : sql``}
         ) x
         -- The derived status filters before the limit, so a filter never loses rows past it.
-         WHERE ${q.status === 'CANCELLED' ? sql`x.status = 'CANCELLED'` : q.status === 'PAID' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric <= x.paid::numeric` : q.status === 'OPEN' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric > x.paid::numeric` : sql`TRUE`}
+         WHERE ${q.status === 'CANCELLED' ? sql`x.status = 'CANCELLED'` : q.status === 'PAID' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric + x.notes::numeric <= x.paid::numeric` : q.status === 'OPEN' ? sql`x.status <> 'CANCELLED' AND x.total_amount::numeric + x.notes::numeric > x.paid::numeric` : sql`TRUE`}
          ORDER BY x.due_date, x.entry_number
          LIMIT 1000`);
       const data = rows
         .map((r) => {
-          const balance = toDec(r.total_amount).minus(r.paid);
+          const balance = toDec(r.total_amount).plus(r.notes).minus(r.paid);
           return {
             id: r.id,
             entryNumber: r.entry_number,
@@ -327,6 +540,8 @@ export class PayablesService extends TenantService {
             branchId: r.branch_id,
             supplier: { id: r.supplier_id, code: r.supplier_code, name: r.supplier_name },
             totalAmount: money(r.total_amount),
+            /** Debit notes less credit notes. */
+            notesAmount: money(r.notes),
             paidAmount: money(r.paid),
             balance: money(balance),
             status: r.status === 'CANCELLED' ? 'CANCELLED' : balance.lte(0) ? 'PAID' : 'OPEN',
@@ -372,9 +587,17 @@ export class PayablesService extends TenantService {
       // An entity has no time zone of its own: its first branch's local day (Manila when it has none).
       const [first] = await db.select({ timezone: branches.timezone }).from(branches).where(eq(branches.legalEntityId, q.legalEntityId)).orderBy(asc(branches.createdAt)).limit(1);
       const asOf = q.asOf ?? (await localToday(db, first?.timezone ?? 'Asia/Manila'));
+      // A note counts from its note date; a payment from its paid-on date until its void's local date
+      // (the dates their entries and the void's reversal carry).
       const { rows } = await db.execute<{ supplier_id: string; code: string; name: string; due_date: string; days: number; balance: string }>(sql`
         SELECT i.supplier_id, s.code, s.name, i.due_date::text, (${asOf}::date - i.due_date)::int AS days,
-               (i.total_amount - coalesce((SELECT sum(p.amount) FROM supplier_payments p WHERE p.supplier_invoice_id = i.id AND p.paid_on <= ${asOf}::date), 0))::text AS balance
+               (i.total_amount
+                 + coalesce((SELECT sum(CASE n.kind WHEN 'DEBIT' THEN n.total_amount ELSE -n.total_amount END) FROM supplier_notes n
+                              WHERE n.supplier_invoice_id = i.id AND n.note_date <= ${asOf}::date), 0)
+                 - coalesce((SELECT sum(a.amount) FROM supplier_payment_allocations a
+                               JOIN supplier_payments p ON p.id = a.supplier_payment_id JOIN branches pb ON pb.id = p.branch_id
+                              WHERE a.supplier_invoice_id = i.id AND p.paid_on <= ${asOf}::date
+                                AND (p.voided_at IS NULL OR (p.voided_at AT TIME ZONE pb.timezone)::date > ${asOf}::date)), 0))::text AS balance
           FROM supplier_invoices i
           JOIN suppliers s ON s.id = i.supplier_id
           JOIN branches b ON b.id = i.branch_id
@@ -426,9 +649,19 @@ export class PayablesService extends TenantService {
     return invoice;
   }
 
+  /** What payments not voided have settled of the invoice. */
   private async paidOn(db: Database, invoiceId: string) {
-    const { rows } = await db.execute<{ v: string }>(sql`SELECT coalesce(sum(amount), 0)::text AS v FROM supplier_payments WHERE supplier_invoice_id = ${invoiceId}`);
+    const { rows } = await db.execute<{ v: string }>(sql`
+      SELECT coalesce(sum(a.amount), 0)::text AS v FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id = a.supplier_payment_id
+       WHERE a.supplier_invoice_id = ${invoiceId} AND p.voided_at IS NULL`);
     return toDec(rows[0]!.v);
+  }
+
+  /** Still owed on the invoice: its total, plus debit notes, less credit notes, less what is paid. */
+  private async openBalance(db: Database, i: InvoiceRow) {
+    const { rows } = await db.execute<{ v: string }>(sql`
+      SELECT coalesce(sum(CASE kind WHEN 'DEBIT' THEN total_amount ELSE -total_amount END), 0)::text AS v FROM supplier_notes WHERE supplier_invoice_id = ${i.id}`);
+    return toDec(i.totalAmount).plus(rows[0]!.v).minus(await this.paidOn(db, i.id));
   }
 
   private async view(db: Database, i: InvoiceRow) {
@@ -439,14 +672,23 @@ export class PayablesService extends TenantService {
       .innerJoin(goodsReceipts, eq(goodsReceipts.id, supplierInvoiceReceipts.goodsReceiptId))
       .where(eq(supplierInvoiceReceipts.supplierInvoiceId, i.id))
       .orderBy(asc(goodsReceipts.receiptNumber));
-    const payments = await db.select().from(supplierPayments).where(eq(supplierPayments.supplierInvoiceId, i.id)).orderBy(asc(supplierPayments.paymentNumber));
+    const payments = await db
+      .select({ p: supplierPayments, allocated: supplierPaymentAllocations.amount })
+      .from(supplierPaymentAllocations)
+      .innerJoin(supplierPayments, eq(supplierPayments.id, supplierPaymentAllocations.supplierPaymentId))
+      .where(eq(supplierPaymentAllocations.supplierInvoiceId, i.id))
+      .orderBy(asc(supplierPayments.paymentNumber));
+    const notes = await db.select().from(supplierNotes).where(eq(supplierNotes.supplierInvoiceId, i.id)).orderBy(asc(supplierNotes.entryNumber));
     const [entry] = await db
       .select({ id: journalEntries.id })
       .from(journalEntries)
       .where(and(eq(journalEntries.sourceType, 'SUPPLIER_INVOICE'), eq(journalEntries.sourceId, i.id)));
     const [reversal] = entry ? await db.select({ id: journalEntries.id }).from(journalEntries).where(eq(journalEntries.reversesEntryId, entry.id)) : [];
-    const paid = payments.reduce((a, p) => a.plus(p.amount), new Dec(0));
-    const balance = toDec(i.totalAmount).minus(paid);
+    const paid = payments.filter((x) => !x.p.voidedAt).reduce((a, x) => a.plus(x.allocated), new Dec(0));
+    const noteSum = (kind: string) => notes.filter((n) => n.kind === kind).reduce((a, n) => a.plus(n.totalAmount), new Dec(0));
+    const credited = noteSum('CREDIT');
+    const debited = noteSum('DEBIT');
+    const balance = toDec(i.totalAmount).plus(debited).minus(credited).minus(paid);
     return {
       id: i.id,
       legalEntityId: i.legalEntityId,
@@ -464,6 +706,8 @@ export class PayablesService extends TenantService {
       inputVat: money(i.inputVat),
       /** What the invoice charges beyond the receipts and the claimable VAT (posted to the price variance). */
       priceVariance: money(toDec(i.totalAmount).minus(i.matchedAmount).minus(i.inputVat)),
+      creditedAmount: money(credited),
+      debitedAmount: money(debited),
       paidAmount: money(paid),
       balance: money(balance),
       status: i.status === 'CANCELLED' ? 'CANCELLED' : balance.lte(0) ? 'PAID' : 'OPEN',
@@ -476,16 +720,49 @@ export class PayablesService extends TenantService {
       journalEntryId: entry?.id ?? null,
       reversalEntryId: reversal?.id ?? null,
       receipts: receipts.map((r) => ({ ...r, matchedAmount: money(r.matchedAmount) })),
-      payments: payments.map((p) => ({
+      /** `amount`: what the payment settles of this invoice; `paymentAmount`: the whole payment (it may settle others too). */
+      payments: payments.map(({ p, allocated }) => ({
         id: p.id,
         paymentNumber: p.paymentNumber,
-        amount: money(p.amount),
+        amount: money(allocated),
+        paymentAmount: money(p.amount),
         paidOn: p.paidOn,
         method: p.method,
         reference: p.reference,
         createdBy: p.createdBy,
         createdAt: p.createdAt,
+        status: p.voidedAt ? 'VOIDED' : 'RECORDED',
+        voidedAt: p.voidedAt,
+        voidReason: p.voidReason,
       })),
+      /** Credit and debit notes (the `notes` field above is the free text entered with the invoice). */
+      adjustments: notes.map(noteView),
     };
   }
 }
+
+function noteView(n: typeof supplierNotes.$inferSelect) {
+  return {
+    id: n.id,
+    supplierInvoiceId: n.supplierInvoiceId,
+    legalEntityId: n.legalEntityId,
+    branchId: n.branchId,
+    kind: n.kind,
+    entryNumber: n.entryNumber,
+    noteNumber: n.noteNumber,
+    noteDate: n.noteDate,
+    netAmount: money(n.netAmount),
+    vatAmount: money(n.vatAmount),
+    totalAmount: money(n.totalAmount),
+    inputVat: money(n.inputVat),
+    grniCleared: money(n.grniCleared),
+    reason: n.reason,
+    createdBy: n.createdBy,
+    createdAt: n.createdAt,
+  };
+}
+
+/** Debit notes less credit notes on invoice `i` (SQL, in a query over `supplier_invoices i`). */
+const NOTES_SQL = sql`coalesce((SELECT sum(CASE n.kind WHEN 'DEBIT' THEN n.total_amount ELSE -n.total_amount END) FROM supplier_notes n WHERE n.supplier_invoice_id = i.id), 0)`;
+/** What payments not voided settled of invoice `i`. */
+const PAID_SQL = sql`coalesce((SELECT sum(a.amount) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id = a.supplier_payment_id WHERE a.supplier_invoice_id = i.id AND p.voided_at IS NULL), 0)`;

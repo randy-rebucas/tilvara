@@ -9,6 +9,12 @@ export interface ConsumingLine {
   /** The sold item (does not track stock itself). */
   variantId: string;
   quantity: string;
+  /**
+   * A check's share of a bill line (ADR-0014 §8): how much of the line earlier checks sold. The share
+   * consumes the rounded running total less what was rounded before, so the shares of a split dish
+   * consume exactly what the whole dish would (a trace amount is not lost to rounding on each share).
+   */
+  soldBefore?: string;
 }
 
 export interface PlannedConsumption {
@@ -46,6 +52,12 @@ const consumed = (sold: string, perUnit: string) => {
   return q.isZero() ? null : q.negated().toString();
 };
 
+/** A share's consumption: rounded (before + share) × recipe less rounded before × recipe; null when nothing. */
+const consumedShare = (before: string, share: string, perUnit: string) => {
+  const q = qty4(toDec(before).plus(share).times(perUnit)).minus(qty4(toDec(before).times(perUnit)));
+  return q.isZero() ? null : q.negated().toString();
+};
+
 /**
  * Ingredient movements for sold lines (ADR-0014 §4): for each line whose item has a recipe version
  * in force (DB clock), one CONSUMPTION per ingredient = sold quantity × recipe quantity, rounded to
@@ -59,14 +71,15 @@ export async function planConsumption(db: Database, lines: ConsumingLine[]): Pro
     if (!recipe) return [];
     // A trace amount that rounds to 0 at 4 dp moves nothing (the ledger refuses zero rows).
     return recipe.ingredients.flatMap((i) => {
-      const quantity = consumed(line.quantity, i.quantity);
+      const quantity = line.soldBefore ? consumedShare(line.soldBefore, line.quantity, i.quantity) : consumed(line.quantity, i.quantity);
       return quantity ? [{ saleLineId: line.saleLineId, variantId: i.variantId, quantity, recipeVersionId: recipe.recipeVersionId }] : [];
     });
   });
 }
 
 /**
- * Stock thrown away for prepared items (ADR-0014 §6: a void after preparation started): tracked
+ * Stock thrown away for prepared items (ADR-0014 §6: a void after preparation started), and goods
+ * returned damaged at the counter (ADR-0011 amendment): tracked
  * items leave as themselves, recipe items as their ingredients. Writes one WASTE stock adjustment
  * with its movements (costed by the ledger trigger) and posts it to Spoilage and waste, in the
  * caller's transaction. Returns null when nothing tracked was involved.

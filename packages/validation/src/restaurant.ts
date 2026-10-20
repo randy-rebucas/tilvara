@@ -246,10 +246,31 @@ export const createBillSchema = z
       .array(z.object({ orderItemId: z.uuid(), beneficiary: clientRefSchema, share: rateSchema.or(z.literal('1')).optional() }))
       .max(200)
       .default([]),
+    /**
+     * Per-item discounts and comps (rate "1" = on the house), each with its reason; an item's priced
+     * choices follow it. An item's own rate replaces the order-level one (no stacking), and an item
+     * with an SC/PWD discount takes no other. Needs sales.discount (session 22).
+     */
+    itemDiscounts: z
+      .array(z.object({
+        orderItemId: z.uuid(),
+        rate: rateSchema.refine((v) => Number(v) > 0, 'Discount must be above zero').or(z.literal('1')),
+        reason: z.string().trim().min(1).max(200),
+      }))
+      .max(200)
+      .default([]),
     /** The total shown before printing; if the server total differs, the bill is refused. */
     expectedAmountDue: amountSchema.optional(),
   })
   .superRefine((v, ctx) => {
+    const discounted = new Set<string>();
+    v.itemDiscounts.forEach((d, i) => {
+      if (discounted.has(d.orderItemId)) ctx.addIssue({ code: 'custom', path: ['itemDiscounts', i, 'orderItemId'], message: 'One discount per item' });
+      discounted.add(d.orderItemId);
+      if (v.statutory.some((s) => s.orderItemId === d.orderItemId)) {
+        ctx.addIssue({ code: 'custom', path: ['itemDiscounts', i, 'orderItemId'], message: 'An item with an SC/PWD discount takes no other discount' });
+      }
+    });
     const refs = new Set(v.beneficiaries.map((b) => b.ref));
     if (refs.size !== v.beneficiaries.length) ctx.addIssue({ code: 'custom', path: ['beneficiaries'], message: 'Duplicate beneficiary ref' });
     const items = new Set<string>();

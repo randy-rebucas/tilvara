@@ -21,7 +21,7 @@ const FLASH_MS = 8000;
 function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null; showStation: boolean }) {
   const { t } = useT();
   if (tickets === null) return <p className="text-muted">{t('floor.loading')}</p>;
-  if (tickets.length === 0) return <p className="py-10 text-center text-muted">{t('kds.noneDone')}</p>;
+  if (tickets.length === 0) return <p className="max-w-[68ch] py-6 text-muted">{t('kds.noneDone')}</p>;
   const clock = (iso: string | null | undefined) => (iso ? new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit' }).format(new Date(iso)) : '—');
   return (
     <ul className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] items-start gap-3" aria-label={t('kds.viewDone')}>

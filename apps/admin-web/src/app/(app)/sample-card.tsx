@@ -15,7 +15,8 @@ export function SampleCard({ state }: { state: SampleData }) {
   const { pending, submit, error } = useSubmit();
   if (!state.canLoad && state.loaded === 0) return null;
   return (
-    <Note denom="orange" className="px-5 py-4">
+    // Sample items are catalog records: blue, like the products they stand in for.
+    <Note denom="blue" className="px-5 py-4">
       <h2 className="text-[1.0625rem] font-semibold">{t('sample.title')}</h2>
       {state.loaded > 0 ? (
         <>

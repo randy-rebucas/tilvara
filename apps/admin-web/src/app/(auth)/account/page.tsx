@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { AuthFace, AuthSplit } from '@/components/auth-note';
 import { Note } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { api, type Me } from '@/lib/api';
@@ -21,37 +22,41 @@ export default async function AccountPage() {
   const { t } = await getT();
   const [me, closure] = await Promise.all([api<Me>('/me'), api<ClosureStatus>('/auth/account/closure')]);
   const readOnly = me.support !== null;
-  return (
-    <>
-      <section className="self-start md:pt-6">
-        <h1 className="text-[2.25rem] font-bold leading-[1.1] tracking-[-0.015em]">{t('account.title')}</h1>
-        <p className="mt-3 max-w-[46ch] text-muted">{t('account.lede')}</p>
-        <dl className="mt-6 grid max-w-[46ch] grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[0.9375rem]">
-          <dt className="text-muted">{t('account.name')}</dt>
-          <dd className="min-w-0 break-words font-semibold" data-testid="account-name">{me.user.displayName}</dd>
-          <dt className="text-muted">{t('account.email')}</dt>
-          <dd className="min-w-0 break-all font-semibold" data-testid="account-email">{me.user.email}</dd>
-          <dt className="text-muted">{t('account.twoStep')}</dt>
-          <dd className="font-semibold">
-            {me.mfa.enabled ? t('mfa.on') : t('mfa.off')}
-            {' · '}
-            <Link className="font-semibold text-blue underline" href="/security">
-              {t('account.manageTwoStep')}
-            </Link>
-          </dd>
-        </dl>
-        <p className="mt-6">
-          <Link className="font-semibold text-blue underline" href="/">
-            {t('mfa.back')}
+  const face = (
+    <AuthFace denom="none" title={t('account.title')} lede={t('account.lede')}>
+      <dl className="mt-6 grid max-w-[46ch] grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-[0.9375rem]">
+        <dt className="text-muted">{t('account.name')}</dt>
+        <dd className="min-w-0 break-words font-semibold" data-testid="account-name">
+          {me.user.displayName}
+        </dd>
+        <dt className="text-muted">{t('account.email')}</dt>
+        <dd className="min-w-0 break-all font-semibold" data-testid="account-email">
+          {me.user.email}
+        </dd>
+        <dt className="text-muted">{t('account.twoStep')}</dt>
+        <dd className="font-semibold">
+          {me.mfa.enabled ? t('mfa.on') : t('mfa.off')}
+          {' · '}
+          <Link className="font-semibold text-blue underline" href="/security">
+            {t('account.manageTwoStep')}
           </Link>
-        </p>
-      </section>
+        </dd>
+      </dl>
+      <p className="mt-6">
+        <Link className="font-semibold text-blue underline" href="/">
+          {t('mfa.back')}
+        </Link>
+      </p>
+    </AuthFace>
+  );
+  return (
+    <AuthSplit denom="none" face={face}>
       {readOnly ? (
         <Note denom="blue" className="p-6 sm:p-7">
           <p className="text-[0.9375rem]">{t('common.readOnly')}</p>
         </Note>
       ) : (
-        <div className="flex flex-col gap-6">
+        <>
           <Note denom="blue" className="p-6 sm:p-7">
             <NameForm displayName={me.user.displayName} />
           </Note>
@@ -61,8 +66,8 @@ export default async function AccountPage() {
           <Note denom="none" className="p-6 sm:p-7">
             <CloseAccountForm mfaOn={me.mfa.enabled} closure={closure} />
           </Note>
-        </div>
+        </>
       )}
-    </>
+    </AuthSplit>
   );
 }

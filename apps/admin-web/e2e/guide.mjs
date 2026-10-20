@@ -64,7 +64,7 @@ try {
   await shot('guide-inventory-1440.png', false);
 
   await go('/help');
-  const all = ['start', 'products', 'prices', 'inventory', 'purchasing', 'restaurant', 'reports', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
+  const all = ['start', 'products', 'prices', 'inventory', 'purchasing', 'restaurant', 'reports', 'customers', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
   check('a business that does both sees every part, in set-up order', JSON.stringify(await sectionIds()) === JSON.stringify(all));
   check('the contents link to every part', await evaluate(`[...document.querySelectorAll('nav[aria-label="Contents"] a')].map((a) => a.getAttribute('href')).join() === ${JSON.stringify(all.map((i) => `#${i}`).join())}`));
   check('each part has numbered steps', await evaluate(`[...document.querySelectorAll('main article')].every((a) => a.querySelectorAll('ol li').length >= 3)`));

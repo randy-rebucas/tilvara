@@ -104,7 +104,7 @@ describe('manager-approved price changes', () => {
     session = await openSession(s.cashier, s.registerId);
   });
 
-  const ask = (auth: Auth, body: Record<string, unknown>) => http().post('/v1/price-overrides').set(auth).send({ branchId: s.branchId, variantId: s.cola, unitPrice: '20.00', reason: 'Dented can', ...body });
+  const ask = (auth: Auth, body: Record<string, unknown>) => http().post('/v1/price-overrides').set(auth).send({ branchId: s.branchId, variantId: s.cola, unitPrice: '20.00', quantity: '1', reason: 'Dented can', ...body });
 
   it('needs the permission or a manager who signs in on the spot; refusals are audited', async () => {
     expect((await ask(s.cashier, {}).expect(403)).body.error.code).toBe('APPROVAL_REQUIRED');
@@ -126,10 +126,13 @@ describe('manager-approved price changes', () => {
   });
 
   it('prices one line of one sale by the cashier who asked, at the approved price', async () => {
-    const approved = (await ask(s.cashier, { email: s.managerEmail, password: PASSWORD }).expect(201)).body;
-    expect(approved).toMatchObject({ approvalMethod: 'CREDENTIALS', approvedBy: s.managerId, listUnitPrice: '22.4', unitPrice: '20', requestedBy: s.cashierId });
+    const approved = (await ask(s.cashier, { email: s.managerEmail, password: PASSWORD, quantity: '2' }).expect(201)).body;
+    expect(approved).toMatchObject({ approvalMethod: 'CREDENTIALS', approvedBy: s.managerId, listUnitPrice: '22.4', unitPrice: '20', quantity: '2', requestedBy: s.cashierId });
 
     const line = { id: 'x', variantId: s.cola, quantity: '2', priceOverrideId: approved.id };
+    // The approval is for 2: a third one at that price needs another approval.
+    const more = (await quote(s.cashier, s.branchId, [{ ...line, quantity: '3' }]).expect(422)).body.error;
+    expect(more).toMatchObject({ code: 'PRICE_OVERRIDE_QUANTITY', details: { approvedQuantity: '2' } });
     const shown = (await quote(s.cashier, s.branchId, [line]).expect(200)).body;
     expect(shown.lines[0]).toMatchObject({ unitPrice: '20', gross: '40.00', amountDue: '40.00', priceOverrideId: approved.id, listUnitPrice: '22.4' });
     // Someone else's approval, another item, the same approval twice in one cart.

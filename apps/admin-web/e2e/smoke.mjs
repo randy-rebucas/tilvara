@@ -45,7 +45,8 @@ try {
   check('business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').checked`));
   await shot('business-type.png');
   await evaluate(`document.querySelector('input[name=businessType][value=HYBRID]').click()`);
-  await evaluate(`document.querySelector('form button.btn-primary').click()`);
+  // The type's own form (the page also has the business name form, session 22).
+  await evaluate(`document.querySelector('input[name=businessType]').closest('form').querySelector('button.btn-primary').click()`);
   await waitFor(`[...document.querySelectorAll('[role=status]')].some((x) => x.textContent.startsWith('Saved'))`);
   await go('/');
   check('after changing to Both: Restaurant tab shown', await navHas('Restaurant'));

@@ -7,7 +7,7 @@ import { FormError, SelectField, TextField } from '@/components/fields';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { UninvoicedReceipt } from '@/lib/api';
-import { formatDateTime, peso, sumDecimal } from '@/lib/format';
+import { formatDate, formatDateTime, peso, signOf, sumDecimal } from '@/lib/format';
 import { docNo } from '@/lib/options';
 
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);
@@ -129,4 +129,106 @@ function PaymentFields({ close, invoiceId, balance, today }: { close: () => void
 export function PaymentForm(props: { invoiceId: string; balance: string; today: string }) {
   const { t } = useT();
   return <Disclosure label={t('ap.pay')}>{(close) => <PaymentFields close={close} {...props} />}</Disclosure>;
+}
+
+/**
+ * A supplier's credit or debit note against this invoice (session 22): what is owed goes down or up.
+ * A credit note never takes the invoice below what is already paid (the API refuses it).
+ */
+function NoteFields({ close, invoiceId, today }: { close: () => void; invoiceId: string; today: string }) {
+  const { t } = useT();
+  const key = useFormKey();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('POST', `/api/v1/supplier-invoices/${invoiceId}/notes`, {
+      kind: f.get('kind'),
+      noteNumber: text(f, 'noteNumber'),
+      noteDate: text(f, 'noteDate'),
+      netAmount: text(f, 'netAmount'),
+      vatAmount: text(f, 'vatAmount') || '0',
+      reason: text(f, 'reason'),
+    }, { idempotencyKey: key });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+      <p className="col-span-full text-[0.875rem] text-muted">{t('ap.noteHint')}</p>
+      <SelectField label={t('ap.noteKind')} name="kind" defaultValue="CREDIT">
+        {(['CREDIT', 'DEBIT'] as const).map((k) => <option key={k} value={k}>{t(`ap.noteKind.${k}`)}</option>)}
+      </SelectField>
+      <TextField label={t('ap.noteNo')} name="noteNumber" required autoFocus error={fieldError('noteNumber')} />
+      <TextField label={t('ap.noteDate')} name="noteDate" type="date" required defaultValue={today} max={today} error={fieldError('noteDate')} />
+      <TextField label={t('ap.net')} name="netAmount" inputMode="decimal" required placeholder="0.00" error={fieldError('netAmount')} />
+      <TextField label={t('ap.vat')} name="vatAmount" inputMode="decimal" placeholder="0.00" error={fieldError('vatAmount')} />
+      <TextField label={t('ap.noteReason')} name="reason" required maxLength={500} error={fieldError('reason')} />
+      <div className="col-span-full flex flex-wrap items-center gap-2">
+        <button className="btn btn-primary" disabled={pending}>{t('ap.recordNote')}</button>
+        <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
+        <FormError message={general(error)} />
+      </div>
+    </form>
+  );
+}
+
+export function NoteForm(props: { invoiceId: string; today: string }) {
+  const { t } = useT();
+  return <Disclosure label={t('ap.newNote')}>{(close) => <NoteFields close={close} {...props} />}</Disclosure>;
+}
+
+/** One payment over several open invoices of a supplier (session 22): an amount per invoice, at most its balance. */
+export function BatchPaymentForm({ supplierId, invoices, today }: { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string }) {
+  const { t, lang } = useT();
+  const router = useRouter();
+  const key = useFormKey();
+  const { pending, submit, fieldError, error } = useSubmit();
+  const [amounts, setAmounts] = useState<Record<string, string>>(() => Object.fromEntries(invoices.map((i) => [i.id, ''])));
+  const chosen = invoices.filter((i) => /^\d+(\.\d{1,2})?$/.test((amounts[i.id] ?? '').trim()) && signOf(amounts[i.id]!.trim()) > 0);
+  const total = sumDecimal(chosen.map((i) => amounts[i.id]!.trim()));
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const reference = text(f, 'reference');
+    const r = await submit<{ id: string }>('POST', '/api/v1/supplier-payments', {
+      supplierId,
+      paidOn: text(f, 'paidOn'),
+      method: f.get('method'),
+      ...(reference ? { reference } : {}),
+      allocations: chosen.map((i) => ({ supplierInvoiceId: i.id, amount: amounts[i.id]!.trim() })),
+    }, { idempotencyKey: key, refresh: false });
+    if (r.ok) router.push(`/purchasing/payments/${r.data.id}`);
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+      <ul className="flex flex-col gap-2">
+        {invoices.map((i) => (
+          <li key={i.id} className="flex flex-wrap items-center gap-3 rounded-[5px] border border-hair-soft p-3">
+            <span className="min-w-0 flex-1">
+              <span className="serial font-semibold">{i.invoiceNumber}</span>
+              <span className="serial ml-2 text-[0.8125rem] text-muted">{t('ap.dueDate')} {formatDate(i.dueDate, lang)} · {t('ap.balance')} {peso(i.balance)}</span>
+            </span>
+            <button type="button" className="btn btn-sm" onClick={() => setAmounts((a) => ({ ...a, [i.id]: i.balance }))}>{t('ap.balance')}</button>
+            <label className="sr-only" htmlFor={`pay-${i.id}`}>{`${t('ap.amount')} ${i.invoiceNumber}`}</label>
+            <input id={`pay-${i.id}`} className="input w-36" inputMode="decimal" placeholder="0.00" value={amounts[i.id] ?? ''} onChange={(e) => setAmounts((a) => ({ ...a, [i.id]: e.target.value }))} />
+          </li>
+        ))}
+      </ul>
+      <p className="text-[0.9375rem] font-semibold">{t('ap.payManyTotal', { amount: peso(total) })}</p>
+      <FormError message={fieldError('allocations')} />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <TextField label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} error={fieldError('paidOn')} />
+        <SelectField label={t('ap.method')} name="method">
+          {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
+        </SelectField>
+        <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button className="btn btn-primary" disabled={pending || chosen.length === 0}>{t('ap.payManyRecord')}</button>
+        <FormError message={general(error)} />
+      </div>
+    </form>
+  );
 }

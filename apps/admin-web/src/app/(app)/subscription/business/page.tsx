@@ -2,7 +2,7 @@ import { Callout, Note, PageHeader, Serial } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { api, type Business, type Me } from '@/lib/api';
 import { SubscriptionTabs } from '../tabs';
-import { BusinessTypeForm } from './business-form';
+import { BusinessNameForm, BusinessTypeForm } from './business-form';
 
 export const metadata = { title: 'Business' };
 
@@ -15,8 +15,8 @@ export default async function BusinessPage() {
       <PageHeader title={t('biz.title')} lede={t('biz.lede')} />
       <SubscriptionTabs active="business" />
       <Note className="px-5 py-4" as="div">
-        <p className="font-semibold">{business.name}</p>
-        <Serial className="mt-1 block">{business.slug}</Serial>
+        {canEdit ? <BusinessNameForm name={business.name} /> : <p className="font-semibold">{business.name}</p>}
+        <Serial className="mt-2 block">{business.slug}</Serial>
       </Note>
       <Note className="px-5 py-5" as="div">
         <BusinessTypeForm businessType={business.businessType} canEdit={canEdit} />

@@ -240,5 +240,15 @@ Audit decisions (session 21): ✅ done. The user chose the recommended option fo
 - ✅ Plan contents kept as seeded and enforced: `advanced_reports` (the five analysis reports) and `multi_entity` (a second legal entity) on Growth and Enterprise, `api_access` on Enterprise.
 - ✅ Shift close with open restaurant bills: refused (`OPEN_BILLS`, listed at the till); a manager overrides with a reason, audited.
 
+Audit remainder (session 22): ✅ done — every audit item that needed no decision. Migrations 0081–0083.
+
+Till quantities and stock movements audit (session 23): ✅ done — returns follow the sale's stock, damaged returns as waste, approved prices carry a quantity, split-check recipe rounding, one waste per voided choice, till quantity controls. Migration 0084. Open items: `docs/LEFTOVER.md` (session 23).
+- ✅ Supplier credit/debit notes, one payment over several invoices, voiding a mistaken payment; no manual reversal of payment or note entries (ADR-0013 amendment); admin invoice page, payment page, "Pay several invoices".
+- ✅ Restaurant: "Change" on a pending item at the till; per-item discounts and comps on the bill (ADR-0014 amendment).
+- ✅ Business rename; Senior Cashier and Purchasing Officer roles (back-filled); RETAIL gets no restaurant roles until it changes type; sample items follow the type; `/me` plan `features` and screens gated on them.
+- ✅ Webhook delivery pinned to the checked address (DNS rebinding); API-key expiry in the admin.
+- ✅ Tests: integration `payables` (+4), `bills`, `orders`, `business-type` (+3), `integrations`, `support-onboarding`, `isolation`, workers `webhooks` (+2), accounting/validation/admin/POS unit; E2E `payables` 36, `tables` 37, `integrations` 37, and the stale `guide`/`onboarding` expectations fixed.
+- ⬜ Still waiting on someone else: mobile app (user), customer VAT treatment (tax adviser), EWT (accountant), purge periods (DPO), hardware adapters, CI (billing lock).
+
 ## Phase 7 — Differentiation (validated demand only)
 Ecommerce, loyalty, forecasting, replenishment, loss-prevention analytics, multi-branch intelligence.

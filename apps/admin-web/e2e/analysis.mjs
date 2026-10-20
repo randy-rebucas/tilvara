@@ -35,7 +35,7 @@ await call('POST', '/v1/goods-receipts', tk, { branchId: b1.id, supplierId: supp
 await call('POST', '/v1/stock/adjustments', tk, { branchId: b2.id, reason: 'Opening', items: [{ variantId: rice, quantity: '5', unitCost: '40.00' }] }, idem());
 const s1 = await call('POST', '/v1/cashier-sessions', tk, { registerId: r1.id, openingFloat: '500.00' });
 await call('POST', '/v1/sales', tk, { cashierSessionId: s1.id, clientTransactionId: randomUUID(), lines: [{ variantId: cola, quantity: '2', discountRate: '0.1' }, { variantId: rice, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '96.32' }] }, idem());
-const approval = await call('POST', '/v1/price-overrides', tk, { branchId: b1.id, variantId: cola, unitPrice: '20.00', reason: 'Dented can' });
+const approval = await call('POST', '/v1/price-overrides', tk, { branchId: b1.id, variantId: cola, unitPrice: '20.00', quantity: '1', reason: 'Dented can' });
 await call('POST', '/v1/sales', tk, { cashierSessionId: s1.id, clientTransactionId: randomUUID(), lines: [{ variantId: cola, quantity: '1', priceOverrideId: approval.id }], tenders: [{ method: 'CASH', tendered: '20.00' }] }, idem());
 await call('POST', '/v1/payment-intents', tk, { cashierSessionId: s1.id, clientTransactionId: randomUUID(), method: 'QR', amount: '15.00' }, idem());
 const s2 = await call('POST', '/v1/cashier-sessions', tk, { registerId: r2.id, openingFloat: '0.00' });

@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-20 (session 21 — the audit's three decisions: offline sales after a lapse, plan features, shift close with open bills. Session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-20 (session 23 — till quantities and stock movements audit: returns follow the sale's stock, damaged returns written off as waste, approved prices carry a quantity, split-check recipe rounding, one waste per voided choice, till quantity controls. Session 22 — the rest of the audit: supplier credit/debit notes, payments over several invoices and voids, comps and changing pending items at the till, business rename, two role templates, type- and plan-aware roles, samples and screens, webhook DNS pinning, API-key expiry. Session 21 — the audit's three decisions: offline sales after a lapse, plan features, shift close with open bills. Session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,51 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 23 — till quantities and stock movements
+The user asked for an audit of the till's wiring (stock movements, +/− quantity), then to fix everything found. Migration 0084; the dev DB is migrated to 0084.
+- **Till** (`apps/pos-desktop`):
+  - a scan no longer merges into a discounted or manager-priced line;
+  - "−" disables on a decimal check (`lte(1)`), not the string `'1'`;
+  - a weight/fraction quantity box puts back the priced quantity when the entry is refused, and Enter saves it;
+  - a return line of `0.0`/`00` is skipped like `0`;
+  - restaurant steppers (order, edit, split by item) use decimal strings, not JS numbers.
+- **Approved prices carry a quantity** (ADR-0017 amendment, 0084): `POST /v1/price-overrides` requires `quantity`; a larger line is refused `PRICE_OVERRIDE_QUANTITY`; the till sends the line's quantity, shows it in the form and stops "+" at it. Counter guide tip `guide.sell.t5` updated (EN/FIL).
+- **Returns** (ADR-0011 amendment):
+  - restock follows the sale's own `SALE` movement, not the product's current `track_inventory`;
+  - `DAMAGED` lines come back and are written off at once in a WASTE adjustment (Spoilage and waste; `wasteAdjustmentId` in the audit row);
+  - whole-unit items are returned in whole units (except the exact rest of a check share).
+- **Restaurant**: voiding an item no longer wastes a choice that was already voided (and wasted) on its own; a check's share of a recipe dish consumes on the running total, so a split dish consumes what the whole would (a 1 g trace split 3 ways: 0.0003/0.0004/0.0003).
+- **Verified (session 23)**:
+  - `pnpm build` 14/14; `pnpm lint` clean; POS `tsc --noEmit`; unit `turbo run test --force --concurrency=4` 24/24 tasks; OpenAPI regenerated;
+  - integration: api full run 411/412 (the failure was `traceability.test.ts` expecting 2 adjustments; the fixture's damaged return now makes a third, expectation updated), then `traceability` + `ledger` 8/8; `sales`, `counter-controls`, `bills`, `restaurant-leftovers` 63/63 (new tests for each fix); database 33/33;
+  - E2E on API :4323 (rate limits off) + POS preview :3333 (`localhost`: the preview binds IPv6 only): `pos:controls` 33/33, `pos` 41/41, `tables` 37/37.
+  - Not re-run: the other E2E suites, desktop till, offline.
+
+## Session 22 — the rest of the audit
+The user asked to fix every gap in `docs/AUDIT-2026-10-19.md`. Sessions 20–21 had closed most; this session closed every remaining item that needs no decision. Migrations 0081–0083; the dev DB is migrated to 0083 (back-fills checked: 47/47 businesses got both new roles, 6/6 payments got their allocation).
+- **Supplier payables** (ADR-0013 amendment, 0082/0083):
+  - credit and debit notes against an invoice (`supplier_notes`, source `SUPPLIER_NOTE`). A credit note clears the GRNI that returns after invoicing left (computed per invoice), gives back input VAT, and the rest is price variance;
+  - one payment over several open invoices of a supplier (`supplier_payment_allocations`, `POST /v1/supplier-payments`, balanced per branch; earlier payments back-filled);
+  - voiding a mistaken payment (once, with a reason, entry reversed);
+  - manual reversal refused for payment and note entries too.
+  - Admin: notes on the invoice page, a real payment page with "Void payment", "Pay several invoices", journal label/filter/link, no Reverse button on supplier documents, guide tips. Accountant question 12.
+- **Restaurant** (ADR-0014 amendment): "Change" on a pending item at the till (quantity, course, seat, note → the existing PATCH); per-item discounts and comps on the bill (`itemDiscounts`, reason audited, no stacking with the order rate or SC/PWD), shown on the bill screen and the printed bill.
+- **Business and roles** (0081): business name editable (`PATCH /v1/business { name }`, audited `tenant.renamed`); Senior Cashier and Purchasing Officer templates, back-filled; a RETAIL sign-up gets no restaurant roles, changing type adds them; RETAIL trials get shop sample items.
+- **Plan features on screens**: `/me` `activeTenant.features`. The admin hides Restaurant (with a "not on your plan" notice), its guide part, a second legal entity and integrations the plan lacks. The till hides the kitchen display and server mode; the Tables tab stays so printed bills can still be paid. The admin tolerates an older API without `features`: this crashed Locations against an API process started before the change.
+- **Integrations**: webhook POSTs connect to the address that was checked (node `http(s)` with a pinned `lookup`; TLS still verifies the host name), closing the DNS-rebinding gap. API keys get "Valid for" in the admin and show their expiry.
+- **Stale E2E expectations found**: `guide.mjs` lacked the Customers part (session 20) and `onboarding.mjs` the Business/Integrations tabs (sessions 17/20); both suites had not been re-run since. Fixed.
+- **Verified (session 22)**:
+  - `pnpm build` 14/14; `pnpm lint` clean; `tsc` api/admin/POS; unit `turbo run test --force --concurrency=4` 24/24 tasks (api 55, admin 29, POS 19, accounting 17, validation 10, …); OpenAPI regenerated;
+  - integration `turbo run test:integration --concurrency=1 --continue --force`: database **33/33**, workers **28/28**, api **408/408**. Before that, the worker webhooks file's first run timed out in its first test while draining the shared test DB's outbox backlog; it passed 6/6 on rerun.
+  - E2E on a fresh API :4322 (rate limits off, insecure webhooks), worker, admin `next start` :3322, POS preview :3332:
+    - `web:payables` **36/36** (first run 35/36: a CSS-uppercased title in my check);
+    - `tables` **37/37** (first runs: the floor not yet drawn, then the FIL floor check expecting a free table);
+    - `web:integrations` **37/37** (first runs: my revoke check matched the other revoked key);
+    - `web` 46/46 (the type form's save button needed scoping, since the page now has two forms), `web:guide` 22/22, `web:onboarding` 23/23 (one run timed out at sign-in, then passed);
+    - regression: `pos` 41/41, `service` 22/22 (against the OPEN_BILLS refusal), `pos:controls` 33/33, `pos:extras` 15/15, `floor` 13/13, `kitchen` 22/22, `web:backoffice` 49/49, `web:restaurant` 22/22, `web:analysis` 12/12, `web:reports` 24/24, `web:stock` 22/22, `web:customers` 21/21, `web:inventory-extras` 13/13, `web:drawers` 19/19.
+  - Not re-run: offline, security, account, MFA, desktop till.
+- Nothing committed: the working tree also holds the uncommitted admin design work (auth pages, empty states) that was there at the start of the session.
 
 ## Session 21 — the audit's three decisions
 The user picked the recommended option for each. Migration 0080; the dev DB is migrated to 0080.

@@ -7,7 +7,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <span className="text-[1.5rem] font-bold tracking-[0.04em]">Tilvara</span>
         <LangSwitch onBand />
       </header>
-      <main className="mx-auto grid max-w-[1040px] gap-10 px-4 py-10 sm:px-6 md:grid-cols-[1fr_420px] md:py-16">{children}</main>
+      <main className="mx-auto max-w-[1040px] px-4 py-8 sm:px-6 md:py-14">{children}</main>
     </div>
   );
 }

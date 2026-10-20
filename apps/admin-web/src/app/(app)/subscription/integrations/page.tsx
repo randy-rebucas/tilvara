@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ActionButton } from '@/components/actions';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
-import { apiOrNull, type Subscription } from '@/lib/api';
+import { apiOrNull, type Me } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
@@ -11,6 +11,8 @@ import { CreateKeyForm, CreateWebhookForm, RotateSecretButton } from './forms';
 export const metadata = { title: 'Integrations' };
 
 interface ApiKey { id: string; name: string; prefix: string; scopes: string[]; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; revokedAt: string | null; createdByName: string | null }
+/** Expired keys answer 401 like revoked ones (the check is in `auth_api_key`). */
+const expired = (k: ApiKey) => k.expiresAt !== null && Date.parse(k.expiresAt) <= Date.now();
 interface Webhook { id: string; url: string; description: string | null; topics: string[]; enabled: boolean; pending: number; dead: number; lastDeliveredAt: string | null }
 
 /**
@@ -19,12 +21,12 @@ interface Webhook { id: string; url: string; description: string | null; topics:
  */
 export default async function IntegrationsPage() {
   const { t, lang } = await getT();
-  const [keys, hooks, sub] = await Promise.all([
+  const [keys, hooks, me] = await Promise.all([
     apiOrNull<{ data: ApiKey[] }>('/api-keys'),
     apiOrNull<{ data: Webhook[] }>('/webhooks'),
-    apiOrNull<Subscription>('/subscription'),
+    apiOrNull<Me>('/me'),
   ]);
-  const included = sub?.plan.features.includes('api_access') ?? true;
+  const included = me?.activeTenant?.features?.includes('api_access') ?? true;
 
   return (
     <div className="flex max-w-[960px] flex-col gap-6">
@@ -50,7 +52,7 @@ export default async function IntegrationsPage() {
               <ul className="grid gap-3">
                 {keys.data.map((k) => (
                   <li key={k.id}>
-                    <Note denom={k.revokedAt ? 'none' : 'violet'} className="px-5 py-4" as="div">
+                    <Note denom={k.revokedAt || expired(k) ? 'none' : 'violet'} className="px-5 py-4" as="div">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="font-semibold">{k.name}</p>
@@ -62,6 +64,11 @@ export default async function IntegrationsPage() {
                             {k.revokedAt
                               ? t('int.revokedAt', { date: formatDateTime(k.revokedAt, lang) })
                               : k.lastUsedAt ? t('int.lastUsed', { date: formatDateTime(k.lastUsedAt, lang) }) : t('int.neverUsed')}
+                            {!k.revokedAt && k.expiresAt && (
+                              expired(k)
+                                ? <span className="font-semibold text-red"> · {t('int.expiredOn', { date: formatDateTime(k.expiresAt, lang) })}</span>
+                                : ` · ${t('int.expiresOn', { date: formatDateTime(k.expiresAt, lang) })}`
+                            )}
                             {k.createdByName && ` · ${t('int.madeBy', { name: k.createdByName })}`}
                           </p>
                         </div>

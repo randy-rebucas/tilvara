@@ -1,9 +1,9 @@
 import { Download } from 'lucide-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { Callout, Empty, Note, PageHeader } from '@/components/note';
+import { Callout, Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
-import { api, apiOrNull, ApiError, type Branch, type Me, type Subscription } from '@/lib/api';
+import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
 import { hasRestaurant } from '@/lib/business-type';
 import { RestaurantOff } from '@/components/restaurant-off';
 import { PrintButton } from '@/components/print-button';
@@ -95,7 +95,9 @@ export async function ReportsChrome({ tab, scope, error: reportError, children }
   const { branches, branch, from, to, day } = scope;
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
   // A retail business has no restaurant reports (business type): one group, so no group tabs either.
-  const restaurant = hasRestaurant((await api<Me>('/me')).activeTenant?.businessType);
+  // Reports read records made before a plan change, so only the type hides the restaurant group.
+  const tenant = (await api<Me>('/me')).activeTenant;
+  const restaurant = hasRestaurant(tenant?.businessType);
   if (group === 'restaurant' && !restaurant) {
     return (
       <div className="flex flex-col gap-6">
@@ -104,8 +106,9 @@ export async function ReportsChrome({ tab, scope, error: reportError, children }
       </div>
     );
   }
-  // Analysis is the plan's `advanced_reports` (Growth and Enterprise): the group stays visible, with the reason.
-  const notOnPlan = group === 'analysis' && (await apiOrNull<Subscription>('/subscription'))?.plan.features.includes('advanced_reports') === false;
+  // Analysis is the plan's `advanced_reports` (Growth and Enterprise): the group stays visible, with the
+  // reason. From /me, so everyone sees it (not only those who may read the subscription).
+  const notOnPlan = group === 'analysis' && tenant?.features !== undefined && !tenant.features.includes('advanced_reports');
   const error = notOnPlan ? t('rep.notOnPlan') : reportError;
   const params = (k: ReportTab, extra: Record<string, string> = {}) =>
     new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }), ...extra });
@@ -123,7 +126,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, children }
       )}
       <div className="contents print:hidden">
       <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => g !== 'restaurant' || restaurant).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
-      <SubNav label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
+      <SubNav level={2} label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }) })}`} />}
       {branch && (
         <div className="flex flex-col gap-2">
@@ -175,7 +178,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, children }
         </div>
       )}
       </div>
-      {!branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone={notOnPlan || error === t('rep.notOnPlan') ? 'warn' : 'error'}>{error}</Callout> : children}
+      {!branch ? <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone={notOnPlan || error === t('rep.notOnPlan') ? 'warn' : 'error'}>{error}</Callout> : children}
     </div>
   );
 }

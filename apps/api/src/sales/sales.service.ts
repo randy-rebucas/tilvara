@@ -117,6 +117,8 @@ interface RecordLine extends Buckets {
   /** An approved price change (session 20). */
   priceOverrideId?: string | null;
   allocation?: { billLineId: string; share: Fraction };
+  /** A check's share of a bill line: what earlier checks already sold of that line (recipe consumption rounds on the running total). */
+  soldBefore?: string;
 }
 
 interface RecordCharge extends Buckets {
@@ -509,6 +511,7 @@ export class SalesService extends TenantService {
         snapshot: line.taxSnapshot,
         parentIndex: line.parentLineId ? indexOf.get(line.parentLineId)! : null,
         allocation: { billLineId: line.id, share },
+        soldBefore: before.quantity.toString(),
       });
     }
 
@@ -743,7 +746,7 @@ export class SalesService extends TenantService {
     // Items made from a recipe consume their ingredients with the sale (ADR-0014 §4).
     const consumed = await planConsumption(
       db,
-      priced.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineIds[i]!, variantId: l.variantId, quantity: l.quantity }])),
+      priced.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineIds[i]!, variantId: l.variantId, quantity: l.quantity, ...(l.soldBefore && { soldBefore: l.soldBefore }) }])),
     );
     for (const c of consumed) {
       stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });

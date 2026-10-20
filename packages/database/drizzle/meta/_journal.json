@@ -568,6 +568,34 @@
       "when": 1792459088242,
       "tag": "0080_snapshot_business_writable",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792478015062,
+      "tag": "0081_role_templates_senior_cashier_purchasing",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792479641148,
+      "tag": "0082_ambiguous_orphan",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1792479690598,
+      "tag": "0083_supplier_notes_allocations_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1792487067632,
+      "tag": "0084_price_override_quantity",
+      "breakpoints": true
     }
   ]
 }

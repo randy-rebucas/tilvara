@@ -6,14 +6,14 @@ import { api, apiOrNull, type Branch, type LegalEntity, type Me, type PayablesAg
 import { formatDate, peso, signOf, subtractQty } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
-import { NewInvoiceForm } from './forms';
+import { BatchPaymentForm, NewInvoiceForm } from './forms';
 
 export const metadata = { title: 'Supplier invoices' };
 
 const STATUSES: SupplierInvoiceStatus[] = ['OPEN', 'PAID', 'CANCELLED'];
 const BUCKETS = ['current', 'days1to30', 'days31to60', 'days61to90', 'over90'] as const;
 
-type Query = { entity?: string; status?: string; supplier?: string; branch?: string };
+type Query = { entity?: string; status?: string; supplier?: string; branch?: string; pay?: string };
 
 /**
  * Payables per legal entity (ADR-0013 amendment): the invoices, entering a new one against goods
@@ -35,6 +35,8 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
   const supplierFilter = sp.supplier && isUuid(sp.supplier) ? sp.supplier : undefined;
   const permissions = me.activeTenant?.permissions ?? [];
   const canEnter = permissions.includes('purchasing.manage') || permissions.includes('accounting.post');
+  const canPay = permissions.includes('accounting.post');
+  const paySupplier = canPay ? suppliers?.data.find((s) => s.id === sp.pay) : undefined;
   const entityBranches = branches?.data.filter((b) => !b.archivedAt && b.legalEntityId === entity?.id) ?? [];
   const pickBranch = entityBranches.find((b) => b.id === sp.branch);
   const pickSupplier = suppliers?.data.find((s) => s.id === sp.supplier);
@@ -44,10 +46,11 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
     return `/purchasing/invoices?${p.toString()}`;
   };
 
-  const [invoices, aging, uninvoiced] = await Promise.all([
+  const [invoices, aging, uninvoiced, payable] = await Promise.all([
     entity ? apiOrNull<{ data: SupplierInvoiceRow[] }>(`/supplier-invoices?legalEntityId=${entity.id}${status ? `&status=${status}` : ''}${supplierFilter ? `&supplierId=${supplierFilter}` : ''}`) : null,
     entity ? apiOrNull<PayablesAging>(`/reports/payables-aging?legalEntityId=${entity.id}`) : null,
     canEnter && pickBranch && pickSupplier ? apiOrNull<{ data: UninvoicedReceipt[] }>(`/uninvoiced-receipts?branchId=${pickBranch.id}&supplierId=${pickSupplier.id}`) : null,
+    entity && paySupplier ? apiOrNull<{ data: SupplierInvoiceRow[] }>(`/supplier-invoices?legalEntityId=${entity.id}&supplierId=${paySupplier.id}&status=OPEN`) : null,
   ]);
   const today = aging?.asOf ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
   const ledgerDiffers = aging && signOf(subtractQty(aging.ledgerBalance, aging.totals.total)) !== 0;
@@ -88,6 +91,28 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
                 uninvoiced.data.length > 0
                   ? <div><NewInvoiceForm key={`${pickBranch?.id}-${pickSupplier.id}`} supplierId={pickSupplier.id} receipts={uninvoiced.data} today={today} /></div>
                   : <Callout>{t('ap.noUninvoiced')}</Callout>
+              )}
+            </section>
+          )}
+
+          {canPay && suppliers && (
+            <section className="flex flex-col gap-3">
+              <h2 className="section-title">{t('ap.payMany')}</h2>
+              <p className="text-[0.875rem] text-muted">{t('ap.payManyHint')}</p>
+              <form method="get" action="/purchasing/invoices" className="flex flex-wrap items-end gap-3">
+                <input type="hidden" name="entity" value={entity.id} />
+                <div className="field">
+                  <label htmlFor="ap-pay-supplier">{t('ap.payManySupplier')}</label>
+                  <select id="ap-pay-supplier" name="pay" className="input" defaultValue={paySupplier?.id}>
+                    {suppliers.data.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+                  </select>
+                </div>
+                <button className="btn">{t('ap.payManyLoad')}</button>
+              </form>
+              {payable && paySupplier && (
+                payable.data.length > 0
+                  ? <BatchPaymentForm key={paySupplier.id} supplierId={paySupplier.id} today={today} invoices={payable.data.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, balance: i.balance }))} />
+                  : <Callout>{t('ap.payManyNone')}</Callout>
               )}
             </section>
           )}

@@ -18,6 +18,7 @@
   --color-muted: #555962;
   --color-hair: #cfc9b8;
   --color-hair-soft: #e7e1d1;
+  --color-table-head: #fbf9f3;
 
   --color-blue: #2a5da8;      /* ₱1000 — catalog, prices, primary actions */
   --color-blue-deep: #1f4885;
@@ -124,6 +125,14 @@
   .tbl .serial { white-space: nowrap; }
   .tbl tr:last-child td { border-bottom: 0; }
   .tbl .num { text-align: right; }
+  /* Rows answer the pointer faintly, so the eye keeps its line across a wide table. */
+  .tbl tbody tr { transition: background-color 120ms ease-out; }
+  .tbl tbody tr:hover { background: var(--color-table-head); }
+
+  /* Record links inside a note: the underline is a hairline until hovered, so a column of names
+     reads as names, not as a column of default links. */
+  .note a.underline { text-decoration-color: var(--color-hair); text-decoration-thickness: 1px; transition: text-decoration-color 120ms ease-out; }
+  .note a.underline:hover { text-decoration-color: currentColor; }
 
   .chip {
     display: inline-flex; align-items: center; height: 1.4rem; padding: 0 0.5rem; border-radius: 3px;
@@ -134,6 +143,28 @@
     font-size: 0.75rem; font-weight: 600; border: 1px solid var(--color-hair); color: var(--color-muted); background: #fff;
   }
   .section-title { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); }
+
+  /* Auth notes: the tear line between the face and its stub (an OR booklet's perforation),
+     and the microprinted name along the face's foot. */
+  .perf {
+    height: 9px; margin: 0 14px;
+    background-image: radial-gradient(circle at center, var(--color-hair) 1.3px, transparent 1.8px);
+    background-size: 9px 9px; background-repeat: repeat-x; background-position: center;
+  }
+  @media (min-width: 1024px) {
+    .perf { width: 9px; height: auto; margin: 14px 0; background-repeat: repeat-y; }
+  }
+  .microprint {
+    font-family: var(--font-serial); font-size: 6.5px; font-weight: 500; line-height: 1;
+    letter-spacing: 0.24em; text-transform: uppercase; white-space: nowrap; overflow: hidden;
+    color: var(--color-muted); opacity: 0.6; user-select: none;
+  }
+}
+
+/* The rosette is engraved once, on arrival; without motion it is simply there. */
+@media (prefers-reduced-motion: no-preference) {
+  .rosette g { stroke-dasharray: 1; stroke-dashoffset: 1; animation: engrave 1400ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+  @keyframes engrave { to { stroke-dashoffset: 0; } }
 }
 
 /* Tabs that scroll off the right edge fade out, so hidden tabs are discoverable. */
@@ -152,6 +183,7 @@
   @page { margin: 12mm; }
   main { padding: 0 !important; max-width: none !important; }
   .reveal { animation: none !important; }
+  .rosette, .microprint, .perf { display: none; }
   table { page-break-inside: auto; }
   tr { page-break-inside: avoid; }
 }

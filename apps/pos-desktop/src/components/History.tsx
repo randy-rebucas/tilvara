@@ -6,7 +6,7 @@ import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } fro
 import type { ExchangeStart } from './CounterTools';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
-import { Callout, Field, Money, Note } from './ui';
+import { Callout, Empty, Field, Money, Note } from './ui';
 
 const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr' };
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
@@ -76,7 +76,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       mode !== 'void'
         ? selected.detail.lines
             .map((l) => ({ saleLineId: l.id, quantity: String(f.get(`qty-${l.id}`) ?? '').trim(), disposition: (f.get(`dmg-${l.id}`) ? 'DAMAGED' : 'RESTOCK') as 'RESTOCK' | 'DAMAGED' }))
-            .filter((l) => l.quantity && l.quantity !== '0')
+            .filter((l) => l.quantity && !/^0*\.?0*$/.test(l.quantity))
         : undefined;
     if (mode === 'exchange') {
       if (!lines?.length) return setMessage({ kind: 'error', text: t('history.exchangeNone') });
@@ -140,11 +140,11 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
             </div>
           </form>
         )}
-        {sales?.length === 0 && <p className="p-4 text-muted">{t('history.empty')}</p>}
+        {sales?.length === 0 && <Empty>{t('history.empty')}</Empty>}
         <ul>
           {sales?.map((s) => (
             <li key={s.id} className="row-rule">
-              <button className={`flex w-full items-center justify-between px-3 py-3 text-left hover:bg-paper ${selected?.detail.id === s.id ? 'bg-paper' : ''}`} onClick={() => open(s.id)}>
+              <button className="row-pick flex w-full items-center justify-between px-3 py-3 text-left" aria-current={selected?.detail.id === s.id ? 'true' : undefined} onClick={() => open(s.id)}>
                 <span>
                   <span className="serial block">#{String(s.saleNumber).padStart(6, '0')}</span>
                   {/* Time tells two similar amounts apart before a void; the tender, how it was paid. */}

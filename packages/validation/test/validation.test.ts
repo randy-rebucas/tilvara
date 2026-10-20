@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, signupSchema } from '../src/index.js';
+import { isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -48,14 +48,35 @@ describe('role templates', () => {
     expect(isPrivilegedSet(of('kitchen_crew'))).toBe(false);
   });
 
-  it('migration 0049 back-fills exactly these two templates into existing businesses', () => {
-    const sql = readFileSync(fileURLToPath(new URL('../../database/drizzle/0049_restaurant_role_templates.sql', import.meta.url)), 'utf8');
-    for (const key of ['restaurant_manager', 'kitchen_crew']) {
+  it.each([
+    ['0049_restaurant_role_templates.sql', ['restaurant_manager', 'kitchen_crew']],
+    ['0081_role_templates_senior_cashier_purchasing.sql', ['senior_cashier', 'purchasing_officer']],
+  ])('migration %s back-fills exactly these templates into existing businesses', (file, keys) => {
+    const sql = readFileSync(fileURLToPath(new URL(`../../database/drizzle/${file}`, import.meta.url)), 'utf8');
+    for (const key of keys) {
       const t = ROLE_TEMPLATES.find((x) => x.key === key)!;
       const m = new RegExp(`\\('${key}', '${t.name}', ARRAY\\[([^\\]]*)\\]`).exec(sql);
       expect(m, key).not.toBeNull();
       expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).sort()).toEqual([...t.permissions].sort());
     }
+  });
+
+  it('senior cashier = cashier + refunds, voids, discounts, customers; purchasing officer adjusts no stock; neither needs MFA', () => {
+    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
+    expect([...of('senior_cashier')].sort()).toEqual([...of('cashier'), 'sales.refund', 'sales.void', 'sales.discount', 'customers.manage'].sort());
+    expect(of('senior_cashier')).not.toContain('sales.price_override');
+    expect(of('purchasing_officer')).toContain('purchasing.manage');
+    expect(of('purchasing_officer')).not.toContain('inventory.adjust');
+    expect(isPrivilegedSet(of('senior_cashier'))).toBe(false);
+    expect(isPrivilegedSet(of('purchasing_officer'))).toBe(false);
+  });
+
+  it('a retail business gets no restaurant roles; the others get every template', () => {
+    expect(roleTemplatesFor('RETAIL').map((t) => t.key)).not.toEqual(expect.arrayContaining(['restaurant_manager']));
+    expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'kitchen_crew')).toBe(false);
+    expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'cashier')).toBe(true);
+    expect(roleTemplatesFor('RESTAURANT')).toEqual(ROLE_TEMPLATES);
+    expect(roleTemplatesFor('HYBRID')).toEqual(ROLE_TEMPLATES);
   });
 
   it('owner holds every permission; admin cannot manage the subscription', () => {

@@ -22,6 +22,8 @@ export default async function LocationsPage() {
   const canManage = perms.includes('org.manage');
   const canTerminals = perms.includes('terminals.manage');
   const activeEntities = entities?.data.filter((e) => !e.archivedAt) ?? [];
+  // A second live entity is the plan's `multi_entity` (the API refuses it too).
+  const secondEntityOff = activeEntities.length > 0 && !(me.activeTenant?.features?.includes('multi_entity') ?? true);
   const activeBranches = branches?.data.filter((b) => !b.archivedAt) ?? [];
   const activeRegisters = registers?.data.filter((r) => !r.archivedAt) ?? [];
   const entityName = new Map(entities?.data.map((e) => [e.id, e.registeredName]));
@@ -37,7 +39,8 @@ export default async function LocationsPage() {
       <section>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="section-title">{t('loc.entities')}</h2>
-          {canManage && <AddEntityForm />}
+          {canManage && !secondEntityOff && <AddEntityForm />}
+          {canManage && secondEntityOff && <p className="max-w-[36rem] text-[0.875rem] text-muted">{t('loc.multiEntityNotOnPlan')}</p>}
         </div>
         <Note denom="violet" className="overflow-x-auto pr-2">
           {entities && entities.data.length > 0 ? (
@@ -60,7 +63,7 @@ export default async function LocationsPage() {
               </tbody>
             </table>
           ) : (
-            <Empty>{entities ? t('loc.empty') : t('common.noAccess')}</Empty>
+            <Empty>{entities ? t('loc.emptyEntities') : t('common.noAccess')}</Empty>
           )}
         </Note>
       </section>
@@ -99,7 +102,9 @@ export default async function LocationsPage() {
             })}
           </ul>
         ) : (
-          <Note><Empty>{branches ? t('loc.empty') : t('common.noAccess')}</Empty></Note>
+          <Note denom="violet">
+            <Empty>{!branches ? t('common.noAccess') : activeEntities.length > 0 ? t('loc.emptyBranches') : t('loc.emptyBranchesNoEntity')}</Empty>
+          </Note>
         )}
       </section>
 
@@ -133,7 +138,7 @@ export default async function LocationsPage() {
                 </tbody>
               </table>
             ) : (
-              <Empty>{registers ? t('loc.empty') : t('common.noAccess')}</Empty>
+              <Empty>{!registers ? t('common.noAccess') : activeBranches.length > 0 ? t('loc.emptyRegisters') : t('loc.emptyRegistersNoBranch')}</Empty>
             )}
           </Note>
         </div>
@@ -170,7 +175,7 @@ export default async function LocationsPage() {
                 </tbody>
               </table>
             ) : (
-              <Empty>{terminals ? t('loc.empty') : t('common.noAccess')}</Empty>
+              <Empty>{!terminals ? t('common.noAccess') : activeRegisters.length > 0 ? t('loc.emptyTerminals') : t('loc.emptyTerminalsNoRegister')}</Empty>
             )}
           </Note>
         </div>

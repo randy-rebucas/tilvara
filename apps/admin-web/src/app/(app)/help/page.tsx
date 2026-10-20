@@ -17,7 +17,7 @@ export default async function HelpPage() {
   const me = await api<Me>('/me');
   const { t } = await getT();
   const tenant = me.activeTenant!;
-  const sections = guideFor(tenant.businessType, tenant.permissions);
+  const sections = guideFor(tenant.businessType, tenant.permissions, tenant.features);
 
   const openHref = (id: GuideTopic, areaHref: string | undefined) => (id === 'till' ? POS_URL : (areaHref ?? OWN_PAGE[id] ?? null));
 

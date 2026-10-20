@@ -13,7 +13,7 @@ import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { OfflineReceipt } from './Till';
-import { Callout, Field, Money, Note } from './ui';
+import { Callout, Empty, Field, Money, Note } from './ui';
 import { CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
 
 interface CartLine {
@@ -192,7 +192,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       return;
     }
     setCart((c) => {
-      const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && l.wholeUnits);
+      // Never into a discounted or manager-priced line: the approval was for what was on it then.
+      const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && !l.discount && !l.override && l.wholeUnits);
       if (existing) return c.map((l) => (l === existing ? { ...l, quantity: toDec(l.quantity).plus(1).toString() } : l));
       const wholeUnits = item.soldBy === 'UNIT' && !item.uom.allowsFraction;
       return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: '1', wholeUnits }];
@@ -565,7 +566,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
         <Note denom="blue" className="min-h-[240px] p-2">
           {cart.length === 0 ? (
-            <p className="grid min-h-[220px] place-items-center text-muted">{t('sell.emptyCart')}</p>
+            <Empty>{t('sell.emptyCart')}</Empty>
           ) : (
             <ul aria-label="Cart">
               {cart.map((l) => {
@@ -609,11 +610,17 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                       <div className="col-span-2 row-start-2 flex flex-wrap items-center gap-1 xl:col-span-1 xl:row-start-auto">
                         {l.wholeUnits ? (
                           <>
-                            <button className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={l.quantity === '1'} onClick={() => setQty(l.id, toDec(l.quantity).minus(1).toString())}>
+                            <button className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={toDec(l.quantity).lte(1)} onClick={() => setQty(l.id, toDec(l.quantity).minus(1).toString())}>
                               <Minus className="size-4" aria-hidden />
                             </button>
                             <span className="money w-10 text-center text-[1.0625rem]" aria-label={t('sell.qty')}>{l.quantity}</span>
-                            <button className="btn btn-sm" aria-label={`${t('sell.qty')} +`} onClick={() => setQty(l.id, toDec(l.quantity).plus(1).toString())}>
+                            <button
+                              className="btn btn-sm"
+                              aria-label={`${t('sell.qty')} +`}
+                              // An approved price covers the quantity it was approved for; more needs a new approval.
+                              disabled={Boolean(l.override?.quantity && toDec(l.quantity).gte(l.override.quantity))}
+                              onClick={() => setQty(l.id, toDec(l.quantity).plus(1).toString())}
+                            >
                               <Plus className="size-4" aria-hidden />
                             </button>
                           </>
@@ -623,7 +630,13 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                             className="input money h-9 w-24 text-right"
                             inputMode="decimal"
                             defaultValue={l.quantity}
-                            onBlur={(e) => /^\d{1,6}(\.\d{1,4})?$/.test(e.target.value) && toDec(e.target.value).gt(0) && setQty(l.id, e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                            onBlur={(e) => {
+                              const v = e.target.value.trim();
+                              if (/^\d{1,6}(\.\d{1,4})?$/.test(v) && toDec(v).gt(0)) setQty(l.id, v);
+                              // Refused: show the quantity the cart is priced at, not what was typed.
+                              else e.target.value = l.quantity;
+                            }}
                           />
                         )}
                         {/* Discounts and price changes need the server: not offered offline (ADR-0015 §1). */}
@@ -664,6 +677,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                         lineId={l.id}
                         branchId={shift.branch.id}
                         variantId={l.variantId}
+                        quantity={l.quantity}
                         listPrice={q?.unitPrice}
                         canApprove={canApprovePrice}
                         onApproved={(o) => setOverride(l.id, o)}

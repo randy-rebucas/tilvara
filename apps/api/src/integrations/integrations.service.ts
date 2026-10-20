@@ -80,7 +80,7 @@ export class IntegrationsService extends TenantService {
         .insert(apiKeys)
         .values({ tenantId: tenantOf(auth).tenantId, name: input.name, prefix, keyHash: hashApiKey(key), scopes: [...input.scopes], createdBy: auth.userId, expiresAt: input.expiresAt ? new Date(input.expiresAt) : null })
         .returning({ id: apiKeys.id, name: apiKeys.name, prefix: apiKeys.prefix, scopes: apiKeys.scopes, createdAt: apiKeys.createdAt, expiresAt: apiKeys.expiresAt });
-      await this.audit(db, auth, 'api_key.created', 'api_key', row!.id, { name: input.name, prefix, scopes: input.scopes });
+      await this.audit(db, auth, 'api_key.created', 'api_key', row!.id, { name: input.name, prefix, scopes: input.scopes, expiresAt: input.expiresAt ?? null });
       return { ...row!, key };
     });
   }

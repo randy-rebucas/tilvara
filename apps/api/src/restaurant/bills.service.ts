@@ -76,17 +76,22 @@ export class BillsService extends TenantService {
       for (const [i, s] of input.statutory.entries()) {
         if (!live.some((l) => l.id === s.orderItemId)) throw new AppError('NOT_FOUND', 'Item not found on this order', HttpStatus.NOT_FOUND, { path: ['statutory', i, 'orderItemId'] });
       }
+      for (const [i, d] of input.itemDiscounts.entries()) {
+        if (!live.some((l) => l.id === d.orderItemId)) throw new AppError('NOT_FOUND', 'Item not found on this order', HttpStatus.NOT_FOUND, { path: ['itemDiscounts', i, 'orderItemId'] });
+      }
 
       // One cart line per live item, then its priced modifiers (same SC/PWD assignment as the item).
-      const plan: { item: typeof live[number]; parentNo: number | null; statutory?: { scheme: string; share?: string }; beneficiary?: string }[] = [];
+      // `rate`: the item's own discount (its choices follow it), else the order-level one; none on SC/PWD lines.
+      const plan: { item: typeof live[number]; parentNo: number | null; statutory?: { scheme: string; share?: string }; beneficiary?: string; rate?: string }[] = [];
       for (const it of live) {
         const assigned = input.statutory.find((s) => s.orderItemId === it.id);
         const b = assigned ? input.beneficiaries.find((x) => x.ref === assigned.beneficiary)! : undefined;
         const statutory = b ? { scheme: b.scheme, ...(assigned!.share && { share: assigned!.share }) } : undefined;
+        const rate = statutory ? undefined : (input.itemDiscounts.find((d) => d.orderItemId === it.id)?.rate ?? input.discountRate);
         const parentNo = plan.length + 1;
-        plan.push({ item: it, parentNo: null, ...(statutory && { statutory, beneficiary: b!.ref }) });
+        plan.push({ item: it, parentNo: null, ...(statutory && { statutory, beneficiary: b!.ref }), ...(rate && { rate }) });
         for (const child of items.filter((c) => c.parentItemId === it.id && c.variantId && c.status !== 'VOIDED')) {
-          plan.push({ item: child, parentNo, ...(statutory && { statutory, beneficiary: b!.ref }) });
+          plan.push({ item: child, parentNo, ...(statutory && { statutory, beneficiary: b!.ref }), ...(rate && { rate }) });
         }
       }
       const cartLines = (discounts?: Map<number, string>) =>
@@ -98,10 +103,13 @@ export class BillsService extends TenantService {
           ...(p.statutory && { statutory: p.statutory }),
         }));
       let cart = await this.tax.computeCart(db, auth, { branchId: order.branchId, lines: cartLines() });
-      if (input.discountRate) {
-        // An order-level discount, spread line by line on the price basis; statutory lines keep theirs only (no stacking).
+      if (plan.some((p) => p.rate)) {
+        // Order-level and per-item discounts, line by line on the price basis; statutory lines keep theirs only (no stacking).
         const mode = cart.taxProfile.roundingMode as RoundingMode;
-        const discounts = new Map(cart.lines.flatMap((l, i) => (plan[i]!.statutory ? [] : [[i, roundTo(toDec(l.gross).times(input.discountRate!), 2, mode).toString()] as const])));
+        const discounts = new Map(cart.lines.flatMap((l, i) => {
+          const rate = plan[i]!.rate;
+          return rate ? [[i, roundTo(toDec(l.gross).times(rate), 2, mode).toString()] as const] : [];
+        }));
         cart = await this.tax.computeCart(db, auth, { branchId: order.branchId, lines: cartLines(discounts) });
       }
 
@@ -196,7 +204,14 @@ export class BillsService extends TenantService {
         } as typeof orderBillCharges.$inferInsert);
       }
       await db.update(restaurantOrders).set({ status: 'BILLED' }).where(eq(restaurantOrders.id, orderId));
-      await this.audit(db, auth, 'order.billed', 'restaurant_order', orderId, { orderBillId: bill!.id, billNumber, amountDue: m2(totals.amountDue), discountRate: input.discountRate ?? null });
+      await this.audit(db, auth, 'order.billed', 'restaurant_order', orderId, {
+        orderBillId: bill!.id,
+        billNumber,
+        amountDue: m2(totals.amountDue),
+        discountRate: input.discountRate ?? null,
+        // Comps and item discounts: which item, the rate and why (the reason is the server's free text, not personal data).
+        ...(input.itemDiscounts.length > 0 && { itemDiscounts: input.itemDiscounts }),
+      });
       return this.view(db, bill!);
     });
   }

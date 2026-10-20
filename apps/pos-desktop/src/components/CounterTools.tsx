@@ -18,6 +18,8 @@ export interface LineOverride {
   id: string;
   unitPrice: string;
   approvedByName: string | null;
+  /** How many the price is approved for (unknown on a resumed cart: the server still checks). */
+  quantity?: string;
 }
 
 /** An exchange started from "This shift": what comes back and the refund it gives towards new items. */
@@ -98,10 +100,12 @@ export function DiscountPanel({ lineId, current, onApply, onRemove, onCancel }: 
  * manager to type their own email and password here (and their code if they use two-step sign-in).
  * The password goes to the server once and is never kept.
  */
-export function PricePanel({ lineId, branchId, variantId, listPrice, canApprove, onApproved, onCancel }: {
+export function PricePanel({ lineId, branchId, variantId, quantity, listPrice, canApprove, onApproved, onCancel }: {
   lineId: string;
   branchId: string;
   variantId: string;
+  /** The line's quantity now: the most the approved price may sell. */
+  quantity: string;
   listPrice: string | undefined;
   canApprove: boolean;
   onApproved: (o: LineOverride) => void;
@@ -122,11 +126,11 @@ export function PricePanel({ lineId, branchId, variantId, listPrice, canApprove,
     const code = String(f.get('approverCode') ?? '').trim();
     setBusy(true);
     try {
-      const o = await api<{ id: string; unitPrice: string; approvedByName: string | null }>('POST', '/v1/price-overrides', {
-        branchId, variantId, unitPrice, reason: String(f.get('priceReason') ?? '').trim(),
+      const o = await api<{ id: string; unitPrice: string; approvedByName: string | null; quantity: string | null }>('POST', '/v1/price-overrides', {
+        branchId, variantId, unitPrice, quantity, reason: String(f.get('priceReason') ?? '').trim(),
         ...(!canApprove && { email, password: String(f.get('approverPassword') ?? ''), ...(code && { code }) }),
       });
-      onApproved({ id: o.id, unitPrice: o.unitPrice, approvedByName: o.approvedByName });
+      onApproved({ id: o.id, unitPrice: o.unitPrice, approvedByName: o.approvedByName, ...(o.quantity && { quantity: o.quantity }) });
     } catch (err) {
       const code = (err as { error?: { code?: string } }).error?.code;
       if (code === 'APPROVER_CODE_REQUIRED') setNeedsCode(true);
@@ -139,6 +143,7 @@ export function PricePanel({ lineId, branchId, variantId, listPrice, canApprove,
     <form className="mt-3 grid gap-3 rounded-[5px] border border-hair bg-white p-4" onSubmit={submit} autoComplete="off">
       <p className="font-semibold">{t('price.title')}</p>
       {listPrice && <p className="text-[0.8125rem] text-muted">{t('price.list')} <Money value={listPrice} /></p>}
+      <p className="text-[0.8125rem] text-muted">{t('price.forQty', { qty: quantity })}</p>
       <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
         <Field id={`np-${lineId}`} name="price" inputMode="decimal" required autoFocus label={t('price.new')} error={priceError} />
         <Field id={`nr-${lineId}`} name="priceReason" required label={t('price.reason')} />

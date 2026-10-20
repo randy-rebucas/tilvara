@@ -297,7 +297,12 @@ export const supplierInvoiceReceipts = pgTable(
   ],
 );
 
-/** Append-only. A payment against one invoice, from the bank; never more than the invoice's open balance (service, under a lock). */
+/**
+ * A payment to one supplier from the bank, spread over one or more of its open invoices of one legal
+ * entity (`supplier_payment_allocations`, session 22). Evidence: nothing changes after insert except a
+ * void, once (trigger), which a reversal of its entry accompanies. `supplier_invoice_id` is the single
+ * invoice of a one-invoice payment (every payment before session 22), null when it pays several.
+ */
 export const supplierPayments = pgTable(
   'supplier_payments',
   {
@@ -306,7 +311,7 @@ export const supplierPayments = pgTable(
     legalEntityId: uuid('legal_entity_id').notNull(),
     branchId: uuid('branch_id').notNull(),
     supplierId: uuid('supplier_id').notNull(),
-    supplierInvoiceId: uuid('supplier_invoice_id').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id'),
     paymentNumber: bigint('payment_number', { mode: 'number' }).notNull(),
     amount: money('amount').notNull(),
     paidOn: date('paid_on').notNull(),
@@ -314,6 +319,9 @@ export const supplierPayments = pgTable(
     reference: text('reference'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    voidedBy: uuid('voided_by'),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidReason: text('void_reason'),
   },
   (t) => [
     unique('supplier_payments_tenant_id_id_unique').on(t.tenantId, t.id),
@@ -323,7 +331,73 @@ export const supplierPayments = pgTable(
     foreignKey({ columns: [t.tenantId, t.supplierId], foreignColumns: [suppliers.tenantId, suppliers.id] }),
     foreignKey({ columns: [t.tenantId, t.supplierInvoiceId], foreignColumns: [supplierInvoices.tenantId, supplierInvoices.id] }),
     index('supplier_payments_invoice_idx').on(t.tenantId, t.supplierInvoiceId),
+    index('supplier_payments_supplier_idx').on(t.tenantId, t.supplierId),
     check('supplier_payments_amount_check', sql`${t.amount} > 0`),
     check('supplier_payments_method_check', sql`${t.method} IN ('BANK_TRANSFER','CHECK','OTHER')`),
+    check('supplier_payments_void_check', sql`(${t.voidedAt} IS NULL) = (${t.voidedBy} IS NULL) AND (${t.voidedAt} IS NULL) = (${t.voidReason} IS NULL) AND (${t.voidReason} IS NULL OR length(trim(${t.voidReason})) > 0)`),
+  ],
+);
+
+/** Append-only. How much of a payment settles each invoice; Σ = the payment's amount (service, same transaction). */
+export const supplierPaymentAllocations = pgTable(
+  'supplier_payment_allocations',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    supplierPaymentId: uuid('supplier_payment_id').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id').notNull(),
+    amount: money('amount').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('supplier_payment_allocations_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('supplier_payment_allocations_pair_unique').on(t.tenantId, t.supplierPaymentId, t.supplierInvoiceId),
+    foreignKey({ columns: [t.tenantId, t.supplierPaymentId], foreignColumns: [supplierPayments.tenantId, supplierPayments.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierInvoiceId], foreignColumns: [supplierInvoices.tenantId, supplierInvoices.id] }),
+    index('supplier_payment_allocations_invoice_idx').on(t.tenantId, t.supplierInvoiceId),
+    check('supplier_payment_allocations_amount_check', sql`${t.amount} > 0`),
+  ],
+);
+
+/**
+ * Append-only. A supplier's credit note (what is owed goes down: a return after invoicing, an
+ * allowance) or debit note (it goes up: an undercharge, a charge left off) against one invoice
+ * (session 22, ADR-0013 amendment). A credit note clears the GRNI that returns after invoicing left
+ * (`grni_cleared`); the rest of either kind, net of claimable VAT, is a purchase price variance.
+ */
+export const supplierNotes = pgTable(
+  'supplier_notes',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    supplierInvoiceId: uuid('supplier_invoice_id').notNull(),
+    kind: text('kind').notNull(),
+    entryNumber: bigint('entry_number', { mode: 'number' }).notNull(),
+    /** The supplier's own number on the note. */
+    noteNumber: text('note_number').notNull(),
+    noteDate: date('note_date').notNull(),
+    netAmount: money('net_amount').notNull(),
+    vatAmount: money('vat_amount').notNull(),
+    totalAmount: money('total_amount').notNull(),
+    inputVat: money('input_vat').notNull(),
+    grniCleared: money('grni_cleared').notNull(),
+    reason: text('reason').notNull(),
+    createdBy: uuid('created_by').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('supplier_notes_tenant_id_id_unique').on(t.tenantId, t.id),
+    unique('supplier_notes_number_unique').on(t.tenantId, t.legalEntityId, t.entryNumber),
+    foreignKey({ columns: [t.tenantId, t.legalEntityId], foreignColumns: [legalEntities.tenantId, legalEntities.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierId], foreignColumns: [suppliers.tenantId, suppliers.id] }),
+    foreignKey({ columns: [t.tenantId, t.supplierInvoiceId], foreignColumns: [supplierInvoices.tenantId, supplierInvoices.id] }),
+    index('supplier_notes_invoice_idx').on(t.tenantId, t.supplierInvoiceId),
+    check('supplier_notes_kind_check', sql`${t.kind} IN ('CREDIT','DEBIT')`),
+    check('supplier_notes_text_check', sql`length(trim(${t.noteNumber})) > 0 AND length(trim(${t.reason})) > 0`),
+    check('supplier_notes_amounts_check', sql`${t.netAmount} >= 0 AND ${t.vatAmount} >= 0 AND ${t.totalAmount} = ${t.netAmount} + ${t.vatAmount} AND ${t.totalAmount} > 0 AND ${t.inputVat} IN (0, ${t.vatAmount}) AND ${t.grniCleared} >= 0 AND (${t.kind} = 'CREDIT' OR ${t.grniCleared} = 0) AND ${t.grniCleared} <= ${t.totalAmount} - ${t.inputVat}`),
   ],
 );

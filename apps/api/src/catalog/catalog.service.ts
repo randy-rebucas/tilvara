@@ -29,6 +29,7 @@ import type {
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
+import { businessType } from '../billing/entitlements.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -42,8 +43,12 @@ export interface ProductView extends ProductRow {
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-/** The trial's sample set (ADR-0016 slice 6): a small café counter, VAT-inclusive prices on the default list. */
-const SAMPLE_ITEMS: readonly { name: string; price: string }[] = [
+/**
+ * The trial's sample sets (ADR-0016 slice 6), VAT-inclusive prices on the default list: a small café
+ * counter for a restaurant or a business that does both, a neighbourhood shop for retail (session 22).
+ * Both sets have the same length, so the trial card reads the same.
+ */
+const CAFE_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Iced coffee 16oz', price: '120.00' },
   { name: 'Hot chocolate', price: '95.00' },
   { name: 'Ensaymada', price: '45.00' },
@@ -53,6 +58,17 @@ const SAMPLE_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Banana cake slice', price: '60.00' },
   { name: 'Tote bag', price: '250.00' },
 ];
+const SHOP_ITEMS: readonly { name: string; price: string }[] = [
+  { name: 'Rice 5 kg', price: '275.00' },
+  { name: 'Instant noodles', price: '16.00' },
+  { name: 'Canned sardines 155g', price: '28.00' },
+  { name: 'Laundry soap bar', price: '35.00' },
+  { name: 'Cooking oil 1 L', price: '115.00' },
+  { name: 'Bottled water 500ml', price: '25.00' },
+  { name: 'Ballpen (blue)', price: '12.00' },
+  { name: 'AA batteries (2 pcs)', price: '70.00' },
+];
+const sampleItems = (type: Awaited<ReturnType<typeof businessType>>) => (type === 'RETAIL' ? SHOP_ITEMS : CAFE_ITEMS);
 
 const SAMPLE_REFUSALS = {
   SAMPLE_DATA_LOADED: 'The sample items are already on your list',
@@ -377,7 +393,7 @@ export class CatalogService extends TenantService {
     this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const s = await this.sampleState(db);
-      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: SAMPLE_ITEMS.length };
+      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: sampleItems(await businessType(db)).length };
     });
   }
 
@@ -401,7 +417,7 @@ export class CatalogService extends TenantService {
       if (!vat || !pc) throw new AppError('SAMPLE_DATA_UNAVAILABLE', 'The default VAT category or the piece unit is missing', HttpStatus.UNPROCESSABLE_ENTITY);
       const [category] = await db.insert(categories).values({ tenantId, name: 'Sample items', isSample: true, sortOrder: 999 }).returning();
       const ids: string[] = [];
-      for (const [i, item] of SAMPLE_ITEMS.entries()) {
+      for (const [i, item] of sampleItems(await businessType(db)).entries()) {
         const [product] = await db
           .insert(products)
           .values({ tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true })

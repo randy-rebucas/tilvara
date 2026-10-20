@@ -8,7 +8,7 @@ import { api, apiOrNull, type Branch, type Me, type SupplierInvoice } from '@/li
 import { formatDate, formatDateTime, peso, signOf } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
-import { PaymentForm } from '../forms';
+import { NoteForm, PaymentForm } from '../forms';
 
 export const metadata = { title: 'Supplier invoice' };
 
@@ -25,9 +25,19 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
   if (!invoice) notFound();
   const permissions = me.activeTenant?.permissions ?? [];
   const canPay = permissions.includes('accounting.post') && invoice.status === 'OPEN';
-  const canCancel = (permissions.includes('purchasing.manage') || permissions.includes('accounting.post')) && invoice.status === 'OPEN' && signOf(invoice.paidAmount) === 0;
+  const canEnter = permissions.includes('purchasing.manage') || permissions.includes('accounting.post');
+  // An invoice with notes is not cancelled (a wrong note is corrected by an opposite one).
+  const canCancel = canEnter && invoice.status === 'OPEN' && signOf(invoice.paidAmount) === 0 && invoice.adjustments.length === 0;
+  const canNote = canEnter && invoice.status !== 'CANCELLED';
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: branches?.data.find((b) => b.id === invoice.branchId)?.timezone ?? 'Asia/Manila' }).format(new Date());
   const books = (entryId: string) => `/books/entries/${entryId}?entity=${invoice.legalEntityId}`;
+  /** What a payment settles of this invoice, and the whole payment when it also settles others. */
+  const paymentAmount = (p: SupplierInvoice['payments'][number]) => (
+    <span className={`money font-semibold ${p.status === 'VOIDED' ? 'line-through' : ''}`}>
+      {peso(p.amount)}
+      {p.paymentAmount !== p.amount && <span className="block text-[0.75rem] font-normal text-muted">{t('ap.ofPayment', { amount: peso(p.paymentAmount) })}</span>}
+    </span>
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -49,6 +59,8 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
         <Figure label={t('ap.net')}>{peso(invoice.netAmount)}</Figure>
         <Figure label={t('ap.vat')}>{peso(invoice.vatAmount)}</Figure>
         <Figure label={t('ap.total')}>{peso(invoice.totalAmount)}</Figure>
+        {signOf(invoice.creditedAmount) !== 0 && <Figure label={t('ap.credited')}>−{peso(invoice.creditedAmount)}</Figure>}
+        {signOf(invoice.debitedAmount) !== 0 && <Figure label={t('ap.debited')}>{peso(invoice.debitedAmount)}</Figure>}
         <Figure label={t('ap.paid')}>{peso(invoice.paidAmount)}</Figure>
         <Figure label={t('ap.balance')} tone={invoice.status === 'OPEN' ? 'red' : undefined}>{peso(invoice.balance)}</Figure>
       </Note>
@@ -68,6 +80,7 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
         {invoice.journalEntryId && <Link href={books(invoice.journalEntryId)} className="btn">{t('common.journalEntry')}</Link>}
         {invoice.reversalEntryId && <Link href={books(invoice.reversalEntryId)} className="btn">{t('ap.reversal')}</Link>}
         {canPay && <PaymentForm invoiceId={invoice.id} balance={invoice.balance} today={today} />}
+        {canNote && <NoteForm invoiceId={invoice.id} today={today} />}
         {canCancel && (
           <ReasonAction url={`/api/v1/supplier-invoices/${invoice.id}/cancel`} label={t('ap.cancel')} reasonLabel={t('common.reason')} hint={t('ap.cancelHint')} danger idempotent />
         )}
@@ -95,16 +108,18 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
               rows={invoice.payments}
               rowKey={(p) => p.id}
               columns={[
-                { header: t('ap.paymentNo'), cell: (p) => <Link href={`/books?entity=${invoice.legalEntityId}&source=${p.id}`} className="serial font-semibold underline">{docNo(p.paymentNumber)}</Link> },
+                { header: t('ap.paymentNo'), cell: (p) => <Link href={`/purchasing/payments/${p.id}`} className="serial font-semibold underline">{docNo(p.paymentNumber)}</Link> },
                 { header: t('ap.paidOn'), cell: (p) => formatDate(p.paidOn, lang) },
                 { header: t('ap.method'), cell: (p) => t(`ap.method.${p.method}`) },
                 { header: t('ap.reference'), cell: (p) => <span className="text-muted">{p.reference ?? ''}</span> },
-                { header: t('ap.amount'), num: true, cell: (p) => <span className="money font-semibold">{peso(p.amount)}</span> },
+                { header: t('common.status'), cell: (p) => <span className={`tag ${p.status === 'VOIDED' ? 'tag-bad' : ''}`}>{t(`ap.status.${p.status}`)}</span> },
+                { header: t('ap.amount'), num: true, cell: (p) => paymentAmount(p) },
               ]}
+              dimmed={(p) => p.status === 'VOIDED'}
               stacked={{
-                title: (p) => `${t('ap.paymentNo')} ${docNo(p.paymentNumber)}`,
-                meta: (p) => <Serial>{formatDate(p.paidOn, lang)} · {t(`ap.method.${p.method}`)}{p.reference ? ` · ${p.reference}` : ''}</Serial>,
-                figure: (p) => <span className="money font-semibold">{peso(p.amount)}</span>,
+                title: (p) => <Link href={`/purchasing/payments/${p.id}`} className="underline">{`${t('ap.paymentNo')} ${docNo(p.paymentNumber)}`}</Link>,
+                meta: (p) => <Serial>{formatDate(p.paidOn, lang)} · {t(`ap.method.${p.method}`)}{p.reference ? ` · ${p.reference}` : ''} · {t(`ap.status.${p.status}`)}</Serial>,
+                figure: (p) => paymentAmount(p),
               }}
             />
           ) : (
@@ -112,6 +127,36 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
           )}
         </Note>
       </section>
+
+      <section>
+        <h2 className="section-title mb-3">{t('ap.notes')}</h2>
+        <Note denom="ink" className="pr-2">
+          {invoice.adjustments.length > 0 ? (
+            <RecordTable
+              rows={invoice.adjustments}
+              rowKey={(n) => n.id}
+              columns={[
+                { header: t('ap.entryNo'), cell: (n) => <Link href={`/books?entity=${invoice.legalEntityId}&source=${n.id}`} className="serial font-semibold underline">{docNo(n.entryNumber)}</Link> },
+                { header: t('ap.noteKind'), cell: (n) => <span className="tag">{t(`ap.noteKindShort.${n.kind}`)}</span> },
+                { header: t('ap.noteNo'), cell: (n) => <Serial className="text-ink">{n.noteNumber}</Serial> },
+                { header: t('ap.noteDate'), cell: (n) => formatDate(n.noteDate, lang) },
+                { header: t('common.reason'), cell: (n) => <span className="text-muted">{n.reason}</span> },
+                { header: t('ap.grniCleared'), num: true, cell: (n) => <span className="money">{signOf(n.grniCleared) !== 0 ? peso(n.grniCleared) : ''}</span> },
+                { header: t('ap.amount'), num: true, cell: (n) => <span className="money font-semibold">{n.kind === 'CREDIT' ? '−' : ''}{peso(n.totalAmount)}</span> },
+              ]}
+              stacked={{
+                title: (n) => `${t(`ap.noteKindShort.${n.kind}`)} ${n.noteNumber}`,
+                meta: (n) => <Serial>{formatDate(n.noteDate, lang)} · {n.reason}</Serial>,
+                figure: (n) => <span className="money font-semibold">{n.kind === 'CREDIT' ? '−' : ''}{peso(n.totalAmount)}</span>,
+              }}
+            />
+          ) : (
+            <Empty>{t('ap.noNotes')}</Empty>
+          )}
+        </Note>
+        {invoice.adjustments.length > 0 && invoice.status !== 'CANCELLED' && <p className="mt-2 text-[0.8125rem] text-muted">{t('ap.notesHasHint')}</p>}
+      </section>
     </div>
   );
 }
+

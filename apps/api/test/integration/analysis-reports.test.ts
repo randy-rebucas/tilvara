@@ -64,7 +64,7 @@ beforeAll(async () => {
   session1 = (await http().post('/v1/cashier-sessions').set(manager).send({ registerId: r1, openingFloat: '500.00' }).expect(201)).body.id;
   // B1: 2 colas at 10 % off + a rice; a cola at an approved ₱20.00; a gift wrap; one cola comes back.
   const first = (await sell(session1, [{ variantId: cola, quantity: '2', discountRate: '0.1' }, { variantId: rice, quantity: '1' }], '100.32', manager).expect(201)).body;
-  const approval = (await http().post('/v1/price-overrides').set(manager).send({ branchId: b1, variantId: cola, unitPrice: '20.00', reason: 'Dented can' }).expect(201)).body;
+  const approval = (await http().post('/v1/price-overrides').set(manager).send({ branchId: b1, variantId: cola, unitPrice: '20.00', quantity: '1', reason: 'Dented can' }).expect(201)).body;
   await sell(session1, [{ variantId: cola, quantity: '1', priceOverrideId: approval.id }, { variantId: wrap, quantity: '1' }], '35.00', manager).expect(201);
   await idem(`/v1/sales/${first.id}/returns`, { cashierSessionId: session1, kind: 'RETURN', reason: 'Flat', lines: [{ saleLineId: first.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }, manager).expect(201);
   // B2: one rice.

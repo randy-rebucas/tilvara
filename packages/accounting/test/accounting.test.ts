@@ -10,6 +10,7 @@ import {
   saleReturnPosting,
   stockChangePosting,
   supplierInvoicePosting,
+  supplierNotePosting,
   supplierPaymentPosting,
   supplierReturnPosting,
   transferDispatchPosting,
@@ -80,6 +81,21 @@ describe('posting rules', () => {
     // Invoiced below the receipts: a credit variance.
     expect(net(supplierInvoicePosting({ matched: '500.0040', inputVat: '0', payable: '500.00' }))).toEqual({ GRNI: '500.00', PURCHASE_PRICE_VARIANCE: '-0.00', ACCOUNTS_PAYABLE: '-500.00' });
     expect(net(supplierPaymentPosting('400.00'))).toEqual({ ACCOUNTS_PAYABLE: '400.00', CASH_IN_BANK: '-400.00' });
+  });
+
+  it('supplier credit and debit notes (session 22): GRNI left by a later return, VAT back, the rest a variance', () => {
+    // A ₱100 + VAT return after invoicing, credited as ₱112: AP down, input VAT back, GRNI cleared.
+    expect(net(supplierNotePosting({ kind: 'CREDIT', payable: '112.00', inputVat: '12.00', grniCleared: '100.00' }))).toEqual({
+      ACCOUNTS_PAYABLE: '112.00', INPUT_VAT: '-12.00', GRNI: '-100.00',
+    });
+    // An allowance with no return behind it: a credit variance.
+    expect(net(supplierNotePosting({ kind: 'CREDIT', payable: '56.00', inputVat: '6.00', grniCleared: '0' }))).toEqual({
+      ACCOUNTS_PAYABLE: '56.00', INPUT_VAT: '-6.00', PURCHASE_PRICE_VARIANCE: '-50.00',
+    });
+    // A debit note: the supplier charges more.
+    expect(net(supplierNotePosting({ kind: 'DEBIT', payable: '22.40', inputVat: '2.40', grniCleared: '0' }))).toEqual({
+      PURCHASE_PRICE_VARIANCE: '20.00', INPUT_VAT: '2.40', ACCOUNTS_PAYABLE: '-22.40',
+    });
   });
 
   it('adjustments, waste and counts post to their expense accounts in either direction', () => {

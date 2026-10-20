@@ -160,6 +160,9 @@ export class AccountingService extends TenantService {
       // An invoice's entry is undone by cancelling the invoice, which also frees its receipts; a
       // reversal by hand would leave the invoice open against books that no longer carry it.
       if (entry.sourceType === 'SUPPLIER_INVOICE') throw unprocessable('CANCEL_THE_DOCUMENT', 'Cancel the supplier invoice instead of reversing its entry');
+      // The same for a payment (void it: the invoices it settled open again) and a note (record an opposite note).
+      if (entry.sourceType === 'SUPPLIER_PAYMENT') throw unprocessable('CANCEL_THE_DOCUMENT', 'Void the supplier payment instead of reversing its entry');
+      if (entry.sourceType === 'SUPPLIER_NOTE') throw unprocessable('CANCEL_THE_DOCUMENT', 'Record an opposite note instead of reversing this entry');
       const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, id));
       const posting: PostingLine[] = lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }));
       const reversal = await post(db, {

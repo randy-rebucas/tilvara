@@ -492,6 +492,17 @@ describe('sample items for a trial (ADR-0016 slice 6)', () => {
     expect((await tenantAudit(t.tenantId, 'sample_data.loaded')).length + (await tenantAudit(t.tenantId, 'sample_data.removed')).length).toBe(2);
   });
 
+  it('a retail shop gets shop items, not the café set (session 22)', async () => {
+    const t = await signup(app, 'sample-shop');
+    const auth = bearer(t.access);
+    await http().patch('/v1/business').set(auth).send({ businessType: 'RETAIL' }).expect(200);
+    expect((await http().get('/v1/sample-data').set(auth).expect(200)).body.items).toBe(8);
+    await http().post('/v1/sample-data').set(auth).expect(201);
+    const names = ((await http().get('/v1/products').query({ limit: 50 }).set(auth).expect(200)).body.data as { name: string }[]).map((p) => p.name);
+    expect(names).toContain('Rice 5 kg (sample)');
+    expect(names.some((n) => n.startsWith('Iced coffee'))).toBe(false);
+  });
+
   it('is for trials only', async () => {
     const t = await signup(app, 'sample-paid');
     await setSubscription(t.tenantId, 'ACTIVE');

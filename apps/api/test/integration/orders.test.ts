@@ -129,6 +129,13 @@ describe('order taking', () => {
     const edited = (await http().patch(`/v1/order-items/${burger.id}`).set(r.server).send({ quantity: '3' }).expect(200)).body;
     expect(edited.items[0].modifiers.map((m: { quantity: string }) => m.quantity)).toEqual(['3', '3', '3']);
     await http().patch(`/v1/order-items/${burger.modifiers[0].id}`).set(r.server).send({ quantity: '1' }).expect(422); // a choice alone
+    // Course, seat and note as the till's "Change" sends them (session 22): choices follow course and seat; null clears.
+    const moved = (await http().patch(`/v1/order-items/${burger.id}`).set(r.server).send({ course: 2, seat: 3, note: 'No salt' }).expect(200)).body.items[0];
+    expect(moved).toMatchObject({ course: 2, seat: 3, note: 'No salt', quantity: '3', status: 'PENDING' });
+    expect(moved.modifiers.map((m: { course: number; seat: number | null }) => [m.course, m.seat])).toEqual([[2, 3], [2, 3], [2, 3]]);
+    const cleared = (await http().patch(`/v1/order-items/${burger.id}`).set(r.server).send({ seat: null, note: null }).expect(200)).body.items[0];
+    expect([cleared.seat, cleared.note]).toEqual([null, null]);
+    await http().patch(`/v1/order-items/${burger.id}`).set(r.server).send({}).expect(400);
     await http().post(`/v1/order-items/${view.items[2].id}/remove`).set(r.server).expect(200);
     expect((await order(r, o.id)).items).toHaveLength(2);
 

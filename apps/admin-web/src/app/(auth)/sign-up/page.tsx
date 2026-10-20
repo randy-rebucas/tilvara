@@ -1,27 +1,53 @@
 import Link from 'next/link';
-import { Note } from '@/components/note';
+import { AuthFace, AuthStub } from '@/components/auth-note';
+import { stripe, type Denomination } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { SignUpForm } from './sign-up-form';
 
 export const metadata = { title: 'Create your business' };
 
+/** What an owner sets up, in the hierarchy's order, each in the colour its records will carry. */
+const SETUP: [Denomination, 'auth.setupLocations' | 'auth.setupRegisters' | 'auth.setupCatalog' | 'auth.setupTeam'][] = [
+  ['violet', 'auth.setupLocations'],
+  ['orange', 'auth.setupRegisters'],
+  ['blue', 'auth.setupCatalog'],
+  ['green', 'auth.setupTeam'],
+];
+
 export default async function SignUpPage() {
   const { t } = await getT();
   return (
-    <>
-      <section className="self-center">
-        <h1 className="text-[2.25rem] font-bold leading-[1.1] tracking-[-0.015em]">{t('auth.signUpTitle')}</h1>
-        <p className="mt-3 max-w-[46ch] text-muted">{t('auth.signUpLede')}</p>
-        <p className="mt-6 text-muted">
-          {t('auth.haveAccount')}{' '}
-          <Link className="font-semibold text-blue underline" href="/sign-in">
-            {t('auth.signIn')}
-          </Link>
-        </p>
-      </section>
-      <Note denom="blue" className="p-6 sm:p-7">
-        <SignUpForm />
-      </Note>
-    </>
+    <AuthStub
+      denom="blue"
+      face={
+        <AuthFace
+          denom="blue"
+          title={t('auth.signUpTitle')}
+          lede={t('auth.signUpLede')}
+          foot={
+            <>
+              <h2 className="section-title">{t('auth.setupTitle')}</h2>
+              <ul className="mt-3 flex flex-col gap-2.5 text-[0.9375rem]">
+                {SETUP.map(([denom, key]) => (
+                  <li key={key} className="flex items-center gap-3">
+                    <span aria-hidden className="h-4 w-[7px] shrink-0 rounded-[2px]" style={{ background: stripe[denom] }} />
+                    {t(key)}
+                  </li>
+                ))}
+              </ul>
+            </>
+          }
+        >
+          <p className="mt-5 text-muted">
+            {t('auth.haveAccount')}{' '}
+            <Link className="font-semibold text-blue underline" href="/sign-in">
+              {t('auth.signIn')}
+            </Link>
+          </p>
+        </AuthFace>
+      }
+    >
+      <SignUpForm />
+    </AuthStub>
   );
 }

@@ -14,13 +14,13 @@ import type { Shift } from './Registers';
 import type { FloorPlace } from './Tables';
 import { Callout, Field, Money, Note } from './ui';
 
-type Split = { kind: 'rest' } | { kind: 'even'; ways: number } | { kind: 'items'; picked: Record<string, number> };
+type Split = { kind: 'rest' } | { kind: 'even'; ways: number } | { kind: 'items'; picked: Record<string, string> };
 type Allocation = { billLineId: string; quantity?: string; share?: { num: number; den: number } };
 
-/** Units of a line still to pay, when they are whole units (else null: the line is paid as "the rest"). */
+/** Units of a line still to pay (decimal string), when they are whole units (else null: the line is paid as "the rest"). */
 const wholeLeft = (l: BillLine) => {
   const left = toDec(l.quantity).minus(l.paidQuantity);
-  return left.isInteger() && left.gt(0) ? left.toNumber() : null;
+  return left.isInteger() && left.gt(0) ? left.toString() : null;
 };
 
 /** Which shares of which lines this check pays; undefined = everything still unpaid. */
@@ -39,7 +39,7 @@ function allocationsFor(bill: Bill, split: Split): Allocation[] | undefined | 'T
   const out = Object.entries(split.picked).map(([billLineId, qty]) => {
     const line = open.find((l) => l.id === billLineId);
     const left = line ? wholeLeft(line) : null;
-    return left !== null && qty < left ? { billLineId, quantity: String(qty) } : { billLineId };
+    return left !== null && toDec(qty).lt(left) ? { billLineId, quantity: qty } : { billLineId };
   });
   return out.length ? out : 'NOTHING';
 }
@@ -261,6 +261,7 @@ export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlac
                         <p key={c.id} className="flex justify-between gap-3 text-[0.875rem] text-muted"><span>+ {c.name}</span><Money value={c.amountDue} /></p>
                       ))}
                       {isPositive(l.statutoryDiscount) && <p className="text-[0.8125rem] text-muted">{t('totals.statutory')} −<Money value={l.statutoryDiscount} /></p>}
+                      {isPositive(l.discount) && <p className="text-[0.8125rem] text-muted">{t('bill.lineDiscount')} −<Money value={l.discount} /></p>}
                       {l.paidShare !== '0/1' && <span className={`tag mt-1 ${l.fullyPaid ? '' : 'tag-warn'}`}>{l.fullyPaid ? t('bill.paid') : t('bill.paidPart', { qty: toDec(l.paidQuantity).toString() })}</span>}
                     </div>
                     <Money value={l.amountDue} className={`text-[1.0625rem] font-semibold ${l.fullyPaid ? 'text-muted' : ''}`} />
@@ -334,7 +335,7 @@ export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlac
                     const on = mine.length > 0 && mine.every((l) => picked[l.id] !== undefined) && Object.keys(picked).length === mine.length;
                     return (
                       <button key={n} type="button" className="btn btn-sm" disabled={locked} aria-pressed={on}
-                        onClick={() => setSplit({ kind: 'items', picked: Object.fromEntries(mine.map((l) => [l.id, wholeLeft(l) ?? 1])) })}>
+                        onClick={() => setSplit({ kind: 'items', picked: Object.fromEntries(mine.map((l) => [l.id, wholeLeft(l) ?? '1'])) })}>
                         {t('kds.seat', { n: String(n) })}
                       </button>
                     );
@@ -347,7 +348,7 @@ export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlac
                     const left = wholeLeft(l);
                     const qty = picked[l.id];
                     const on = qty !== undefined;
-                    const setQty = (q: number | undefined) =>
+                    const setQty = (q: string | undefined) =>
                       setSplit((s) => {
                         if (s.kind !== 'items') return s;
                         const next = { ...s.picked };
@@ -358,14 +359,14 @@ export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlac
                     return (
                       <li key={l.id} className="flex min-h-12 flex-wrap items-center gap-2">
                         <label className="flex flex-1 items-center gap-3">
-                          <input type="checkbox" className="size-5" disabled={locked} checked={on} onChange={(e) => setQty(e.target.checked ? (left ?? 1) : undefined)} />
+                          <input type="checkbox" className="size-5" disabled={locked} checked={on} onChange={(e) => setQty(e.target.checked ? (left ?? '1') : undefined)} />
                           <span>{l.name}</span>
                         </label>
-                        {on && left !== null && left > 1 && (
+                        {on && left !== null && toDec(left).gt(1) && (
                           <span className="flex items-center gap-1">
-                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={locked || qty! <= 1} onClick={() => setQty(qty! - 1)}><Minus className="size-4" aria-hidden /></button>
+                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={locked || toDec(qty!).lte(1)} onClick={() => setQty(toDec(qty!).minus(1).toString())}><Minus className="size-4" aria-hidden /></button>
                             <span className="money w-12 text-center">{qty}/{left}</span>
-                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={locked || qty! >= left} onClick={() => setQty(qty! + 1)}><Plus className="size-4" aria-hidden /></button>
+                            <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={locked || toDec(qty!).gte(left)} onClick={() => setQty(toDec(qty!).plus(1).toString())}><Plus className="size-4" aria-hidden /></button>
                           </span>
                         )}
                       </li>

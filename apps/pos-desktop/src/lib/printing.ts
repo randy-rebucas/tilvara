@@ -77,6 +77,8 @@ export function billToPrintable(b: Bill, place: { branch: string; where: string;
       ...b.lines.filter((l) => !l.parentLineId).flatMap((l) => [
         { name: `${l.quantity} x ${l.name}${l.seat ? ` (seat ${l.seat})` : ''}`, amount: l.amountDue },
         ...children(l.id).map((c) => ({ name: `  + ${c.name}`, amount: c.amountDue })),
+        // An order or item discount, or a comp: the guest sees why the line costs less (or nothing).
+        ...(toDec(l.discount ?? '0').gt(0) ? [{ name: '  Discount', amount: `-${toDec(l.discount).toFixed(2)}` }] : []),
       ]),
       ...b.charges.map((c) => ({ name: `Service charge ${toDec(c.rate).times(100).toString()}%`, amount: c.amountDue })),
     ],

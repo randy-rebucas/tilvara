@@ -6,7 +6,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildHandlers, DevWorkerMailer } from '../../src/handlers.js';
 import { OutboxProcessor, type Logger } from '../../src/outbox-processor.js';
-import { WebhookDispatcher } from '../../src/webhook-dispatcher.js';
+import { postPinned, WebhookDispatcher } from '../../src/webhook-dispatcher.js';
 
 /** Outbound webhooks (session 20, ADR-0019): fan-out from the outbox, signed delivery, retries, refusals. */
 const pool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 5 });
@@ -44,7 +44,8 @@ afterAll(async () => {
 async function endpoint(tenantId: string, path: string, topics: string[], enabled = true) {
   return withTenant(pool, tenantId, async (db) => {
     const salt = newSigningSalt();
-    const [row] = await db.insert(webhookEndpoints).values({ tenantId, url: `${base}${path}`, topics, enabled, signingSalt: salt, createdBy: randomUUID() }).returning();
+    const url = path.startsWith('https://') ? path : `${base}${path}`;
+    const [row] = await db.insert(webhookEndpoints).values({ tenantId, url, topics, enabled, signingSalt: salt, createdBy: randomUUID() }).returning();
     return { id: row!.id, secret: webhookSecret(KEY, row!.id, salt) };
   });
 }
@@ -133,6 +134,29 @@ describe('outbound webhooks', () => {
     await dispatchUntil(d, async () => (await deliveries(t, local.id))[0]!.attempts === 1);
     expect((await deliveries(t, local.id))[0]).toMatchObject({ status: 'PENDING', last_error: 'not https' });
     expect(received.slice(before).some((r) => r.path === '/ok/secure')).toBe(false);
+  });
+
+  it('an https host that resolves to any private address is refused before connecting', async () => {
+    const t = await createTenant(pool, { slug: slug('wh-p'), name: 'Hooks P' });
+    const hook = await endpoint(t, 'https://hooks.example.test/in', ['sale.completed']);
+    await processed(t, await emit(t, 'sale.completed', { saleId: randomUUID() }));
+    const asked: string[] = [];
+    // One public and one private answer: a single private address is enough to refuse.
+    const d = dispatcher({ allowInsecure: false, retryDelaySeconds: () => 3600, resolve: async (h) => (asked.push(h), ['93.184.216.34', '10.1.2.3']) });
+    await dispatchUntil(d, async () => (await deliveries(t, hook.id))[0]!.attempts === 1);
+    expect((await deliveries(t, hook.id))[0]).toMatchObject({ status: 'PENDING', last_error: 'address not public' });
+    expect(asked).toEqual(['hooks.example.test']);
+  });
+
+  it('the connection goes to the checked address, not to a fresh DNS answer (rebinding)', async () => {
+    // `.invalid` never resolves: the request can only arrive if the socket uses the pinned address.
+    const port = (server.address() as AddressInfo).port;
+    const status = await postPinned(`http://rebind.invalid:${port}/ok/pinned`, '127.0.0.1', 1000, { 'content-type': 'application/json' }, '{}');
+    expect(status).toBe(204);
+    const got = received.find((r) => r.path === '/ok/pinned')!;
+    expect(got.headers.host).toBe(`rebind.invalid:${port}`);
+    // Without a pinned address the name is looked up, and fails.
+    await expect(postPinned(`http://rebind.invalid:${port}/ok/unpinned`, null, 1000, {}, '{}')).rejects.toMatchObject({ code: 'ENOTFOUND' });
   });
 
   it('the worker reaches deliveries only through its functions; the API role cannot claim them', async () => {

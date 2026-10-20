@@ -3,12 +3,20 @@ export interface Me {
   userId: string;
   user: { email: string; displayName: string };
   /** businessType: RETAIL leaves out restaurant service (tables, floor, kitchen display). */
-  activeTenant: { tenantId: string; businessType?: 'RETAIL' | 'RESTAURANT' | 'HYBRID'; permissions: string[] } | null;
+  /** features: what the plan includes (absent from an older API: treated as everything). */
+  activeTenant: { tenantId: string; businessType?: 'RETAIL' | 'RESTAURANT' | 'HYBRID'; features?: string[]; permissions: string[] } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
 
-/** Whether the business serves tables at all (business type); permissions decide who does. */
+/**
+ * Whether the business serves tables at all (business type); permissions decide who does. The
+ * cashier's Tables tab follows the type only: after a plan downgrade, bills already printed must
+ * still be paid at the counter (the API allows it on purpose).
+ */
 export const servesTables = (me: Me) => me.activeTenant?.businessType !== 'RETAIL';
+
+/** Restaurant service on the plan as well: the kitchen display and server mode take new work. */
+export const restaurantOnPlan = (me: Me) => servesTables(me) && (me.activeTenant?.features?.includes('restaurant') ?? true);
 
 export interface Workstation {
   register: { id: string; code: string; name: string };
@@ -185,6 +193,8 @@ export interface BillLine {
   quantity: string;
   amountDue: string;
   statutoryDiscount: string;
+  /** Order, item discount or comp (not SC/PWD). */
+  discount: string;
   beneficiaryId: string | null;
   /** "n/d" of the line already paid. */
   paidShare: string;

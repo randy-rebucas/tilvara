@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { sql, type BusinessType, type Database } from '@1pos/database';
-import type { BusinessUpdateInput } from '@1pos/validation';
+import { roleTemplatesFor, type BusinessUpdateInput } from '@1pos/validation';
+import { addRoleTemplates } from '../auth/role-templates.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -34,7 +35,15 @@ export class BusinessService extends TenantService {
     this.assertCan(auth, 'tenant.manage');
     return this.mutate(auth, async (db) => {
       const before = await row(db, true);
-      if (before.business_type === input.businessType) return view(before);
+      const tenantId = tenantOf(auth).tenantId;
+      let after = before;
+      if (input.name !== undefined && input.name !== before.name) {
+        after = (await db.execute<BusinessRow>(
+          sql`UPDATE tenants SET name = ${input.name} WHERE id = ${tenantId} RETURNING id, slug, name, business_type`,
+        )).rows[0]!;
+        await this.audit(db, auth, 'tenant.renamed', 'tenant', before.id, { from: before.name, to: input.name });
+      }
+      if (input.businessType === undefined || before.business_type === input.businessType) return view(after);
       if (input.businessType === 'RETAIL') {
         // Tables still in service would be left with orders nobody may bill or settle.
         const { rows } = await db.execute<{ n: number }>(
@@ -51,12 +60,15 @@ export class BusinessService extends TenantService {
         }
       }
       const { rows } = await db.execute<BusinessRow>(
-        sql`UPDATE tenants SET business_type = ${input.businessType} WHERE id = ${tenantOf(auth).tenantId}
+        sql`UPDATE tenants SET business_type = ${input.businessType} WHERE id = ${tenantId}
             RETURNING id, slug, name, business_type`,
       );
+      // A business that started as RETAIL has no restaurant roles yet; they come with the restaurant.
+      const added = input.businessType === 'RETAIL' ? new Map() : await addRoleTemplates(db, tenantId, roleTemplatesFor(input.businessType));
       await this.audit(db, auth, 'tenant.business_type_changed', 'tenant', before.id, {
         from: before.business_type,
         to: input.businessType,
+        ...(added.size > 0 && { rolesAdded: [...added.keys()] }),
       });
       return view(rows[0]!);
     });

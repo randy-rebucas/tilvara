@@ -109,7 +109,11 @@ export interface Business {
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  activeTenant: { tenantId: string; membershipId: string; status: string; businessType: BusinessType; permissions: string[] } | null;
+  /**
+   * `features`: what the plan includes (restaurant, multi_entity, api_access, advanced_reports).
+   * Absent from an API older than session 22: treat as "not known" (show everything; the API still refuses).
+   */
+  activeTenant: { tenantId: string; membershipId: string; status: string; businessType: BusinessType; features?: string[]; permissions: string[] } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];
   mfa: MfaStatus;
   /** Tilvara support staff (ADR-0016 slice 6). */
@@ -541,7 +545,51 @@ export interface SupplierInvoice extends Omit<SupplierInvoiceRow, 'paidAmount' |
   journalEntryId: string | null;
   reversalEntryId: string | null;
   receipts: { goodsReceiptId: string; receiptNumber: number; matchedAmount: string; active: boolean }[];
-  payments: { id: string; paymentNumber: number; amount: string; paidOn: string; method: 'BANK_TRANSFER' | 'CHECK' | 'OTHER'; reference: string | null; createdAt: string }[];
+  /** `amount`: what the payment settles of this invoice; `paymentAmount`: the whole payment (it may settle others too). */
+  payments: {
+    id: string; paymentNumber: number; amount: string; paymentAmount: string; paidOn: string; method: SupplierPaymentMethod; reference: string | null; createdAt: string;
+    status: 'RECORDED' | 'VOIDED'; voidedAt: string | null; voidReason: string | null;
+  }[];
+  creditedAmount: string;
+  debitedAmount: string;
+  /** Credit and debit notes (session 22). */
+  adjustments: SupplierNote[];
+}
+export type SupplierPaymentMethod = 'BANK_TRANSFER' | 'CHECK' | 'OTHER';
+export interface SupplierNote {
+  id: string;
+  supplierInvoiceId: string;
+  legalEntityId: string;
+  kind: 'CREDIT' | 'DEBIT';
+  entryNumber: number;
+  noteNumber: string;
+  noteDate: string;
+  netAmount: string;
+  vatAmount: string;
+  totalAmount: string;
+  inputVat: string;
+  grniCleared: string;
+  reason: string;
+  createdAt: string;
+}
+/** One payment to a supplier, over one or more invoices (session 22). */
+export interface SupplierPayment {
+  id: string;
+  legalEntityId: string;
+  branchId: string;
+  supplier: { id: string; code: string; name: string };
+  paymentNumber: number;
+  amount: string;
+  paidOn: string;
+  method: SupplierPaymentMethod;
+  reference: string | null;
+  createdAt: string;
+  status: 'RECORDED' | 'VOIDED';
+  voidedAt: string | null;
+  voidReason: string | null;
+  allocations: { supplierInvoiceId: string; invoiceNumber: string; branchId: string; amount: string }[];
+  journalEntryId: string | null;
+  reversalEntryId: string | null;
 }
 export interface UninvoicedReceipt {
   id: string;

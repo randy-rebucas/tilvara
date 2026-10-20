@@ -209,6 +209,42 @@ export const createSupplierPaymentSchema = z.object({
 });
 export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
 
+/** One payment to a supplier spread over several of its open invoices (session 22); Σ amounts = the payment. */
+export const createSupplierBatchPaymentSchema = z
+  .object({
+    supplierId: z.uuid(),
+    paidOn: z.iso.date(),
+    method: z.enum(['BANK_TRANSFER', 'CHECK', 'OTHER']),
+    reference: optionalText(100),
+    allocations: z
+      .array(z.object({ supplierInvoiceId: z.uuid(), amount: peso.refine((v) => Number(v) > 0, 'More than zero') }))
+      .min(1)
+      .max(100),
+  })
+  .superRefine((v, ctx) => {
+    if (new Set(v.allocations.map((a) => a.supplierInvoiceId)).size !== v.allocations.length) {
+      ctx.addIssue({ code: 'custom', path: ['allocations'], message: 'Each invoice once' });
+    }
+  });
+export type CreateSupplierBatchPaymentInput = z.infer<typeof createSupplierBatchPaymentSchema>;
+
+export const voidSupplierPaymentSchema = z.object({ reason });
+export type VoidSupplierPaymentInput = z.infer<typeof voidSupplierPaymentSchema>;
+
+/** A supplier's credit note (owed goes down) or debit note (owed goes up) against one invoice (session 22). */
+export const createSupplierNoteSchema = z
+  .object({
+    kind: z.enum(['CREDIT', 'DEBIT']),
+    /** The supplier's own number on the note. */
+    noteNumber: z.string().trim().min(1).max(60),
+    noteDate: z.iso.date(),
+    netAmount: peso,
+    vatAmount: peso,
+    reason: z.string().trim().min(1).max(500),
+  })
+  .refine((v) => Number(v.netAmount) + Number(v.vatAmount) > 0, { message: 'More than zero', path: ['netAmount'] });
+export type CreateSupplierNoteInput = z.infer<typeof createSupplierNoteSchema>;
+
 export const payablesAgingQuerySchema = z.object({ legalEntityId: z.uuid(), asOf: z.iso.date().optional() });
 export type PayablesAgingQuery = z.infer<typeof payablesAgingQuerySchema>;
 

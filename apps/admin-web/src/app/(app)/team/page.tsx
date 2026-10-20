@@ -85,7 +85,9 @@ export default async function TeamPage() {
 
       <section className="grid gap-6 xl:grid-cols-2">
         <div className="min-w-0">
-          <h2 className="section-title mb-3">{t('team.invitations')}</h2>
+          <div className="mb-3 flex min-h-9 items-center">
+            <h2 className="section-title">{t('team.invitations')}</h2>
+          </div>
           <Note denom="green" className="overflow-x-auto pr-2">
             {invites && invites.data.length > 0 ? (
               <table className="tbl">
@@ -107,14 +109,14 @@ export default async function TeamPage() {
                 </tbody>
               </table>
             ) : (
-              <Empty>{invites ? t('loc.empty') : t('common.noAccess')}</Empty>
+              <Empty>{invites ? t('team.emptyInvites') : t('common.noAccess')}</Empty>
             )}
           </Note>
         </div>
 
         <div className="min-w-0">
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-            <h2 className="section-title pt-2">{t('team.roles')}</h2>
+          <div className="mb-3 flex min-h-9 flex-wrap items-center justify-between gap-3">
+            <h2 className="section-title">{t('team.roles')}</h2>
             {canManageRoles && <NewRoleForm />}
           </div>
           <Note className="overflow-x-auto">

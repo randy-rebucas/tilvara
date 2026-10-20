@@ -1,18 +1,20 @@
-import { ArrowLeft, Minus, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Minus, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
+import { toDec } from '@1pos/money';
 import { api, uuid } from '../lib/api';
 import type { BranchMenu, DiningArea, MenuItem, Order, OrderItem, OrderSummary, Quote } from '../types';
 import { errorText, unanswered, type Notice } from './Payment';
 import type { FloorPlace } from './Tables';
 import { usePoll } from '../lib/poll';
 import { useFloorPush } from '../lib/push';
-import { Callout, Field, Money, Note } from './ui';
+import { Callout, Empty, Field, Money, Note } from './ui';
 
 interface Compose {
   item: MenuItem;
   chosen: string[];
-  qty: number;
+  /** Decimal string, stepped in whole units. */
+  qty: string;
   course: number;
   /** Whose item it is at the table (for a split by seat); null = shared. */
   seat: number | null;
@@ -29,6 +31,7 @@ interface Diner {
 type Place = { id: string; label: string };
 type Panel =
   | { kind: 'void'; item: { id: string; name: string; status: OrderItem['status'] }; choice: boolean; key: string }
+  | { kind: 'edit'; item: OrderItem; qty: string; course: number; seat: number | null; note: string }
   | { kind: 'notes' }
   | { kind: 'transfer'; free: { id: string; code: string }[] }
   | { kind: 'merge'; orders: Place[] }
@@ -125,7 +128,7 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
 
   function startCompose(item: MenuItem) {
     if (!item.available) return;
-    setCompose({ item, chosen: [], qty: 1, course: 1, seat: null, note: '', key: uuid() });
+    setCompose({ item, chosen: [], qty: '1', course: 1, seat: null, note: '', key: uuid() });
   }
 
   function toggle(groupId: string, optionId: string) {
@@ -151,7 +154,7 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
         return await api<Order>(
           'POST',
           `/v1/restaurant/orders/${orderId}/items`,
-          { items: [{ variantId: c.item.variantId, quantity: String(c.qty), course: c.course, modifierOptionIds: c.chosen, ...(c.seat && { seat: c.seat }), ...(c.note.trim() && { note: c.note.trim() }) }] },
+          { items: [{ variantId: c.item.variantId, quantity: c.qty, course: c.course, modifierOptionIds: c.chosen, ...(c.seat && { seat: c.seat }), ...(c.note.trim() && { note: c.note.trim() }) }] },
           { 'idempotency-key': c.key },
         );
       } catch (err) {
@@ -181,6 +184,21 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
 
   const fire = (courses?: number[]) => act(() => api<Order>('POST', `/v1/restaurant/orders/${orderId}/fire`, courses ? { courses } : {}));
   const remove = (itemId: string) => act(() => api<Order>('POST', `/v1/order-items/${itemId}/remove`));
+
+  /** Change an item not yet sent to the kitchen: only what differs is sent (choices follow the item). */
+  function saveEdit() {
+    if (panel?.kind !== 'edit') return;
+    const p = panel;
+    const note = p.note.trim();
+    const changes = {
+      ...(!toDec(p.qty).equals(p.item.quantity) && { quantity: p.qty }),
+      ...(p.course !== p.item.course && { course: p.course }),
+      ...(p.seat !== (p.item.seat ?? null) && { seat: p.seat }),
+      ...(note !== (p.item.note ?? '') && { note: note || null }),
+    };
+    if (!Object.keys(changes).length) return setPanel(null);
+    void act(() => api<Order>('PATCH', `/v1/order-items/${p.item.id}`, changes), () => setPanel(null));
+  }
   const served = (itemId: string) => act(async () => (await api('POST', `/v1/order-items/${itemId}/status`, { status: 'SERVED' }), null), load);
 
   function voidItem(e: FormEvent<HTMLFormElement>) {
@@ -337,11 +355,11 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
                 <div className="grid gap-1">
                   <span className="text-[0.8125rem] font-semibold">{t('sell.qty')}</span>
                   <div className="flex items-center gap-1">
-                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={compose.qty <= 1} onClick={() => setCompose({ ...compose, qty: compose.qty - 1 })}>
+                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={toDec(compose.qty).lte(1)} onClick={() => setCompose({ ...compose, qty: toDec(compose.qty).minus(1).toString() })}>
                       <Minus className="size-4" aria-hidden />
                     </button>
                     <span className="money w-10 text-center text-[1.0625rem]" aria-live="polite">{compose.qty}</span>
-                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={compose.qty >= 99} onClick={() => setCompose({ ...compose, qty: compose.qty + 1 })}>
+                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={toDec(compose.qty).gte(99)} onClick={() => setCompose({ ...compose, qty: toDec(compose.qty).plus(1).toString() })}>
                       <Plus className="size-4" aria-hidden />
                     </button>
                   </div>
@@ -393,7 +411,7 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
           )}
           <Note className="p-2">
             {order.items.length === 0 ? (
-              <p className="grid min-h-[160px] place-items-center px-4 text-center text-muted">{t('order.empty')}</p>
+              <Empty>{t('order.empty')}</Empty>
             ) : (
               <ul aria-label={t('order.ticket')}>
                 {order.items.map((i) => (
@@ -404,6 +422,7 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
                     canServe={!closed}
                     working={working}
                     onRemove={() => remove(i.id)}
+                    onEdit={editable ? () => setPanel({ kind: 'edit', item: i, qty: toDec(i.quantity).toString(), course: i.course, seat: i.seat ?? null, note: i.note ?? '' }) : undefined}
                     onServed={() => served(i.id)}
                     onVoid={() => setPanel({ kind: 'void', item: i, choice: false, key: uuid() })}
                     onVoidChoice={(m) => setPanel({ kind: 'void', item: m, choice: true, key: uuid() })}
@@ -412,6 +431,50 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
               </ul>
             )}
           </Note>
+
+          {panel?.kind === 'edit' && (
+            <Note denom="blue" className="grid gap-4 p-4" aria-label={t('order.editItem', { name: panel.item.name })}>
+              <p className="font-semibold">{t('order.editTitle', { name: panel.item.name })}</p>
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="grid gap-1">
+                  <span className="text-[0.8125rem] font-semibold">{t('sell.qty')}</span>
+                  <div className="flex items-center gap-1">
+                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} −`} disabled={toDec(panel.qty).lte(1)} onClick={() => setPanel({ ...panel, qty: toDec(panel.qty).minus(1).toString() })}>
+                      <Minus className="size-4" aria-hidden />
+                    </button>
+                    <span className="money w-10 text-center text-[1.0625rem]" aria-live="polite">{panel.qty}</span>
+                    <button type="button" className="btn btn-sm" aria-label={`${t('sell.qty')} +`} disabled={toDec(panel.qty).gte(99)} onClick={() => setPanel({ ...panel, qty: toDec(panel.qty).plus(1).toString() })}>
+                      <Plus className="size-4" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+                <div className="grid gap-1" role="group" aria-label={t('order.course')}>
+                  <span className="text-[0.8125rem] font-semibold">{t('order.course')}</span>
+                  <div className="flex gap-1">
+                    {[1, 2, 3].map((n) => (
+                      <button key={n} type="button" className="btn btn-sm" aria-pressed={panel.course === n} onClick={() => setPanel({ ...panel, course: n })}>{n}</button>
+                    ))}
+                  </div>
+                </div>
+                {order.orderType === 'DINE_IN' && (
+                  <div className="grid gap-1" role="group" aria-label={t('order.seat')}>
+                    <span className="text-[0.8125rem] font-semibold">{t('order.seat')}</span>
+                    <div className="flex flex-wrap gap-1">
+                      <button type="button" className="btn btn-sm" aria-pressed={panel.seat === null} onClick={() => setPanel({ ...panel, seat: null })}>{t('order.seatShared')}</button>
+                      {Array.from({ length: Math.min(Math.max(order.guestCount ?? 4, 1), 12) }, (_, i) => i + 1).map((n) => (
+                        <button key={n} type="button" className="btn btn-sm" aria-label={t('kds.seat', { n: String(n) })} aria-pressed={panel.seat === n} onClick={() => setPanel({ ...panel, seat: n })}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <Field id="editNote" name="editNote" label={t('order.note')} value={panel.note} maxLength={200} onChange={(e) => setPanel({ ...panel, note: e.target.value })} />
+              <div className="flex gap-2">
+                <button type="button" className="btn btn-primary flex-1" disabled={working} onClick={saveEdit}>{t('order.saveChanges')}</button>
+                <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
+              </div>
+            </Note>
+          )}
 
           {panel?.kind === 'void' && (
             <Note className="p-4">
@@ -594,12 +657,14 @@ const STATUS_TONE: Partial<Record<OrderItem['status'], string>> = { READY: 'tag-
 /** Courses a note can be written for (the composer offers 1–3). */
 const NOTE_COURSES = [1, 2, 3];
 
-function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, onVoid, onVoidChoice }: {
+function TicketRow({ item: i, canVoid, canServe, working, onRemove, onEdit, onServed, onVoid, onVoidChoice }: {
   item: OrderItem;
   canVoid: boolean;
   canServe: boolean;
   working: boolean;
   onRemove: () => void;
+  /** Absent while the order is not open (billed or closed). */
+  onEdit?: () => void;
   onServed: () => void;
   onVoid: () => void;
   onVoidChoice: (m: OrderItem['modifiers'][number]) => void;
@@ -643,6 +708,11 @@ function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, on
         <div className="flex shrink-0 items-center gap-2">
           {cooking && canServe && <button type="button" className="btn btn-sm" disabled={working} onClick={onServed}>{t('order.served')}</button>}
           {!voided && i.status !== 'PENDING' && canVoid && <button type="button" className="btn btn-sm btn-danger" disabled={working} onClick={onVoid}>{t('order.void')}</button>}
+          {i.status === 'PENDING' && onEdit && (
+            <button type="button" className="btn btn-sm" aria-label={t('order.editItem', { name: i.name })} disabled={working} onClick={onEdit}>
+              <Pencil className="size-4" aria-hidden /> {t('order.edit')}
+            </button>
+          )}
           {i.status === 'PENDING' && (
             <button type="button" className="btn btn-sm btn-danger" aria-label={t('sell.remove')} disabled={working} onClick={onRemove}>
               <Trash2 className="size-4" aria-hidden />
@@ -654,7 +724,15 @@ function TicketRow({ item: i, canVoid, canServe, working, onRemove, onServed, on
   );
 }
 
-/** Before the bill is printed: SC/PWD diners and the items for their own use, and an order discount. */
+/** A whole-number or 2-decimal percentage between 0 and 100 (exclusive), e.g. "10" or "12.5". */
+const isPct = (v: string) => /^\d{1,2}(\.\d{1,2})?$/.test(v) && Number(v) > 0;
+/** A percentage the server turns into its rate: "10" → "0.1" (string arithmetic only, no floats). */
+function pctToRate(pct: string) {
+  const [w, f = ''] = pct.split('.');
+  return `0.${w!.padStart(2, '0')}${f}`.replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/** Before the bill is printed: SC/PWD diners and the items for their own use, an order discount, item discounts and comps. */
 function BillPrep({ order, permissions, working, onCancel, onBill }: {
   order: Order;
   permissions: string[];
@@ -667,6 +745,9 @@ function BillPrep({ order, permissions, working, onCancel, onBill }: {
   const [assigned, setAssigned] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState(false);
   const [discount, setDiscount] = useState('');
+  /** Per-item discounts and comps (rate "1"), each with its reason; SC/PWD items take none. */
+  const [itemDiscounts, setItemDiscounts] = useState<{ orderItemId: string; name: string; rate: string; pct: string | null; reason: string }[]>([]);
+  const [addingDiscount, setAddingDiscount] = useState<{ itemId: string; comp: boolean; pct: string; reason: string } | null>(null);
   const live = order.items.filter(LIVE);
 
   function addDiner(e: FormEvent<HTMLFormElement>) {
@@ -680,13 +761,20 @@ function BillPrep({ order, permissions, working, onCancel, onBill }: {
   }
 
   const pct = discount.trim();
-  const validPct = pct === '' || (/^\d{1,2}(\.\d{1,2})?$/.test(pct) && Number(pct) > 0);
-  // A percentage the server turns into its rate: "10" → "0.1" (string arithmetic only, no floats).
-  const rate = pct === '' || !validPct ? undefined : (() => {
-    const [w, f = ''] = pct.split('.');
-    return `0.${w!.padStart(2, '0')}${f}`.replace(/0+$/, '').replace(/\.$/, '');
-  })();
+  const validPct = pct === '' || isPct(pct);
+  const rate = pct === '' || !validPct ? undefined : pctToRate(pct);
   const used = new Set(Object.values(assigned));
+  // An item already discounted, or with an SC/PWD diner, cannot take another discount.
+  const discountable = live.filter((i) => !assigned[i.id] && !itemDiscounts.some((d) => d.orderItemId === i.id));
+
+  function addItemDiscount(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const a = addingDiscount;
+    const item = a && live.find((i) => i.id === a.itemId);
+    if (!a || !item || !a.reason.trim() || (!a.comp && !isPct(a.pct.trim()))) return;
+    setItemDiscounts((ds) => [...ds, { orderItemId: item.id, name: item.name, rate: a.comp ? '1' : pctToRate(a.pct.trim()), pct: a.comp ? null : a.pct.trim(), reason: a.reason.trim() }]);
+    setAddingDiscount(null);
+  }
 
   function submit() {
     const statutory = Object.entries(assigned).filter(([, ref]) => ref).map(([orderItemId, beneficiary]) => ({ orderItemId, beneficiary }));
@@ -694,6 +782,8 @@ function BillPrep({ order, permissions, working, onCancel, onBill }: {
       beneficiaries: diners.filter((d) => used.has(d.ref)).map((d) => ({ ref: d.ref, scheme: d.scheme, name: d.name, idNumber: d.idNumber })),
       statutory,
       ...(rate && { discountRate: rate }),
+      // An SC/PWD diner assigned after the discount was added wins: the discount is dropped.
+      itemDiscounts: itemDiscounts.filter((d) => !assigned[d.orderItemId]).map(({ orderItemId, rate: r, reason }) => ({ orderItemId, rate: r, reason })),
     });
   }
 
@@ -746,6 +836,49 @@ function BillPrep({ order, permissions, working, onCancel, onBill }: {
       </div>
       {permissions.includes('sales.discount') && (
         <Field id="discountPct" label={t('bill.discount')} hint={t('bill.discountHint')} inputMode="decimal" value={discount} onChange={(e) => setDiscount(e.target.value)} error={validPct ? undefined : t('bill.discountInvalid')} placeholder="0" />
+      )}
+      {permissions.includes('sales.discount') && (
+        <div className="grid gap-2">
+          <p className="text-[0.875rem] font-semibold">{t('bill.itemDiscounts')}</p>
+          <p className="text-[0.8125rem] text-muted">{t('bill.itemDiscountsHint')}</p>
+          {itemDiscounts.filter((d) => !assigned[d.orderItemId]).map((d) => (
+            <p key={d.orderItemId} className="flex flex-wrap items-center gap-2 text-[0.9375rem]">
+              <span className="tag">{d.pct === null ? t('bill.compTag') : t('bill.pctTag', { pct: d.pct })}</span>
+              <span className="min-w-0 flex-1">{d.name} <span className="text-[0.8125rem] text-muted">· {d.reason}</span></span>
+              <button type="button" className="btn btn-sm" aria-label={t('bill.removeItemDiscount', { name: d.name })} onClick={() => setItemDiscounts((ds) => ds.filter((x) => x.orderItemId !== d.orderItemId))}>
+                <X className="size-4" aria-hidden />
+              </button>
+            </p>
+          ))}
+          {addingDiscount ? (
+            <form className="grid gap-3 rounded-[5px] border border-hair bg-white p-4" onSubmit={addItemDiscount}>
+              <div className="field">
+                <label htmlFor="discountItem">{t('bill.item')}</label>
+                <select id="discountItem" className="input" value={addingDiscount.itemId} onChange={(e) => setAddingDiscount({ ...addingDiscount, itemId: e.target.value })}>
+                  {discountable.map((i) => <option key={i.id} value={i.id}>{`${i.quantity}× ${i.name}`}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-wrap items-end gap-3" role="group" aria-label={t('bill.itemDiscounts')}>
+                <button type="button" className="btn btn-sm" aria-pressed={addingDiscount.comp} onClick={() => setAddingDiscount({ ...addingDiscount, comp: true })}>{t('bill.comp')}</button>
+                <button type="button" className="btn btn-sm" aria-pressed={!addingDiscount.comp} onClick={() => setAddingDiscount({ ...addingDiscount, comp: false })}>{t('bill.percentOff')}</button>
+                {!addingDiscount.comp && (
+                  <Field id="itemDiscountPct" name="itemDiscountPct" label={t('bill.percentOff')} inputMode="decimal" value={addingDiscount.pct} placeholder="10"
+                    onChange={(e) => setAddingDiscount({ ...addingDiscount, pct: e.target.value })}
+                    error={addingDiscount.pct.trim() === '' || isPct(addingDiscount.pct.trim()) ? undefined : t('bill.discountInvalid')} />
+                )}
+              </div>
+              <Field id="itemDiscountReason" name="itemDiscountReason" label={t('bill.discountReason')} required maxLength={200} value={addingDiscount.reason} onChange={(e) => setAddingDiscount({ ...addingDiscount, reason: e.target.value })} />
+              <div className="flex gap-2">
+                <button className="btn btn-primary" disabled={!addingDiscount.reason.trim() || (!addingDiscount.comp && !isPct(addingDiscount.pct.trim()))}>{t('sell.apply')}</button>
+                <button type="button" className="btn" onClick={() => setAddingDiscount(null)}>{t('common.cancel')}</button>
+              </div>
+            </form>
+          ) : (
+            discountable.length > 0 && (
+              <button type="button" className="btn btn-sm justify-self-start" onClick={() => setAddingDiscount({ itemId: discountable[0]!.id, comp: true, pct: '', reason: '' })}>{t('bill.addItemDiscount')}</button>
+            )
+          )}
+        </div>
       )}
       <div className="flex gap-2">
         <button type="button" className="btn btn-primary flex-1" disabled={working || !validPct} onClick={submit}>{t('bill.print')}</button>

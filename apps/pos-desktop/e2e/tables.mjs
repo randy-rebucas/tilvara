@@ -221,13 +221,66 @@ try {
   await shown('Go to the bill');
   await clickText('Floor');
 
+  // Session 22: change an item before it is sent (quantity, course), then comp the burger on the bill.
+  await waitFor(`[...document.querySelectorAll('[aria-label^="T2 —"]')].some((x) => x.getClientRects().length)`);
+  await clickLabel('T2 —');
+  await waitFor(`document.getElementById('guests')`);
+  await fill('guests', '2');
+  await clickText('Open table');
+  await shown('Mains');
+  await clickText('Burger');
+  await waitFor(`document.body.innerText.includes('pick one')`);
+  await clickExact('Medium');
+  await clickText('Add to order');
+  await shown('1× Burger');
+  await clickText('Drinks');
+  await clickText('Iced tea');
+  await waitFor(`document.body.innerText.includes('Add to order')`);
+  await clickText('Add to order');
+  await shown('1× Iced tea');
+  await clickLabel('Change Iced tea');
+  await waitFor(`document.getElementById('editNote')`);
+  await clickLabel('Quantity +');
+  await evaluate(`[...document.querySelectorAll('[aria-label="Change Iced tea"] [aria-label="Course"] button')].find((x) => x.textContent.trim() === '2').click()`);
+  await fill('editNote', 'Less ice');
+  await clickText('Save changes');
+  check('a pending item changes in place: quantity, course and note', await shown('2× Iced tea') && await shown('Course 2') && (await text()).includes('Less ice'));
+  const t2 = (await call('GET', `/v1/restaurant/orders?branchId=${r.branchId}&status=LIVE`, tk)).data.find((o) => o.tableId === r.tables.T2);
+  const tea = (await call('GET', `/v1/restaurant/orders/${t2.id}`, tk)).items.find((i) => i.name === 'Iced tea');
+  check('server: the tea is ×2, course 2, still pending', tea.quantity === '2' && tea.course === 2 && tea.note === 'Less ice' && tea.status === 'PENDING');
+  await clickText('Send to kitchen');
+  await waitFor(`!document.body.innerText.includes('Not sent')`);
+  await clickText('Print bill');
+  await waitFor(`document.body.innerText.includes('Before printing the bill')`);
+  await clickText('Discount an item');
+  await waitFor(`document.getElementById('itemDiscountReason')`);
+  await evaluate(`(() => {
+    const s = document.getElementById('discountItem');
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, [...s.options].find((o) => o.textContent.includes('Burger')).value);
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  await fill('itemDiscountReason', 'Overcooked');
+  await clickLast('Apply');
+  check('the comp is listed with its reason', await shown('On the house') && (await text()).includes('Overcooked'));
+  await shot('tables-comp.png', false);
+  await clickLast('Print bill');
+  // Burger comped; teas 2 × 45 = 90; service charge 10 % (8.04 + VAT 0.96) → ₱99.00.
+  check('bill #4: the burger on the house, ₱99.00 with the service charge', await shown('Bill #4') && await shown('₱99.00') && (await text()).includes('Discount'));
+  const bill4 = (await call('GET', `/v1/restaurant/orders/${t2.id}`, tk)).bill;
+  const billed = await call('GET', `/v1/restaurant/bills/${bill4.id}`, tk);
+  check('server: the burger line is discounted in full', billed.lines.find((l) => l.name === 'Burger' && !l.parentLineId).discount === '150.00' && billed.amountDue === '99.00');
+  await clickText('Order');
+  await shown('Go to the bill');
+  await clickText('Floor');
+
   // The drawer took the cash check only: 1000 + 236.50
   await clickText('Close shift');
   check('expected drawer ₱1,236.50', await shown('₱1,236.50'));
 
   await clickText('fil');
   await clickText('Mga mesa');
-  check('Filipino floor', await shown('Bakante') || await shown('Bukas'));
+  // Both tables end billed (T1 by seat, T2 with the comp), so the floor reads "Babayaran" (to pay).
+  check('Filipino floor', await shown('Babayaran') || await shown('Bakante') || await shown('Bukas'));
 } catch (e) {
   check(`unexpected error: ${e.message}`, false);
 } finally {

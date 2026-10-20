@@ -92,6 +92,27 @@ describe('API keys', () => {
     await http().get('/v1/branches').set(key).expect(401);
     expect(String(await asOwnerInTenant(owner, a.tenantId, (x) => x.query(`UPDATE api_keys SET revoked_at = NULL, revoked_by = NULL WHERE id = $1`, [made.id])).catch((e: Error) => e))).toMatch(/only revoked, once/);
   });
+
+  it('a key given an expiry works until then and answers 401 after; an expiry in the past is refused', async () => {
+    await plan(a, 'enterprise');
+    const past = new Date(Date.now() - 60_000).toISOString();
+    const refused = (await http().post('/v1/api-keys').set(auth).send({ name: 'Old', scopes: ['org.read'], expiresAt: past }).expect(422)).body.error;
+    expect(refused.code).toBe('EXPIRY_IN_PAST');
+    // A few seconds ahead on the database clock (the check is `auth_api_key`'s, on the same clock).
+    const { rows } = await owner.query<{ at: Date }>(`SELECT now() + interval '3 seconds' AS at`);
+    const made = (await http().post('/v1/api-keys').set(auth).send({ name: 'Short', scopes: ['org.read'], expiresAt: rows[0]!.at.toISOString() }).expect(201)).body;
+    expect(made.expiresAt).toBeTruthy();
+    await http().get('/v1/branches').set(withKey(made.key)).expect(200);
+    const audit = await asOwnerInTenant(owner, a.tenantId, async (x) => (await x.query(`SELECT metadata FROM audit_logs WHERE action = 'api_key.created' AND resource_id = $1`, [made.id])).rows);
+    expect(audit[0].metadata.expiresAt).toBe(rows[0]!.at.toISOString());
+    let status = 200;
+    for (let i = 0; i < 40 && status === 200; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      status = (await http().get('/v1/branches').set(withKey(made.key))).status;
+    }
+    expect(status).toBe(401);
+    expect((await http().get('/v1/api-keys').set(auth).expect(200)).body.data.find((k: { id: string }) => k.id === made.id).revokedAt).toBeNull();
+  });
 });
 
 describe('webhooks', () => {

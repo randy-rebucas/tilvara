@@ -64,6 +64,14 @@ describe('user guide', () => {
     expect(both).toHaveLength(GUIDE_SECTIONS.length);
   });
 
+  it('a plan without restaurant service leaves it out like a retail shop does (session 22)', () => {
+    const starter = guideFor('RESTAURANT', ALL, []);
+    expect(starter.map((s) => s.id)).not.toContain('restaurant');
+    expect(topicFor('/restaurant/menus', 'RESTAURANT', [])).toBe('subscription');
+    expect(topicFor('/restaurant/menus', 'RESTAURANT', ['restaurant'])).toBe('restaurant');
+    expect(guideFor('HYBRID', ALL, ['restaurant'])).toHaveLength(GUIDE_SECTIONS.length);
+  });
+
   it('still explains areas the role does not open, marked as such', () => {
     const cashier = guideFor('HYBRID', ['catalog.read', 'sales.create', 'cash.session', 'restaurant.orders']);
     const by = Object.fromEntries(cashier.map((s) => [s.id, s.permitted]));

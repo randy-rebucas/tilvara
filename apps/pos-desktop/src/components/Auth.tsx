@@ -3,7 +3,8 @@ import { useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { ApiFailure, signIn, switchTenant, verifyMfa, type SignInResult } from '../lib/api';
 import type { Me } from '../types';
-import { Callout, Field, Note } from './ui';
+import { AuthStub } from './AuthNote';
+import { Callout, Field } from './ui';
 
 export function SignIn({ onDone }: { onDone: (activeTenantId: string | null) => void }) {
   const { t } = useT();
@@ -54,44 +55,38 @@ export function SignIn({ onDone }: { onDone: (activeTenantId: string | null) => 
   }
 
   return (
-    <div className="mx-auto grid max-w-[960px] gap-8 px-4 py-12 sm:px-6 md:grid-cols-[1fr_400px] md:items-center">
-      <section>
-        <h1 className="text-[2.25rem] font-bold leading-[1.1] tracking-[-0.015em]">{t('signin.title')}</h1>
-        <p className="mt-3 max-w-[46ch] text-muted">{challenge ? t('signin.mfaLede') : t('signin.lede')}</p>
-      </section>
-      <Note denom="blue" className="p-6">
-        {challenge ? (
-          <form onSubmit={submitCode} className="grid gap-4">
-            {useRecovery ? (
-              <Field key="recovery" id="recoveryCode" name="recoveryCode" autoComplete="off" required autoFocus label={t('signin.recovery')} />
-            ) : (
-              <Field key="code" id="code" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} required autoFocus label={t('signin.code')} />
-            )}
-            {error && <Callout kind="error">{error}</Callout>}
-            <button className="btn btn-primary w-full" disabled={pending}>
-              {t('signin.verify')}
+    <AuthStub denom="blue" title={t('signin.title')} lede={challenge ? t('signin.mfaLede') : t('signin.lede')}>
+      {challenge ? (
+        <form onSubmit={submitCode} className="grid gap-4">
+          {useRecovery ? (
+            <Field key="recovery" id="recoveryCode" name="recoveryCode" autoComplete="off" required autoFocus label={t('signin.recovery')} />
+          ) : (
+            <Field key="code" id="code" name="code" inputMode="numeric" autoComplete="one-time-code" maxLength={7} required autoFocus label={t('signin.code')} />
+          )}
+          {error && <Callout kind="error">{error}</Callout>}
+          <button className="btn btn-primary w-full" disabled={pending}>
+            {t('signin.verify')}
+          </button>
+          <div className="flex flex-wrap justify-between gap-2 text-[0.9375rem]">
+            <button type="button" className="font-semibold text-blue underline" onClick={() => { setUseRecovery((v) => !v); setError(null); }}>
+              {useRecovery ? t('signin.useCode') : t('signin.useRecovery')}
             </button>
-            <div className="flex flex-wrap justify-between gap-2 text-[0.9375rem]">
-              <button type="button" className="font-semibold text-blue underline" onClick={() => { setUseRecovery((v) => !v); setError(null); }}>
-                {useRecovery ? t('signin.useCode') : t('signin.useRecovery')}
-              </button>
-              <button type="button" className="text-muted underline" onClick={() => { setChallenge(null); setUseRecovery(false); setError(null); }}>
-                {t('signin.startOver')}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form onSubmit={submit} className="grid gap-4">
-            <Field id="email" name="email" type="email" autoComplete="username" required autoFocus label={t('signin.email')} />
-            <Field id="password" name="password" type="password" autoComplete="current-password" required label={t('signin.password')} />
-            {error && <Callout kind="error">{error}</Callout>}
-            <button className="btn btn-primary w-full" disabled={pending}>
-              {t('signin.submit')}
+            <button type="button" className="text-muted underline" onClick={() => { setChallenge(null); setUseRecovery(false); setError(null); }}>
+              {t('signin.startOver')}
             </button>
-          </form>
-        )}
-      </Note>
-    </div>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={submit} className="grid gap-4">
+          <Field id="email" name="email" type="email" autoComplete="username" required autoFocus label={t('signin.email')} />
+          <Field id="password" name="password" type="password" autoComplete="current-password" required label={t('signin.password')} />
+          {error && <Callout kind="error">{error}</Callout>}
+          <button className="btn btn-primary w-full" disabled={pending}>
+            {t('signin.submit')}
+          </button>
+        </form>
+      )}
+    </AuthStub>
   );
 }
 

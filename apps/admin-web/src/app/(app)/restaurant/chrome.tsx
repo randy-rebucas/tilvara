@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { Empty, Note, PageHeader } from '@/components/note';
+import { Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, type Branch, type Me } from '@/lib/api';
-import { hasRestaurant } from '@/lib/business-type';
+import { restaurantOffReason } from '@/lib/business-type';
 import { RestaurantOff } from '@/components/restaurant-off';
 import { getT } from '@/i18n/server';
 
@@ -29,12 +29,14 @@ export async function RestaurantChrome({ tab, branches = [], branch, children }:
   const { t } = await getT();
   const q = branch ? `?branch=${branch.id}` : '';
   const perBranch = PER_BRANCH.includes(tab);
-  // A retail business has no restaurant service (business type; the API refuses its changes too).
-  if (!hasRestaurant((await api<Me>('/me')).activeTenant?.businessType)) {
+  // A retail business, or a plan without it, has no restaurant service (the API refuses its changes too).
+  const tenant = (await api<Me>('/me')).activeTenant;
+  const off = restaurantOffReason(tenant?.businessType, tenant?.features);
+  if (off) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title={t('rest.title')} lede={t('rest.lede')} />
-        <RestaurantOff />
+        <RestaurantOff reason={off} />
       </div>
     );
   }
@@ -47,7 +49,7 @@ export async function RestaurantChrome({ tab, branches = [], branch, children }:
         items={(Object.keys(PATHS) as RestaurantTab[]).map((key) => ({ key, href: `${PATHS[key]}${PER_BRANCH.includes(key) ? q : ''}`, label: t(`rest.tab.${key}`) }))}
       />
       {perBranch && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?branch=${id}`} />}
-      {perBranch && !branch ? <Note><Empty>{t('inv.noBranch')}</Empty></Note> : children}
+      {perBranch && !branch ? <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note> : children}
     </div>
   );
 }

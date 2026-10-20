@@ -1,0 +1,2 @@
+ALTER TABLE "price_overrides" ADD COLUMN "quantity" numeric(18, 4);--> statement-breakpoint
+ALTER TABLE "price_overrides" ADD CONSTRAINT "price_overrides_quantity_check" CHECK ("price_overrides"."quantity" IS NULL OR "price_overrides"."quantity" > 0);

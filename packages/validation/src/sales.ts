@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
-import { oneDiscountRefinement, rateSchema, taxQuoteLineObject } from './tax.js';
+import { oneDiscountRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
@@ -202,6 +202,8 @@ export const createPriceOverrideSchema = z
     variantId: z.uuid(),
     /** The new unit price, on the same basis as the list price (VAT-inclusive or not). */
     unitPrice: amountSchema,
+    /** How many the price is approved for: the line it prices may not sell more at it. */
+    quantity: quantitySchema,
     reason: z.string().trim().min(1).max(200),
     email: z.string().trim().toLowerCase().max(254).pipe(z.email()).optional(),
     password: z.string().min(1).max(128).optional(),

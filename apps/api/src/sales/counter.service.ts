@@ -111,6 +111,7 @@ export class CounterService extends TenantService {
           priceId: price.priceId,
           listUnitPrice: price.amount,
           unitPrice: input.unitPrice,
+          quantity: input.quantity,
           reason: input.reason,
           requestedBy: auth.userId,
           approvedBy: approver.userId,
@@ -121,7 +122,7 @@ export class CounterService extends TenantService {
         .returning();
       await this.audit(db, auth, 'sale.price_override_approved', 'price_override', row!.id, {
         branchId: input.branchId, variantId: input.variantId, listUnitPrice: toDec(price.amount).toFixed(2), unitPrice: toDec(input.unitPrice).toFixed(2),
-        reason: input.reason, approvedBy: approver.userId, method: approver.method,
+        quantity: toDec(input.quantity).toString(), reason: input.reason, approvedBy: approver.userId, method: approver.method,
       });
       return this.overrideView(db, row!);
     });
@@ -140,7 +141,8 @@ export class CounterService extends TenantService {
     const [approver] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, o.approvedBy));
     return {
       id: o.id, branchId: o.branchId, variantId: o.variantId, priceId: o.priceId,
-      listUnitPrice: toDec(o.listUnitPrice).toString(), unitPrice: toDec(o.unitPrice).toString(), reason: o.reason,
+      listUnitPrice: toDec(o.listUnitPrice).toString(), unitPrice: toDec(o.unitPrice).toString(),
+      quantity: o.quantity === null ? null : toDec(o.quantity).toString(), reason: o.reason,
       requestedBy: o.requestedBy, approvedBy: o.approvedBy, approvedByName: approver?.displayName ?? null, approvalMethod: o.approvalMethod,
       createdAt: o.createdAt, expiresAt: o.expiresAt,
     };

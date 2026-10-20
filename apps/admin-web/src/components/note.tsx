@@ -1,10 +1,12 @@
+import { ChevronRight } from 'lucide-react';
+import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { twMerge } from 'tailwind-merge';
 
 /** Denomination = the kind of record. Colours never mean anything else. */
 export type Denomination = 'blue' | 'violet' | 'orange' | 'green' | 'gold' | 'ink' | 'none';
 
-const stripe: Record<Denomination, string | undefined> = {
+export const stripe: Record<Denomination, string | undefined> = {
   blue: 'var(--color-blue)',
   violet: 'var(--color-violet)',
   orange: 'var(--color-orange-soft)',
@@ -53,8 +55,27 @@ export function PageHeader({ title, lede, actions }: { title: string; lede?: str
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-4 py-6 text-center text-muted">{children}</p>;
+/**
+ * A list with nothing in it yet: say what belongs here (or what must come first) and, when there is
+ * one, the way to it. Left-aligned like the rows it stands in for.
+ */
+export function Empty({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 px-5 py-5">
+      <p className="min-w-0 max-w-[68ch] text-muted">{children}</p>
+      {action && <div className="shrink-0">{action}</div>}
+    </div>
+  );
+}
+
+/** The way to Locations from a page that needs a branch or legal entity first. */
+export function ToLocations({ label }: { label: string }) {
+  return (
+    <Link href="/locations" className="btn">
+      {label}
+      <ChevronRight aria-hidden className="size-4" />
+    </Link>
+  );
 }
 
 export function Callout({ tone = 'info', children }: { tone?: 'info' | 'warn' | 'error'; children: ReactNode }) {

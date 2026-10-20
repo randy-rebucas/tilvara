@@ -313,6 +313,8 @@ export const priceOverrides = pgTable(
     priceId: uuid('price_id').notNull(),
     listUnitPrice: money('list_unit_price').notNull(),
     unitPrice: money('unit_price').notNull(),
+    /** The most the approved price may be sold for on its line (null: approved before 0084, no limit). */
+    quantity: qty('quantity'),
     reason: text('reason').notNull(),
     requestedBy: uuid('requested_by').notNull(),
     approvedBy: uuid('approved_by').notNull(),
@@ -327,6 +329,7 @@ export const priceOverrides = pgTable(
     foreignKey({ columns: [t.tenantId, t.priceId], foreignColumns: [productPrices.tenantId, productPrices.id] }),
     index('price_overrides_branch_idx').on(t.tenantId, t.branchId, t.createdAt.desc()),
     check('price_overrides_price_check', sql`${t.unitPrice} >= 0 AND ${t.listUnitPrice} >= 0 AND ${t.unitPrice} <> ${t.listUnitPrice}`),
+    check('price_overrides_quantity_check', sql`${t.quantity} IS NULL OR ${t.quantity} > 0`),
     check('price_overrides_reason_check', sql`length(trim(${t.reason})) > 0`),
     check('price_overrides_method_check', sql`${t.approvalMethod} IN ('SELF','CREDENTIALS')`),
     check('price_overrides_self_check', sql`(${t.approvalMethod} = 'SELF') = (${t.approvedBy} = ${t.requestedBy})`),

@@ -94,6 +94,56 @@ describe('business type', () => {
     expect(code(await http().patch('/v1/business').set(b.auth).send({}).expect(400))).toBe('VALIDATION_FAILED');
   });
 
+  it('/me carries the features the plan includes, and follows a plan change', async () => {
+    const b = await business('bt-feat', 'HYBRID');
+    const features = async () => ((await http().get('/v1/me').set(b.auth).expect(200)).body.activeTenant.features as string[]).sort();
+    // The trial is Growth.
+    expect(await features()).toEqual(['advanced_reports', 'multi_entity', 'restaurant']);
+    await owner.query(`SELECT platform_set_subscription($1, 'starter', 'ACTIVE', null, null)`, [b.tenantId]);
+    expect(await features()).toEqual([]);
+    await owner.query(`SELECT platform_set_subscription($1, 'enterprise', 'ACTIVE', null, null)`, [b.tenantId]);
+    expect(await features()).toEqual(['advanced_reports', 'api_access', 'multi_entity', 'restaurant']);
+  });
+
+  it('a retail business starts without restaurant roles and gets them when it takes on a restaurant', async () => {
+    const shop = await business('bt-roles', 'RETAIL');
+    const keys = async () => ((await http().get('/v1/roles').set(shop.auth).expect(200)).body.data as { key: string }[]).map((r) => r.key).sort();
+    expect(await keys()).toEqual(['accountant', 'admin', 'branch_manager', 'cashier', 'inventory_officer', 'owner', 'purchasing_officer', 'senior_cashier']);
+    await http().patch('/v1/business').set(shop.auth).send({ businessType: 'HYBRID' }).expect(200);
+    expect(await keys()).toEqual(expect.arrayContaining(['kitchen_crew', 'restaurant_manager']));
+    const crew = ((await http().get('/v1/roles').set(shop.auth)).body.data as { key: string; permissions: string[]; isSystem: boolean }[]).find((r) => r.key === 'kitchen_crew');
+    expect(crew).toMatchObject({ isSystem: true, permissions: ['kitchen.operate'] });
+    expect(await typeChanges(shop.tenantId)).toEqual([{ from: 'RETAIL', to: 'HYBRID', rolesAdded: ['restaurant_manager', 'kitchen_crew'] }]);
+    // Back and forth again: nothing new to add, roles kept.
+    await http().patch('/v1/business').set(shop.auth).send({ businessType: 'RETAIL' }).expect(200);
+    await http().patch('/v1/business').set(shop.auth).send({ businessType: 'RESTAURANT' }).expect(200);
+    expect((await typeChanges(shop.tenantId)).slice(1)).toEqual([{ from: 'HYBRID', to: 'RETAIL' }, { from: 'RETAIL', to: 'RESTAURANT' }]);
+    // A senior cashier may refund and give discounts; a purchasing officer may not adjust stock.
+    const senior = bearer(await loginToken(app, (await addMember(owner, shop.tenantId, 'senior_cashier', { type: 'BRANCH', id: shop.branchId })).email));
+    const me = (await http().get('/v1/me').set(senior).expect(200)).body.activeTenant;
+    expect(me.permissions).toEqual(expect.arrayContaining(['sales.refund', 'sales.void', 'sales.discount', 'customers.manage']));
+  });
+
+  it('the name can be changed by tenant.manage (audited, trimmed, 1–200 characters) and is what /me shows', async () => {
+    const b = await business('bt-name', 'HYBRID');
+    const cashier = bearer(await loginToken(app, (await addMember(owner, b.tenantId, 'cashier', { type: 'BRANCH', id: b.branchId })).email));
+    expect(code(await http().patch('/v1/business').set(cashier).send({ name: 'Mine' }).expect(403))).toBe('FORBIDDEN');
+    const before = (await http().get('/v1/business').set(b.auth).expect(200)).body.name;
+    const renamed = await http().patch('/v1/business').set(b.auth).send({ name: '  Kapehan ni Lola  ' }).expect(200);
+    expect(renamed.body).toMatchObject({ name: 'Kapehan ni Lola', businessType: 'HYBRID' });
+    const me = (await http().get('/v1/me').set(b.auth).expect(200)).body;
+    expect(me.memberships.find((m: { tenantId: string }) => m.tenantId === b.tenantId).tenantName).toBe('Kapehan ni Lola');
+    // Name and type in one request: both recorded.
+    await http().patch('/v1/business').set(b.auth).send({ name: 'Kapehan', businessType: 'RESTAURANT' }).expect(200);
+    // The same name again records nothing.
+    await http().patch('/v1/business').set(b.auth).send({ name: 'Kapehan' }).expect(200);
+    const renames = await asOwnerInTenant(owner, b.tenantId, async (c) =>
+      (await c.query<{ metadata: unknown }>(`SELECT metadata FROM audit_logs WHERE action = 'tenant.renamed' ORDER BY occurred_at`)).rows.map((r) => r.metadata));
+    expect(renames).toEqual([{ from: before, to: 'Kapehan ni Lola' }, { from: 'Kapehan ni Lola', to: 'Kapehan' }]);
+    expect(await typeChanges(b.tenantId)).toEqual([{ from: 'HYBRID', to: 'RESTAURANT' }]);
+    for (const name of ['   ', 'x'.repeat(201)]) expect(code(await http().patch('/v1/business').set(b.auth).send({ name }).expect(400))).toBe('VALIDATION_FAILED');
+  });
+
   it('one business cannot change or read another', async () => {
     const a = await business('bt-iso-a', 'HYBRID');
     const z = await business('bt-iso-z', 'HYBRID');

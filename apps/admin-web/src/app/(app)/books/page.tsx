@@ -24,7 +24,7 @@ async function loadJournal(path: string): Promise<{ data: JournalRow[] } | { err
   }
 }
 
-const SOURCE_TYPES = ['SALE', 'SALE_RETURN', 'GOODS_RECEIPT', 'SUPPLIER_RETURN', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'STOCK_ADJUSTMENT', 'STOCK_COUNT', 'TRANSFER_DISPATCH', 'TRANSFER_RECEIPT', 'CASH_MOVEMENT', 'CASH_VARIANCE', 'MANUAL', 'REVERSAL'] as const;
+const SOURCE_TYPES = ['SALE', 'SALE_RETURN', 'GOODS_RECEIPT', 'SUPPLIER_RETURN', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE', 'STOCK_ADJUSTMENT', 'STOCK_COUNT', 'TRANSFER_DISPATCH', 'TRANSFER_RECEIPT', 'CASH_MOVEMENT', 'CASH_VARIANCE', 'MANUAL', 'REVERSAL'] as const;
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 type Query = { entity?: string; source?: string; account?: string; from?: string; to?: string; type?: string };

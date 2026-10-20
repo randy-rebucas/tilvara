@@ -131,6 +131,19 @@ describe('voiding a choice on its own', () => {
     const audit = await sql<{ action: string }>(r, `SELECT action FROM audit_logs WHERE action LIKE 'order.%voided' ORDER BY occurred_at`);
     expect(audit.map((a) => a.action)).toEqual(['order.modifier_voided', 'order.modifier_voided']);
   });
+
+  it('voiding the item after its extra was wasted writes the extra off once', async () => {
+    const r = await restaurant('rl-modvoid-twice');
+    const o = await open(r, { orderType: 'DINE_IN', tableId: r.t1 });
+    await add(r, o, [{ variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium, r.cheeseOpt] }]);
+    await fire(r, o);
+    const fired = (await order(r, o)).items[0]!;
+    const voidIt = (id: string, body: Record<string, unknown>) => http().post(`/v1/order-items/${id}/void`).set(r.manager).set(key()).send(body);
+    await voidIt(fired.modifiers.find((m) => m.name === 'Cheese')!.id, { reason: 'No cheese after all', wasted: true }).expect(200);
+    await voidIt(fired.id, { reason: 'Dropped it', wasted: true }).expect(200);
+    const [cheese] = await sql<{ q: string }>(r, `SELECT sum(quantity)::text AS q FROM stock_movements WHERE type = 'WASTE' AND variant_id = $1`, [r.cheese]);
+    expect(cheese!.q).toBe('-1.0000');
+  });
 });
 
 describe('floor push stream', () => {

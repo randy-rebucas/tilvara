@@ -90,7 +90,10 @@ describe('traceability (Phase 3 exit criterion)', () => {
     expect(entries).toEqual([expect.objectContaining({ sourceType: 'STOCK_ADJUSTMENT', total: '980.00' })]);
     const movements = (await http().get('/v1/stock/movements').query({ branchId: d.b1 }).set(d.auth)).body.data as { type: string; stockAdjustmentId: string | null }[];
     expect(movements.filter((m) => m.type === 'ADJUSTMENT').every((m) => m.stockAdjustmentId === d.opening.id)).toBe(true);
-    expect((await http().get('/v1/stock/adjustments').query({ branchId: d.b1 }).set(d.auth).expect(200)).body.data).toHaveLength(2);
+    // Opening, the rats, and the damaged return's write-off (ADR-0011 amendment).
+    const adjustments = (await http().get('/v1/stock/adjustments').query({ branchId: d.b1 }).set(d.auth).expect(200)).body.data as { kind: string; reason: string }[];
+    expect(adjustments).toHaveLength(3);
+    expect(adjustments.filter((a) => a.kind === 'WASTE' && a.reason.startsWith('Damaged on return'))).toHaveLength(1);
   });
 
   it('every entry opens its document through the API (the admin links each journal line to it)', async () => {

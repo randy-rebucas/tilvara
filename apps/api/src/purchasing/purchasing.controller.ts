@@ -2,13 +2,19 @@ import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Query } fr
 import {
   cancelSupplierInvoiceSchema,
   createSupplierInvoiceSchema,
+  createSupplierBatchPaymentSchema,
+  createSupplierNoteSchema,
   createSupplierPaymentSchema,
+  voidSupplierPaymentSchema,
   payablesAgingQuerySchema,
   supplierInvoiceListQuerySchema,
   uninvoicedReceiptsQuerySchema,
   type CancelSupplierInvoiceInput,
   type CreateSupplierInvoiceInput,
+  type CreateSupplierBatchPaymentInput,
+  type CreateSupplierNoteInput,
   type CreateSupplierPaymentInput,
+  type VoidSupplierPaymentInput,
   type PayablesAgingQuery,
   type SupplierInvoiceListQuery,
   type UninvoicedReceiptsQuery,
@@ -226,9 +232,34 @@ export class PurchasingController {
     return this.payables.pay(auth, invoiceId, body);
   }
 
+  @Idempotent({ required: true })
+  @Post('supplier-invoices/:id/notes')
+  createNote(@Auth() auth: AuthContext, @Param('id', id) invoiceId: string, @Body(new ZodPipe(createSupplierNoteSchema)) body: CreateSupplierNoteInput) {
+    return this.payables.createNote(auth, invoiceId, body);
+  }
+
+  @Get('supplier-notes/:id')
+  getNote(@Auth() auth: AuthContext, @Param('id', id) noteId: string) {
+    return this.payables.getNote(auth, noteId);
+  }
+
+  /** One payment over several open invoices of one supplier and legal entity (session 22). */
+  @Idempotent({ required: true })
+  @Post('supplier-payments')
+  payMany(@Auth() auth: AuthContext, @Body(new ZodPipe(createSupplierBatchPaymentSchema)) body: CreateSupplierBatchPaymentInput) {
+    return this.payables.payMany(auth, body);
+  }
+
   @Get('supplier-payments/:id')
   getPayment(@Auth() auth: AuthContext, @Param('id', id) paymentId: string) {
     return this.payables.getPayment(auth, paymentId);
+  }
+
+  @Idempotent({ required: true })
+  @HttpCode(200)
+  @Post('supplier-payments/:id/void')
+  voidPayment(@Auth() auth: AuthContext, @Param('id', id) paymentId: string, @Body(new ZodPipe(voidSupplierPaymentSchema)) body: VoidSupplierPaymentInput) {
+    return this.payables.voidPayment(auth, paymentId, body);
   }
 
   @Get('reports/payables-aging')

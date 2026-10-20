@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Callout, Empty, Note, PageHeader } from '@/components/note';
+import { Callout, Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { apiOrNull, type LegalEntity } from '@/lib/api';
 import { getT } from '@/i18n/server';
@@ -23,6 +23,7 @@ export function sourceHref(e: { sourceType: string; sourceId: string | null; rev
     case 'SUPPLIER_RETURN': return `/purchasing/returns/${e.sourceId}`;
     case 'SUPPLIER_INVOICE': return `/purchasing/invoices/${e.sourceId}`;
     case 'SUPPLIER_PAYMENT': return `/purchasing/payments/${e.sourceId}`;
+    case 'SUPPLIER_NOTE': return `/purchasing/notes/${e.sourceId}`;
     case 'SALE': return `/sales/${e.sourceId}`;
     case 'SALE_RETURN': return `/sales/returns/${e.sourceId}`;
     case 'CASH_MOVEMENT': return `/shifts/movements/${e.sourceId}`;
@@ -57,7 +58,7 @@ export async function BooksChrome({ tab, entities, entity, children }: { tab: Bo
         ]}
       />
       <ScopePicker label={t('loc.entityOne')} items={entities.map((e) => ({ id: e.id, name: e.registeredName }))} selected={entity?.id} href={(id) => `${PATHS[tab]}?entity=${id}`} />
-      {entity ? children : <Note><Empty>{t('books.noEntity')}</Empty></Note>}
+      {entity ? children : <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('books.noEntity')}</Empty></Note>}
     </div>
   );
 }
