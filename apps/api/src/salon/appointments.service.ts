@@ -25,6 +25,7 @@ import { activeCustomer } from '../customers/customers.service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
+import { mayReadNotes } from './salon.service.js';
 import { unprocessable } from '../tax/tax.service.js';
 
 type AppointmentRow = typeof appointments.$inferSelect;
@@ -90,7 +91,7 @@ export class AppointmentsService extends TenantService {
           q.staffId ? sql`EXISTS (SELECT 1 FROM appointment_services s WHERE s.appointment_id = ${appointments.id} AND s.staff_id = ${q.staffId})` : undefined,
         ))
         .orderBy(asc(appointments.startsAt), asc(appointments.id));
-      return { data: await this.views(db, rows) };
+      return { data: await this.views(db, auth, rows) };
     });
   }
 
@@ -99,7 +100,7 @@ export class AppointmentsService extends TenantService {
       const row = await this.load(db, id);
       const { scope } = await branchScope(db, row.branchId);
       this.assertCan(auth, 'appointments.read', scope);
-      return (await this.views(db, [row]))[0]!;
+      return (await this.views(db, auth, [row]))[0]!;
     });
   }
 
@@ -132,7 +133,7 @@ export class AppointmentsService extends TenantService {
       await this.audit(db, auth, 'appointment.booked', 'appointment', row!.id, {
         branchId: branch.id, startsAt: span.startsAt.toISOString(), services: planned.length, ...(input.outsideHours && { outsideHours: true }),
       });
-      return (await this.views(db, [row!]))[0]!;
+      return (await this.views(db, auth, [row!]))[0]!;
     });
   }
 
@@ -163,7 +164,7 @@ export class AppointmentsService extends TenantService {
       await this.audit(db, auth, 'appointment.changed', 'appointment', id, {
         fields: Object.keys(input).filter((k) => k !== 'outsideHours'), ...(input.outsideHours && { outsideHours: true }),
       });
-      return (await this.views(db, [row!]))[0]!;
+      return (await this.views(db, auth, [row!]))[0]!;
     });
   }
 
@@ -173,7 +174,7 @@ export class AppointmentsService extends TenantService {
       const { scope } = await branchScope(db, current.branchId);
       this.assertCan(auth, 'appointments.manage', scope);
       await assertAppointments(db);
-      if (current.status === input.status) return (await this.views(db, [current]))[0]!;
+      if (current.status === input.status) return (await this.views(db, auth, [current]))[0]!;
       this.assertOpen(current);
       if (input.status === 'ARRIVED' && current.status !== 'BOOKED') throw new AppError('APPOINTMENT_NOT_OPEN', 'Only a booked appointment can arrive', HttpStatus.CONFLICT, { status: current.status });
       const [row] = await db
@@ -184,7 +185,7 @@ export class AppointmentsService extends TenantService {
       // A cancelled booking or a no-show frees the staff's time.
       if (input.status !== 'ARRIVED') await db.update(appointmentServices).set({ active: false }).where(eq(appointmentServices.appointmentId, id));
       await this.audit(db, auth, `appointment.${input.status.toLowerCase()}`, 'appointment', id, input.status === 'CANCELLED' ? { reason: input.reason } : undefined);
-      return (await this.views(db, [row!]))[0]!;
+      return (await this.views(db, auth, [row!]))[0]!;
     });
   }
 
@@ -346,7 +347,8 @@ export class AppointmentsService extends TenantService {
     await db.insert(appointmentServices).values(planned.map((p, i) => ({ tenantId, appointmentId, position: i + 1, ...p })));
   }
 
-  private async views(db: Database, rows: AppointmentRow[]) {
+  private async views(db: Database, auth: AuthContext, rows: AppointmentRow[]) {
+    const notesShown = mayReadNotes(auth);
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const services = await db
@@ -380,7 +382,8 @@ export class AppointmentsService extends TenantService {
         customerPhone: c?.phone ?? null,
         hasEmail: Boolean(c?.email),
         guestName: r.guestName,
-        notes: r.notes,
+        // Free text that may hold health details: staff only (decision A1).
+        notes: notesShown ? r.notes : null,
         remind: r.remind,
         remindedAt: r.remindedAt,
         saleId: r.saleId,

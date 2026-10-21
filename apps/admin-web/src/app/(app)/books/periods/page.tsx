@@ -5,8 +5,9 @@ import { formatDateTime, todayManila } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity } from '../chrome';
 import { ClosePeriodForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Periods' };
+export const generateMetadata = pageTitle('books.periods');
 
 function previousMonth(today: string) {
   const [y, m] = today.split('-').map(Number);

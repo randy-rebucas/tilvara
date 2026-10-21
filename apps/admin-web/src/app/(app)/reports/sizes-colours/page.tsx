@@ -5,8 +5,9 @@ import type { ByAttribute } from '@/lib/api';
 import { peso, qty, sumDecimal } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by size and colour' };
+export const generateMetadata = pageTitle('reports.sizes-colours');
 
 /** Sales lines totalled by the value of one attribute of the item sold (ADR-0021 §2), e.g. by Size. */
 export default async function SizesColoursPage({ searchParams }: { searchParams: Promise<ReportQuery & { attribute?: string }> }) {

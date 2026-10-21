@@ -4,8 +4,9 @@ import { apiOrNull, type DiningArea, type KitchenStation } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome, restaurantBranch } from './chrome';
 import { AreaForm, EditRecord, EditTablesForm, RowAction, StationForm, TableForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Restaurant' };
+export const generateMetadata = pageTitle('restaurant');
 
 /** Kitchen stations and the dining floor of one branch (ADR-0014 §5). */
 export default async function FloorPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {

@@ -37,6 +37,7 @@ import type {
   VoidOrderItemInput,
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
+import { requestVoidSlips } from './kitchen-print.js';
 import { assertFeature } from '../billing/entitlements.js';
 import { nextNumber } from '../common/sequence.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -253,11 +254,14 @@ export class OrdersService extends TenantService {
           reason: `Voided after firing (order #${order.orderNumber}): ${input.reason}`,
           userId: auth.userId,
           items: lines.map((l) => ({ ...l, tracked: tracked.find((t) => t.id === l.variantId)!.track })),
+          openPacks: true,
         });
       }
       const voided = { status: 'VOIDED', voidedAt: sql`now()`, voidedBy: auth.userId, voidReason: input.reason };
       await db.update(orderItems).set({ ...voided, wasteAdjustmentId }).where(eq(orderItems.id, itemId));
       await db.update(orderItems).set(voided).where(and(eq(orderItems.parentItemId, itemId), ne(orderItems.status, 'VOIDED')));
+      // A kitchen working from paper gets a VOID slip for a ticket already printed.
+      await requestVoidSlips(db, [itemId, ...children.map((c) => c.id)]);
       await this.audit(db, auth, item.kind === 'MODIFIER' ? 'order.modifier_voided' : 'order.item_voided', 'restaurant_order', order.id, {
         itemId, ...(item.parentItemId && { parentItemId: item.parentItemId }), name: item.name, quantity: item.quantity, fromStatus: item.status, reason: input.reason, wasteAdjustmentId,
       });
@@ -348,6 +352,15 @@ export class OrdersService extends TenantService {
       const [source, target] = await this.lockPair(db, auth, orderId, input.intoOrderId);
       for (const o of [source, target]) if (o.status !== 'OPEN') throw notOpen(o);
       await db.update(orderItems).set({ orderId: target.id }).where(eq(orderItems.orderId, source.id));
+      // Course notes follow the items still to be fired: a course noted on both orders keeps both notes.
+      await db.execute(sql`
+        INSERT INTO order_course_notes (tenant_id, branch_id, order_id, course, note, updated_by)
+        SELECT tenant_id, branch_id, ${target.id}, course, note, ${auth.userId} FROM order_course_notes WHERE order_id = ${source.id}
+        ON CONFLICT (tenant_id, order_id, course) DO UPDATE
+          SET note = CASE WHEN order_course_notes.note = excluded.note THEN order_course_notes.note
+                          ELSE left(order_course_notes.note || ' / ' || excluded.note, 200) END,
+              updated_by = excluded.updated_by, updated_at = now()`);
+      await db.delete(orderCourseNotes).where(eq(orderCourseNotes.orderId, source.id));
       await db.update(restaurantOrders)
         .set({ status: 'MERGED', mergedIntoId: target.id, closedBy: auth.userId, closedAt: sql`now()` })
         .where(eq(restaurantOrders.id, source.id));
@@ -419,7 +432,8 @@ export class OrdersService extends TenantService {
 
   /** The table exists at this branch, is active and has no live order (the unique index backs the race). */
   private async freeTable(db: Database, branchId: string, tableId: string) {
-    const [table] = await db.select().from(restaurantTables).where(eq(restaurantTables.id, tableId));
+    // Locked, as archiving a table locks it: an order cannot open on a table being archived.
+    const [table] = await db.select().from(restaurantTables).where(eq(restaurantTables.id, tableId)).for('update');
     if (!table || table.branchId !== branchId) throw new AppError('NOT_FOUND', 'Table not found', HttpStatus.NOT_FOUND, { tableId });
     if (table.archivedAt) throw archived('Table');
     const [busy] = await db.select({ id: restaurantOrders.id, orderNumber: restaurantOrders.orderNumber }).from(restaurantOrders)

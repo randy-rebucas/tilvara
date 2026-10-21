@@ -5,8 +5,9 @@ import { getT } from '@/i18n/server';
 import { api, ApiError, type Me, type StaffGrant } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { OpenGrantButton } from './open-grant';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Support requests' };
+export const generateMetadata = pageTitle('support');
 
 /**
  * Tilvara staff only (ADR-0016 slice 6). Outside the app shell: staff belong to no business. Each row

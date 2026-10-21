@@ -21,7 +21,7 @@ import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { dbNow, effectiveNowSql } from '../common/clock.js';
+import { dbNow, EFFECTIVE_SKEW, effectiveNowSql } from '../common/clock.js';
 
 /** A promotion may start this long before the request reached the database (clock skew), never earlier. */
 const BACKDATE_TOLERANCE_MS = 60_000;
@@ -49,8 +49,10 @@ export function enginePromotion(row: PromotionRow, variantIds: string[]): Promot
  * Promotions in force at a branch at `at` (ADR-0021 §1): started by then, not yet ended, for every
  * branch or listing this one. With `variantIds`, only those touching one of them. Each carries its
  * whole item set (a mix-and-match set may include items not in the cart).
+ * With `knownAt` (an offline sale re-priced as of its snapshot), a promotion made after that instant is
+ * ignored even when its start was set up to a minute earlier: the till could not have known it.
  */
-export async function promotionsInForce(db: Database, branchId: string, at: Date, variantIds?: readonly string[]): Promise<Promotion[]> {
+export async function promotionsInForce(db: Database, branchId: string, at: Date, variantIds?: readonly string[], knownAt?: Date): Promise<Promotion[]> {
   if (variantIds && !variantIds.length) return [];
   const atSql = sql`${at.toISOString()}::timestamptz`;
   const rows = await db
@@ -60,6 +62,7 @@ export async function promotionsInForce(db: Database, branchId: string, at: Date
       and(
         sql`${promotions.startsAt} <= ${atSql}`,
         sql`(${promotions.endsAt} IS NULL OR ${promotions.endsAt} > ${atSql})`,
+        knownAt ? sql`${promotions.createdAt} <= ${knownAt.toISOString()}::timestamptz + ${sql.raw(EFFECTIVE_SKEW)}` : undefined,
         sql`(${promotions.allBranches} OR EXISTS (SELECT 1 FROM promotion_branches pb WHERE pb.promotion_id = ${promotions.id} AND pb.branch_id = ${branchId}))`,
         variantIds
           ? sql`EXISTS (SELECT 1 FROM promotion_items pi WHERE pi.promotion_id = ${promotions.id} AND pi.variant_id IN (${sql.join(variantIds.map((v) => sql`${v}::uuid`), sql`, `)}))`

@@ -59,7 +59,7 @@ try {
   await viewport(1440, 900);
   // ---- sign-up offers the lodging type ----
   await go('/sign-up');
-  check('sign-up offers “Hotel, resort or transient house”', await evaluate(`Boolean(document.querySelector('input[name=businessType][value=LODGING]'))`) && (await text()).includes('Hotel, resort or transient house'));
+  check('sign-up offers “Hotel, resort or transient house”', await evaluate(`Boolean(document.querySelector('input[name=businessType][value=LODGING]')) && document.body.textContent.includes('Hotel, resort or transient house')`));
 
   await go('/sign-in');
   await fill('email', email);
@@ -244,6 +244,28 @@ try {
   const changes = (await call('GET', `/v1/rooms/${r102.id}/status-changes`, tk)).data;
   check('housekeeping: 101 clean, 102 out of order with the note, and who did it', (await call('GET', `/v1/rooms/${r101.id}`, tk)).housekeepingStatus === 'CLEAN' && changes[0]?.toStatus === 'OUT_OF_ORDER' && changes[0].note === 'Leaking shower' && (await text()).includes('Rosa Villanueva'));
   await shot('lodging-housekeeping.png');
+
+  // ---- an overstay (audit 2026-10-21): in house past the departure; check-out extends and charges ----
+  const r103 = await call('POST', '/v1/rooms', tk, { branchId: br.id, roomTypeId: std.id, number: '103' }, idem());
+  const over = await call('POST', '/v1/stays', tk, { branchId: br.id, roomId: r103.id, arrivalDate: day(-3), departureDate: yesterday, adults: 1, source: 'WALK_IN', checkIn: true,
+    guests: [{ fullName: 'Liza Reyes', nationality: 'Filipino', idType: 'Passport', idNumber: 'P7654321', address: 'Quezon City' }] }, idem());
+  await go(`/lodging?branch=${br.id}`);
+  const overRow = `[...document.querySelectorAll('tr, li')].filter((x) => x.getClientRects().length && x.querySelector('a[data-stay="${over.id}"]'))`;
+  check('the front desk flags the guest past their departure “Overstay” (departures and in house)', await waitFor(`${overRow}.length >= 2 && ${overRow}.every((x) => x.innerText.includes('Overstay'))`, 8000).then(() => true, () => false));
+  await go(`/lodging/housekeeping?branch=${br.id}`);
+  check('the housekeeping board flags room 103 “Overstay”', await waitFor(`document.querySelector('[data-room="103"]')?.closest('li').innerText.includes('Overstay')`, 8000).then(() => true, () => false));
+  await go(`/lodging/stays/${over.id}`);
+  await clickButton('Charge the nights and apply deposits');
+  await waitFor(`document.querySelector('[data-testid=prepared]')`, 10000);
+  const overStay = await call('GET', `/v1/stays/${over.id}`, tk);
+  const overFolio = await call('GET', `/v1/folios/${overStay.folio.id}`, tk);
+  const overNights = overFolio.entries.filter((e) => e.kind === 'ROOM_NIGHT');
+  check('check-out moved the departure to today and charged the three nights (with the tax)', overStay.departureDate === today && overStay.overstay === false && overNights.length === 3 && overNights.every((e) => e.amount === '2500.00') && overNights.some((e) => e.nightDate === yesterday) && overFolio.entries.some((e) => e.kind === 'ACCOMMODATION_TAX'));
+  check('the stay page shows the balance to pay', await evaluate(`document.querySelector('[data-testid=folio-balance]')?.textContent === ${JSON.stringify(pesos(overFolio.balance))}`));
+  await call('POST', `/v1/folios/${overFolio.id}/payments`, tk, { method: 'CASH', cashierSessionId: shift.id, tendered: overFolio.balance }, idem());
+  await go(`/lodging/stays/${over.id}`);
+  await evaluate(`[...document.querySelectorAll('[data-testid=check-out] button')].find((x) => x.textContent.trim() === 'Check out').click()`);
+  check('the overstay checks out', await waitFor(`document.querySelector('h1 [data-stay-status="CHECKED_OUT"]')`, 10000).then(() => true, () => false));
 
   // ---- reports and their CSV ----
   await go(`/reports/occupancy?branch=${br.id}&from=${yesterday}&to=${today}`);

@@ -7,6 +7,7 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
+import { refundParts } from '../reports/refund-parts.js';
 import { registerScope } from './cash.service.js';
 
 const BUCKETS = ['gross', 'discount', 'statutory_discount', 'vat_exemption_amount', 'vatable_sales', 'vat_amount', 'vat_exempt_sales', 'zero_rated_sales', 'percentage_tax_sales', 'amount_due'] as const;
@@ -60,8 +61,7 @@ export class ZReadingsService extends TenantService {
           SELECT t.method, t.amount FROM sale_tenders t JOIN sales x ON x.id = t.sale_id
            WHERE x.register_id = ${register.id} AND x.completed_at >= ${w!.start}::timestamptz AND x.completed_at < ${w!.end}::timestamptz
           UNION ALL
-          SELECT refund_method, -amount_due FROM sale_returns
-           WHERE register_id = ${register.id} AND created_at >= ${w!.start}::timestamptz AND created_at < ${w!.end}::timestamptz) m
+          SELECT method, -amount FROM (${refundParts(sql`r.register_id = ${register.id} AND r.created_at >= ${w!.start}::timestamptz AND r.created_at < ${w!.end}::timestamptz`)}) rp) m
          GROUP BY method ORDER BY method`);
       const { rows: schemes } = await db.execute<{ scheme: string; discount: string }>(sql`
         SELECT scheme, sum(discount)::text AS discount FROM (

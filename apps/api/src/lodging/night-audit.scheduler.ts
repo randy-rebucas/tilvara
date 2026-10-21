@@ -4,6 +4,7 @@ import { sql, withTenant } from '@1pos/database';
 import { readOnlyReason } from '../billing/entitlements.js';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
+import { ApiMetrics } from '../infrastructure/metrics.js';
 import { TaxService } from '../tax/tax.service.js';
 import { inHouseStays, postDueNights } from './night-audit.js';
 
@@ -28,6 +29,7 @@ export class NightAuditScheduler implements OnApplicationBootstrap, OnApplicatio
     @Inject(DatabasePool) private readonly database: DatabasePool,
     @Inject(TaxService) private readonly tax: TaxService,
     @Inject(ENV) private readonly env: ServerEnv,
+    @Inject(ApiMetrics) private readonly metrics: ApiMetrics,
   ) {}
 
   onApplicationBootstrap() {
@@ -43,22 +45,32 @@ export class NightAuditScheduler implements OnApplicationBootstrap, OnApplicatio
 
   private tick() {
     if (this.running) return this.running;
-    this.running = this.runOnce().catch((e: Error) => this.logger.warn({ msg: 'night audit failed', message: e.message.slice(0, 200) })).finally(() => {
+    this.running = this.runOnce().catch((e: Error) => {
+      this.metrics.nightAudit.inc({ outcome: 'failed' });
+      this.logger.warn({ msg: 'night audit failed', message: e.message.slice(0, 200) });
+    }).finally(() => {
       this.running = null;
     });
     return this.running;
   }
 
   /** One pass over every business with nights due. Returns the nights posted per tenant (tests call it directly). */
-  async runOnce(): Promise<{ tenantId: string; nights: number; skipped?: string }[]> {
+  async runOnce(): Promise<{ tenantId: string; nights: number; overstays: number; failed: number; skipped?: string }[]> {
     const client = await this.database.pool.connect();
     try {
       const { rows: [lock] } = await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [NIGHT_AUDIT_LOCK]);
       if (!lock?.ok) return [];
       try {
         const { rows } = await client.query<{ tenant_id: string }>('SELECT tenant_id FROM platform_lodging_due_tenants()');
-        const out: { tenantId: string; nights: number; skipped?: string }[] = [];
-        for (const { tenant_id: tenantId } of rows) out.push(await this.runTenant(tenantId));
+        const out: { tenantId: string; nights: number; overstays: number; failed: number; skipped?: string }[] = [];
+        for (const { tenant_id: tenantId } of rows) {
+          const r = await this.runTenant(tenantId);
+          // Counts only, outcome from a fixed set (no tenant or stay ids as labels).
+          if (r.skipped) this.metrics.nightAudit.inc({ outcome: 'skipped' });
+          if (r.nights) this.metrics.nightAudit.inc({ outcome: 'posted' }, r.nights);
+          if (r.failed) this.metrics.nightAudit.inc({ outcome: 'failed' }, r.failed);
+          out.push(r);
+        }
         return out;
       } finally {
         await client.query('SELECT pg_advisory_unlock($1)', [NIGHT_AUDIT_LOCK]);
@@ -68,15 +80,16 @@ export class NightAuditScheduler implements OnApplicationBootstrap, OnApplicatio
     }
   }
 
-  private async runTenant(tenantId: string): Promise<{ tenantId: string; nights: number; skipped?: string }> {
+  private async runTenant(tenantId: string): Promise<{ tenantId: string; nights: number; overstays: number; failed: number; skipped?: string }> {
     const pool = this.database.pool;
     const { stays, readOnly } = await withTenant(pool, tenantId, async (db) => {
       const { rows } = await db.execute<{ status: string }>(sqlTenantStatus);
       const reason = await readOnlyReason(db, rows[0]?.status ?? 'ACTIVE');
       return { stays: reason ? [] : await inHouseStays(db), readOnly: reason?.code ?? null };
     });
-    if (readOnly) return { tenantId, nights: 0, skipped: readOnly };
+    if (readOnly) return { tenantId, nights: 0, overstays: 0, failed: 0, skipped: readOnly };
     let nights = 0;
+    let failed = 0;
     for (const s of stays) {
       try {
         nights += (await withTenant(pool, tenantId, (db) => postDueNights(db, this.tax, s.id, {
@@ -84,9 +97,11 @@ export class NightAuditScheduler implements OnApplicationBootstrap, OnApplicatio
         }))).length;
       } catch (e) {
         // Ids only (logging rules): the stay stays due and is tried again on the next pass.
+        failed += 1;
         this.logger.warn({ msg: 'night audit could not post a stay', tenantId, stayId: s.id, message: (e as Error).message.slice(0, 200) });
       }
     }
-    return { tenantId, nights };
+    // Overstays: in house past the departure date; no night past it is charged until check-out extends the stay.
+    return { tenantId, nights, overstays: stays.filter((s) => s.overstay).length, failed };
   }
 }

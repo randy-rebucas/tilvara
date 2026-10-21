@@ -5,8 +5,9 @@ import { formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome, restaurantBranch } from '../chrome';
 import { RowAction, SettingsForm, SoldOutForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Restaurant settings' };
+export const generateMetadata = pageTitle('restaurant.settings');
 
 /** Per branch: the menus served, the service charge (ADR-0014 §9) and what is sold out today ("86"). */
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {

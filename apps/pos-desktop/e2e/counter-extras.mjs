@@ -23,7 +23,7 @@ const b = await openBrowser({ base: BASE, out: OUT, port: 9342 });
 const { evaluate, viewport, waitFor, go, fill, clickText, shot } = b;
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
-const tab = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+const tab = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
 const shiftView = async (id) => call('GET', `/v1/cashier-sessions/${id}`, tk);
 
 try {

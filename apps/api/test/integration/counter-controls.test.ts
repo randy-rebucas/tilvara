@@ -136,7 +136,10 @@ describe('manager-approved price changes', () => {
     const shown = (await quote(s.cashier, s.branchId, [line]).expect(200)).body;
     expect(shown.lines[0]).toMatchObject({ unitPrice: '20', gross: '40.00', amountDue: '40.00', priceOverrideId: approved.id, listUnitPrice: '22.4' });
     // Someone else's approval, another item, the same approval twice in one cart.
-    expect((await quote(s.cashier2, s.branchId, [line]).expect(422)).body.error.code).toBe('PRICE_OVERRIDE_MISMATCH');
+    // A held cart resumed by another cashier lands here: the message says to ask again (audit 2026-10-21).
+    expect((await quote(s.cashier2, s.branchId, [line]).expect(422)).body.error).toMatchObject({
+      code: 'PRICE_OVERRIDE_MISMATCH', message: expect.stringMatching(/cashier who asked.*ask for the approval again/), details: { reason: 'OTHER_CASHIER' },
+    });
     expect((await quote(s.cashier, s.branchId, [{ ...line, variantId: s.rice }]).expect(422)).body.error.code).toBe('PRICE_OVERRIDE_MISMATCH');
     expect((await quote(s.cashier, s.branchId, [line, { ...line, id: 'y' }]).expect(422)).body.error.code).toBe('PRICE_OVERRIDE_REPEATED');
 

@@ -27,7 +27,8 @@ export interface OfflineReceipt {
   seller: { name: string; registeredName: string; tin: string | null; vatStatus: 'VAT' | 'NON_VAT' };
   cashierName: string;
   /** `promotion`: the promotion that priced the line and its discount (ADR-0021). */
-  lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string; promotion?: { name: string; discount: string } }[];
+  /** `generic`: a medicine's generic name, strength and form (ADR-0025 §3); lots are not known offline. */
+  lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string; promotion?: { name: string; discount: string }; generic?: string }[];
   totals: { gross: string; vatableSales: string; vatAmount: string; vatExemptSales: string; zeroRatedSales: string; percentageTaxSales: string; amountDue: string };
   tendered: string;
   change: string;

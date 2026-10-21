@@ -216,9 +216,22 @@ export class CashService extends TenantService {
       if (session.status !== 'OPEN') throw notOpen();
       const out = input.type !== 'PAY_IN';
       const amount = out ? toDec(input.amount).negated().toString() : input.amount;
-      // Tips handed to staff (session 25) leave the drawer like a pay-out, against what is owed to them.
-      if (input.type === 'TIP_PAYOUT' && toDec(await expectedCash(db, id)).lt(input.amount)) {
-        throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for that', { available: toDec(await expectedCash(db, id)).toFixed(2) });
+      // Cash that leaves (a pay-out, or tips handed to staff, session 25) must be in the drawer.
+      if (out) {
+        const available = toDec(await expectedCash(db, id));
+        if (available.lt(input.amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for that', { available: available.toFixed(2) });
+      }
+      // Tips are paid out against what is owed to staff: the branch's TIPS_PAYABLE as the books hold it.
+      // Serialized per branch, so two drawers cannot pay the same tips out twice.
+      if (input.type === 'TIP_PAYOUT') {
+        await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`tips-payout:${session.branchId}`}, 0))`);
+        const { rows: [owed] } = await db.execute<{ owed: string }>(sql`
+          SELECT coalesce(sum(l.credit - l.debit), 0)::text AS owed
+            FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+           WHERE a.system_key = 'TIPS_PAYABLE' AND a.legal_entity_id = ${scope.legalEntityId} AND l.branch_id = ${session.branchId}`);
+        if (toDec(owed!.owed).lt(input.amount)) {
+          throw new AppError('TIPS_EXCEEDED', 'More than the tips owed to staff at this branch', HttpStatus.CONFLICT, { owed: toDec(owed!.owed).toFixed(2) });
+        }
       }
       const [row] = await db
         .insert(cashMovements)
@@ -253,8 +266,8 @@ export class CashService extends TenantService {
         .where(
           and(
             eq(paymentIntents.cashierSessionId, id),
-            // A FOLIO payment (ADR-0023) is settled by the folio payment or deposit that consumed it.
-            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), isNull(paymentIntents.folioId))),
+            // A FOLIO payment (ADR-0023) is settled by the folio payment or deposit that consumed it, a JOB_ORDER one (ADR-0024) by its down payment.
+            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), isNull(paymentIntents.folioId), isNull(paymentIntents.jobOrderId))),
           ),
         );
       if (outstanding.length) {

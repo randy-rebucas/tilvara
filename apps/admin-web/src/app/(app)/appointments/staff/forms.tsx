@@ -1,6 +1,7 @@
 'use client';
 
 import { Plus, Trash2, X } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
@@ -9,8 +10,8 @@ import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { MessageKey } from '@/i18n/messages';
 import type { ServiceStaff } from '@/lib/api';
-import { STAFF_COLOURS, zonedInstant } from '@/lib/calendar';
-import { percentFromRate, rateFromPercent } from '@/lib/format';
+import { localParts, STAFF_COLOURS, zonedInstant } from '@/lib/calendar';
+import { formatDate, percentFromRate, rateFromPercent } from '@/lib/format';
 
 export interface MemberOption {
   id: string;
@@ -272,6 +273,7 @@ function TimeOffFields({ close, staffId, timezone }: { close: () => void; staffI
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, fieldError, error } = useSubmit();
+  const [last, setLast] = useState<Record<string, string> | null>(null);
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -280,7 +282,14 @@ function TimeOffFields({ close, staffId, timezone }: { close: () => void; staffI
       return v ? zonedInstant(v.slice(0, 10), v.slice(11, 16), timezone) : '';
     };
     const reason = text(f, 'reason');
-    const r = await submit('POST', `/api/v1/service-staff/${staffId}/time-off`, { startsAt: at('startsAt'), endsAt: at('endsAt'), ...(reason ? { reason } : {}) }, { idempotencyKey: key });
+    const body = { startsAt: at('startsAt'), endsAt: at('endsAt'), ...(reason ? { reason } : {}) };
+    setLast(body);
+    const r = await submit('POST', `/api/v1/service-staff/${staffId}/time-off`, body, { idempotencyKey: key });
+    if (r.ok) close();
+  }
+  async function keep() {
+    if (!last) return;
+    const r = await submit('POST', `/api/v1/service-staff/${staffId}/time-off`, { ...last, keepAppointments: true }, { idempotencyKey: key });
     if (r.ok) close();
   }
   return (
@@ -291,9 +300,59 @@ function TimeOffFields({ close, staffId, timezone }: { close: () => void; staffI
       <div className="col-span-full flex flex-wrap items-center gap-2">
         <button className="btn btn-primary" disabled={pending}>{t('common.add')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
-        <FormError message={general(error)} />
+        {error?.code !== 'STAFF_HAS_APPOINTMENTS' && <FormError message={general(error)} />}
       </div>
+      {error?.code === 'STAFF_HAS_APPOINTMENTS' && <BookingsConflict details={error.details} timezone={timezone} pending={pending} keepLabel={t('sstaff.keepAndAddTimeOff')} onKeep={() => void keep()} />}
     </form>
+  );
+}
+
+/**
+ * Archiving someone or giving them time off over open bookings (audit 2026-10-21): the API lists the
+ * first few; the manager opens them to reassign or cancel, or goes ahead and keeps them for later.
+ */
+function BookingsConflict({ details, timezone, pending, keepLabel, onKeep }: { details?: Record<string, unknown>; timezone: string; pending: boolean; keepLabel: string; onKeep: () => void }) {
+  const { t, lang } = useT();
+  const count = Number(details?.count ?? 0);
+  const list = (details?.appointments as { id: string; startsAt: string }[] | undefined) ?? [];
+  return (
+    <div role="alert" className="col-span-full grid gap-2 rounded-md border border-red/40 px-4 py-3 text-[0.9375rem]">
+      <p className="font-semibold">{t('sstaff.hasBookings', { count })}</p>
+      <ul className="grid gap-0.5">
+        {list.map((a) => {
+          const p = localParts(a.startsAt, timezone);
+          return <li key={a.id}><Link href={`/appointments/${a.id}`} className="underline">{formatDate(p.date, lang)} {p.time}</Link></li>;
+        })}
+        {count > list.length && <li className="text-muted">{t('sstaff.moreBookings', { n: count - list.length })}</li>}
+      </ul>
+      <p className="text-[0.875rem] text-muted">{t('sstaff.hasBookingsHint')}</p>
+      <div><button type="button" className="btn btn-danger" disabled={pending} onClick={onKeep}>{keepLabel}</button></div>
+    </div>
+  );
+}
+
+/** Archive a staff member; open bookings are listed first, and kept only on purpose. */
+export function ArchiveStaff({ staffId, name, timezone }: { staffId: string; name: string; timezone: string }) {
+  const { t } = useT();
+  const { pending, submit, error } = useSubmit();
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        className="btn"
+        disabled={pending}
+        onClick={() => {
+          if (window.confirm(t('sstaff.archiveConfirm', { name }))) void submit('PATCH', `/api/v1/service-staff/${staffId}`, { archived: true });
+        }}
+      >
+        {t('sstaff.archive')}
+      </button>
+      {error?.code === 'STAFF_HAS_APPOINTMENTS' ? (
+        <BookingsConflict details={error.details} timezone={timezone} pending={pending} keepLabel={t('sstaff.keepAndArchive')} onKeep={() => void submit('PATCH', `/api/v1/service-staff/${staffId}`, { archived: true, keepAppointments: true })} />
+      ) : (
+        <FormError message={error?.message} />
+      )}
+    </span>
   );
 }
 

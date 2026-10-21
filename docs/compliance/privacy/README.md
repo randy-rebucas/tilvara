@@ -102,3 +102,8 @@ These are gaps in the system, recorded in `docs/LEFTOVER.md` as well:
 5. Breach notification to businesses: is a contractual target of 24 hours right?
 6. Hosting outside the Philippines (D1): acceptable, and what the agreement must say.
 7. The audit log keeps sign-in events and who did what for as long as the fiscal records. Proportionate?
+8. **Salon service notes** (processing register §15a) can hold allergies and other health information.
+   Since 2026-10-21 they are shown only to the business's own staff who hold `customers.read`. They are
+   refused to the business's API keys (third-party integrations) and to Tilvara support sessions, and
+   appointment notes are blanked for both. Is that the right line? Should staff need a separate
+   permission to read them, beyond `customers.read` (which cashiers hold)?

@@ -16,6 +16,7 @@ import {
   roomStatusChanges,
   roomTypes,
   sql,
+  stays,
   taxCategories,
   unitsOfMeasure,
   users,
@@ -101,8 +102,14 @@ export class LodgingSetupService extends TenantService {
     return this.read(auth, async (db) => (await this.typeViews(db, [await this.loadType(db, id)]))[0]!);
   }
 
+  /** Room types are business-wide (no branch): set up with a business-wide grant, never a branch one. */
   createRoomType(auth: AuthContext, input: CreateRoomTypeInput) {
-    this.assertHolds(auth, 'lodging.setup');
+    this.assertCan(auth, 'lodging.setup');
+    // Without a night item given, one is made and priced on the default list: the catalog's own rules.
+    if (!input.nightVariantId) {
+      this.assertCan(auth, 'catalog.manage');
+      this.assertCan(auth, 'prices.manage');
+    }
     return this.mutate(auth, async (db) => {
       await assertLodging(db);
       const tenantId = tenantOf(auth).tenantId;
@@ -117,7 +124,7 @@ export class LodgingSetupService extends TenantService {
   }
 
   updateRoomType(auth: AuthContext, id: string, input: UpdateRoomTypeInput) {
-    this.assertHolds(auth, 'lodging.setup');
+    this.assertCan(auth, 'lodging.setup');
     return this.mutate(auth, async (db) => {
       await assertLodging(db);
       const row = await this.loadType(db, id);
@@ -265,13 +272,14 @@ export class LodgingSetupService extends TenantService {
       this.assertCan(auth, 'lodging.read', scope);
       const { rows } = await db.execute<{
         id: string; number: string; floor: string | null; room_type_id: string; type_code: string; type_name: string; status: string;
-        changed_at: string | null; changed_by: string | null; note: string | null; occupied: boolean; departing: boolean; arriving: boolean; today: string;
+        changed_at: string | null; changed_by: string | null; note: string | null; occupied: boolean; departing: boolean; overstay: boolean; arriving: boolean; today: string;
       }>(sql`
         WITH today AS (SELECT (now() AT TIME ZONE ${branch.timezone})::date AS d)
         SELECT r.id, r.number, r.floor, r.room_type_id, t.code AS type_code, t.name AS type_name, r.housekeeping_status AS status,
                c.changed_at::text, u.display_name AS changed_by, c.note,
                EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status = 'IN_HOUSE') AS occupied,
                EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status = 'IN_HOUSE' AND s.departure_date <= today.d) AS departing,
+               EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status = 'IN_HOUSE' AND s.departure_date < today.d) AS overstay,
                EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status = 'BOOKED' AND s.arrival_date <= today.d) AS arriving,
                today.d::text AS today
           FROM rooms r JOIN room_types t ON t.id = r.room_type_id CROSS JOIN today
@@ -285,7 +293,7 @@ export class LodgingSetupService extends TenantService {
         data: rows.map((r) => ({
           roomId: r.id, number: r.number, floor: r.floor, roomType: { id: r.room_type_id, code: r.type_code, name: r.type_name }, status: r.status,
           lastChange: r.changed_at ? { at: r.changed_at, byName: r.changed_by, note: r.note } : null,
-          occupied: r.occupied, departingToday: r.departing, arrivingToday: r.arriving,
+          occupied: r.occupied, overstay: r.overstay, departingToday: r.departing, arrivingToday: r.arriving,
         })),
       };
     });
@@ -436,6 +444,8 @@ export class LodgingSetupService extends TenantService {
   private async roomViews(db: Database, rows: RoomRow[]) {
     if (!rows.length) return [];
     const types = await db.select({ id: roomTypes.id, code: roomTypes.code, name: roomTypes.name }).from(roomTypes).where(inArray(roomTypes.id, [...new Set(rows.map((r) => r.roomTypeId))]));
-    return rows.map((r) => ({ ...r, roomType: types.find((t) => t.id === r.roomTypeId) ?? null }));
+    // Occupied: a guest in house holds the room, whatever its housekeeping status (no status value of its own).
+    const held = await db.select({ roomId: stays.roomId, stayId: stays.id }).from(stays).where(and(inArray(stays.roomId, rows.map((r) => r.id)), eq(stays.status, 'IN_HOUSE')));
+    return rows.map((r) => ({ ...r, roomType: types.find((t) => t.id === r.roomTypeId) ?? null, occupied: held.some((h) => h.roomId === r.id), occupiedByStayId: held.find((h) => h.roomId === r.id)?.stayId ?? null }));
   }
 }

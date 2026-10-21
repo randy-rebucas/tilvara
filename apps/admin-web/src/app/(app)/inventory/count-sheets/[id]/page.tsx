@@ -6,8 +6,9 @@ import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { SheetCounter } from '../../sheets';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Count sheet' };
+export const generateMetadata = pageTitle('inventory.count-sheets.item');
 
 export default async function CountSheetPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

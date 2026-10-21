@@ -144,11 +144,17 @@ export async function postDueNights(db: Database, tax: TaxService, stayId: strin
   return posted;
 }
 
-/** In-house stays of a branch (or every branch) whose nights may be due: the night audit's work list. */
-export async function inHouseStays(db: Database, branchId?: string): Promise<Pick<StayRow, 'id' | 'branchId'>[]> {
-  const { rows } = await db.execute<{ id: string; branch_id: string }>(sql`
-    SELECT id, branch_id FROM stays WHERE status = 'IN_HOUSE' ${branchId ? sql`AND branch_id = ${branchId}` : sql``} ORDER BY id`);
-  return rows.map((r) => ({ id: r.id, branchId: r.branch_id }));
+/**
+ * In-house stays of a branch (or every branch) whose nights may be due: the night audit's work list.
+ * `overstay`: the guest is still in house after their departure date (in the branch's calendar). The
+ * night audit charges no night past the departure; check-out extends the stay to today first.
+ */
+export async function inHouseStays(db: Database, branchId?: string): Promise<(Pick<StayRow, 'id' | 'branchId'> & { overstay: boolean })[]> {
+  const { rows } = await db.execute<{ id: string; branch_id: string; overstay: boolean }>(sql`
+    SELECT s.id, s.branch_id, s.departure_date < (now() AT TIME ZONE b.timezone)::date AS overstay
+      FROM stays s JOIN branches b ON b.id = s.branch_id
+     WHERE s.status = 'IN_HOUSE' ${branchId ? sql`AND s.branch_id = ${branchId}` : sql``} ORDER BY s.id`);
+  return rows.map((r) => ({ id: r.id, branchId: r.branch_id, overstay: r.overstay }));
 }
 
 export const nightAuditBusy = () => new AppError('NIGHT_AUDIT_BUSY', 'The night audit is running; try again in a moment', HttpStatus.CONFLICT);

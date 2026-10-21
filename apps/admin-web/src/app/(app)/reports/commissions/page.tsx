@@ -5,8 +5,9 @@ import type { CommissionsReport } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Commissions' };
+export const generateMetadata = pageTitle('reports.commissions');
 
 /**
  * Commissions (ADR-0022 §5): per staff member, the rate kept on each line at the sale × the line's

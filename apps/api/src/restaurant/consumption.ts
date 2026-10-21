@@ -3,6 +3,7 @@ import { and, desc, inArray, lte, recipeIngredients, recipeVersions, stockAdjust
 import { Dec, quantity as qty4, toDec } from '@1pos/money';
 import { post } from '../accounting/ledger.js';
 import { effectiveNowSql } from '../common/clock.js';
+import { openPacksForSale } from '../inventory/packs.service.js';
 
 export interface ConsumingLine {
   saleLineId: string;
@@ -15,6 +16,12 @@ export interface ConsumingLine {
    * consume exactly what the whole dish would (a trace amount is not lost to rounding on each share).
    */
   soldBefore?: string;
+  /**
+   * Set when a check of this bill line was voided (audit 2026-10-21): how much of the line was consumed
+   * by every check so far, voided ones included (cooked food is never restocked). A share paid again
+   * consumes only what goes beyond it.
+   */
+  consumedBefore?: string;
 }
 
 export interface PlannedConsumption {
@@ -58,6 +65,13 @@ const consumedShare = (before: string, share: string, perUnit: string) => {
   return q.isZero() ? null : q.negated().toString();
 };
 
+/** A share paid again after a voided check: rounded max(consumed, before + share) × recipe less rounded consumed × recipe. */
+const consumedAgain = (consumedSoFar: string, before: string, share: string, perUnit: string) => {
+  const upTo = Dec.max(toDec(consumedSoFar), toDec(before).plus(share));
+  const q = qty4(upTo.times(perUnit)).minus(qty4(toDec(consumedSoFar).times(perUnit)));
+  return q.lte(0) ? null : q.negated().toString();
+};
+
 /**
  * Ingredient movements for sold lines (ADR-0014 §4): for each line whose item has a recipe version
  * in force (DB clock), one CONSUMPTION per ingredient = sold quantity × recipe quantity, rounded to
@@ -71,7 +85,9 @@ export async function planConsumption(db: Database, lines: ConsumingLine[]): Pro
     if (!recipe) return [];
     // A trace amount that rounds to 0 at 4 dp moves nothing (the ledger refuses zero rows).
     return recipe.ingredients.flatMap((i) => {
-      const quantity = line.soldBefore ? consumedShare(line.soldBefore, line.quantity, i.quantity) : consumed(line.quantity, i.quantity);
+      const quantity = line.consumedBefore
+        ? consumedAgain(line.consumedBefore, line.soldBefore ?? '0', line.quantity, i.quantity)
+        : line.soldBefore ? consumedShare(line.soldBefore, line.quantity, i.quantity) : consumed(line.quantity, i.quantity);
       return quantity ? [{ saleLineId: line.saleLineId, variantId: i.variantId, quantity, recipeVersionId: recipe.recipeVersionId }] : [];
     });
   });
@@ -86,7 +102,11 @@ export async function planConsumption(db: Database, lines: ConsumingLine[]): Pro
  */
 export async function recordPreparedWaste(
   db: Database,
-  p: { tenantId: string; branchId: string; legalEntityId: string; reason: string; userId: string; items: { variantId: string; quantity: string; tracked: boolean }[] },
+  p: {
+    tenantId: string; branchId: string; legalEntityId: string; reason: string; userId: string; items: { variantId: string; quantity: string; tracked: boolean }[];
+    /** Waste taken from the shelf (a void after preparation): pieces short come out of packs, as a sale's would (ADR-0020 §2). */
+    openPacks?: boolean;
+  },
 ): Promise<string | null> {
   const recipes = await recipesInForce(db, p.items.filter((i) => !i.tracked).map((i) => i.variantId));
   const out = new Map<string, Dec>();
@@ -98,6 +118,14 @@ export async function recordPreparedWaste(
     else for (const ing of recipes.get(i.variantId)?.ingredients ?? []) add(ing.variantId, consumed(i.quantity, ing.quantity));
   }
   if (!out.size) return null;
+  // Opening locks every balance involved in variant order first, as the movements below then do.
+  if (p.openPacks) {
+    await openPacksForSale(
+      db,
+      { tenantId: p.tenantId, branchId: p.branchId, legalEntityId: p.legalEntityId, userId: p.userId, reason: p.reason },
+      [...out.entries()].map(([variantId, quantity]) => ({ variantId, quantity: quantity.negated().toString() })),
+    );
+  }
   const [doc] = await db.insert(stockAdjustments).values({ tenantId: p.tenantId, branchId: p.branchId, kind: 'WASTE', reason: p.reason, createdBy: p.userId }).returning({ id: stockAdjustments.id });
   const rows = await db
     .insert(stockMovements)

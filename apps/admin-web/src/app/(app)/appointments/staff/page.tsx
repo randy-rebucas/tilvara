@@ -8,8 +8,9 @@ import { AppointmentsChrome, appointmentsAccess, appointmentsBranch, staffColor 
 import { hoursLine } from '../data';
 import { STAFF_COLOURS } from '@/lib/calendar';
 import { AddStaff } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Staff' };
+export const generateMetadata = pageTitle('appointments.staff');
 
 /**
  * Service staff of a branch (ADR-0022 §2): the people who perform services, whether or not they sign

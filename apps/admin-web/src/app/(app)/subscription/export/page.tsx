@@ -6,8 +6,9 @@ import { apiOrNull, type DataExport } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { SubscriptionTabs } from '../tabs';
 import { DownloadButton, RequestExportButton } from './export-actions';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Your records' };
+export const generateMetadata = pageTitle('subscription.export');
 
 /** Bytes as KB/MB for people (the exact size and checksum are shown too). */
 function size(bytes: number | null): string {

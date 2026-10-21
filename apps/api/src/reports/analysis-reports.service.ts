@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { branches, categories, eq, isNull, sql, type Database } from '@1pos/database';
+import { movementAt, movementSaleJoin } from './movement-time.js';
 import { Dec, toDec } from '@1pos/money';
 import type { ConsolidatedRangeQuery } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -59,9 +60,9 @@ export class AnalysisReportsService extends ReportsService {
            GROUP BY 1),
         cost AS (
           SELECT p.category_id, -sum(m.value) AS cogs
-            FROM stock_movements m LEFT JOIN sale_lines l ON m.type = 'CONSUMPTION' AND l.id = m.sale_line_id
+            FROM stock_movements m LEFT JOIN sale_lines l ON m.type = 'CONSUMPTION' AND l.id = m.sale_line_id ${movementSaleJoin}
             JOIN product_variants v ON v.id = coalesce(l.variant_id, m.variant_id) JOIN products p ON p.id = v.product_id
-           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND m.created_at < ${w.end}
+           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND ${movementAt} >= ${w.start} AND ${movementAt} < ${w.end}
            GROUP BY 1),
         cats AS (SELECT category_id FROM sold UNION SELECT category_id FROM back UNION SELECT category_id FROM cost)
         SELECT cats.category_id,

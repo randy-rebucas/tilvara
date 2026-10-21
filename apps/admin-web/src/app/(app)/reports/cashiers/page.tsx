@@ -4,8 +4,9 @@ import type { ByCashier } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by cashier' };
+export const generateMetadata = pageTitle('reports.cashiers');
 
 /** Who rang up what, and the returns each person processed. */
 export default async function ByCashierPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

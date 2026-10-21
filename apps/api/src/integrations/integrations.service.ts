@@ -71,6 +71,11 @@ export class IntegrationsService extends TenantService {
   createKey(auth: AuthContext, input: CreateApiKeyInput) {
     return this.mutate(auth, async (db) => {
       await this.guard(db, auth);
+      // A key's scopes become business-wide grants: the maker must hold each one business-wide.
+      const notHeld = input.scopes.filter((s) => !this.can(auth, s));
+      if (notHeld.length > 0) {
+        throw new AppError('SCOPE_NOT_HELD', 'A key can only read what you can read across the whole business', HttpStatus.FORBIDDEN, { scopes: notHeld });
+      }
       if (input.expiresAt && new Date(input.expiresAt).getTime() <= (await dbNow(db)).getTime()) {
         throw unprocessable('EXPIRY_IN_PAST', 'A key must expire in the future', { path: ['expiresAt'] });
       }

@@ -8,6 +8,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ApiMetrics, BUSINESS_GAUGES } from '../../src/infrastructure/metrics.js';
 import { MonitoringService } from '../../src/infrastructure/monitoring.service.js';
+import { NightAuditScheduler } from '../../src/lodging/night-audit.scheduler.js';
 import { addMember, bearer, createApp, loginToken, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
 
 /**
@@ -237,16 +238,22 @@ describe('request counters', () => {
 
 describe('business gauges', () => {
   it('equal independent counts, as fixed label sets with no tenant data', async () => {
+    // Other suites may write meanwhile (they share the database): each count is taken just before and
+    // just after the scrape, and the gauge must lie between the two.
+    const counts: [string, string, unknown[]][] = [
+      ...['PENDING', 'PROCESSING', 'DEAD'].map((s): [string, string, unknown[]] => [`onepos_outbox_events{status="${s}"}`, 'SELECT count(*) AS n FROM outbox_events WHERE status = $1', [s]]),
+      ['onepos_offline_sales_quarantined', "SELECT count(*) AS n FROM terminal_transactions WHERE status = 'QUARANTINED'", []],
+      ['onepos_cashier_sessions_awaiting_approval', "SELECT count(*) AS n FROM cashier_sessions WHERE status = 'CLOSED'", []],
+    ];
+    const before = await Promise.all(counts.map(([, q, p]) => platformCount(q, p)));
     const text = await scrape();
+    const after = await Promise.all(counts.map(([, q, p]) => platformCount(q, p)));
     expect(sample(text, 'onepos_db_up')).toBe(1);
-    for (const status of ['PENDING', 'PROCESSING', 'DEAD']) {
-      expect([status, sample(text, `onepos_outbox_events{status="${status}"}`)]).toEqual([
-        status,
-        await platformCount('SELECT count(*) AS n FROM outbox_events WHERE status = $1', [status]),
-      ]);
-    }
-    expect(sample(text, 'onepos_offline_sales_quarantined')).toBe(await platformCount("SELECT count(*) AS n FROM terminal_transactions WHERE status = 'QUARANTINED'"));
-    expect(sample(text, 'onepos_cashier_sessions_awaiting_approval')).toBe(await platformCount("SELECT count(*) AS n FROM cashier_sessions WHERE status = 'CLOSED'"));
+    counts.forEach(([metric], i) => {
+      const [lo, hi] = [Math.min(before[i]!, after[i]!), Math.max(before[i]!, after[i]!)];
+      const v = sample(text, metric) ?? Number.NaN;
+      expect([metric, v, v >= lo && v <= hi]).toEqual([metric, v, true]);
+    });
 
     // Every business gauge is exported, and its only label values are statuses.
     for (const [name, def] of Object.entries(BUSINESS_GAUGES)) {
@@ -268,6 +275,31 @@ describe('business gauges', () => {
              has_function_privilege('onepos_worker', p.oid, 'EXECUTE') AS worker
         FROM pg_proc p WHERE p.proname = 'platform_metrics'`);
     expect(fn).toEqual({ owner: 'onepos_platform', secdef: true, app: true, readonly: false, worker: false });
+  });
+});
+
+describe('night audit (audit 2026-10-21 §3)', () => {
+  it('a stay whose nights fell due more than a day ago shows in the gauge; the scheduler posts them and counts them', async () => {
+    const day = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(Date.now() + days * 86_400_000));
+    const t = await signup(app, 'mon-hotel');
+    const auth = bearer(t.access);
+    const idem = (path: string, body: object) => http().post(path).set(auth).set('Idempotency-Key', randomUUID()).send(body);
+    await http().patch('/v1/business').set(auth).send({ businessType: 'LODGING' }).expect(200);
+    const le = (await http().post('/v1/legal-entities').set(auth).send({ registeredName: 'Mon Hotel Corp', vatStatus: 'VAT' }).expect(201)).body.id;
+    const h1 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le, code: 'H1', name: 'H1' }).expect(201)).body.id;
+    await http().patch(`/v1/branches/${h1}/lodging-settings`).set(auth).send({ nightAuditTime: '00:00' }).expect(200);
+    const type = (await idem('/v1/room-types', { code: 'STD', name: 'Standard', baseOccupancy: 2, maxOccupancy: 3, rackRate: '2800.00' }).expect(201)).body.id;
+    const room = (await idem('/v1/rooms', { branchId: h1, roomTypeId: type, number: '101' }).expect(201)).body.id;
+    const guest = { fullName: 'Liza Reyes', nationality: 'Filipino', idType: 'Passport', idNumber: 'P1234567', address: 'Quezon City' };
+    // In since three days ago: the night three days ago fell due (at 00:00 two days ago) more than a day ago.
+    await idem('/v1/stays', { branchId: h1, roomId: room, arrivalDate: day(-3), departureDate: day(1), guests: [guest], checkIn: true }).expect(201);
+    expect(sample(await scrape(), 'onepos_lodging_stays_nights_overdue')).toBeGreaterThanOrEqual(1);
+
+    const posted = metrics.nightAudit.get({ outcome: 'posted' });
+    const pass = await app.get(NightAuditScheduler).runOnce();
+    expect(pass.find((p) => p.tenantId === t.tenantId)).toMatchObject({ nights: 3, failed: 0 });
+    expect(metrics.nightAudit.get({ outcome: 'posted' }) - posted).toBe(pass.reduce((a, p) => a + p.nights, 0));
+    expect(await scrape()).toMatch(/^onepos_night_audit_total\{outcome="posted"\} \d+$/m);
   });
 });
 

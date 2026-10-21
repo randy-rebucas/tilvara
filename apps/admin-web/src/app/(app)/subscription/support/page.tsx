@@ -7,8 +7,9 @@ import { apiOrNull, type SupportGrant } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { SubscriptionTabs } from '../tabs';
 import { GiveAccessForm } from './support-forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Support access' };
+export const generateMetadata = pageTitle('subscription.support');
 
 export default async function SupportAccessPage() {
   const { t, lang } = await getT();

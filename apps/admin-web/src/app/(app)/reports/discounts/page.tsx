@@ -5,8 +5,9 @@ import type { DiscountsReport } from '@/lib/api';
 import { formatDateTime, peso, signOf } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Discounts and price changes' };
+export const generateMetadata = pageTitle('reports.discounts');
 
 /** Every line sold off its list price: discounts at the counter and approved price changes, with who did each. */
 export default async function DiscountsPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

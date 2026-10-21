@@ -5,8 +5,9 @@ import type { TipsByStaffReport } from '@/lib/api';
 import { peso, signOf } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Tips by staff' };
+export const generateMetadata = pageTitle('reports.staff-tips');
 
 /**
  * Tips per staff member (ADR-0022 §7): their shares of the tips on the period's sales, less shares

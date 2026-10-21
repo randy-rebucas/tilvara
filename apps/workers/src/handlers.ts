@@ -1,5 +1,5 @@
-import { appointmentReminderMail, eq, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
-import { maskEmail } from '@1pos/observability';
+import { appointmentReminderMail, eq, expiredSoldMail, expiryAlertMail, laundryNotice, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
+import { maskEmail, maskPhone } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
 
@@ -17,6 +17,22 @@ export class DevWorkerMailer implements WorkerMailer {
   }
 }
 
+/** Text messages (ADR-0024 §6). A provider adapter replaces the dev one once one is chosen (D7). */
+export interface SmsSender {
+  send(message: { to: string; text: string; template: string }): Promise<{ reference: string | null }>;
+}
+
+/** Dev SMS sender: logs the template, a masked number and the length only; stores nothing. Refused in production by @1pos/config. */
+export class DevSmsSender implements SmsSender {
+  readonly sent: { to: string; text: string; template: string }[] = [];
+  constructor(private readonly logger: Logger) {}
+  async send(message: { to: string; text: string; template: string }): Promise<{ reference: string | null }> {
+    this.sent.push(message);
+    this.logger.info('[dev sms]', { template: message.template, to: maskPhone(message.to), length: message.text.length });
+    return { reference: null };
+  }
+}
+
 export interface ExportOptions {
   storage: FileStorage;
   /** Days a finished export stays downloadable. */
@@ -27,7 +43,12 @@ export interface ExportOptions {
 
 export const exportKey = (tenantId: string, exportId: string) => `exports/${tenantId}/${exportId}.zip`;
 
-export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Record<string, OutboxHandler> {
+/** Counts each laundry notice channel's outcome (the worker's metrics; `WorkerMonitor`). */
+export interface NoticeMetrics {
+  recordLaundryNotice(channel: 'email' | 'sms', outcome: 'SENT' | 'SKIPPED' | 'FAILED'): void;
+}
+
+export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions, sms?: SmsSender, metrics?: NoticeMetrics): Record<string, OutboxHandler> {
   return withWebhooks({
     /** Welcome email to the owner. RLS guarantees we can only read users of this event's tenant. */
     'tenant.onboarded': async (event, db) => {
@@ -51,11 +72,50 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
         await mailer.send({ to: k.email, template: 'stock.expiring', ...mail });
       }
     },
+    // A sale that took expired or held stock where it is blocked (ADR-0025 §4): an offline sale, a recipe.
+    'stock.expired_sold': async (event, _db, { client }) => {
+      const mail = await expiredSoldMail(client, event.payload);
+      if (!mail) return;
+      for (const k of await stockKeepers(client, String(event.payload.branchId ?? ''))) {
+        await mailer.send({ to: k.email, template: 'stock.expired_sold', ...mail });
+      }
+    },
     // A day-before reminder to the customer (ADR-0022 §10), flagged by the hourly pass. Ids only in the event.
     'appointment.reminder': async (event, _db, { client }) => {
       const mail = await appointmentReminderMail(client, event.payload);
       if (!mail) return; // cancelled, moved, turned off or no address since: nothing to send
       await mailer.send({ ...mail, template: 'appointment.reminder' });
+    },
+    // A laundry's "ready for pickup" notice, a reminder or the final notice (ADR-0024 §6), queued by the
+    // API or the hourly pass. Each channel is tried once; the outcome is settled on the notice row.
+    'job_order.notice': async (event, _db, { client }) => {
+      const notice = await laundryNotice(client, event.payload);
+      if (!notice) return; // settled already (a retry), or gone
+      const outcome = { email: 'SKIPPED', emailTo: null as string | null, sms: 'SKIPPED', smsTo: null as string | null, reference: null as string | null };
+      if (!notice.skip) {
+        const template = `job_order.${notice.kind.toLowerCase()}`;
+        if (notice.email) {
+          outcome.emailTo = maskEmail(notice.email.to);
+          try {
+            await mailer.send({ ...notice.email, template });
+            outcome.email = 'SENT';
+          } catch {
+            outcome.email = 'FAILED';
+          }
+        }
+        if (notice.sms && sms) {
+          outcome.smsTo = maskPhone(notice.sms.to);
+          try {
+            outcome.reference = (await sms.send({ ...notice.sms, template })).reference;
+            outcome.sms = 'SENT';
+          } catch {
+            outcome.sms = 'FAILED';
+          }
+        }
+      }
+      await client.query('SELECT laundry_notice_settle($1, $2, $3, $4, $5, $6)', [notice.noticeId, outcome.email, outcome.emailTo, outcome.sms, outcome.smsTo, outcome.reference]);
+      metrics?.recordLaundryNotice('email', outcome.email as 'SENT' | 'SKIPPED' | 'FAILED');
+      metrics?.recordLaundryNotice('sms', outcome.sms as 'SENT' | 'SKIPPED' | 'FAILED');
     },
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
   });

@@ -54,6 +54,9 @@ export interface ReceiptInput {
     staff?: string | null;
     /** A session of a prepaid package (ADR-0022 §6): printed as such at ₱0.00. */
     packageSession?: boolean;
+    /** A medicine (ADR-0025 §3, §5): "generic strength form" under the brand, and the lots it came from. */
+    drugLabel?: string | null;
+    lots?: { lotCode: string | null; expiresOn: string }[];
   }[];
   /** A tip given with the sale (session 25): printed below the payment, never in the totals. */
   tip?: { method: string; amount: string } | null;
@@ -63,7 +66,8 @@ export interface ReceiptInput {
   roomCharge?: { roomNumber: string; guestSurname: string | null; amount: string } | null;
   /** `exchangeReturnNumber`: this cash is the refund of that return, put towards this sale (an exchange). */
   tenders: { method: string; amount: string; tendered: string; change: string; exchangeReturnNumber?: number | null }[];
-  beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
+  /** `purchaseBooklet` (ADR-0025 §8): set when the discount covered a medicine. */
+  beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
   /** Charges that are not items (service charge, ADR-0014 §9); included in the sale totals. */
   /** `gross` is the charge ex VAT (its sales); `amountDue` adds its VAT. */
   charges?: { kind: string; rate: string; gross: string; amountDue: string; vatTreatment: string }[];
@@ -109,6 +113,8 @@ export interface ReturnReceiptInput extends Pick<ReceiptInput, 'invoicingMode' |
     amountDue: string;
   };
   lines: { name: string; quantity: string; unitPrice: string; amountDue: string; vatTreatment: string; vatableSales: string; vatExemptSales: string; disposition: string }[];
+  /** How a refund split between methods was given back (store credit, folio, cash); omitted when it went one way. */
+  refunds?: { method: string; amount: string }[];
 }
 
 /**
@@ -173,7 +179,7 @@ export function buildReturnReceipt(r: ReturnReceiptInput) {
       ...(positive(r.doc.statutoryDiscount) && { statutoryDiscount: m(r.doc.statutoryDiscount) }),
       refund: m(r.doc.amountDue),
     },
-    tenders: [{ method: r.doc.refundMethod ?? 'CASH', amount: m(r.doc.amountDue) }],
+    tenders: r.refunds?.length ? r.refunds.map((t) => ({ method: t.method, amount: m(t.amount) })) : [{ method: r.doc.refundMethod ?? 'CASH', amount: m(r.doc.amountDue) }],
     statutory: [],
     reason: r.doc.reason,
     legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
@@ -213,6 +219,7 @@ export function buildReceipt(r: ReceiptInput) {
       discount: discount.toFixed(2),
       // In-store statutory discounts need the beneficiary's signature (PH_COMPLIANCE_ASSUMPTIONS §7).
       signatureLine: true,
+      ...(b.purchaseBooklet != null && { purchaseBooklet: b.purchaseBooklet }),
     };
   });
 
@@ -244,6 +251,9 @@ export function buildReceipt(r: ReceiptInput) {
       ...(l.promotion && positive(l.discount) && { promotion: l.promotion }),
       ...(l.staff && { staff: l.staff }),
       ...(l.packageSession && { packageSession: true }),
+      ...(l.drugLabel && { generic: l.drugLabel }),
+      // "Lot A123 · Exp 03/2027" per lot the line was drawn from.
+      ...(l.lots?.length && { lots: l.lots.map((x) => [x.lotCode ? `Lot ${x.lotCode}` : null, `Exp ${x.expiresOn.slice(5, 7)}/${x.expiresOn.slice(0, 4)}`].filter(Boolean).join(' · ')) }),
       flag: flag(l),
     })),
     // Shown separately, never inside item prices (RA 11360); with its VAT, like the item lines above it.

@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import type { OfflineSale, Snapshot } from '@1pos/sync-protocol';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
@@ -41,7 +42,7 @@ async function store(prefix: string) {
   const c2 = await addMember(owner, t.tenantId, 'cashier', { type: 'BRANCH', id: branchId });
   const m = await addMember(owner, t.tenantId, 'branch_manager', { type: 'BRANCH', id: branchId });
   return {
-    tenantId: t.tenantId, auth, branchId, registerId, register2, product, uoms,
+    tenantId: t.tenantId, auth, branchId, registerId, register2, product, uoms, cashierId: c.userId,
     cashier: bearer(await loginToken(app, c.email)),
     cashier2: bearer(await loginToken(app, c2.email)),
     manager: bearer(await loginToken(app, m.email)),
@@ -66,6 +67,19 @@ const balance = async (s: Store, variantId: string) =>
 const onHand = async (s: Store, variantId: string) => (await balance(s, variantId)).quantity;
 const setPolicy = (s: Store, negativeStockPolicy: string) =>
   http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy, lowStockAlerts: true }).expect(200);
+/** An offline cash sale (ADR-0015) on R1's terminal, priced as the till's snapshot prices it (the quote then). */
+async function offlineSale(s: Store, sessionId: string, lines: { variantId: string; quantity: string }[]) {
+  const t = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.registerId, name: `Till ${randomUUID().slice(0, 4)}` }).expect(201)).body;
+  const headers = { 'x-terminal-id': t.terminal.id, Authorization: `Terminal ${t.credential}` };
+  const snap = (await http().get('/v1/terminal/snapshot').set(headers).expect(200)).body as Snapshot;
+  const amountDue = (await http().post('/v1/tax/quote').set(s.cashier).send({ branchId: s.branchId, lines }).expect(200)).body.totals.amountDue as string;
+  const env: OfflineSale = {
+    terminalTxnId: randomUUID(), deviceSeq: 1, snapshotId: snap.snapshotId, cashierSessionId: sessionId, cashierUserId: s.cashierId,
+    occurredAt: new Date().toISOString(), localReference: `R1-T${snap.terminal.credentialHint}-000001`,
+    lines, tenders: [{ method: 'CASH', tendered: '1000.00' }], amountDue,
+  };
+  return (await http().post('/v1/sync/sales').set(headers).send({ sales: [env] }).expect(200)).body.results[0] as { status: string; code?: string; saleId: string; flags: string[] };
+}
 const q = <T = Record<string, unknown>>(s: Store, text: string, params: unknown[] = []) =>
   asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query(text, params)).rows as T[]);
 
@@ -202,6 +216,35 @@ describe('opening packs', () => {
     expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 
+  it('an offline sale short of pieces opens packs as the SALE, its revaluation posts PACK_OPENING, and the books tie (audit 2026-10-21)', async () => {
+    const s = await store('pk-offline');
+    const { pack, stick } = await cigarettes(s);
+    await stockIn(s, pack, '1');
+    const session = await openSession(s);
+    // 21 sticks from one pack: it opens the pack (20 in at ₱10) and runs one short, flagged never refused (ALLOW).
+    const first = await offlineSale(s, session, [{ variantId: stick, quantity: '21' }]);
+    expect([first.status, first.flags]).toEqual(['RECORDED', []]);
+    const [opening] = await q<{ id: string; sale_id: string; packs: string }>(s, `SELECT id, sale_id, packs::text FROM pack_openings`);
+    expect(opening).toMatchObject({ sale_id: first.saleId, packs: '1.0000' });
+    expect(await q(s, `SELECT type, quantity::text FROM stock_movements WHERE pack_opening_id = $1 ORDER BY type`, [opening!.id]))
+      .toEqual([{ type: 'UNPACK_IN', quantity: '20.0000' }, { type: 'UNPACK_OUT', quantity: '-1.0000' }]);
+    expect(await onHand(s, pack)).toBe('0');
+    expect(await onHand(s, stick)).toBe('-1');
+
+    // A dearer pack (₱240 → ₱12 a stick) opened by the next offline sale revalues the stick sold short: +₱2 to COGS.
+    await stockIn(s, pack, '1', '240.00');
+    const second = await offlineSale(s, session, [{ variantId: stick, quantity: '1' }]);
+    expect(second.status).toBe('RECORDED');
+    const [last] = await q<{ id: string; sale_id: string }>(s, `SELECT id, sale_id FROM pack_openings ORDER BY created_at DESC, id DESC LIMIT 1`);
+    expect(last!.sale_id).toBe(second.saleId);
+    const entry = await q<{ key: string; net: string }>(s, `
+      SELECT a.system_key AS key, sum(l.debit - l.credit)::text AS net FROM journal_entries e JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
+       WHERE e.source_type = 'PACK_OPENING' AND e.source_id = $1 GROUP BY 1 ORDER BY 1`, [last!.id]);
+    expect(entry).toEqual([{ key: 'COGS', net: '2.0000' }, { key: 'INVENTORY', net: '-2.0000' }]);
+    expect(await balance(s, stick)).toMatchObject({ quantity: '18', avgCost: '12.0000', value: '216.00' });
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
   it('respects reservations and automatic opening turned off', async () => {
     const s = await store('pk-reserve');
     const { pack, stick, linkId } = await cigarettes(s);
@@ -237,6 +280,26 @@ describe('opening packs', () => {
     expect(await q(s, `SELECT 1 FROM pack_openings`)).toHaveLength(1);
     expect(await onHand(s, pack)).toBe('0');
     expect(await onHand(s, stick)).toBe('5');
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('under BLOCK an opening by hand and a sale opening packs at once lock pack and piece in one order: both go through (audit 2026-10-21)', async () => {
+    const s = await store('pk-lock-order');
+    const { pack, stick, linkId } = await cigarettes(s);
+    await setPolicy(s, 'BLOCK');
+    const a = await openSession(s, s.cashier, s.registerId);
+    for (let round = 0; round < 3; round++) {
+      await stockIn(s, pack, '2');
+      const [byHand, sold] = await Promise.all([
+        http().post('/v1/stock/pack-openings').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, conversionId: linkId, packs: '1', reason: 'Shelf' }),
+        sell(s, a, [{ variantId: stick, quantity: '20' }], s.cashier),
+      ]);
+      // Two packs cover the one opened by hand and the one the sale may open (if the hand's pieces are not there yet).
+      expect([byHand.status, sold.status]).toEqual([201, 201]);
+    }
+    const opened = (await q(s, `SELECT 1 FROM pack_openings`)).length;
+    expect(await onHand(s, pack)).toBe(String(6 - opened));
+    expect(await onHand(s, stick)).toBe(String(20 * opened - 60));
     expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 });

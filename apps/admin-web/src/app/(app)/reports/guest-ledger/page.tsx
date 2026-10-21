@@ -7,8 +7,9 @@ import { formatDate, peso, signOf } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Guest ledger' };
+export const generateMetadata = pageTitle('reports.guest-ledger');
 
 /**
  * The guest ledger (ADR-0023 §12) of the branch's legal entity, as it stands now: open folios and

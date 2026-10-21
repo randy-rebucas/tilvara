@@ -5,6 +5,9 @@ import { getT } from '@/i18n/server';
 import { api, type Me } from '@/lib/api';
 import { POS_URL } from '@/lib/config';
 import { guideFor, type GuideTopic } from '@/lib/guide';
+import { pageTitle } from '@/i18n/page-title';
+
+export const generateMetadata = pageTitle('help');
 
 /** Where a section's "Open …" button goes when it is not one of the band's tabs. */
 const OWN_PAGE: Partial<Record<GuideTopic, string>> = { start: '/', account: '/account' };

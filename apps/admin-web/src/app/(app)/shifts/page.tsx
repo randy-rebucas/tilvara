@@ -5,8 +5,9 @@ import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type Branch, type CashierSessionRow, type Me, type Member, type Register } from '@/lib/api';
 import { formatDateTime, peso, signed, signOf } from '@/lib/format';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Drawer counts' };
+export const generateMetadata = pageTitle('shifts');
 
 /** How many recently closed shifts to show under the ones waiting. */
 const RECENT = 30;

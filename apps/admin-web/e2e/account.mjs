@@ -81,7 +81,7 @@ try {
   await waitFor(`location.pathname === '/'`);
   check('the name in the band opens the account page', await evaluate(`[...document.querySelectorAll('header a')].some((a) => a.getAttribute('href') === '/account')`));
   check('1440px with a long business name: every tab fits without scrolling, the full name is in the tooltip', await evaluate(`(() => {
-    const nav = document.querySelector('nav[aria-label="Main"]');
+    const nav = document.querySelector('nav[data-testid=main-nav]');
     const link = [...document.querySelectorAll('header a')].find((a) => a.getAttribute('href') === '/account');
     return nav.querySelectorAll('a').length > 10 && nav.scrollWidth <= nav.clientWidth + 1 && link.title.includes(${JSON.stringify(BUSINESS)});
   })()`));

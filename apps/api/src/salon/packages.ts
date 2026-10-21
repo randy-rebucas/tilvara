@@ -201,12 +201,49 @@ export async function recordPackages(
   }
 }
 
+type SoldPackage = typeof customerPackages.$inferSelect;
+
+/**
+ * Which packages a return of `n` units of a package line gives back: unused ones (every service still
+ * holds all its sessions), the last sold first. PACKAGE_USED when fewer are unused.
+ */
+async function chooseUnused(db: Database, sold: SoldPackage[], requests: { saleLineId: string; n: number }[]) {
+  const items = sold.length ? await db.select().from(customerPackageItems).where(inArray(customerPackageItems.customerPackageId, sold.map((p) => p.id))) : [];
+  // A package whose sessions all came back counts as unused.
+  const balances = await itemBalances(db, items.map((i) => i.id));
+  const notWhole = new Set(items.filter((i) => (balances.get(i.id)?.sessions ?? 0) !== i.sessions).map((i) => i.customerPackageId));
+  const out = new Map<string, SoldPackage[]>();
+  for (const r of requests) {
+    const ofLine = sold.filter((p) => p.saleLineId === r.saleLineId).sort((a, b) => b.unitNo - a.unitNo);
+    if (!ofLine.length) continue;
+    const unused = ofLine.filter((p) => !notWhole.has(p.id));
+    if (unused.length < r.n) {
+      throw new AppError('PACKAGE_USED', 'Only packages with no sessions used can be returned', HttpStatus.CONFLICT, { saleLineId: r.saleLineId, unused: unused.length });
+    }
+    out.set(r.saleLineId, unused.slice(0, r.n));
+  }
+  return { chosen: out, items };
+}
+
+/**
+ * The recorded value of the packages a return of a package line would give back (null for another
+ * line). The return's share of the line is exactly this, so Sales returns (4010) nets to zero against
+ * what leaves Prepaid service packages (audit 2026-10-21: a prorated share could differ by a centavo).
+ */
+export async function packageReturnValue(db: Database, saleLineId: string, quantity: Dec): Promise<Dec | null> {
+  const sold = await db.select().from(customerPackages).where(eq(customerPackages.saleLineId, saleLineId));
+  if (!sold.length) return null;
+  const { chosen } = await chooseUnused(db, sold, [{ saleLineId, n: quantity.toNumber() }]);
+  return (chosen.get(saleLineId) ?? []).reduce((a, p) => a.plus(p.value), new Dec(0));
+}
+
 /**
  * A return or void of package lines and sessions (ADR-0022 §6), in the return's transaction:
  * - a package line returns whole unused packages only (PACKAGE_USED otherwise): their sessions and
  *   value leave (REFUNDED), and the liability goes down by exactly their value (`prepaid`);
- * - a session line gives its sessions back (RESTORED) with their share of the value it turned into
- *   sales (`restored`: back from Sales into Prepaid service packages).
+ * - a session line gives its sessions back (RESTORED, naming the line) with their share of the value
+ *   it turned into sales (`restored`: back from Sales into Prepaid service packages).
+ * Whole units and sessions only: the return plan refuses a fraction first.
  */
 export async function returnPackages(
   db: Database,
@@ -217,23 +254,19 @@ export async function returnPackages(
   let restored = new Dec(0);
   const lineIds = lines.map((l) => l.saleLineId);
   if (!lineIds.length) return { prepaid, restored };
+  for (const l of lines) {
+    if (l.customerPackageId && !l.quantity.isInteger()) throw unprocessable('QUANTITY_NOT_ALLOWED', 'Package sessions are returned in whole sessions', { saleLineId: l.saleLineId });
+  }
   const sold = await db.select().from(customerPackages).where(inArray(customerPackages.saleLineId, lineIds));
   for (const id of [...new Set([...sold.map((p) => p.id), ...lines.flatMap((l) => (l.customerPackageId ? [l.customerPackageId] : []))])].sort()) await lockPackage(db, id);
 
   if (sold.length) {
-    const items = await db.select().from(customerPackageItems).where(inArray(customerPackageItems.customerPackageId, sold.map((p) => p.id)));
-    // Unused = every service still holds all its sessions (a package whose sessions all came back counts as unused).
-    const balances = await itemBalances(db, items.map((i) => i.id));
-    const notWhole = new Set(items.filter((i) => (balances.get(i.id)?.sessions ?? 0) !== i.sessions).map((i) => i.customerPackageId));
     for (const l of lines) {
-      const ofLine = sold.filter((p) => p.saleLineId === l.saleLineId).sort((a, b) => b.unitNo - a.unitNo);
-      if (!ofLine.length) continue;
-      const unused = ofLine.filter((p) => !notWhole.has(p.id));
-      const n = l.quantity.toNumber();
-      if (unused.length < n) {
-        throw new AppError('PACKAGE_USED', 'Only packages with no sessions used can be returned', HttpStatus.CONFLICT, { saleLineId: l.saleLineId, unused: unused.length });
-      }
-      for (const pkg of unused.slice(0, n)) {
+      if (sold.some((p) => p.saleLineId === l.saleLineId) && !l.quantity.isInteger()) throw unprocessable('QUANTITY_NOT_ALLOWED', 'A package is returned in whole units', { saleLineId: l.saleLineId });
+    }
+    const { chosen, items } = await chooseUnused(db, sold, lines.map((l) => ({ saleLineId: l.saleLineId, n: l.quantity.toNumber() })));
+    for (const pkgs of chosen.values()) {
+      for (const pkg of pkgs) {
         const its = items.filter((i) => i.customerPackageId === pkg.id);
         await db.insert(customerPackageEntries).values(its.map((i) => ({
           tenantId: ctx.tenantId, customerPackageId: pkg.id, customerPackageItemId: i.id, kind: 'REFUNDED' as const,
@@ -247,11 +280,15 @@ export async function returnPackages(
   for (const l of lines.filter((x) => x.customerPackageId)) {
     const { rows: entries } = await db.execute<{ customer_package_item_id: string; redeemed: number; value: string; restored: number; restored_value: string }>(sql`
       SELECT r.customer_package_item_id, -r.sessions AS redeemed, (-r.value)::text AS value,
-             coalesce((SELECT sum(x.sessions) FROM customer_package_entries x JOIN sale_return_lines rl ON rl.sale_return_id = x.sale_return_id
-                        WHERE x.kind = 'RESTORED' AND x.customer_package_item_id = r.customer_package_item_id AND rl.sale_line_id = r.sale_line_id), 0)::int AS restored,
-             coalesce((SELECT sum(x.value) FROM customer_package_entries x JOIN sale_return_lines rl ON rl.sale_return_id = x.sale_return_id
-                        WHERE x.kind = 'RESTORED' AND x.customer_package_item_id = r.customer_package_item_id AND rl.sale_line_id = r.sale_line_id), 0)::text AS restored_value
-        FROM customer_package_entries r WHERE r.kind = 'REDEEMED' AND r.sale_line_id = ${l.saleLineId}`);
+             coalesce(sum(x.sessions), 0)::int AS restored, coalesce(sum(x.value), 0)::text AS restored_value
+        FROM customer_package_entries r
+        -- What earlier returns gave back of this line: RESTORED entries name their line (rows written
+        -- before they did are matched through their return's lines).
+        LEFT JOIN customer_package_entries x ON x.kind = 'RESTORED' AND x.customer_package_item_id = r.customer_package_item_id
+         AND (x.sale_line_id = r.sale_line_id
+              OR (x.sale_line_id IS NULL AND EXISTS (SELECT 1 FROM sale_return_lines rl WHERE rl.sale_return_id = x.sale_return_id AND rl.sale_line_id = r.sale_line_id)))
+       WHERE r.kind = 'REDEEMED' AND r.sale_line_id = ${l.saleLineId}
+       GROUP BY r.id, r.customer_package_item_id, r.sessions, r.value`);
     const e = entries[0];
     if (!e) continue;
     const sessions = l.quantity.toNumber();
@@ -260,7 +297,7 @@ export async function returnPackages(
     const value = sessions >= left ? toDec(e.value).minus(e.restored_value) : cents(toDec(e.value).times(sessions).dividedBy(e.redeemed));
     await db.insert(customerPackageEntries).values({
       tenantId: ctx.tenantId, customerPackageId: l.customerPackageId!, customerPackageItemId: e.customer_package_item_id, kind: 'RESTORED',
-      sessions, value: value.toString(), saleReturnId: ctx.saleReturnId, createdBy: ctx.userId,
+      sessions, value: value.toString(), saleLineId: l.saleLineId, saleReturnId: ctx.saleReturnId, createdBy: ctx.userId,
     });
     restored = restored.plus(value);
   }

@@ -7,8 +7,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { SubscriptionTabs } from '../tabs';
 import { CreateKeyForm, CreateWebhookForm, RotateSecretButton } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Integrations' };
+export const generateMetadata = pageTitle('subscription.integrations');
 
 interface ApiKey { id: string; name: string; prefix: string; scopes: string[]; createdAt: string; expiresAt: string | null; lastUsedAt: string | null; revokedAt: string | null; createdByName: string | null }
 /** Expired keys answer 401 like revoked ones (the check is in `auth_api_key`). */

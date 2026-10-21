@@ -9,8 +9,9 @@ import { branchLabel, docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { ReceiveTransferForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Transfer' };
+export const generateMetadata = pageTitle('inventory.transfers.item');
 
 export default async function TransferPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ branch?: string }> }) {
   const { id } = await params;

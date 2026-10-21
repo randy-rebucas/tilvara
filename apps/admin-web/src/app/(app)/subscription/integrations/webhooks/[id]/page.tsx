@@ -8,8 +8,9 @@ import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Webhook deliveries' };
+export const generateMetadata = pageTitle('subscription.integrations.webhooks.item');
 
 interface Delivery { id: string; topic: string; status: 'PENDING' | 'DELIVERING' | 'DELIVERED' | 'DEAD'; attempts: number; maxAttempts: number; lastStatusCode: number | null; lastError: string | null; availableAt: string; deliveredAt: string | null; createdAt: string }
 

@@ -6,8 +6,9 @@ import { peso, qty, sumDecimal } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Promotions' };
+export const generateMetadata = pageTitle('reports.promotions');
 
 /** Per promotion (ADR-0021 §1): the sales it priced, the units, the discount it gave and what they sold for, less returns. */
 export default async function PromotionsReportPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

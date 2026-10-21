@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { sql, type BusinessType, type Database } from '@1pos/database';
-import { LODGING_CODES, roleTemplatesFor, servesAppointments, servesLodging, servesTables, type BusinessUpdateInput } from '@1pos/validation';
+import { LODGING_CODES, roleTemplatesFor, servesAppointments, servesLaundry, servesLodging, servesPharmacy, servesTables, type BusinessUpdateInput } from '@1pos/validation';
 import { addRoleTemplates } from '../auth/role-templates.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -18,7 +18,9 @@ type BusinessRow = {
  * The business's own details. Its type decides which features its people see: RETAIL, GROCERY and
  * SALON leave out restaurant service (refused by `assertFeature`), RESTAURANT leaves out selling by
  * weight (screens only), only SALON and HYBRID take appointments (`assertAppointments`, ADR-0022),
- * only LODGING and HYBRID have rooms and stays (`assertLodging`, ADR-0023), HYBRID shows everything. Records are never removed by a change of type.
+ * only LODGING and HYBRID have rooms and stays (`assertLodging`, ADR-0023), only LAUNDRY and HYBRID take job
+ * orders (`assertLaundry`, ADR-0024), only PHARMACY and HYBRID dispense prescription medicines (`assertPharmacy`,
+ * ADR-0025; a pharmacy's branches block expired stock unless set otherwise), HYBRID shows everything. Records are never removed by a change of type.
  */
 @Injectable()
 export class BusinessService extends TenantService {
@@ -67,13 +69,21 @@ export class BusinessService extends TenantService {
           throw new AppError('OPEN_STAYS', 'Check out the guests in house before making this a business without rooms', HttpStatus.CONFLICT, { inHouse: Number(stays!.n) });
         }
       }
+      if (!servesLaundry(input.businessType)) {
+        // Laundry still at the shop or on its way would be left with no way to release it (ADR-0024 §1).
+        const { rows: [jobs] } = await db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM job_orders WHERE status NOT IN ('CLAIMED', 'CANCELLED', 'DISPOSED')`);
+        if (Number(jobs?.n ?? 0) > 0) {
+          throw new AppError('OPEN_JOB_ORDERS', 'Release, cancel or dispose of the open job orders before making this a business without laundry', HttpStatus.CONFLICT, { openJobOrders: Number(jobs!.n) });
+        }
+      }
       const { rows } = await db.execute<BusinessRow>(
         sql`UPDATE tenants SET business_type = ${input.businessType} WHERE id = ${tenantId}
             RETURNING id, slug, name, business_type`,
       );
       // A business that started without table service or appointments has no restaurant or salon roles yet;
       // they come with the type that uses them (existing roles are left as they are).
-      const added = !servesTables(input.businessType) && !servesAppointments(input.businessType) && !servesLodging(input.businessType)
+      const added = !servesTables(input.businessType) && !servesAppointments(input.businessType) && !servesLodging(input.businessType) && !servesLaundry(input.businessType)
+        && !servesPharmacy(input.businessType)
         ? new Map()
         : await addRoleTemplates(db, tenantId, roleTemplatesFor(input.businessType));
       // A salon's front desk becoming a hotel's (ADR-0023 §9): the role it already has gains the lodging codes.

@@ -7,8 +7,9 @@ import { apiOrNull, type Branch, type Count } from '@/lib/api';
 import { formatDateTime, peso, qty, signed } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Count' };
+export const generateMetadata = pageTitle('inventory.counts.item');
 
 
 export default async function CountPage({ params }: { params: Promise<{ id: string }> }) {

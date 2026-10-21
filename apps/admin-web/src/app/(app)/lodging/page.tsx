@@ -10,8 +10,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { NightAuditButton } from './forms';
 import { branchToday, LodgingChrome, lodgingAccess, lodgingBranch, nightsBetween, StayTag } from './chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Front desk' };
+export const generateMetadata = pageTitle('lodging');
 
 /**
  * The front desk (ADR-0023 §4): today's arrivals (bookings due, the late ones first), the guests in
@@ -42,7 +43,9 @@ export default async function FrontDeskPage({ searchParams }: { searchParams: Pr
   const tagFor = (s: StayRow, kind: 'arrive' | 'stay' | 'leave') =>
     kind === 'arrive'
       ? { due: true, label: t(s.arrivalDate < today ? 'lod.late' : 'lod.arrivesToday') }
-      : s.departureDate <= today
+      : s.overstay
+        ? { due: true, label: t('lod.overstay') }
+        : s.departureDate <= today
         ? { due: true, label: t('lod.leavesToday') }
         : { due: false, label: status(s.status) };
 

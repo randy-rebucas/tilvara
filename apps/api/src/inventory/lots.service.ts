@@ -16,6 +16,7 @@ type LotRow = {
   quantity: string;
   avg_cost: string | null;
   days_left: number;
+  held: boolean;
 };
 
 const view = (r: LotRow) => ({
@@ -30,6 +31,8 @@ const view = (r: LotRow) => ({
   value: toDec(r.quantity).times(r.avg_cost ?? '0').toFixed(2),
   /** In the branch's calendar; negative once expired. */
   daysLeft: r.days_left,
+  /** Its batch is on hold (a recall, ADR-0025 §5). */
+  held: r.held,
 });
 
 /**
@@ -51,7 +54,10 @@ export class LotsService extends TenantService {
       this.assertCan(auth, 'inventory.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
       const { rows: [s] } = await db.execute<{ days: number }>(sql`SELECT expiry_alert_days AS days FROM inventory_settings WHERE branch_id = ${branch.id}`);
       const withinDays = q.withinDays ?? (s?.days || 30);
-      const rows = await this.lots(db, branch.id, branch.timezone, sql`AND l.expires_on <= (now() AT TIME ZONE ${branch.timezone})::date + ${withinDays}::int`);
+      // Held lots (a recall, ADR-0025 §5) are listed whatever their date, so they can be written off here.
+      const rows = await this.lots(db, branch.id, branch.timezone, sql`AND (l.expires_on <= (now() AT TIME ZONE ${branch.timezone})::date + ${withinDays}::int
+        OR (l.lot_code IS NOT NULL AND EXISTS (SELECT 1 FROM lot_holds h WHERE h.variant_id = l.variant_id AND h.released_at IS NULL
+              AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code)) AND (h.branch_id IS NULL OR h.branch_id = l.branch_id))))`);
       const data = rows.map(view);
       return {
         withinDays,
@@ -79,7 +85,9 @@ export class LotsService extends TenantService {
   private async lots(db: Database, branchId: string, timezone: string, filter: ReturnType<typeof sql>) {
     const { rows } = await db.execute<LotRow>(sql`
       SELECT l.id, l.variant_id, v.sku, concat_ws(' ', p.name, v.name) AS name, l.expires_on::text, l.lot_code, l.quantity::text,
-             b.avg_cost::text, (l.expires_on - (now() AT TIME ZONE ${timezone})::date)::int AS days_left
+             b.avg_cost::text, (l.expires_on - (now() AT TIME ZONE ${timezone})::date)::int AS days_left,
+             (l.lot_code IS NOT NULL AND EXISTS (SELECT 1 FROM lot_holds h WHERE h.variant_id = l.variant_id AND h.released_at IS NULL
+                AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code)) AND (h.branch_id IS NULL OR h.branch_id = l.branch_id))) AS held
         FROM stock_lots l
         JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
         JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id

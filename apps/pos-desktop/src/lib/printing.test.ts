@@ -1,8 +1,10 @@
 import { encodeEscPos, toText } from '@1pos/escpos';
 import { describe, expect, it } from 'vitest';
-import type { FolioStatement, Receipt } from '../types';
+import type { FolioStatement, JobTicket, Receipt } from '../types';
+import type { KitchenTicketPrint } from '@1pos/pos-offline';
 import { escposDrawer, escposPrinter } from './devices';
-import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable, statementToPrintable, tenderLabel } from './printing';
+import { kitchenSlipToPrintable, serverTicketSlip } from './kitchen';
+import { billToPrintable, jobQuantity, offlineReceiptToPrintable, receiptToPrintable, statementToPrintable, stubToPrintable, tagToPrintable, tenderLabel } from './printing';
 
 const receipt: Receipt = {
   notice: 'THIS IS NOT AN OFFICIAL INVOICE',
@@ -165,5 +167,124 @@ describe('lodging (ADR-0023)', () => {
     expect(text).toContain('BALANCE');
     expect(text).not.toContain('Accommodation tax');
     expect(text).toContain('Guest signature');
+  });
+});
+
+describe('laundry claim stub and bag tag (ADR-0024 §4)', () => {
+  const ticket: JobTicket = {
+    stub: {
+      business: 'Labada Express', legalName: 'Labada Express Inc', branch: 'Cubao', branchAddress: null, timezone: 'Asia/Manila',
+      reference: 'J-000007', claimCode: 'KQ7M2P', receivedAt: '2026-10-21T01:00:00Z', promisedAt: '2026-10-21T07:00:00Z', serviceLevel: 'EXPRESS',
+      customer: 'Maria Santos', weightKg: '2.4', bagCount: 1,
+      lines: [
+        { name: 'Wash-dry-fold (per kilo)', measuredQuantity: '2.4', quantity: '3', unit: 'KG', unitPrice: '35.00', amountDue: '105.00', packageSession: false },
+        { name: 'Express service', measuredQuantity: '1', quantity: '1', unit: null, unitPrice: '50.00', amountDue: '50.00', packageSession: false },
+      ],
+      amountDue: '155.00', depositHeld: '100.00', balance: '55.00',
+      items: [{ label: 'Shirts', count: 6, note: null }], pieces: 6,
+      specialInstructions: 'Separate whites', conditionNotes: 'Stain on one shirt', claimPolicy: 'Unclaimed after 30 days may be donated.', notice: 'Claim stub — not an official receipt',
+    },
+    tag: { reference: 'J-000007', customer: 'Maria Santos', bagCount: 1, serviceLevel: 'EXPRESS', promisedAt: '2026-10-21T07:00:00Z', specialInstructions: 'Separate whites', pieces: 6 },
+  };
+
+  it('prints the claim code, the minimum billed, the down payment and the balance, items, condition and policy', () => {
+    const text = toText(stubToPrintable(ticket), 48);
+    expect(text).toContain('CLAIM CODE KQ7M2P');
+    expect(text).toContain('2.4 kg (min 3) x 35.00');
+    expect(text).toContain('Down payment');
+    expect(text).toMatch(/BALANCE AT PICKUP\s+PHP 55\.00/);
+    expect(text).toContain('6 x Shirts');
+    expect(text).toContain('Stain on one shirt');
+    expect(text).toContain('Unclaimed after 30 days may be donated.');
+    expect(text).toContain('Oct 21, 2026');
+  });
+
+  it('the bag tag has no prices', () => {
+    const text = toText(tagToPrintable(ticket), 32);
+    expect(text).toContain('J-000007');
+    expect(text).toContain('EXPRESS');
+    expect(text).toContain('Separate whites');
+    expect(text).not.toContain('PHP');
+  });
+
+  it('reads quantities by unit and names the down-payment tender', () => {
+    expect(jobQuantity({ measuredQuantity: '2', quantity: '2', unit: 'LOAD' })).toBe('2 loads');
+    expect(jobQuantity({ measuredQuantity: '4', quantity: '4', unit: 'PIECE' })).toBe('4 pc');
+    expect(tenderLabel({ method: 'JOB_DEPOSIT' })).toBe('DOWN PAYMENT');
+  });
+});
+
+describe('medicines on the receipt (ADR-0025)', () => {
+  const pharmacy: Receipt = {
+    ...receipt,
+    lines: [
+      { name: 'Biogesic', quantity: '2', unitPrice: '5.50', amount: '8.80', flag: 'E', generic: 'Paracetamol 500 mg tablet', lots: ['Lot NEW-1 · Exp 03/2027', 'Lot NEW-2 · Exp 05/2027'] },
+      { name: 'Cotton balls', quantity: '1', unitPrice: '20.00', amount: '20.00', flag: 'V' },
+    ],
+    charges: [],
+    statutory: [{ label: 'Senior citizen', name: 'Lola Cruz', idNumber: 'OSCA-123', discount: '2.20', signatureLine: true, purchaseBooklet: true }],
+  };
+
+  it('prints the generic and each lot under the medicine, and the booklet under the SC/PWD details', () => {
+    const text = toText(receiptToPrintable(pharmacy), 48);
+    const lines = text.split('\n');
+    const at = (s: string) => lines.findIndex((l) => l.includes(s));
+    // The detail wraps at the paper width (indented), one medicine's generic and batches together.
+    expect(text).toContain('  2 x 5.50 | Paracetamol 500 mg tablet | Lot\n  NEW-1 - Exp 03/2027 | Lot NEW-2 - Exp 05/2027');
+    expect(at('Paracetamol')).toBeGreaterThan(at('Biogesic'));
+    expect(at('Paracetamol')).toBeLessThan(at('Cotton balls'));
+    expect(lines[at('Cotton balls') + 1]!.trim()).toBe('1 x 20.00');
+    expect(at('Purchase booklet presented')).toBe(at('ID OSCA-123') + 1);
+    // No booklet (false or not a medicine): nothing printed.
+    const without = toText(receiptToPrintable({ ...pharmacy, statutory: [{ ...pharmacy.statutory[0]!, purchaseBooklet: false }] }), 48);
+    expect(without).not.toContain('booklet');
+  });
+
+  it('prints the generic on an offline receipt (no lots offline)', () => {
+    const doc = offlineReceiptToPrintable({
+      localReference: 'R1-TAbCd-000043', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
+      seller: { name: 'Botika', registeredName: 'Botika Inc', tin: null, vatStatus: 'VAT' }, cashierName: 'Maria',
+      lines: [{ name: 'Amoxil 500', quantity: '7', unitPrice: '18.00', amount: '126.00', flag: 'E', generic: 'Amoxicillin 500 mg capsule' }],
+      totals: { gross: '126.00', vatableSales: '0.00', vatAmount: '0.00', vatExemptSales: '126.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', amountDue: '126.00' },
+      tendered: '200.00', change: '74.00', notice: 'OFFLINE',
+    }, '10/17/2026, 10:00:00');
+    expect(toText(doc, 48)).toContain('7 x 18.00 | Amoxicillin 500 mg capsule');
+  });
+});
+
+describe('kitchen slips (session 25; VOID slips, audit 2026-10-21)', () => {
+  const ticket: KitchenTicketPrint = {
+    id: 't1', kind: 'TICKET', ticketNumber: 31, reprint: false, course: 1, courseNote: 'Mains together', firedAt: '2026-10-21T04:00:00Z',
+    station: { id: 's1', code: 'GRILL', name: 'Grill' },
+    order: { orderNumber: 12, orderType: 'DINE_IN', tableCode: 'T4', customerName: null },
+    items: [{ name: 'Burger', quantity: '2', seat: 1, note: null, choices: ['Well done'] }],
+  };
+
+  it('a ticket prints its station, its items with their choices and where the food goes', () => {
+    const text = toText(kitchenSlipToPrintable(serverTicketSlip(ticket, '12:00')), 32);
+    expect(text).toContain('KITCHEN TICKET');
+    expect(text).not.toContain('VOID');
+    expect(text).toContain('Note: Mains together');
+  });
+
+  it('a VOID slip opens with a big VOID, says not to make it, and names the ticket, the table and the voided items', () => {
+    const slip = kitchenSlipToPrintable(serverTicketSlip({ ...ticket, kind: 'VOID', items: [{ name: 'No onions (Burger)', quantity: '1', seat: null, note: null, choices: [] }] }, '12:20'));
+    expect(slip.banner).toBe('*** VOID ***');
+    expect(toText(slip, 32).split('\n')).toEqual([
+      '          *** VOID ***',
+      '             GRILL',
+      '       VOID - DO NOT MAKE',
+      '--------------------------------',
+      'Ticket 31                  12:20',
+      '--------------------------------',
+      '1 x No onions (Burger)',
+      '--------------------------------',
+      'Table T4 - #12',
+    ]);
+    // On the printer the banner is bold and double height.
+    const bytes = Array.from(encodeEscPos(slip, { width: 32 }));
+    expect(bytes.join(',')).toContain([0x1d, 0x21, 0x01].join(','));
+    // A counter sale's slip names the call number and the pickup name.
+    expect(toText(kitchenSlipToPrintable(serverTicketSlip({ ...ticket, kind: 'VOID', order: { orderNumber: 7, orderType: 'COUNTER', tableCode: null, customerName: 'Di' } }, '12:20')), 32)).toContain('#7 Di');
   });
 });

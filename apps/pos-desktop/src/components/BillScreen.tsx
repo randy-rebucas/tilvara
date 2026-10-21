@@ -1,13 +1,14 @@
 import { toDec } from '@1pos/money';
-import { ArrowLeft, Minus, Plus, Printer } from 'lucide-react';
+import { ArrowLeft, Minus, Plus, Printer, UserRound } from 'lucide-react';
 import { forwardRef, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
 import { partOfRest } from '../lib/fraction';
-import { isPositive } from '../lib/money';
+import { gte, isPositive, peso, sub } from '../lib/money';
 import { BILL_NOTICE, billToPrintable } from '../lib/printing';
 import { useTill } from '../lib/till';
-import type { Bill, BillLine, CheckPreview, Order, Receipt as ReceiptData } from '../types';
+import type { Bill, BillLine, CheckPreview, CounterCustomer, Order, Receipt as ReceiptData } from '../types';
+import { CustomerPanel } from './CounterTools';
 import { errorText, PaymentPanel, usePayment, type Notice } from './Payment';
 import { Receipt } from './Receipt';
 import type { Shift } from './Registers';
@@ -67,7 +68,7 @@ const BillSlip = forwardRef<HTMLDivElement, { bill: Bill; branch: string; where:
       <dl className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
         <div className="flex justify-between font-semibold"><dt>TOTAL DUE</dt><dd><Money value={bill.amountDue} /></dd></div>
         <div className="flex justify-between"><dt>VAT</dt><dd><Money value={bill.vatAmount} /></dd></div>
-        {bill.checks.length > 0 && (
+        {bill.checks.some((c) => !c.voided) && (
           <>
             <div className="flex justify-between"><dt>Paid</dt><dd><Money value={bill.amountPaid} /></dd></div>
             <div className="flex justify-between"><dt>Left to pay</dt><dd><Money value={bill.amountRemaining} /></dd></div>
@@ -83,7 +84,7 @@ const BillSlip = forwardRef<HTMLDivElement, { bill: Bill; branch: string; where:
  * A frozen bill (ADR-0014 §8) paid in one or more checks: the rest, an even split, or by item. The
  * server prices each check (preview) and records it as a sale; the till never prorates money itself.
  */
-export function BillScreen({ place, billId, onBack, onDone, lodging = false }: { place: FloorPlace; billId: string; onBack: () => void; onDone: () => void; lodging?: boolean }) {
+export function BillScreen({ place, billId, onBack, onDone, lodging = false, permissions = [] }: { place: FloorPlace; billId: string; onBack: () => void; onDone: () => void; lodging?: boolean; permissions?: string[] }) {
   // Without a drawer (server mode) the bill is shown and printed, but money is taken at a till.
   const shift = place.shift ?? ({ sessionId: '', branch: place.branch } as Shift);
   const { t } = useT();
@@ -98,8 +99,15 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
   const [printError, setPrintError] = useState<string | null>(null);
   const slip = useRef<HTMLDivElement>(null);
   const till = useTill();
+  // The customer the check is for (ADR-0018): purchase history, and their store credit pays first, up to what is due.
+  const [customer, setCustomer] = useState<CounterCustomer | null>(null);
+  const [pickingCustomer, setPickingCustomer] = useState(false);
+  const [usingCredit, setUsingCredit] = useState(false);
+  const creditHere = customer?.storeCredit.find((c) => c.legalEntityId === shift.branch.legalEntityId)?.balance ?? '0.00';
+  const due = preview?.amountDue ?? '0.00';
+  const credit = usingCredit && isPositive(creditHere) ? (gte(creditHere, due) ? due : toDec(creditHere).toFixed(2)) : '0.00';
   // A resort's restaurant charges checks to a guest's room too (ADR-0023 §5.1).
-  const pay = usePayment({ shift, due: preview?.amountDue ?? '0.00', setNotice, allowTip: true, allowRoomCharge: lodging });
+  const pay = usePayment({ shift, due: sub(due, credit), setNotice, allowTip: true, allowRoomCharge: lodging });
 
   const load = useCallback(async () => {
     try {
@@ -164,7 +172,11 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
         api<{ id: string }>(
           'POST',
           `/v1/restaurant/bills/${billId}/checks`,
-          { cashierSessionId: shift.sessionId, ...body, ...(allocations && { allocations }), expectedAmountDue: expected },
+          {
+            cashierSessionId: shift.sessionId, ...body, ...(allocations && { allocations }), expectedAmountDue: expected,
+            ...(customer && { customerId: customer.id }),
+            ...(isPositive(credit) && { tenders: [{ method: 'STORE_CREDIT' as const, amount: credit }, ...body.tenders] }),
+          },
           { 'idempotency-key': key },
         ),
       () => void load(),
@@ -180,6 +192,10 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
 
   function nextCheck() {
     pay.reset();
+    // The next diner pays for themselves: no customer carried over.
+    setCustomer(null);
+    setUsingCredit(false);
+    setPickingCustomer(false);
     setReceipt(null);
     setNotice(null);
     setSplit((s) => (s.kind === 'even' ? { kind: 'even', ways: Math.max(1, s.ways - 1) } : s.kind === 'items' ? { kind: 'items', picked: {} } : s));
@@ -224,6 +240,9 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
   }
 
   const open = bill.lines.filter((l) => !l.parentLineId && !l.fullyPaid);
+  // A voided check paid nothing (its share is owed again); the others are what was paid.
+  const paidChecks = bill.checks.filter((c) => !c.voided);
+  const voidedChecks = bill.checks.filter((c) => c.voided);
   const childrenOf = (id: string) => bill.lines.filter((l) => l.parentLineId === id);
   const locked = pay.intents.length > 0; // a card/QR payment was taken for this amount: keep the split
   const picked = split.kind === 'items' ? split.picked : {};
@@ -280,14 +299,17 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
           <Note className="grid gap-1 p-5">
             <p className="flex items-baseline justify-between"><span className="text-muted">{t('bill.total')}</span><Money value={bill.amountDue} className="text-[1.5rem] font-semibold" /></p>
             <p className="flex justify-between text-[0.9375rem]"><span className="text-muted">{t('totals.vat')}</span><Money value={bill.vatAmount} /></p>
-            {bill.checks.length > 0 && (
+            {paidChecks.length > 0 && (
               <>
-                <p className="flex justify-between text-[0.9375rem]"><span className="text-muted">{t('bill.paidSoFar', { n: String(bill.checks.length) })}</span><Money value={bill.amountPaid} /></p>
+                <p className="flex justify-between text-[0.9375rem]"><span className="text-muted">{t('bill.paidSoFar', { n: String(paidChecks.length) })}</span><Money value={bill.amountPaid} /></p>
                 <p className="flex justify-between font-semibold"><span>{t('bill.left')}</span><Money value={bill.amountRemaining} /></p>
               </>
             )}
           </Note>
-          {bill.status === 'ACTIVE' && bill.checks.length === 0 && (
+          {bill.status === 'ACTIVE' && voidedChecks.length > 0 && (
+            <Callout kind="info">{t('bill.voidedChecks', { n: voidedChecks.map((c) => `#${c.saleNumber}`).join(', ') })}</Callout>
+          )}
+          {bill.status === 'ACTIVE' && paidChecks.length === 0 && (
             reopening ? (
               <Note className="p-4">
                 <form className="grid gap-3" onSubmit={reopen}>
@@ -311,6 +333,29 @@ export function BillScreen({ place, billId, onBack, onDone, lodging = false }: {
           </aside>
         ) : bill.status === 'ACTIVE' ? (
           <aside className="grid content-start gap-4" aria-label={t('bill.payTitle')}>
+            {customer ? (
+              <div className="flex flex-wrap items-center gap-2 rounded-[5px] border border-hair bg-white px-3 py-2" data-testid="check-customer">
+                <UserRound className="size-4 text-muted" aria-hidden />
+                <span className="font-semibold">{customer.displayName}</span>
+                {customer.phone && <span className="serial text-[0.8125rem] text-muted">{customer.phone}</span>}
+                {isPositive(creditHere) && <span className="chip bg-green">{t('custc.credit', { amount: peso(creditHere) })}</span>}
+                <span className="ml-auto flex gap-2">
+                  {isPositive(creditHere) && (
+                    <button type="button" className="btn btn-sm" disabled={locked} aria-pressed={usingCredit} onClick={() => setUsingCredit(!usingCredit)}>
+                      {usingCredit ? t('custc.dropCredit') : t('custc.useCredit')}
+                    </button>
+                  )}
+                  <button type="button" className="btn btn-sm" disabled={locked} onClick={() => { setCustomer(null); setUsingCredit(false); }}>{t('custc.remove')}</button>
+                </span>
+                {isPositive(credit) && <p className="flex w-full justify-between text-[0.875rem]"><span className="text-muted">{t('custc.creditApplied')}</span><Money value={credit} /></p>}
+              </div>
+            ) : pickingCustomer ? (
+              <CustomerPanel canAdd={permissions.includes('customers.manage')} onPick={(c) => { setCustomer(c); setPickingCustomer(false); }} onCancel={() => setPickingCustomer(false)} />
+            ) : (permissions.includes('customers.read') || permissions.includes('customers.manage')) && (
+              <button type="button" className="btn btn-sm justify-self-start" onClick={() => setPickingCustomer(true)}>
+                <UserRound className="size-4" aria-hidden /> {t('custc.button')}
+              </button>
+            )}
             <Note className="grid gap-3 p-5">
               <div className="flex flex-wrap gap-1" role="group" aria-label={t('bill.splitHow')}>
                 <button type="button" className="btn btn-sm" disabled={locked} aria-pressed={split.kind === 'rest'} onClick={() => setSplit({ kind: 'rest' })}>{t('bill.payRest')}</button>

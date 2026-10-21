@@ -4,8 +4,9 @@ import { Note } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { api, type Me } from '@/lib/api';
 import { CloseAccountForm, EmailForm, NameForm } from './account-forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Your account' };
+export const generateMetadata = pageTitle('account');
 
 export interface ClosureStatus {
   canClose: boolean;

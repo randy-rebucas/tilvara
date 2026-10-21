@@ -185,8 +185,14 @@ export function TillProvider({ children }: { children: ReactNode }) {
         for (const ticket of data) {
           const printer = kitchenPrinters[ticket.station.id];
           try {
+            // Every item was voided before it printed (an older server still hands these out): no empty slip.
+            // A VOID slip (kind VOID) prints like a ticket, with its VOID banner, and is settled the same way.
+            if (!ticket.items.length) {
+              await settle(ticket.id, 'printed');
+              continue;
+            }
             if (!printer) throw new Error('No printer for this station');
-            await tauriByteChannel(printer.target)(encodeEscPos(kitchenSlipToPrintable(serverTicketSlip(ticket, kitchenTime(ticket.firedAt))), { width: 48 }));
+            await tauriByteChannel(printer.target)(encodeEscPos(kitchenSlipToPrintable(serverTicketSlip(ticket, kitchenTime(ticket.kind === 'VOID' ? Date.now() : ticket.firedAt))), { width: 48 }));
             await settle(ticket.id, 'printed');
             setKitchenPrintError(null);
           } catch (err) {

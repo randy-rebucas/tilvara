@@ -44,7 +44,7 @@ describe('signup / onboarding', () => {
 
     const roles = await http().get('/v1/roles').set(bearer(s.access)).expect(200);
     expect(roles.body.data.map((r: { key: string }) => r.key).sort()).toEqual(
-      ['accountant', 'admin', 'branch_manager', 'cashier', 'front_desk', 'housekeeping', 'inventory_officer', 'kitchen_crew', 'owner', 'purchasing_officer', 'restaurant_manager', 'senior_cashier', 'stylist'],
+      ['accountant', 'admin', 'branch_manager', 'cashier', 'front_desk', 'housekeeping', 'inventory_officer', 'kitchen_crew', 'laundry_attendant', 'owner', 'pharmacist', 'pharmacy_assistant', 'purchasing_officer', 'restaurant_manager', 'rider', 'senior_cashier', 'stylist'],
     );
     const byKey = new Map((roles.body.data as { key: string; permissions: string[]; isSystem: boolean }[]).map((r) => [r.key, r]));
     expect(byKey.get('kitchen_crew')).toMatchObject({ isSystem: true, permissions: ['kitchen.operate'] });

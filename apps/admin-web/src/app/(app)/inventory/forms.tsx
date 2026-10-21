@@ -39,10 +39,11 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const kind = f.get('kind') === 'WASTE' ? 'WASTE' : 'ADJUSTMENT';
-    const items = readLines(f, ['variantId', 'quantity', 'expiresOn']).map((l) => {
+    const items = readLines(f, ['variantId', 'quantity', 'expiresOn', 'lotCode']).map((l) => {
       const quantity = kind === 'WASTE' && l.quantity && !l.quantity.startsWith('-') ? `-${l.quantity}` : l.quantity;
-      // A date only on stock coming in (ADR-0020): it makes an expiry lot.
-      return { variantId: l.variantId, quantity, ...(l.expiresOn && !quantity?.startsWith('-') ? { expiresOn: l.expiresOn } : {}) };
+      // A date only on stock coming in (ADR-0020): it makes an expiry lot; a medicine's also needs its lot code (ADR-0025 §5).
+      const inbound = l.expiresOn && !quantity?.startsWith('-');
+      return { variantId: l.variantId, quantity, ...(inbound ? { expiresOn: l.expiresOn, ...(l.lotCode && { lotCode: l.lotCode }) } : {}) };
     });
     const r = await submit<{ id: string }>('POST', '/api/v1/stock/adjustments', { branchId, kind, reason: text(f, 'reason'), items }, { idempotencyKey: key, refresh: false });
     if (r.ok) {
@@ -63,13 +64,15 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
           { name: 'variantId', label: t('common.item'), kind: 'select' },
           { name: 'quantity', label: t('inv.adjustQty'), kind: 'decimal', placeholder: '-1' },
           { name: 'expiresOn', label: `${t('inv.adjustExpires')} (${t('common.optional')})`, kind: 'date' },
+          { name: 'lotCode', label: t('inv.adjustLot'), kind: 'text' },
         ]}
         options={variants}
         fieldError={fieldError}
         addLabel={t('common.addLine')}
         removeLabel={t('common.removeLine')}
       />
-      <Actions pending={pending} general={general(error) ?? apiFieldError('items')} submitLabel={t('inv.adjustSave')} close={close} />
+      {/* LOT_CODE_REQUIRED names its line: the message shows on that row's lot field. */}
+      <Actions pending={pending} general={(error?.code === 'LOT_CODE_REQUIRED' ? null : general(error)) ?? apiFieldError('items')} submitLabel={t('inv.adjustSave')} close={close} />
     </form>
   );
 }

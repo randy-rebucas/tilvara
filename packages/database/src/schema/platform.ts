@@ -9,7 +9,7 @@ export type TenantStatus = (typeof TENANT_STATUSES)[number];
  * store or grocery, ADR-0020) hide restaurant service (and the server refuses its writes); RESTAURANT
  * hides selling by weight; HYBRID shows all.
  */
-export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID', 'GROCERY', 'SALON', 'LODGING'] as const;
+export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID', 'GROCERY', 'SALON', 'LODGING', 'LAUNDRY', 'PHARMACY'] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 
 export const tenants = pgTable(
@@ -28,7 +28,7 @@ export const tenants = pgTable(
   (t) => [
     check('tenants_status_check', sql`${t.status} IN ('PROVISIONING','ACTIVE','SUSPENDED','OFFBOARDING','CLOSED')`),
     check('tenants_slug_format', sql`${t.slug} ~ '^[a-z0-9][a-z0-9-]{1,62}$'`),
-    check('tenants_business_type_check', sql`${t.businessType} IN ('RETAIL','RESTAURANT','HYBRID','GROCERY','SALON','LODGING')`),
+    check('tenants_business_type_check', sql`${t.businessType} IN ('RETAIL','RESTAURANT','HYBRID','GROCERY','SALON','LODGING','LAUNDRY','PHARMACY')`),
   ],
 );
 

@@ -116,4 +116,53 @@ describe('report CSV', () => {
     const tips = reportRows('staffTips', { staff: [{ staffId: null, name: null, tips: 1, amount: '20.00', voided: '0.00' }], total: '20.00' }, t);
     expect(tips[1]).toEqual(['Unassigned', 1, '20.00', '0.00']);
   });
+
+  it('laundry reports (ADR-0024): down payments per legal entity, kilos kept as decimal strings', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21', legalEntityId: 'e' };
+    expect(reportPath('jobDeposits', q)).toBe('/reports/job-order-deposits?legalEntityId=e');
+    expect(reportPath('machineUsage', q)).toBe('/reports/machine-usage?branchId=b&from=2026-10-01&to=2026-10-21');
+    const jobs = reportRows('jobOrders', {
+      days: [{ day: '2026-10-21', received: 2, ready: 1, claimed: 1, cancelled: 0, disposed: 0, averageTurnaroundHours: '5.5', onTimePercent: '100.0' }],
+      services: [{ variantId: 'v', name: 'Wash-dry-fold', unit: 'KG', measured: '2.4', billed: '3', jobs: 1, amount: '105.00' }],
+      totals: { received: 2, ready: 1, claimed: 1, cancelled: 0, disposed: 0, averageTurnaroundHours: '5.5', onTimePercent: '100.0', kilos: '2.4', loads: '0', overdueNow: 0, openNow: 1 },
+    }, t);
+    expect(jobs[1]).toEqual(['2026-10-21', 2, 1, 1, 0, 0, '5.5', '100.0']);
+    expect(jobs[5]).toEqual(['Wash-dry-fold', 'KG', '2.4', '3', 1, '105.00']);
+    const held = reportRows('jobDeposits', {
+      legalEntityId: 'e',
+      held: [{ jobOrderId: 'j', reference: 'J-000001', branchId: 'b', status: 'READY', customer: 'Ana', amountDue: '105.00', held: '50.00' }],
+      unclaimed: [],
+      forfeited: { amount: '0.00', entries: 0 },
+      totals: { held: '50.00', customerDownPaymentsGl: '50.00', difference: '0.00', unclaimedValue: '0.00' },
+    }, t);
+    expect(held[1]).toEqual(['Down payments held', '50.00']);
+    expect(held[8]).toEqual(['J-000001', 'Ana', 'READY', '105.00', '50.00']);
+  });
+});
+
+describe('pharmacy books CSV (ADR-0025)', () => {
+  const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21' };
+  it('reads the two books from their own routes', () => {
+    expect(reportPath('prescriptionBook', q)).toBe('/reports/prescription-book?branchId=b&from=2026-10-01&to=2026-10-21');
+    expect(reportPath('dangerousDrugs', q)).toBe('/reports/dangerous-drugs?branchId=b&from=2026-10-01&to=2026-10-21');
+  });
+
+  it('prescription book: one row per fill, quantities as sent', () => {
+    const rows = reportRows('prescriptionBook', { data: [{ day: '2026-10-21', saleReference: 'R1-000001', saleId: 's', prescriptionId: 'p', patientName: 'Ana Cruz', prescriberName: 'Dr. Lim', prescriberLicenseNo: '0123456', prescriberS2No: null, yellowFormNo: null, issuedOn: '2026-10-20', genericName: 'Amoxicillin', strength: '500 mg', dosageForm: 'CAPSULE', drugClass: 'ANTIBIOTIC', brand: 'Amoxil', quantity: '21', returned: false, needsReview: true, pharmacist: 'Rosa' }] }, t);
+    expect(rows[1]).toEqual(['2026-10-21', 'R1-000001', 'Ana Cruz', 'Dr. Lim', '0123456', '', '', '2026-10-20', 'Amoxicillin', '500 mg', 'CAPSULE', 'ANTIBIOTIC', 'Amoxil', '21', '', 'Yes', 'Rosa']);
+  });
+
+  it('dangerous drugs: the register per drug, then each dispensing with its yellow form', () => {
+    const rows = reportRows('dangerousDrugs', { data: [{ variantId: 'v', sku: 'DD-1', name: 'Tramadol', genericName: 'Tramadol', strength: '50 mg', dosageForm: 'CAPSULE', opening: '10', received: '0', dispensed: '-2', returned: '0', writtenOff: '0', adjusted: '0', otherOut: '0', closing: '8', dispensings: [{ day: '2026-10-21', saleReference: 'R1-000002', quantity: '2', yellowFormNo: 'YF-1', patientName: 'Ben', patientAddress: 'Manila', prescriberName: 'Dr. Lim', prescriberLicenseNo: '0123456', prescriberS2No: 'S2-9', pharmacist: 'Rosa' }] }] }, t);
+    expect(rows[1]).toEqual(['DD-1', 'Tramadol', 'Tramadol', '50 mg', 'CAPSULE', '10', '0', '-2', '0', '0', '0', '0', '8']);
+    expect(rows.at(-1)).toEqual(['DD-1', '2026-10-21', 'R1-000002', 'YF-1', 'Ben', 'Manila', 'Dr. Lim', '0123456', 'S2-9', '2', 'Rosa']);
+  });
+
+  it('SC/PWD book: the purchase booklet column, blank when no medicine', () => {
+    const row = (purchaseBooklet: boolean | null) => ({ document: 'SALE', day: '2026-10-21', number: 1, register: 'R1', schemeCode: 'SC', name: 'Lola', idNumber: 'SC-1', tin: null, sales: '100.00', discount: '20.00', net: '80.00', purchaseBooklet });
+    const rows = reportRows('statutory', { data: [row(true), row(null)] }, t);
+    expect(rows[0]!.at(-1)).toBe('Booklet');
+    expect(rows[1]!.at(-1)).toBe('Yes');
+    expect(rows[2]!.at(-1)).toBe('');
+  });
 });

@@ -682,3 +682,48 @@ describe('voids and returns (ADR-0011)', () => {
     }
   });
 });
+
+describe('sale list paging', () => {
+  it('a member who reads only part of the sales pages through all of them, each once, in order', async () => {
+    const s = await store('list-page');
+    const r2 = (await http().post('/v1/registers').set(s.auth).send({ branchId: s.branchId, code: 'R2', name: 'Counter 2' }).expect(201)).body.id as string;
+    // A cashier who may read only register R1's sales; the branch cashier sells on R2 in between.
+    const a = await addMember(owner, s.t.tenantId, 'cashier', { type: 'REGISTER', id: s.registerId });
+    const onR1 = bearer(await loginToken(app, a.email));
+    const [r1Session, r2Session] = [await openSession(s, onR1), await openSession(s, s.cashier, '1000.00', r2)];
+    const ring = async (on: 'R1' | 'R2') => {
+      const res = on === 'R1'
+        ? await post(onR1, sale(r1Session.id, [{ variantId: s.wrap, quantity: '1' }], '15.00'))
+        : await post(s.cashier, sale(r2Session.id, [{ variantId: s.wrap, quantity: '1' }], '15.00'));
+      // A cashier granted only register R1 sells there (audit 2026-10-21: pricing used to need the branch).
+      expect([on, res.status, res.body.error?.code]).toEqual([on, 201, undefined]);
+    };
+    for (const on of ['R1', 'R1', 'R1', 'R2', 'R1', 'R2', 'R2', 'R2', 'R1', 'R1', 'R2'] as const) await ring(on);
+    const expected = (await asOwnerInTenant(owner, s.t.tenantId, (c) => c.query<{ id: string }>(`SELECT id FROM sales WHERE register_id = $1 ORDER BY id DESC`, [s.registerId]))).rows.map((r) => r.id);
+    expect(expected).toHaveLength(6);
+
+    const seen: string[] = [];
+    const sizes: number[] = [];
+    let cursor: string | null | undefined;
+    for (let i = 0; i < 10; i++) {
+      const page = (await http().get('/v1/sales').query({ limit: 2, ...(cursor && { cursor }) }).set(onR1).expect(200)).body as { data: { id: string }[]; nextCursor: string | null };
+      seen.push(...page.data.map((x) => x.id));
+      sizes.push(page.data.length);
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(seen).toEqual(expected); // none repeated, none skipped, newest first
+    expect(sizes.slice(0, -1).every((n) => n === 2)).toBe(true); // full pages until the end
+    // Someone who reads the whole branch pages through all eleven.
+    const all: string[] = [];
+    cursor = undefined;
+    for (let i = 0; i < 10; i++) {
+      const page = (await http().get('/v1/sales').query({ limit: 4, ...(cursor && { cursor }) }).set(s.manager).expect(200)).body as { data: { id: string }[]; nextCursor: string | null };
+      all.push(...page.data.map((x) => x.id));
+      cursor = page.nextCursor;
+      if (!cursor) break;
+    }
+    expect(all).toHaveLength(11);
+    expect(new Set(all).size).toBe(11);
+  });
+});

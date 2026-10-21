@@ -1,6 +1,6 @@
 import { Dec, isCurrencyCode, minorUnits, toDec } from '@1pos/money';
 import { applyPromotions, PromotionError, type PromotionLineResult } from '@1pos/pricing';
-import { parseScaleLabel, type OfflineSale, type Snapshot, type SnapshotCounter, type SyncResult } from '@1pos/sync-protocol';
+import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type SnapshotDrug, type Snapshot, type SnapshotCounter, type SyncResult } from '@1pos/sync-protocol';
 import { CounterCartError, expandCounterCart, type CounterCartLine, type LocalKitchenTicket } from './counter.js';
 import { calculateTax, TaxError, type TaxResult } from '@1pos/tax';
 import { LocalStore, type OfflineReceipt, type QueuedSale } from './store.js';
@@ -9,13 +9,25 @@ import { TransportError, type Transport } from './transport.js';
 /** A refusal at the till, before anything is stored (the cashier fixes the cart and tries again). */
 export class OfflineSaleError extends Error {
   constructor(
-    readonly code: 'NO_SNAPSHOT' | 'NO_OPEN_SHIFT' | 'NOT_SHIFT_OWNER' | 'UNKNOWN_ITEM' | 'QUANTITY_NOT_ALLOWED' | 'INSUFFICIENT_TENDER' | 'TAX_REFUSED' | 'TERMINAL_REVOKED' | 'ONLINE_ONLY' | 'UNKNOWN_STAFF',
+    readonly code: 'NO_SNAPSHOT' | 'NO_OPEN_SHIFT' | 'NOT_SHIFT_OWNER' | 'UNKNOWN_ITEM' | 'QUANTITY_NOT_ALLOWED' | 'INSUFFICIENT_TENDER' | 'TAX_REFUSED' | 'TERMINAL_REVOKED' | 'ONLINE_ONLY' | 'UNKNOWN_STAFF' | 'DANGEROUS_DRUG_OFFLINE' | 'INVALID_PRESCRIPTION' | 'INVALID_SALE',
     message: string,
   ) {
     super(message);
     this.name = 'OfflineSaleError';
   }
 }
+
+/** A prescription recorded at the offline till (ADR-0025 §6), as the envelope carries it. */
+export type OfflinePrescription = NonNullable<OfflineSale['prescriptions']>[number];
+
+/** "Amoxicillin 500 mg capsule": a medicine's generic label, worded as the server words it (ADR-0025 §3). */
+export function drugLabel(d: { genericName: string; strength: string | null; dosageForm: string }): string {
+  return [d.genericName.trim(), d.strength?.trim(), d.dosageForm.toLowerCase()].filter(Boolean).join(' ');
+}
+
+/** Classes a line needs a prescription for (ADR-0025 §6). */
+export const needsPrescription = (d: Pick<SnapshotDrug, 'drugClass'> | null | undefined): boolean =>
+  d?.drugClass === 'RX' || d?.drugClass === 'ANTIBIOTIC' || d?.drugClass === 'DANGEROUS';
 
 export interface EngineOptions {
   store: LocalStore;
@@ -151,13 +163,41 @@ export class OfflineEngine {
   }
 
   /**
+   * Search the stored snapshot by name, SKU or a medicine's generic name (ADR-0025 §3), case-insensitive;
+   * names that start with the first word come first.
+   */
+  async search(q: string, limit = 8): Promise<Snapshot['items']> {
+    const items = (await this.store.snapshot())?.body.items ?? [];
+    const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const text = (i: Snapshot['items'][number]) => `${i.name} ${i.sku} ${i.drug ? drugLabel(i.drug) : ''}`.toLowerCase();
+    const hits = items.filter((i) => words.every((w) => text(i).includes(w)));
+    const first = words[0]!;
+    const starts = (i: Snapshot['items'][number]) => i.name.toLowerCase().startsWith(first) || Boolean(i.drug?.genericName.toLowerCase().startsWith(first));
+    return [...hits.filter(starts), ...hits.filter((i) => !starts(i))].slice(0, limit);
+  }
+
+  /**
+   * Other items of the same medicine (same generic, strength and form: `drug.genericKey`) in the stored
+   * snapshot, cheapest first (ADR-0025 §3; offline the till knows prices, not stock).
+   */
+  async equivalents(variantId: string): Promise<Snapshot['items']> {
+    const items = (await this.store.snapshot())?.body.items ?? [];
+    const key = items.find((i) => i.variantId === variantId)?.drug?.genericKey;
+    if (!key) return [];
+    return items
+      .filter((i) => i.variantId !== variantId && i.drug?.genericKey === key)
+      .sort((a, b) => toDec(a.unitPrice).comparedTo(toDec(b.unitPrice)) || a.name.localeCompare(b.name));
+  }
+
+  /**
    * Ring up a cash sale offline. Validates, prices, and writes the sale with its envelope and the next
    * device number in one local transaction; returns the receipt to print. Nothing is sent here.
    *
    * `terminalTxnId`: the counter passes the id of the checkout it was trying online. If that attempt
    * did reach the server, the delivery is refused as a duplicate (quarantined), never recorded twice.
    */
-  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string; pickupName?: string; tip?: string }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt; kitchen: LocalKitchenTicket[] }> {
+  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string; pickupName?: string; tip?: string; prescriptions?: OfflinePrescription[] }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt; kitchen: LocalKitchenTicket[] }> {
     return this.serial(async () => {
       if ((await this.store.meta('auth_state')) === 'REVOKED') throw new OfflineSaleError('TERMINAL_REVOKED', 'This till was revoked; it cannot record sales');
       // The same checkout submitted again (double tap, retry after a crash): the sale already queued.
@@ -174,7 +214,10 @@ export class OfflineEngine {
         const item = snap.items.find((x) => x.variantId === l.variantId);
         if (item?.productType === 'PACKAGE') throw new OfflineSaleError('ONLINE_ONLY', `${item.name} is a package: sell it while online`);
         if (l.staffId && snap.staff && !snap.staff.some((s) => s.id === l.staffId)) throw new OfflineSaleError('UNKNOWN_STAFF', 'That staff member is not on this till’s list; connect to refresh it');
+        // A dangerous drug needs the pharmacist and the yellow form checked online: never sold offline (ADR-0025 §6).
+        if (item?.drug?.drugClass === 'DANGEROUS') throw new OfflineSaleError('DANGEROUS_DRUG_OFFLINE', `${item.name} is a dangerous drug: sell it while online`);
       }
+      const prescriptions = checkPrescriptions(input.prescriptions ?? [], input.lines);
       const expanded = expand(snap, input.lines);
       const priced = price(snap, expanded.lines);
       const counter = expanded.kitchen.length > 0 || input.lines.some((l) => snap.counter?.items.some((m) => m.variantId === l.variantId));
@@ -194,11 +237,20 @@ export class OfflineEngine {
           occurredAt, localReference,
           lines: input.lines.map((l) => ({
             variantId: l.variantId, quantity: l.quantity, ...(l.choices?.length && { choices: l.choices }), ...(l.kitchenNote && { kitchenNote: l.kitchenNote }), ...(l.staffId && { staffId: l.staffId }),
+            ...(l.prescription && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
           })),
+          ...(prescriptions.length > 0 && { prescriptions }),
           tenders: [{ method: 'CASH', tendered: tendered.toFixed(2) }], amountDue: due.toFixed(2),
           ...(counter && snap.counter && { menuVersionId: snap.counter.menuVersionId, ...(pickupName && { pickupName }) }),
           ...(tip && { tip: { amount: tip.toFixed(2) } }),
         };
+        // Checked as the server checks it, before it is queued: a sale it cannot read would only be
+        // quarantined later (cash taken, nothing recorded). Refused here, nothing is stored.
+        const checked = offlineSaleSchema.safeParse(envelope);
+        if (!checked.success) {
+          const issue = checked.error.issues[0]!;
+          throw new OfflineSaleError('INVALID_SALE', `This sale cannot be recorded as it is (${issue.path.join('.') || 'sale'}: ${issue.message})`);
+        }
         const receipt: OfflineReceipt = {
           localReference, occurredAt, register: { code: snap.register.code, name: snap.register.name }, branch: { name: snap.branch.name },
           seller: {
@@ -214,6 +266,7 @@ export class OfflineEngine {
               quantity: expanded.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.amountDue).toFixed(2),
               flag: !isVat ? '' : item.vatTreatment === 'ZERO_RATED' ? 'Z' : item.vatTreatment === 'VAT_EXEMPT' ? 'E' : 'V',
               ...promotionOf(snap, priced.promotions[i]!),
+              ...(expanded.parentIndex[i] === null && item.drug && { generic: drugLabel(item.drug) }),
             };
           }),
           totals: {
@@ -332,6 +385,32 @@ export class OfflineEngine {
     this.chain = run.catch(() => undefined);
     return run;
   }
+}
+
+/**
+ * The prescriptions recorded at the till for this sale, as the envelope schema takes them: each valid,
+ * each used by a line, and every line's reference pointing at one of them (the server would refuse the
+ * whole envelope otherwise, and an offline sale must never be lost to a typing slip).
+ */
+function checkPrescriptions(given: OfflinePrescription[], lines: CounterCartLine[]): OfflinePrescription[] {
+  if (!given.length && !lines.some((l) => l.prescription)) return [];
+  const parsed = offlineSaleSchema.shape.prescriptions.safeParse(given);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const where = issue ? issue.path.filter((x) => typeof x === 'string').join(' ') : '';
+    throw new OfflineSaleError('INVALID_PRESCRIPTION', `The prescription is not complete${where ? ` (${where})` : ''}: ${issue?.message ?? 'check it'}`);
+  }
+  const rx = parsed.data ?? [];
+  if (new Set(rx.map((p) => p.ref)).size !== rx.length) throw new OfflineSaleError('INVALID_PRESCRIPTION', 'Two prescriptions share one reference');
+  for (const [i, l] of lines.entries()) {
+    if (!l.prescription) continue;
+    const p = rx.find((x) => x.ref === l.prescription!.prescriptionRef);
+    if (!p?.items.some((it) => it.ref === l.prescription!.itemRef)) throw new OfflineSaleError('INVALID_PRESCRIPTION', `Line ${i + 1} points at a prescription that is not on this sale`);
+  }
+  for (const p of rx) {
+    if (!lines.some((l) => l.prescription?.prescriptionRef === p.ref)) throw new OfflineSaleError('INVALID_PRESCRIPTION', `The prescription for ${p.patientName} is not used by any line`);
+  }
+  return rx;
 }
 
 /** A counter cart's lines as the server prices them; a choice the till cannot honour is a refusal. */

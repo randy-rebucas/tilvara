@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalJson, offlineSaleSchema, syncSalesRequestSchema } from '../src/index.js';
+import { canonicalJson, offlineSaleSchema, syncSalesBatchSchema, syncSalesRequestSchema } from '../src/index.js';
 
 const sale = {
   terminalTxnId: '0199f0a0-0000-7000-8000-000000000001',
@@ -22,6 +22,17 @@ describe('offline sale envelope', () => {
     expect(offlineSaleSchema.safeParse({ ...sale, amountDue: 44.8 }).success).toBe(false); // never JS numbers for money
     expect(offlineSaleSchema.safeParse({ ...sale, occurredAt: '2026-10-17 10:00' }).success).toBe(false);
     expect(syncSalesRequestSchema.safeParse({ sales: [] }).success).toBe(false);
+  });
+
+  it('the server reads a batch by each envelope’s head only, so one malformed envelope does not refuse the others', () => {
+    const bad = { ...sale, terminalTxnId: '0199f0a0-0000-7000-8000-000000000009', deviceSeq: 2, amountDue: 44.8, extra: { kept: true } };
+    const parsed = syncSalesBatchSchema.parse({ sales: [sale, bad] });
+    expect(parsed.sales[1]).toEqual(bad); // kept as received, for the quarantine
+    expect(syncSalesRequestSchema.safeParse({ sales: [sale, bad] }).success).toBe(false);
+    expect(syncSalesBatchSchema.safeParse({ sales: [{ ...sale, terminalTxnId: 'not-a-uuid' }] }).success).toBe(false);
+    expect(syncSalesBatchSchema.safeParse({ sales: [{ ...sale, deviceSeq: '1' }] }).success).toBe(false);
+    expect(syncSalesBatchSchema.safeParse({ sales: ['x'] }).success).toBe(false);
+    expect(syncSalesBatchSchema.safeParse({ sales: [] }).success).toBe(false);
   });
 
   it('hashes the same content the same way whatever the key order', () => {

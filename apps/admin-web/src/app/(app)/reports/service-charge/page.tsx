@@ -5,8 +5,9 @@ import type { ServiceChargeReport } from '@/lib/api';
 import { formatDate, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Service charge' };
+export const generateMetadata = pageTitle('reports.service-charge');
 
 /**
  * Service charge collected for distribution to covered staff (RA 11360; DOLE): charged − given back

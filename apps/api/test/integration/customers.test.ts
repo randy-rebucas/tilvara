@@ -227,3 +227,91 @@ describe('purchases and store credit', () => {
     expect((await q(s, `SELECT action FROM audit_logs WHERE resource_id = $1 AND action IN ('customer.exported', 'customer.anonymised')`, [maria.id])).length).toBe(2);
   });
 });
+
+describe('store credit never turns into drawer cash (audit 2026-10-21)', () => {
+  let s: Store;
+  let maria: { id: string };
+  let managerSession: string;
+  const drawer = async () => (await http().get(`/v1/cashier-sessions/${managerSession}`).set(s.manager).expect(200)).body.expectedCash as string;
+  const balance = async () => (await http().get(`/v1/customers/${maria.id}`).set(s.manager).expect(200)).body.storeCredit[0]?.balance as string;
+  const giveBack = (saleId: string, body: object) =>
+    http().post(`/v1/sales/${saleId}/returns`).set(s.manager).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: managerSession, reason: 'Changed mind', ...body });
+
+  beforeAll(async () => {
+    s = await store('credit-back');
+    maria = (await http().post('/v1/customers').set(s.manager).send({ displayName: 'Maria Cruz' }).expect(201)).body;
+    managerSession = await openSession(s.manager, s.registerId);
+    // ₱112.00 of credit: two bags of rice returned as store credit.
+    const rice = (await sell(s.manager, sale(managerSession, [{ variantId: s.rice, quantity: '2' }], [{ method: 'CASH', tendered: '112.00' }], { customerId: maria.id })).expect(201)).body;
+    await giveBack(rice.id, { kind: 'RETURN', refundTo: 'STORE_CREDIT', lines: [{ saleLineId: rice.lines[0].id, quantity: '2', disposition: 'RESTOCK' }] }).expect(201);
+    expect(await balance()).toBe('112.00');
+  });
+
+  it('a void of a sale paid with store credit gives the credit back, not cash; an exchange of it is refused', async () => {
+    const paid = (await sell(s.manager, sale(managerSession, [{ variantId: s.cola, quantity: '2' }], [{ method: 'STORE_CREDIT', amount: '44.80' }], { customerId: maria.id })).expect(201)).body;
+    expect(await balance()).toBe('67.20');
+    // Exchanging it would hand the credit over as cash change: refused, at the preview and at the exchange.
+    const lines = [{ saleLineId: paid.lines[0].id, quantity: '1', disposition: 'RESTOCK' }];
+    expect((await http().post(`/v1/sales/${paid.id}/returns/preview`).set(s.manager).send({ lines }).expect(409)).body.error.code).toBe('EXCHANGE_STORE_CREDIT');
+    expect((await http().post('/v1/exchanges').set(s.manager).set('Idempotency-Key', randomUUID()).send({
+      cashierSessionId: managerSession, saleId: paid.id, reason: 'Other size', returnLines: lines,
+      sale: { clientTransactionId: randomUUID(), lines: [{ variantId: s.cola, quantity: '1' }], tenders: [] },
+    }).expect(409)).body.error.code).toBe('EXCHANGE_STORE_CREDIT');
+
+    const before = await drawer();
+    const glBefore = await gl(s, 'CUSTOMER_STORE_CREDIT');
+    const back = (await giveBack(paid.id, { kind: 'VOID' }).expect(201)).body;
+    expect(back).toMatchObject({ amountDue: '44.80', refundMethod: 'STORE_CREDIT' });
+    expect(await drawer()).toBe(before);
+    expect(await balance()).toBe('112.00');
+    expect(await gl(s, 'CUSTOMER_STORE_CREDIT') - glBefore).toBeCloseTo(-44.8, 4);
+    expect((await q(s, `SELECT 1 FROM cash_movements WHERE sale_return_id = $1`, [back.id])).length).toBe(0);
+    const slip = (await http().get(`/v1/sale-returns/${back.id}/receipt`).set(s.manager).expect(200)).body;
+    expect(slip.tenders).toEqual([{ method: 'STORE_CREDIT', amount: '44.80' }]);
+  });
+
+  // Needs the DDL in the audit report (customer_credit_entries_match must accept a credit share of a cash refund).
+  it('returns of a sale paid partly with credit give that share back as credit, the rest in cash, never more credit than was used', async () => {
+    const paid = (await sell(s.manager, sale(managerSession, [{ variantId: s.cola, quantity: '3' }], [{ method: 'STORE_CREDIT', amount: '22.40' }, { method: 'CASH', tendered: '44.80' }], { customerId: maria.id })).expect(201)).body;
+    expect(await balance()).toBe('89.60');
+    const line = paid.lines[0].id as string;
+    const glCash = await gl(s, 'CASH_ON_HAND');
+    const glCredit = await gl(s, 'CUSTOMER_STORE_CREDIT');
+
+    // One of three: ₱22.40 back, a third of it (₱7.47) as credit, ₱14.93 in cash.
+    let before = Number(await drawer());
+    const first = (await giveBack(paid.id, { kind: 'RETURN', lines: [{ saleLineId: line, quantity: '1', disposition: 'RESTOCK' }] }).expect(201)).body;
+    expect(first).toMatchObject({ amountDue: '22.40', refundMethod: 'CASH', refunds: [{ method: 'STORE_CREDIT', amount: '7.47' }, { method: 'CASH', amount: '14.93' }] });
+    expect(Number(await drawer())).toBeCloseTo(before - 14.93, 2);
+    expect(await balance()).toBe('97.07');
+
+    // The last two: the rest of the credit exactly (₱14.93), ₱29.87 in cash. Total credit back = ₱22.40 used.
+    before = Number(await drawer());
+    const last = (await giveBack(paid.id, { kind: 'RETURN', lines: [{ saleLineId: line, quantity: '2', disposition: 'RESTOCK' }] }).expect(201)).body;
+    expect(last.refunds).toEqual([{ method: 'STORE_CREDIT', amount: '14.93' }, { method: 'CASH', amount: '29.87' }]);
+    expect(Number(await drawer())).toBeCloseTo(before - 29.87, 2);
+    expect(await balance()).toBe('112.00');
+    const slip = (await http().get(`/v1/sale-returns/${last.id}/receipt`).set(s.manager).expect(200)).body;
+    expect(slip.tenders).toEqual([{ method: 'STORE_CREDIT', amount: '14.93' }, { method: 'CASH', amount: '29.87' }]);
+    // Books: the credit came back to the liability, only the cash share left Cash on hand.
+    expect(await gl(s, 'CUSTOMER_STORE_CREDIT') - glCredit).toBeCloseTo(-22.4, 4);
+    expect(await gl(s, 'CASH_ON_HAND') - glCash).toBeCloseTo(-44.8, 4);
+  });
+
+  it('the by-tender report and the Z-reading count a split refund under where the money went (audit 2026-10-21 §3)', async () => {
+    // This store's day: sales CASH 112.00 + 44.80, STORE_CREDIT 44.80 + 22.40. Refunds as credit 112.00 (return),
+    // 44.80 (void), 7.47 + 14.93 (credit shares of two CASH returns); in cash only 14.93 + 29.87.
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+    const byTender = (await http().get('/v1/reports/by-tender').query({ branchId: s.branchId, from: today, to: today }).set(s.manager).expect(200)).body.data;
+    expect(byTender).toEqual([
+      { method: 'CASH', tenders: 2, collected: '156.80', refundsCount: 2, refunded: '44.80', net: '112.00' },
+      { method: 'STORE_CREDIT', tenders: 2, collected: '67.20', refundsCount: 4, refunded: '179.20', net: '-112.00' },
+    ]);
+    const countedCash = await drawer();
+    await http().post(`/v1/cashier-sessions/${managerSession}/close`).set(s.manager).send({ countedCash }).expect(200);
+    const z = (await http().post(`/v1/registers/${s.registerId}/z-readings`).set(s.manager).send({ day: today }).expect(201)).body;
+    expect(z.tenders).toEqual({ CASH: '112.00', STORE_CREDIT: '-112.00' });
+    // The tenders still add up to the day's net.
+    expect(z).toMatchObject({ salesAmount: '224.00', returnsAmount: '179.20', voidsAmount: '44.80', netAmount: '0.00' });
+  });
+});

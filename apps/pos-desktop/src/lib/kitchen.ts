@@ -12,6 +12,8 @@ export interface KitchenSlip {
   where: string;
   ticket: string | null;
   reprint?: boolean;
+  /** A VOID slip (audit 2026-10-21): the items listed were voided after the ticket printed; stop making them. */
+  voided?: boolean;
   courseNote?: string | null;
   dateTime: string;
   items: { name: string; quantity: string; seat?: number | null; note?: string | null; choices: string[] }[];
@@ -19,8 +21,9 @@ export interface KitchenSlip {
 
 export function kitchenSlipToPrintable(s: KitchenSlip): PrintableReceipt {
   return {
+    ...(s.voided && { banner: '*** VOID ***' }),
     header: [s.station.toUpperCase()],
-    notice: s.reprint ? 'REPRINT - KITCHEN TICKET' : 'KITCHEN TICKET',
+    notice: s.voided ? 'VOID - DO NOT MAKE' : s.reprint ? 'REPRINT - KITCHEN TICKET' : 'KITCHEN TICKET',
     meta: [[s.ticket ?? '', s.dateTime]],
     items: s.items.flatMap((i) => [
       { name: `${i.quantity} x ${i.name}${i.seat ? ` (seat ${i.seat})` : ''}`, amount: '' },
@@ -47,7 +50,9 @@ export function serverTicketSlip(t: KitchenTicketPrint, dateTime: string): Kitch
     where: ticketWhere(t.order),
     ticket: `Ticket ${t.ticketNumber}${t.course > 1 ? ` · course ${t.course}` : ''}`,
     reprint: t.reprint,
-    courseNote: t.courseNote,
+    voided: t.kind === 'VOID',
+    // A VOID slip says what to stop, not the course's note.
+    courseNote: t.kind === 'VOID' ? null : t.courseNote,
     dateTime,
     items: t.items,
   };

@@ -7,8 +7,9 @@ import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { ReportsChrome, reportScope, type ReportQuery } from '../chrome';
 import { TakeZReading } from './take';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Z-readings' };
+export const generateMetadata = pageTitle('reports.z-readings');
 
 /** End-of-day readings per register (fiscal gate G2; not BIR-accredited), with the accumulated grand total. */
 export default async function ZReadingsPage({ searchParams }: { searchParams: Promise<ReportQuery & { register?: string }> }) {

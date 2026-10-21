@@ -39,7 +39,7 @@ export function Tables({ place, permissions, active, lodging = false }: { place:
     );
   }
   if (view.name === 'bill') {
-    return <BillScreen place={place} billId={view.billId} lodging={lodging} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
+    return <BillScreen place={place} billId={view.billId} lodging={lodging} permissions={permissions} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
   }
   return <Floor shift={place} active={active} onOpen={(orderId) => setView({ name: 'order', orderId })} />;
 }

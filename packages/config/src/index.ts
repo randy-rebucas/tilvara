@@ -109,6 +109,12 @@ export const serverEnvSchema = z.object({
   /** Key prefix of the rate-limit counters in Redis (tests use a unique one per run). */
   RATE_LIMIT_PREFIX: z.string().min(1).max(64).default('onepos:rl:'),
   /**
+   * How long a rate-limit check waits for Redis before counting in this process instead (fail fast: a
+   * request never waits for Redis). Tests that assert on shared counting raise it, so a busy machine
+   * does not turn a slow answer into a fallback.
+   */
+  RATE_LIMIT_REDIS_TIMEOUT_MS: z.coerce.number().int().min(50).max(10_000).default(300),
+  /**
    * Proxies in front of the API whose X-Forwarded-For may be believed (Express "trust proxy").
    * 0 = none (direct). Behind one load balancer: 1. Wrong values let clients spoof their IP and
    * dodge per-IP limits, or put every client in one bucket.
@@ -149,6 +155,8 @@ export const workerEnvSchema = z.object({
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
   MAILER_DRIVER: z.enum(['dev']).default('dev'),
+  /** Laundry "ready" texts (ADR-0024 §6): only the dev adapter until an SMS provider is chosen (D7). */
+  SMS_DRIVER: z.enum(['dev']).default('dev'),
   ...fileStorage,
   /** Days a finished data export stays downloadable before the worker deletes the file. */
   DATA_EXPORT_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(7),
@@ -165,6 +173,7 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   }
   const issues: string[] = [];
   if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') issues.push('MAILER_DRIVER: the dev mailer cannot be used in production');
+  if (isProd(env) && parsed.data.SMS_DRIVER === 'dev') issues.push('SMS_DRIVER: the dev SMS sender cannot be used in production (no SMS provider chosen yet, D7)');
   if (isProd(env) && parsed.data.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
   if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');

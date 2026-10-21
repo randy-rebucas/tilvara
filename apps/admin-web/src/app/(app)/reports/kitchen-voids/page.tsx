@@ -6,8 +6,9 @@ import type { KitchenVoids } from '@/lib/api';
 import { formatDateTime, peso, qty } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Kitchen voids' };
+export const generateMetadata = pageTitle('reports.kitchen-voids');
 
 /** Items voided after they were sent to the kitchen: how far cooking got, and what was thrown away (ADR-0014 §10). */
 export default async function KitchenVoidsPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

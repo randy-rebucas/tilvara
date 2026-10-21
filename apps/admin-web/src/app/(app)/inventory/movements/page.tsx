@@ -5,8 +5,9 @@ import { peso, qty, signed, sumDecimal, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Stock movements' };
+export const generateMetadata = pageTitle('inventory.movements');
 
 const TYPES = ['RECEIPT', 'SUPPLIER_RETURN', 'SALE', 'CONSUMPTION', 'RETURN', 'TRANSFER_OUT', 'TRANSFER_IN', 'COUNT', 'ADJUSTMENT', 'WASTE', 'UNPACK_OUT', 'UNPACK_IN'];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

@@ -54,7 +54,7 @@ const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScro
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
 const ok = (expr, ms = 10000) => waitFor(expr, ms).then(() => true, () => false);
-const tab = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].filter((x) => x.getClientRects().length).find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+const tab = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].filter((x) => x.getClientRects().length).find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
 /** Set a React-controlled input or select (found by a selector, the visible one first). */
 const setEl = (selector, value, index = 0) => evaluate(`(() => {
   const all = [...document.querySelectorAll(${JSON.stringify(selector)})];
@@ -97,7 +97,7 @@ try {
   await waitFor(`document.getElementById('scan')`);
 
   // ---- the appointment book ----
-  check('a salon has an Appointments tab and no Tables tab', await ok(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent.trim() === 'Appointments')`) && !(await evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent.trim() === 'Tables')`)));
+  check('a salon has an Appointments tab and no Tables tab', await ok(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Appointments')`) && !(await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Tables')`)));
   await tab('Appointments');
   check('the day shows a column per staff member', await ok(`document.querySelector('[data-testid=day-view]')?.innerText.includes('Ana Reyes') && document.querySelector('[data-testid=day-view]').innerText.includes('Ben Lim')`));
   // Tomorrow, so every working hour is still ahead whatever the time of the run.

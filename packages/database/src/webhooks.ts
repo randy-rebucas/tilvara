@@ -10,6 +10,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 export const WEBHOOK_TOPICS = [
   'sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero',
   'stay.checked_in', 'stay.checked_out', 'folio.entry_posted',
+  'job_order.ready', 'job_order.claimed',
 ] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
 /** The test event a manager can send from the back office. */

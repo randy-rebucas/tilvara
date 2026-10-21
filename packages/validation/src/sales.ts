@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
+import { linePrescriptionSchema, salePrescriptionSchema } from './pharmacy.js';
 import { oneDiscountRefinement, packageSessionRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
@@ -7,21 +8,21 @@ const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digit
 /** Client-generated reference (transaction ids, beneficiary refs). */
 export const clientRefSchema = ref;
 
+/** One tender. A job order's down payment (`JOB_DEPOSIT`, ADR-0024 §5) is never sent by a client: only the claim builds it. */
+export const tenderSchema = z.discriminatedUnion('method', [
+  z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+  z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
+  /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
+  z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
+  /**
+   * Charge to room (ADR-0023 §5.1): an in-house guest of the same legal entity; applied after store
+   * credit, before cash; `amount` omitted = all that is left to pay. Never gives change; online only.
+   */
+  z.object({ method: z.literal('ROOM_CHARGE'), stayId: z.uuid(), amount: positiveAmount.optional() }),
+]);
 /** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
 export const tendersSchema = z
-  .array(
-    z.discriminatedUnion('method', [
-      z.object({ method: z.literal('CASH'), tendered: amountSchema }),
-      z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
-      /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
-      z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
-      /**
-       * Charge to room (ADR-0023 §5.1): an in-house guest of the same legal entity; applied after store
-       * credit, before cash; `amount` omitted = all that is left to pay. Never gives change; online only.
-       */
-      z.object({ method: z.literal('ROOM_CHARGE'), stayId: z.uuid(), amount: positiveAmount.optional() }),
-    ]),
-  )
+  .array(tenderSchema)
   .min(1)
   .max(10)
   .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale')
@@ -105,6 +106,29 @@ export const saleLineSchema = taxQuoteLineObject
         beneficiary: ref,
       })
       .optional(),
+    /** A prescription medicine (ADR-0025 §6): the prescription item it fills. */
+    prescription: linePrescriptionSchema.optional(),
+  })
+  .refine(...oneDiscountRefinement)
+  .refine(...packageSessionRefinement);
+
+/**
+ * A counter sale line may name the washer or dryer a self-service cycle runs on (ADR-0024 §7): a cycle
+ * item of the branch's machines. Online only (the offline envelope has no such field).
+ */
+export const counterSaleLineSchema = taxQuoteLineObject
+  .extend({
+    choices: counterChoicesSchema.optional(),
+    kitchenNote: kitchenNoteSchema.optional(),
+    machineId: z.uuid().optional(),
+    statutory: z
+      .object({
+        scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
+        share: rateSchema.or(z.literal('1')).optional(),
+        beneficiary: ref,
+      })
+      .optional(),
+    prescription: linePrescriptionSchema.optional(),
   })
   .refine(...oneDiscountRefinement)
   .refine(...packageSessionRefinement);
@@ -116,10 +140,23 @@ export const saleBeneficiarySchema = z.object({
   /** OSCA / PWD ID number. Never capture disability type (data minimisation). */
   idNumber: z.string().trim().min(1).max(64),
   tin: z.string().trim().regex(/^\d{9}(\d{3}|\d{5})?$/, 'TIN is 9 digits (optionally with branch code)').nullable().optional(),
+  /** Medicines on the discount (ADR-0025 §8): the purchase booklet was presented and filled in. */
+  purchaseBooklet: z.boolean().optional(),
 });
 
 /** Beneficiary refs and line ids of a cart: unique, used, and matching their lines' scheme. */
-function checkSaleRefs(v: { lines: z.infer<typeof saleLineSchema>[]; beneficiaries: z.infer<typeof saleBeneficiarySchema>[] }, ctx: z.RefinementCtx) {
+function checkSaleRefs(
+  v: { lines: z.infer<typeof saleLineSchema>[] | z.infer<typeof counterSaleLineSchema>[]; beneficiaries: z.infer<typeof saleBeneficiarySchema>[]; prescriptions?: z.infer<typeof salePrescriptionSchema>[] },
+  ctx: z.RefinementCtx,
+) {
+  const rx = v.prescriptions ?? [];
+  if (new Set(rx.map((p) => p.ref)).size !== rx.length) ctx.addIssue({ code: 'custom', path: ['prescriptions'], message: 'Duplicate prescription ref' });
+  for (const [i, l] of v.lines.entries()) {
+    const p = l.prescription;
+    if (!p || !('prescriptionRef' in p)) continue;
+    const found = rx.find((x) => x.ref === p.prescriptionRef);
+    if (!found || !found.items.some((it) => it.ref === p.itemRef)) ctx.addIssue({ code: 'custom', path: ['lines', i, 'prescription'], message: 'Unknown prescription ref' });
+  }
   const refs = new Set<string>();
   for (const [i, b] of v.beneficiaries.entries()) {
     if (refs.has(b.ref)) ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Duplicate beneficiary ref' });
@@ -150,7 +187,7 @@ export const createSaleSchema = z
     cashierSessionId: z.uuid(),
     /** Generated by the terminal per checkout; a second sale with the same id on the register is refused. */
     clientTransactionId: ref,
-    lines: z.array(saleLineSchema).min(1).max(200),
+    lines: z.array(counterSaleLineSchema).min(1).max(200),
     beneficiaries: z.array(saleBeneficiarySchema).max(20).default([]),
     tenders: tendersSchema,
     /** The total the cashier saw; if the server total differs (price changed), the sale is refused. */
@@ -162,6 +199,10 @@ export const createSaleSchema = z
     tip: tipSchema.optional(),
     /** The appointment this sale rings up (ADR-0022 §4); it becomes COMPLETED with the sale. */
     appointmentId: z.uuid().optional(),
+    /** Prescriptions recorded with this sale (ADR-0025 §6); lines point at their items by ref. */
+    prescriptions: z.array(salePrescriptionSchema).max(10).default([]),
+    /** A pharmacist's approval for a cashier who may not dispense (ADR-0025 §6); used once. */
+    dispenseApprovalId: z.uuid().optional(),
   })
   .superRefine(checkSaleRefs)
   .refine((v) => v.customerId !== undefined || !v.tenders.some((t) => t.method === 'STORE_CREDIT'), { message: 'Store credit needs the customer on the sale', path: ['customerId'] });
@@ -176,8 +217,9 @@ export const createPaymentIntentSchema = z.object({
   /**
    * TIP (session 25): the charge of a tip given with the sale (`tip.paymentIntentId`), never one of its
    * tenders. FOLIO (ADR-0023 §5.2): a guest settling a folio or paying a booking deposit at the front desk.
+   * JOB_ORDER (ADR-0024 §5): a down payment on a laundry job order.
    */
-  purpose: z.enum(['SALE', 'TIP', 'FOLIO']).default('SALE'),
+  purpose: z.enum(['SALE', 'TIP', 'FOLIO', 'JOB_ORDER']).default('SALE'),
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
@@ -336,6 +378,8 @@ export const createExchangeSchema = z.object({
       .default([]),
     expectedAmountDue: amountSchema.optional(),
     customerId: z.uuid().optional(),
+    prescriptions: z.array(salePrescriptionSchema).max(10).default([]),
+    dispenseApprovalId: z.uuid().optional(),
   }).superRefine(checkSaleRefs),
 });
 export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;

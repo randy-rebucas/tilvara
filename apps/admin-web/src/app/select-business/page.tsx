@@ -2,8 +2,9 @@ import Link from 'next/link';
 import { api, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { BusinessPicker } from './picker';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Choose a business' };
+export const generateMetadata = pageTitle('select-business');
 
 export default async function SelectBusinessPage() {
   const { t } = await getT();

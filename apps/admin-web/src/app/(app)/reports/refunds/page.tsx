@@ -5,8 +5,9 @@ import { peso } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Refund watch' };
+export const generateMetadata = pageTitle('reports.refunds');
 
 /** Rate as a percentage with one decimal, from the API's 4-dp ratio string (string arithmetic only). */
 function pct(rate: string | null): string {

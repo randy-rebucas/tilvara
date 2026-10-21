@@ -17,7 +17,7 @@ const int = (f: FormData, k: string) => Number.parseInt(str(f, k), 10);
 export function NightAuditButton({ branchId }: { branchId: string }) {
   const { t } = useT();
   const { pending, submit, error } = useSubmit();
-  const [done, setDone] = useState<number | null>(null);
+  const [done, setDone] = useState<{ nights: number; overstays: number; failed: number } | null>(null);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
@@ -26,13 +26,19 @@ export function NightAuditButton({ branchId }: { branchId: string }) {
         disabled={pending}
         onClick={async () => {
           setDone(null);
-          const r = await submit<{ nights: number }>('POST', '/api/v1/lodging/night-audit', { branchId });
-          if (r.ok) setDone(r.data.nights);
+          const r = await submit<{ nights: number; overstays: number; failed: unknown[] }>('POST', '/api/v1/lodging/night-audit', { branchId });
+          if (r.ok) setDone({ nights: r.data.nights, overstays: r.data.overstays ?? 0, failed: r.data.failed?.length ?? 0 });
         }}
       >
         {t('lod.runNightAudit')}
       </button>
-      {done !== null && <span role="status" className="text-[0.875rem]" data-testid="night-audit-result">{done === 0 ? t('lod.nightAuditNone') : t('lod.nightAuditDone', { n: done })}</span>}
+      {done !== null && (
+        <span role="status" className="text-[0.875rem]" data-testid="night-audit-result">
+          {done.nights === 0 ? t('lod.nightAuditNone') : t('lod.nightAuditDone', { n: done.nights })}
+          {done.overstays > 0 && <> {t('lod.nightAuditOverstays', { n: done.overstays })}</>}
+          {done.failed > 0 && <span className="text-red"> {t('lod.nightAuditFailed', { n: done.failed })}</span>}
+        </span>
+      )}
       <FormError message={error?.message} />
     </div>
   );

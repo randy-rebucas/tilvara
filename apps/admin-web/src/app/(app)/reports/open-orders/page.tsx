@@ -5,8 +5,9 @@ import type { OpenOrders } from '@/lib/api';
 import { formatDateTime, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Open orders' };
+export const generateMetadata = pageTitle('reports.open-orders');
 
 /** Orders still open or unpaid at the close of a day (or now, for today) — what to chase before closing. */
 export default async function OpenOrdersPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

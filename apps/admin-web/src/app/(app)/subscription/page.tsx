@@ -4,8 +4,9 @@ import { daysUntil, formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import type { MessageKey } from '@/i18n/messages';
 import { SubscriptionTabs } from './tabs';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Subscription' };
+export const generateMetadata = pageTitle('subscription');
 
 const LIMITS: { key: string; label: MessageKey; fill: string }[] = [
   { key: 'maxLegalEntities', label: 'sub.maxLegalEntities', fill: 'border-violet bg-violet' },

@@ -236,7 +236,8 @@ export class FloorService extends TenantService {
 
   archiveTable(auth: AuthContext, id: string) {
     return this.mutate(auth, async (db) => {
-      const table = await this.table(db, id);
+      // Locked, as opening an order on it locks it: no order opens on a table while it is archived.
+      const table = await this.table(db, id, true);
       await this.managed(db, auth, table.branchId);
       if (table.archivedAt) return tableView(table);
       const [live] = await db.select({ id: restaurantOrders.id }).from(restaurantOrders)
@@ -254,8 +255,9 @@ export class FloorService extends TenantService {
     return row;
   }
 
-  private async table(db: Database, id: string) {
-    const [row] = await db.select().from(restaurantTables).where(eq(restaurantTables.id, id));
+  private async table(db: Database, id: string, lock = false) {
+    const q = db.select().from(restaurantTables).where(eq(restaurantTables.id, id));
+    const [row] = lock ? await q.for('update') : await q;
     if (!row) throw notFound('Table');
     return row;
   }

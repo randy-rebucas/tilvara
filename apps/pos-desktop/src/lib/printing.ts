@@ -1,7 +1,7 @@
 import type { PrintableReceipt } from '@1pos/escpos';
 import { toDec } from '@1pos/money';
 import type { OfflineReceipt } from '@1pos/pos-offline';
-import type { Bill, FolioStatement, Receipt } from '../types';
+import type { Bill, FolioStatement, JobTicket, Receipt } from '../types';
 import { isZero, peso } from './money';
 
 /** Receipt wording stays in English, matching BIR document terminology (not UI copy). */
@@ -37,6 +37,17 @@ const promoDetail = (detail: string, promo?: { name: string; discount: string })
 const salonDetail = (detail: string, l: { staff?: string; packageSession?: boolean }) =>
   [detail, ...(l.packageSession ? ['Package session'] : []), ...(l.staff ? [l.staff] : [])].join(' · ');
 
+/**
+ * A medicine line (ADR-0025 §3, §5) adds its generic label and each batch its sale drew ("Lot NEW-1 ·
+ * Exp 03/2027"), under the item in small print; the printer has one detail line per item, so they follow
+ * the quantity there, kept apart by " | ".
+ */
+export const drugDetail = (detail: string, l: { generic?: string | undefined; lots?: string[] | undefined }) =>
+  [detail, ...(l.generic ? [l.generic] : []), ...(l.lots ?? [])].join(' | ');
+
+/** Under the SC/PWD details when the discount covered a medicine and the booklet was presented (ADR-0025 §8). */
+export const BOOKLET_PRESENTED = 'Purchase booklet presented';
+
 /** The server's receipt document as a thermal-printer receipt: same content, same order, same notice. */
 export function receiptToPrintable(r: Receipt): PrintableReceipt {
   const entries = Object.entries(r.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
@@ -45,7 +56,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     notice: r.notice,
     meta: [...(r.callNumber !== undefined ? [[`ORDER #${r.callNumber}`, r.pickupName ?? ''] as [string, string]] : []), [r.transaction.reference, r.transaction.dateTime]],
     items: [
-      ...r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: salonDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion && l.discount ? { name: l.promotion, discount: l.discount } : undefined), l) })),
+      ...r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(salonDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion && l.discount ? { name: l.promotion, discount: l.discount } : undefined), l), l) })),
       ...(r.charges ?? []).map((c) => ({ name: c.label, amount: `${c.amount} ${c.flag}`.trim() })),
     ],
     totals: entries
@@ -60,7 +71,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       // Charge to room (ADR-0023 §5.1): the line and the guest's signature, as the server words them.
       ...(r.roomCharge ? [{ lines: [r.roomCharge.line], pairs: [['Amount', peso(r.roomCharge.amount)] as [string, string]], signature: r.roomCharge.signatureLine }] : []),
       ...r.statutory.map((s) => ({
-      lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`],
+      lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`, ...(s.purchaseBooklet ? [BOOKLET_PRESENTED] : [])],
       // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
       pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
@@ -113,7 +124,7 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
     header: [r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
     notice: r.notice,
     meta: [...(r.callNumber !== undefined ? [[`ORDER #${r.callNumber}`, r.pickupName ?? ''] as [string, string]] : []), [r.localReference, dateTime]],
-    items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion) })),
+    items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion), l) })),
     totals: totals.map(([k, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v), ...(k === 'amountDue' && { emphasis: true }) })),
     payments: [
       { label: 'CASH', amount: peso(r.totals.amountDue) }, { label: 'Tendered', amount: peso(r.tendered) }, { label: 'Change', amount: peso(r.change) },
@@ -149,4 +160,62 @@ export const tipLabel = (method: string) => (method === 'CASH' ? 'Tip (cash)' : 
 
 /** How a tender reads on a receipt: an exchange credit names the return it came from. */
 export const tenderLabel = (t: { method: string; exchangeReturnNumber?: number }) =>
-  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method === 'ROOM_CHARGE' ? 'CHARGE TO ROOM' : t.method;
+  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method === 'ROOM_CHARGE' ? 'CHARGE TO ROOM' : t.method === 'JOB_DEPOSIT' ? 'DOWN PAYMENT' : t.method;
+
+/** A date and time on a laundry ticket, in the branch's time zone. */
+export const ticketTime = (at: string, timeZone: string) =>
+  new Intl.DateTimeFormat('en-PH', { timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
+
+/** How a job line's quantity reads on the stub: "3.5 kg (min 5)" when the minimum was billed. */
+export function jobQuantity(l: { measuredQuantity: string; quantity: string; unit: string | null }): string {
+  const unit = l.unit === 'KG' ? ' kg' : l.unit === 'LOAD' ? (l.quantity === '1' ? ' load' : ' loads') : l.unit === 'PIECE' ? ' pc' : '';
+  return l.measuredQuantity !== l.quantity ? `${l.measuredQuantity}${unit} (min ${l.quantity})` : `${l.quantity}${unit}`;
+}
+
+/**
+ * The customer's claim stub (ADR-0024 §4): number and claim code, promised time, lines and total, the
+ * down payment and balance, items and condition, and the branch's claim policy. English, like receipts.
+ */
+export function stubToPrintable(t: JobTicket): PrintableReceipt {
+  const s = t.stub;
+  return {
+    header: [s.business, s.legalName, s.branch, ...(s.branchAddress ? [s.branchAddress] : [])],
+    notice: s.notice,
+    meta: [
+      [s.reference, `CLAIM CODE ${s.claimCode}`],
+      ['Received', ticketTime(s.receivedAt, s.timezone)],
+      [s.serviceLevel === 'EXPRESS' ? 'EXPRESS - ready by' : 'Ready by', ticketTime(s.promisedAt, s.timezone)],
+      ...(s.customer ? [['Customer', s.customer] as [string, string]] : []),
+      [`Bags ${s.bagCount}`, s.weightKg ? `${s.weightKg} kg` : ''],
+    ],
+    items: s.lines.map((l) => ({ name: l.name, amount: l.amountDue, detail: `${jobQuantity(l)} x ${l.unitPrice}${l.packageSession ? ' · Package session' : ''}` })),
+    totals: [
+      { label: 'TOTAL', amount: peso(s.amountDue), emphasis: true },
+      ...(isZero(s.depositHeld) ? [] : [{ label: 'Down payment', amount: peso(s.depositHeld) }]),
+      { label: 'BALANCE AT PICKUP', amount: peso(s.balance), emphasis: true },
+    ],
+    payments: [],
+    blocks: [
+      ...(s.items.length ? [{ lines: [`Items (${s.pieces} pcs)`, ...s.items.map((i) => `${i.count} x ${i.label}${i.note ? ` - ${i.note}` : ''}`)] }] : []),
+      ...(s.conditionNotes ? [{ lines: ['Condition at drop-off', s.conditionNotes] }] : []),
+      ...(s.specialInstructions ? [{ lines: ['Instructions', s.specialInstructions] }] : []),
+      ...(s.claimPolicy ? [{ lines: [s.claimPolicy] }] : []),
+    ],
+    footer: ['Bring this stub to claim your laundry.'],
+  };
+}
+
+/** The bag tag (ADR-0024 §4): number, name, bags, service level and instructions; no prices. */
+export function tagToPrintable(t: JobTicket): PrintableReceipt {
+  const g = t.tag;
+  return {
+    header: [g.reference],
+    notice: g.serviceLevel === 'EXPRESS' ? 'EXPRESS' : 'BAG TAG',
+    meta: [...(g.customer ? [['Customer', g.customer] as [string, string]] : []), [`Bags ${g.bagCount}`, `${g.pieces} pcs`], ['Ready by', ticketTime(g.promisedAt, t.stub.timezone)]],
+    items: [],
+    totals: [],
+    payments: [],
+    blocks: g.specialInstructions ? [{ lines: ['Instructions', g.specialInstructions] }] : [],
+    footer: [],
+  };
+}

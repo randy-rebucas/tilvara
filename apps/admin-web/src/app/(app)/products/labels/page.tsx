@@ -3,8 +3,9 @@ import { allProducts, apiOrNull, type Branch, type CurrentPrice, type ItemLocati
 import { getT } from '@/i18n/server';
 import { ProductsTabs } from '../tabs';
 import { LabelMaker } from './labels';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Labels' };
+export const generateMetadata = pageTitle('products.labels');
 
 /**
  * Price and shelf labels (ADR-0021 §4): items × copies on a sheet, a roll or shelf-edge strips, with

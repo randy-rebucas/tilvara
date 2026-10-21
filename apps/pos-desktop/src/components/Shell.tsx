@@ -7,9 +7,9 @@ import { Guide } from './Guide';
 import { TillSettings, TillStatus } from './Till';
 
 export function LangToggle() {
-  const { lang, setLang } = useT();
+  const { t, lang, setLang } = useT();
   return (
-    <div className="flex gap-1" role="group" aria-label="Language">
+    <div className="flex gap-1" role="group" aria-label={t('a11y.language')} data-testid="language">
       {(['en', 'fil'] as const).map((l) => (
         <button
           key={l}
@@ -27,13 +27,17 @@ export function LangToggle() {
 
 /**
  * Which part of the user guide the ? button (and F1) opens; `restaurant` false leaves out tables and the
- * kitchen, `salon` false the appointments part, `lodging` false the rooms part.
+ * kitchen, `salon` false the appointments part, `lodging` false the rooms part, `laundry` false the
+ * laundry part.
  */
 export interface HelpContext {
   topic: GuideTopic;
   restaurant?: boolean;
   salon?: boolean;
   lodging?: boolean;
+  laundry?: boolean;
+  /** A pharmacy, drugstore or hybrid business (ADR-0025): the medicines part. */
+  pharmacy?: boolean;
 }
 
 /** The blue band: wordmark, where you are (branch · register · shift), till status, help, language, sign-out. */
@@ -92,7 +96,7 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}
       {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
-      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} salon={help.salon ?? true} lodging={help.lodging ?? true} onBack={() => setOverlay(null)} />}
+      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} salon={help.salon ?? true} lodging={help.lodging ?? true} laundry={help.laundry ?? true} pharmacy={help.pharmacy ?? true} onBack={() => setOverlay(null)} />}
       <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
     </div>
   );

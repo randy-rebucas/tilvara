@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import type { ServerEnv } from '@1pos/config';
 import { folioPaymentPosting, roomChargePosting } from '@1pos/accounting';
 import {
@@ -22,7 +22,7 @@ import { Dec, toDec } from '@1pos/money';
 import type { FolioAdjustmentInput, FolioPaymentInput, NightAuditInput, NightReversalInput } from '@1pos/validation';
 import { post } from '../accounting/ledger.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { assertLodging } from '../billing/entitlements.js';
+import { assertLodging, assertWritable } from '../billing/entitlements.js';
 import { effectiveNow } from '../common/clock.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { creditBalance } from '../customers/customers.service.js';
@@ -32,7 +32,7 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { TaxService, unprocessable } from '../tax/tax.service.js';
 import { depositView } from './deposits.service.js';
-import { depositsHeld, folioBalance, folioSettled, insertEntry, lockFolio, openJournalDate, stayGuestName, type FolioEntryRow, type FolioRow } from './folio.js';
+import { depositsHeld, folioBalance, folioSettled, insertEntry, liabilityAtStayBranch, lockFolio, openJournalDate, stayGuestName, type FolioEntryRow, type FolioRow } from './folio.js';
 import { consumeFolioIntent, frontDeskSession } from './front-desk.js';
 import { BUCKETS, exVatOf, inHouseStays, postDueNights, signedBuckets, type Buckets } from './night-audit.js';
 
@@ -51,6 +51,7 @@ const paymentView = (p: typeof folioPayments.$inferSelect) => ({ ...p, amount: m
  */
 @Injectable()
 export class FoliosService extends TenantService {
+  private readonly logger = new Logger('NightAudit');
   protected readonly conflicts: ConflictMap = {
     folio_entries_folio_open: ['FOLIO_SETTLED', 'This folio is settled and takes no more entries'],
     folio_entries_overpaid: ['FOLIO_OVERPAID', 'The folio would owe the guest money'],
@@ -102,7 +103,10 @@ export class FoliosService extends TenantService {
         await db.select({ name: roomTypes.name }).from(roomTypes).where(eq(roomTypes.id, stay!.roomTypeId)),
       ];
       const entries = await db.select().from(folioEntries).where(eq(folioEntries.folioId, id)).orderBy(folioEntries.createdAt, folioEntries.id);
-      const sum = (kinds: string[]) => entries.filter((e) => kinds.includes(e.kind)).reduce((a, e) => a.plus(e.amount), new Dec(0)).toFixed(2);
+      // A night reversal counts with what it reverses: the room night, or the night's accommodation tax.
+      const kindOf = new Map(entries.map((e) => [e.id, e.kind]));
+      const kindFor = (e: FolioEntryRow) => (e.kind === 'NIGHT_REVERSAL' && e.relatedEntryId ? (kindOf.get(e.relatedEntryId) ?? 'ROOM_NIGHT') : e.kind);
+      const sum = (kinds: string[]) => entries.filter((e) => kinds.includes(kindFor(e))).reduce((a, e) => a.plus(e.amount), new Dec(0)).toFixed(2);
       return {
         title: entity!.invoicingMode === 'DISABLED' ? 'Guest folio — not an invoice' : 'Guest folio',
         invoicingMode: entity!.invoicingMode,
@@ -112,7 +116,7 @@ export class FoliosService extends TenantService {
         stay: { id: stay!.id, roomNumber: room!.number, roomType: type!.name, arrivalDate: stay!.arrivalDate, departureDate: stay!.departureDate, guestName: await stayGuestName(db, stay!) },
         lines: entries.map((e) => ({ id: e.id, date: e.nightDate ?? e.createdAt.toISOString().slice(0, 10), kind: e.kind, description: e.description ?? e.kind, amount: money(e.amount), vatAmount: money(e.vatAmount) })),
         totals: {
-          roomNights: sum(['ROOM_NIGHT', 'NIGHT_REVERSAL']),
+          roomNights: sum(['ROOM_NIGHT']),
           accommodationTax: sum(['ACCOMMODATION_TAX']),
           charges: sum(['CHARGE', 'CHARGE_RETURN']),
           adjustments: sum(['ADJUSTMENT']),
@@ -192,7 +196,7 @@ export class FoliosService extends TenantService {
       const via = method === 'CASH' ? 'CASH' : method === 'STORE_CREDIT' ? 'STORE_CREDIT' : method === 'BANK_TRANSFER' ? 'BANK' : 'ELECTRONIC';
       await post(db, {
         tenantId, legalEntityId: folio.legalEntityId, branchId: session.branchId, sourceType: 'FOLIO_PAYMENT', sourceId: payment!.id, memo: 'Guest folio payment',
-        lines: folioPaymentPosting(amount, via, session.branchId), createdBy: auth.userId,
+        lines: liabilityAtStayBranch(folioPaymentPosting(amount, via, session.branchId), 'GUEST_LEDGER', folio.branchId), createdBy: auth.userId,
       });
       await this.audit(db, auth, 'folio.payment', 'folio', folio.id, { folioPaymentId: payment!.id, entryId: entry.id, method, amount: amount.toFixed(2) });
       return { payment: paymentView(payment!), entry: entryView(entry), balance: (await folioBalance(db, folio.id)).toFixed(2) };
@@ -274,28 +278,54 @@ export class FoliosService extends TenantService {
     });
   }
 
-  /** The night audit now, for one branch (§7): every in-house stay's nights that are due. */
-  runNightAudit(auth: AuthContext, input: NightAuditInput) {
-    return this.mutate(auth, async (db) => {
+  /**
+   * The night audit now, for one branch (§7): every in-house stay's nights that are due, each stay in
+   * its own transaction as the scheduler does, so one stay that cannot post (a closed period, a missing
+   * price) is reported in `failed` and the others still post. Overstays (in house past the departure
+   * date) are counted; their nights past the departure are charged at check-out.
+   */
+  async runNightAudit(auth: AuthContext, input: NightAuditInput) {
+    if (tenantOf(auth).status === 'SUSPENDED') throw new AppError('TENANT_SUSPENDED', 'This business is suspended; records are read-only', HttpStatus.FORBIDDEN);
+    const work = await this.read(auth, async (db) => {
       const { scope } = await branchScope(db, input.branchId);
       this.assertCan(auth, 'lodging.manage', scope);
       await assertLodging(db);
-      const posted: { stayId: string; nights: string[] }[] = [];
-      for (const s of await inHouseStays(db, input.branchId)) {
-        const nights = await postDueNights(db, this.tax, s.id, { tenantId: tenantOf(auth).tenantId, userId: auth.userId, correlationId: auth.correlationId ?? null, through: 'DUE', production: this.env.NODE_ENV === 'production' });
-        if (nights.length) posted.push({ stayId: s.id, nights });
-      }
-      return { branchId: input.branchId, nights: posted.reduce((a, p) => a + p.nights.length, 0), stays: posted };
+      await assertWritable(db);
+      return inHouseStays(db, input.branchId);
     });
+    const posted: { stayId: string; nights: string[] }[] = [];
+    const failed: { stayId: string; code: string; message: string }[] = [];
+    for (const s of work) {
+      try {
+        const nights = await this.mutate(auth, (db) =>
+          postDueNights(db, this.tax, s.id, { tenantId: tenantOf(auth).tenantId, userId: auth.userId, correlationId: auth.correlationId ?? null, through: 'DUE', production: this.env.NODE_ENV === 'production' }));
+        if (nights.length) posted.push({ stayId: s.id, nights });
+      } catch (e) {
+        const err = e instanceof AppError ? { code: e.code, message: e.message } : { code: 'NIGHT_NOT_POSTED', message: 'This stay could not be posted; try again or check its folio' };
+        this.logger.warn({ msg: 'night audit could not post a stay', stayId: s.id, code: err.code });
+        failed.push({ stayId: s.id, ...err });
+      }
+    }
+    const overstays = work.filter((s) => s.overstay).map((s) => s.id);
+    return { branchId: input.branchId, nights: posted.reduce((a, p) => a + p.nights.length, 0), stays: posted, failed, overstays: overstays.length, overstayStayIds: overstays };
   }
 
   // ---------------------------------------------------------------- helpers
 
+  /**
+   * With `lock`: the folio's advisory lock first, then its row (FOR NO KEY UPDATE), the order every
+   * other path takes (check-out, the night audit, a room charge, the folio-entry trigger), so two
+   * writers of one folio never wait on each other in a cycle.
+   */
   private async load(db: Database, id: string, lock = false): Promise<FolioRow> {
-    const q = db.select().from(folios).where(eq(folios.id, id));
-    const [row] = lock ? await q.for('update') : await q;
+    const q = () => db.select().from(folios).where(eq(folios.id, id));
+    let [row] = await q();
     if (!row) throw notFound('Folio');
-    return row;
+    if (lock) {
+      await lockFolio(db, row.id);
+      [row] = await q().for('no key update');
+    }
+    return row!;
   }
 
   private async view(db: Database, folio: FolioRow) {

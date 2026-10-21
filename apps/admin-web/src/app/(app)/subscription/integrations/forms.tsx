@@ -7,9 +7,9 @@ import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { MessageKey } from '@/i18n/messages';
 
-/** As @1pos/validation lists them (API_KEY_SCOPES, WEBHOOK_TOPIC_NAMES); lodging since ADR-0023 §13. */
-export const SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read', 'lodging.read'] as const;
-export const TOPICS = ['sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero', 'stay.checked_in', 'stay.checked_out', 'folio.entry_posted'] as const;
+/** As @1pos/validation lists them (API_KEY_SCOPES, WEBHOOK_TOPIC_NAMES); lodging since ADR-0023 §13, laundry since ADR-0024 §14. */
+export const SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read', 'lodging.read', 'laundry.read', 'appointments.read'] as const;
+export const TOPICS = ['sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero', 'stay.checked_in', 'stay.checked_out', 'folio.entry_posted', 'job_order.ready', 'job_order.claimed'] as const;
 
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);
 

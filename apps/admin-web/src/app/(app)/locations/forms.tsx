@@ -6,6 +6,7 @@ import { Disclosure } from '@/components/disclosure-form';
 import { FormError, SelectField, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
+import { extraFor } from '@/i18n/titles';
 import type { Branch, LegalEntity, Register } from '@/lib/api';
 
 function useForm() {
@@ -178,7 +179,7 @@ export function EditRegisterForm({ register }: { register: Register }) {
 
 // ---------------------------------------------------------------- register
 function RegisterFields({ close, branches }: { close: () => void; branches: Branch[] }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { pending, submit, fieldError, general } = useForm();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -191,7 +192,7 @@ function RegisterFields({ close, branches }: { close: () => void; branches: Bran
       <SelectField label={t('loc.branchOne')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <TextField label={t('loc.registerName')} name="name" required autoFocus placeholder="Counter 1" error={fieldError('name')} />
+      <TextField label={t('loc.registerName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.registerName')} error={fieldError('name')} />
       <TextField label={t('loc.registerCode')} name="code" required placeholder="R1" error={fieldError('code')} />
       <Actions pending={pending} general={general} submitLabel={t('common.create')} close={close} />
     </form>
@@ -205,7 +206,7 @@ export function AddRegisterForm({ branches }: { branches: Branch[] }) {
 
 // ---------------------------------------------------------------- terminal
 function TerminalFields({ close, registers, onSecret }: { close: () => void; registers: Register[]; onSecret: (s: string) => void }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const { pending, submit, fieldError, general } = useForm();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -222,7 +223,7 @@ function TerminalFields({ close, registers, onSecret }: { close: () => void; reg
       <SelectField label={t('loc.registerOne')} name="registerId">
         {registers.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
       </SelectField>
-      <TextField label={t('loc.terminalName')} name="name" required autoFocus placeholder="iPad Counter 1" error={fieldError('name')} />
+      <TextField label={t('loc.terminalName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.terminalName')} error={fieldError('name')} />
       <Actions pending={pending} general={general} submitLabel={t('loc.pair')} close={close} />
     </form>
   );

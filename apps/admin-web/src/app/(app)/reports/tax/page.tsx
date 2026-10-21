@@ -5,8 +5,9 @@ import { servesLodging } from '@/lib/business-type';
 import { peso, percentFromRate } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Tax summary' };
+export const generateMetadata = pageTitle('reports.tax');
 
 /** Net sales per VAT status and rate in force at the sale (its tax profile), in the BIR's buckets. */
 export default async function TaxSummaryPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

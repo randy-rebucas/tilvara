@@ -195,6 +195,8 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
     send: (body: { clientTransactionId: string; tenders: Tender[]; tip?: TipBody }, key: string) => Promise<{ id: string }>,
     onTotalChanged?: () => void,
     onUnanswered?: () => void,
+    /** The server refused it (a final answer): the caller may word the refusal itself (ADR-0025). */
+    onRefused?: (err: unknown) => void,
   ): Promise<string | null> {
     if (busy.current) return null;
     busy.current = true;
@@ -234,6 +236,7 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
           setNotice({ kind: 'error', text: t(roomError, { available: peso(String((err as ApiFailure).error.details?.available ?? '0')) }) });
           setRoomGuest(null);
         } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+        onRefused?.(err);
       }
       return null;
     } finally {

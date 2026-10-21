@@ -5,8 +5,9 @@ import { api, apiOrNull, type Account, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity } from '../chrome';
 import { AddAccountForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Chart of accounts' };
+export const generateMetadata = pageTitle('books.accounts');
 
 export default async function AccountsPage({ searchParams }: { searchParams: Promise<{ entity?: string }> }) {
   const { t } = await getT();

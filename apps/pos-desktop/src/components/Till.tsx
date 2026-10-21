@@ -324,6 +324,7 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
             <li key={i}>
               <p className="flex justify-between gap-3"><span>{l.name}</span><span className="money">{l.amount} {l.flag}</span></p>
               <p className="text-muted">{l.quantity} × {l.unitPrice}</p>
+              {l.generic && <p className="text-[0.75rem] text-muted" data-testid="receipt-generic">{l.generic}</p>}
               {l.promotion && <p className="text-muted">{l.promotion.name} −{l.promotion.discount}</p>}
             </li>
           ))}

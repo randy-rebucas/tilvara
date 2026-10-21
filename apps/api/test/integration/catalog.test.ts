@@ -72,6 +72,13 @@ describe('tenant catalog defaults', () => {
     expect(lists).toHaveLength(1);
     expect(lists[0]).toMatchObject({ name: 'Standard', isDefault: true, pricesIncludeTax: true, currency: 'PHP' });
   });
+
+  it('a unit code with an underscore is a 400, matching the DB check (audit 2026-10-21)', async () => {
+    const s = await shop('uom-code');
+    const bad = await http().post('/v1/uoms').set(s.auth).send({ code: 'BOX_6', name: 'Box of 6' });
+    expect(bad.status).toBe(400);
+    await http().post('/v1/uoms').set(s.auth).send({ code: 'box6', name: 'Box of 6' }).expect(201);
+  });
 });
 
 describe('products', () => {

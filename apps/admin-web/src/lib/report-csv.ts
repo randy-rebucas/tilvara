@@ -1,5 +1,5 @@
 import type { MessageKey } from '@/i18n/messages';
-import type { AccommodationTaxReport, GuestLedgerReport, OccupancyReport, SalesSummaryRooms, ByAttribute, ByBranch, ByCategory, CommissionsReport, ServicePackagesReport, TipsByStaffReport, DiscountsReport, IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PaymentExceptions, PrepTimes, PromotionsReport, PurchasesBySupplier, RefundWatch, ServiceChargeReport, TipsReport } from './api';
+import type { DangerousDrugsBook, PrescriptionBook, DeliveriesReport, JobDepositsReport, JobOrdersReport, MachineUsageReport, AccommodationTaxReport, GuestLedgerReport, OccupancyReport, SalesSummaryRooms, ByAttribute, ByBranch, ByCategory, CommissionsReport, ServicePackagesReport, TipsByStaffReport, DiscountsReport, IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PaymentExceptions, PrepTimes, PromotionsReport, PurchasesBySupplier, RefundWatch, ServiceChargeReport, TipsReport } from './api';
 
 /**
  * Reports as CSV for a spreadsheet or the accountant. Money and quantities stay the API's exact
@@ -11,7 +11,9 @@ export type CsvReport =
   | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments'
   | 'promotions' | 'attributes'
   | 'commissions' | 'servicePackages' | 'staffTips'
-  | 'occupancy' | 'guestLedger' | 'accommodationTax';
+  | 'occupancy' | 'guestLedger' | 'accommodationTax'
+  | 'jobOrders' | 'machineUsage' | 'jobDeposits' | 'deliveries'
+  | 'prescriptionBook' | 'dangerousDrugs';
 
 /**
  * API path (under /v1) for each report, given the branch and range (and, for sizes and colours, the
@@ -46,6 +48,12 @@ export function reportPath(report: CsvReport, q: { branchId: string; from: strin
     occupancy: `/reports/occupancy?${range}`,
     guestLedger: `/reports/guest-ledger?legalEntityId=${q.legalEntityId ?? ''}`,
     accommodationTax: `/reports/accommodation-tax?${range}`,
+    jobOrders: `/reports/job-orders?${range}`,
+    machineUsage: `/reports/machine-usage?${range}`,
+    jobDeposits: `/reports/job-order-deposits?legalEntityId=${q.legalEntityId ?? ''}`,
+    deliveries: `/reports/deliveries?${range}`,
+    prescriptionBook: `/reports/prescription-book?${range}`,
+    dangerousDrugs: `/reports/dangerous-drugs?${range}`,
     attributes: `/reports/by-attribute?${range}${q.attribute ? `&attribute=${encodeURIComponent(q.attribute)}` : ''}`,
   };
   return paths[report];
@@ -116,10 +124,12 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       return [[t('loc.vat'), t('csv.vatRate'), ...cols.map((b) => t(`csv.${b}` as MessageKey))], ...r.data.map((x) => [x.vatStatus, x.vatRate, ...cols.map((b) => x[b])])];
     }
     case 'statutory': {
-      const r = data as { data: { document: string; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[] };
+      const r = data as { data: { document: string; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string; purchaseBooklet?: boolean | null }[] };
+      // ADR-0025 §8: the purchase booklet, blank when the discount covered no medicine.
+      const booklet = (b: boolean | null | undefined) => (b == null ? '' : b ? t('rep.bookletYes') : t('rep.bookletNo'));
       return [
-        [t('common.date'), t('csv.document'), t('common.number'), t('csv.register'), t('csv.scheme'), t('csv.beneficiary'), t('csv.idNumber'), 'TIN', t('csv.sales'), t('csv.discount'), t('csv.net')],
-        ...r.data.map((x) => [x.day, x.document, x.number, x.register, x.schemeCode, x.name, x.idNumber, x.tin ?? '', x.sales, x.discount, x.net]),
+        [t('common.date'), t('csv.document'), t('common.number'), t('csv.register'), t('csv.scheme'), t('csv.beneficiary'), t('csv.idNumber'), 'TIN', t('csv.sales'), t('csv.discount'), t('csv.net'), t('rep.booklet')],
+        ...r.data.map((x) => [x.day, x.document, x.number, x.register, x.schemeCode, x.name, x.idNumber, x.tin ?? '', x.sales, x.discount, x.net, booklet(x.purchaseBooklet)]),
       ];
     }
     case 'items': {
@@ -297,6 +307,69 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
         [t('rep.month'), t('rep.nights'), t('rep.accTaxBase'), t('rep.accTax')],
         ...r.data.map((x) => [x.month, x.nights, x.base, x.tax]),
         [t('common.total'), '', r.totals.base, r.totals.tax],
+      ];
+    }
+    case 'jobOrders': {
+      const r = data as JobOrdersReport;
+      return [
+        [t('common.date'), t('rep.jobsReceived'), t('rep.jobsReady'), t('rep.jobsClaimed'), t('rep.jobsCancelled'), t('rep.jobsDisposed'), t('rep.turnaroundHours'), t('rep.onTimePct')],
+        ...r.days.map((d) => [d.day, d.received, d.ready, d.claimed, d.cancelled, d.disposed, d.averageTurnaroundHours ?? '', d.onTimePercent ?? '']),
+        [t('common.total'), r.totals.received, r.totals.ready, r.totals.claimed, r.totals.cancelled, r.totals.disposed, r.totals.averageTurnaroundHours ?? '', r.totals.onTimePercent ?? ''],
+        [],
+        [t('lau.service'), t('lau.unitCol'), t('rep.measured'), t('rep.billed'), t('rep.jobs'), t('rep.amount')],
+        ...r.services.map((x) => [x.name, x.unit, x.measured, x.billed, x.jobs, x.amount]),
+      ];
+    }
+    case 'machineUsage': {
+      const r = data as MachineUsageReport;
+      return [
+        [t('lau.machine'), t('lau.machineKind'), t('rep.selfServiceCycles'), t('rep.dropOffCycles'), t('rep.selfServiceMinutes'), t('rep.dropOffMinutes'), t('rep.utilisationPct'), t('rep.selfServiceSales')],
+        ...r.machines.map((m) => [m.label, m.kind, m.selfServiceCycles, m.dropOffCycles, m.selfServiceMinutes, m.dropOffMinutes, m.utilisationPercent ?? '', m.selfServiceSales]),
+        [t('common.total'), '', r.totals.selfServiceCycles, r.totals.dropOffCycles, '', '', '', r.totals.selfServiceSales],
+      ];
+    }
+    case 'jobDeposits': {
+      const r = data as JobDepositsReport;
+      return [
+        [t('rep.glFigure'), t('rep.amount')],
+        [t('rep.dpHeld'), r.totals.held],
+        [t('rep.dpBooks'), r.totals.customerDownPaymentsGl],
+        [t('rep.glDifference'), r.totals.difference],
+        [t('rep.unclaimedValue'), r.totals.unclaimedValue],
+        [t('rep.dpKept'), r.forfeited.amount],
+        [],
+        [t('lau.job'), t('lau.customer'), t('common.status'), t('lau.total'), t('lau.held')],
+        ...r.held.map((x) => [x.reference, x.customer ?? '', x.status, x.amountDue, x.held]),
+        [],
+        [t('lau.job'), t('lau.customer'), t('rep.readySince'), t('rep.daysWaiting'), t('rep.finalNotice'), t('lau.total'), t('lau.held')],
+        ...r.unclaimed.map((x) => [x.reference, x.customer ?? '', x.readyAt, x.daysWaiting, x.finalNoticeSent ? t('rep.finalSent') : t('rep.finalNotSent'), x.amountDue, x.held]),
+      ];
+    }
+    case 'deliveries': {
+      const r = data as DeliveriesReport;
+      return [
+        [t('common.date'), t('lau.tripKind'), t('rep.trips'), t('rep.tripsDone'), t('rep.tripsFailed'), t('rep.tripsCancelled'), t('rep.tripsScheduled')],
+        ...r.days.map((d) => [d.day, d.kind, d.trips, d.done, d.failed, d.cancelled, d.scheduled]),
+        [t('common.total'), '', r.totals.trips, r.totals.done, r.totals.failed, '', ''],
+        [t('rep.deliveryFees'), r.totals.deliveryFees],
+      ];
+    }
+    case 'prescriptionBook': {
+      const r = data as PrescriptionBook;
+      const yes = (b: boolean) => (b ? t('rep.bookletYes') : '');
+      return [
+        [t('common.date'), t('pha.sale'), t('pha.patient'), t('pha.prescriber'), t('pha.prcNo'), t('pha.s2No'), t('pha.yellowForm'), t('pha.issuedOn'), t('drug.generic'), t('drug.strength'), t('drug.form'), t('drug.class'), t('pha.brand'), t('common.quantity'), t('pha.returned'), t('pha.needsReview'), t('pha.pharmacist')],
+        ...r.data.map((x) => [x.day, x.saleReference, x.patientName, x.prescriberName, x.prescriberLicenseNo, x.prescriberS2No ?? '', x.yellowFormNo ?? '', x.issuedOn, x.genericName, x.strength ?? '', x.dosageForm, x.drugClass, x.brand, x.quantity, yes(x.returned), yes(x.needsReview), x.pharmacist ?? '']),
+      ];
+    }
+    case 'dangerousDrugs': {
+      const r = data as DangerousDrugsBook;
+      return [
+        ['SKU', t('common.item'), t('drug.generic'), t('drug.strength'), t('drug.form'), t('pha.dd.opening'), t('pha.dd.received'), t('pha.dd.dispensed'), t('pha.dd.returned'), t('pha.dd.writtenOff'), t('pha.dd.adjusted'), t('pha.dd.otherOut'), t('pha.dd.closing')],
+        ...r.data.map((d) => [d.sku, d.name, d.genericName, d.strength ?? '', d.dosageForm, d.opening, d.received, d.dispensed, d.returned, d.writtenOff, d.adjusted, d.otherOut, d.closing]),
+        [],
+        ['SKU', t('common.date'), t('pha.sale'), t('pha.yellowForm'), t('pha.patient'), t('pha.patientAddress'), t('pha.prescriber'), t('pha.prcNo'), t('pha.s2No'), t('common.quantity'), t('pha.pharmacist')],
+        ...r.data.flatMap((d) => d.dispensings.map((x) => [d.sku, x.day, x.saleReference, x.yellowFormNo ?? '', x.patientName, x.patientAddress ?? '', x.prescriberName, x.prescriberLicenseNo, x.prescriberS2No ?? '', x.quantity, x.pharmacist ?? ''])),
       ];
     }
     case 'payments': {

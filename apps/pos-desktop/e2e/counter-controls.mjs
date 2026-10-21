@@ -70,7 +70,7 @@ const b = await openBrowser({ base: BASE, out: OUT, port: 9343 });
 const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll } = b;
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
-const tab = (label) => evaluate(`void [...document.querySelectorAll('nav[aria-label=Counter] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+const tab = (label) => evaluate(`void [...document.querySelectorAll('nav[data-testid=counter-nav] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
 const scan = async (code) => {
   await evaluate(`(() => { const el = document.getElementById('scan'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(code)}); el.dispatchEvent(new Event('input', { bubbles: true })); el.form.requestSubmit(); })()`);
   await sleep(600);
@@ -227,7 +227,7 @@ try {
   await scan(`CK-${slug}`);
   await totalShows('₱22.40');
   // The line's own Discount (not "Discount all" for the whole cart, session 26).
-  await evaluate(`void [...document.querySelectorAll('ul[aria-label=Cart] button')].find((x) => x.getClientRects().length && x.textContent.trim() === 'Discount').click()`);
+  await evaluate(`void [...document.querySelectorAll('ul[data-testid=cart] button')].find((x) => x.getClientRects().length && x.textContent.trim() === 'Discount').click()`);
   await fill('value', '10');
   await submitFormOf('value');
   check('10 % off, priced by the server', await totalShows('₱20.16') && (await text()).includes('−10%'));
@@ -242,7 +242,7 @@ try {
   await sleep(400);
   check('phone width: no horizontal scroll with the line controls', await noHorizontalScroll());
   check('phone width: the line buttons do not overlap', await evaluate(`(() => {
-    const row = [...document.querySelectorAll('ul[aria-label=Cart] li')].find((li) => li.getClientRects().length);
+    const row = [...document.querySelectorAll('ul[data-testid=cart] li')].find((li) => li.getClientRects().length);
     const rects = [...row.querySelectorAll('button')].filter((x) => x.getClientRects().length).map((x) => x.getBoundingClientRect());
     return rects.every((a, i) => rects.every((b, j) => i === j || a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5))
       && [...row.querySelectorAll('button')].every((x) => x.scrollWidth <= x.clientWidth + 1);

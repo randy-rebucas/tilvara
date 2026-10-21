@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import type { OfflineSale, Snapshot } from '@1pos/sync-protocol';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import request from 'supertest';
@@ -36,9 +37,10 @@ afterAll(async () => {
 /** A date `days` from today in Manila (the branches' default timezone). */
 const day = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(Date.now() + days * 86_400_000));
 
-async function store(prefix: string) {
+async function store(prefix: string, businessType?: string) {
   const t = await signup(app, prefix);
   const auth = bearer(t.access);
+  if (businessType) await http().patch('/v1/business').set(auth).send({ businessType }).expect(200);
   const le = await http().post('/v1/legal-entities').set(auth).send({ registeredName: `${prefix} Store`, vatStatus: 'VAT' }).expect(201);
   const branchId = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le.body.id, code: 'B1', name: 'One' }).expect(201)).body.id as string;
   const branch2 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le.body.id, code: 'B2', name: 'Two', birBranchCode: '00001' }).expect(201)).body.id as string;
@@ -49,7 +51,7 @@ async function store(prefix: string) {
     (await http().post('/v1/products').set(auth).send({ name, uomId: pc, taxCategoryId: taxes.VAT, ...extra, variants: [{ sku: uniq('SKU'), price }] }).expect(201)).body as { id: string; variants: { id: string }[] };
   const supplierId = (await http().post('/v1/suppliers').set(auth).send({ code: 'SUP', name: 'Distributor' }).expect(201)).body.id as string;
   const sessionId = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId, openingFloat: '1000.00' }).expect(201)).body.id as string;
-  return { tenantId: t.tenantId, auth, branchId, branch2, product, supplierId, sessionId };
+  return { tenantId: t.tenantId, userId: t.userId, auth, branchId, registerId, branch2, product, supplierId, sessionId };
 }
 type Store = Awaited<ReturnType<typeof store>>;
 
@@ -61,6 +63,20 @@ const sell = (s: Store, lines: { variantId: string; quantity: string }[]) =>
   http().post('/v1/sales').set(s.auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: s.sessionId, clientTransactionId: randomUUID(), lines, tenders: [{ method: 'CASH', tendered: '1000.00' }] });
 const lots = async (s: Store, variantId: string, branchId = s.branchId) =>
   (await http().get('/v1/stock/lots').query({ branchId, variantId }).set(s.auth).expect(200)).body as { data: { lotId: string; expiresOn: string; lotCode: string | null; quantity: string }[]; onHand: string; undated: string };
+/** An offline cash sale (ADR-0015) by the owner on R1's terminal, priced as the till's snapshot prices it (the quote then). */
+async function offlineSale(s: Store, lines: { variantId: string; quantity: string }[]) {
+  const t = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.registerId, name: `Till ${randomUUID().slice(0, 4)}` }).expect(201)).body;
+  const headers = { 'x-terminal-id': t.terminal.id, Authorization: `Terminal ${t.credential}` };
+  const snap = (await http().get('/v1/terminal/snapshot').set(headers).expect(200)).body as Snapshot;
+  const amountDue = (await http().post('/v1/tax/quote').set(s.auth).send({ branchId: s.branchId, lines }).expect(200)).body.totals.amountDue as string;
+  const env: OfflineSale = {
+    terminalTxnId: randomUUID(), deviceSeq: 1, snapshotId: snap.snapshotId, cashierSessionId: s.sessionId, cashierUserId: s.userId,
+    occurredAt: new Date().toISOString(), localReference: `R1-T${snap.terminal.credentialHint}-000001`,
+    lines, tenders: [{ method: 'CASH', tendered: '1000.00' }], amountDue,
+  };
+  return (await http().post('/v1/sync/sales').set(headers).send({ sales: [env] }).expect(200)).body.results[0] as { status: string; code?: string; saleId: string; flags: string[] };
+}
+const settings = (s: Store) => http().get(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).expect(200).then((r) => r.body);
 const brief = (l: Awaited<ReturnType<typeof lots>>) => [l.data.map((x) => [x.expiresOn, x.quantity]), l.undated];
 
 describe('expiry lots', () => {
@@ -128,6 +144,15 @@ describe('expiry lots', () => {
     expect((await adjust(s, 'WASTE', [{ variantId: bread, quantity: '-1', lotId: expired }], 'Expired').expect(422)).body.error.code).toBe('INVALID_STATE');
     expect((await adjust(s, 'ADJUSTMENT', [{ variantId: milk, quantity: '1', lotId: expired }]).expect(400)).body.error.code).toBe('VALIDATION_FAILED');
 
+    // One item twice in one adjustment (audit 2026-10-21): each movement reaches the lot trigger on its own,
+    // so 4 dated in then 3 out leaves 1 of that date (not the dates computed from the final balance).
+    const yoghurt = (await s.product('Yoghurt', '45.00', { tracksExpiry: true })).variants[0]!.id;
+    await adjust(s, 'ADJUSTMENT', [
+      { variantId: yoghurt, quantity: '4', unitCost: '30.00', expiresOn: day(30) },
+      { variantId: yoghurt, quantity: '-3' },
+    ], 'Delivery, three spoiled').expect(201);
+    expect(brief(await lots(s, yoghurt))).toEqual([[[day(30), '1']], '0']);
+
     // The app reads lots and never writes them.
     await expect(runtime.query(`UPDATE stock_lots SET quantity = 99`)).rejects.toThrow(/permission denied/);
     await expect(runtime.query(`INSERT INTO stock_lot_movements (tenant_id, lot_id, movement_id, quantity) VALUES ('${s.tenantId}', '${expired}', '${expired}', 1)`)).rejects.toThrow(/permission denied/);
@@ -155,6 +180,53 @@ describe('expiry lots', () => {
     await sell(s, [{ variantId: sachet, quantity: '3' }]).expect(201);
     expect(brief(await lots(s, sachet))).toEqual([[[day(60), '7']], '0']);
     expect(brief(await lots(s, tie))).toEqual([[[day(60), '1']], '0']);
+  });
+
+  it('outside pharmacy, a branch set to BLOCK refuses an online sale of expired stock; an offline one is recorded and flagged EXPIRED_STOCK (audit 2026-10-21)', async () => {
+    for (const type of ['GROCERY', 'RETAIL']) {
+      const s = await store(`lot-off-${type.toLowerCase()}`, type);
+      const milk = (await s.product('Milk 1L', '95.00', { tracksExpiry: true })).variants[0]!.id;
+      expect(await settings(s)).toMatchObject({ expiredStock: null, expiredStockRule: 'ALLOW' });
+      await http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy: 'ALLOW', lowStockAlerts: true, expiredStock: 'BLOCK' }).expect(200);
+      expect(await settings(s)).toMatchObject({ expiredStock: 'BLOCK', expiredStockRule: 'BLOCK' });
+      await adjust(s, 'ADJUSTMENT', [{ variantId: milk, quantity: '3', unitCost: '70.00', expiresOn: day(-2), lotCode: 'M1' }], 'Delivery').expect(201);
+      expect((await sell(s, [{ variantId: milk, quantity: '1' }]).expect(409)).body.error.code).toBe('EXPIRED_STOCK');
+
+      // The till sold it while offline: the milk was handed over, so the sale is recorded and the draw flagged.
+      const r = await offlineSale(s, [{ variantId: milk, quantity: '2' }]);
+      expect([r.status, r.flags]).toEqual(['RECORDED', []]);
+      const draws = await asOwnerInTenant(owner, s.tenantId, async (c) =>
+        (await c.query(`SELECT trim_scale(-lm.quantity)::text AS q, lm.expired FROM stock_lot_movements lm JOIN stock_movements m ON m.id = lm.movement_id WHERE m.sale_id = $1`, [r.saleId])).rows);
+      expect(draws).toEqual([{ q: '2', expired: true }]);
+      const delivered = (await http().get('/v1/sync/transactions?status=RECORDED').set(s.auth).expect(200)).body.data;
+      expect(delivered.map((d: { saleId: string; flags: string[] }) => [d.saleId, d.flags])).toEqual([[r.saleId, ['EXPIRED_STOCK']]]);
+      const [audit] = await asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query(`SELECT metadata FROM audit_logs WHERE action = 'sale.completed' AND resource_id = $1`, [r.saleId])).rows);
+      expect(audit.metadata.expiredStockLots).toBe(1);
+      expect(brief(await lots(s, milk))).toEqual([[[day(-2), '1']], '0']);
+      expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+    }
+  });
+
+  it('a HYBRID business blocks expired stock by default, in the API and the lot trigger (migration 0108)', async () => {
+    const s = await store('lot-hybrid', 'HYBRID');
+    expect(await settings(s)).toMatchObject({ expiredStock: null, expiredStockRule: 'BLOCK' });
+    const milk = (await s.product('Milk 1L', '95.00', { tracksExpiry: true })).variants[0]!.id;
+    await adjust(s, 'ADJUSTMENT', [
+      { variantId: milk, quantity: '2', unitCost: '70.00', expiresOn: day(-2) },
+      { variantId: milk, quantity: '2', unitCost: '70.00', expiresOn: day(5) },
+    ], 'Delivery').expect(201);
+    // The trigger draws the sellable lot first (first-expiry-first would take the expired one).
+    const sale = (await sell(s, [{ variantId: milk, quantity: '2' }]).expect(201)).body;
+    expect(brief(await lots(s, milk))).toEqual([[[day(-2), '2']], '0']);
+    const expired = await asOwnerInTenant(owner, s.tenantId, async (c) =>
+      (await c.query(`SELECT bool_or(lm.expired) AS e FROM stock_lot_movements lm JOIN stock_movements m ON m.id = lm.movement_id WHERE m.sale_id = $1`, [sale.id])).rows[0].e);
+    expect(expired).toBe(false);
+    // Only expired stock left: refused.
+    expect((await sell(s, [{ variantId: milk, quantity: '1' }]).expect(409)).body.error.code).toBe('EXPIRED_STOCK');
+    // The branch may allow it.
+    await http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy: 'ALLOW', lowStockAlerts: true, expiredStock: 'ALLOW' }).expect(200);
+    await sell(s, [{ variantId: milk, quantity: '1' }]).expect(201);
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 
   it('the hourly pass flags each lot once when it enters the window, and the mail lists them', async () => {

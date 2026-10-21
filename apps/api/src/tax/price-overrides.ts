@@ -26,7 +26,10 @@ export async function overridesForCart(
     const o = rows.find((r) => r.id === l.priceOverrideId);
     if (!o) throw new AppError('NOT_FOUND', 'Price approval not found', HttpStatus.NOT_FOUND, { line });
     if (o.branchId !== branchId || o.variantId !== l.variantId) throw unprocessable('PRICE_OVERRIDE_MISMATCH', 'This price was approved for another item or branch', { line });
-    if (o.requestedBy !== auth.userId) throw unprocessable('PRICE_OVERRIDE_MISMATCH', 'This price was approved for another cashier', { line });
+    if (o.requestedBy !== auth.userId) {
+      // A held cart resumed by someone else keeps its lines, not the approval: that was given to the cashier who asked.
+      throw unprocessable('PRICE_OVERRIDE_MISMATCH', 'This price change was approved for the cashier who asked for it; ask for the approval again', { line, reason: 'OTHER_CASHIER' });
+    }
     if (o.expiresAt.getTime() <= at.getTime()) throw unprocessable('PRICE_OVERRIDE_EXPIRED', 'The approval for this price has expired; ask again', { line });
     if (o.quantity !== null && toDec(l.quantity).gt(o.quantity)) {
       throw unprocessable('PRICE_OVERRIDE_QUANTITY', `This price was approved for ${toDec(o.quantity).toString()}; ask again for more`, { line, approvedQuantity: toDec(o.quantity).toString() });

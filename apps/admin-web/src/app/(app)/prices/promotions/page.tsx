@@ -10,8 +10,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { PricesTabs } from '../tabs';
 import { NewPromotion, StateMark } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Promotions' };
+export const generateMetadata = pageTitle('prices.promotions');
 
 const STATES = ['CURRENT', 'ENDED', 'ALL'] as const;
 type StateFilter = (typeof STATES)[number];

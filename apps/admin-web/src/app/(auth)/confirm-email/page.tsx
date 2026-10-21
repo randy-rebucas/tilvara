@@ -1,8 +1,9 @@
 import { AuthFace, AuthStub } from '@/components/auth-note';
 import { getT } from '@/i18n/server';
 import { ConfirmEmailForm } from './confirm-email-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Confirm your new email' };
+export const generateMetadata = pageTitle('confirm-email');
 
 /** The link mailed to a new sign-in address. A button, not an automatic change: mail scanners open links. */
 export default async function ConfirmEmailPage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {

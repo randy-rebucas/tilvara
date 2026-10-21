@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql, type Database } from '@1pos/database';
+import { movementAt, movementSaleJoin } from './movement-time.js';
 import { toDec, type Dec } from '@1pos/money';
 import type { AuthContext } from '../auth/auth-context.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -45,8 +46,8 @@ export class RestaurantReportsService extends ReportsService {
            WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
           UNION ALL
           SELECT m.sale_line_id, NULL, 0, 0, 0, 0, 0, -m.value
-            FROM stock_movements m
-           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND m.created_at < ${w.end}),
+            FROM stock_movements m ${movementSaleJoin}
+           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND ${movementAt} >= ${w.start} AND ${movementAt} < ${w.end}),
         g AS (
           SELECT coalesce(p.variant_id, l.variant_id) AS item_id,
                  CASE WHEN l.parent_line_id IS NULL THEN NULL ELSE l.variant_id END AS modifier_id,
@@ -144,8 +145,8 @@ export class RestaurantReportsService extends ReportsService {
                       WHEN m.type = 'WASTE' AND m.stock_adjustment_id IN (SELECT id FROM prepared) THEN 'prepared_waste'
                       WHEN m.type = 'WASTE' THEN 'other_waste'
                       ELSE 'count' END AS kind
-            FROM stock_movements m
-           WHERE m.branch_id = ${w.branchId} AND m.created_at >= ${w.start} AND m.created_at < ${w.end}
+            FROM stock_movements m ${movementSaleJoin}
+           WHERE m.branch_id = ${w.branchId} AND m.created_at >= ${w.start} AND ${movementAt} >= ${w.start} AND ${movementAt} < ${w.end}
              AND m.type IN ('CONSUMPTION', 'SALE', 'RETURN', 'WASTE', 'COUNT')
              AND (m.type = 'CONSUMPTION' OR m.variant_id IN (SELECT variant_id FROM ingredients)))
         SELECT m.variant_id, v.sku, p.name, u.code AS unit, m.kind, sum(m.quantity)::text AS qty, sum(m.value)::text AS value

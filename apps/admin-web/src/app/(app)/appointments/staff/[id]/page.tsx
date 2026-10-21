@@ -9,9 +9,10 @@ import { isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { appointmentsAccess, staffColor } from '../../chrome';
 import { bookableServices, hoursLine } from '../../data';
-import { AddTimeOff, EditStaff, RemoveTimeOff, StaffHours, StaffServices } from '../forms';
+import { AddTimeOff, ArchiveStaff, EditStaff, RemoveTimeOff, StaffHours, StaffServices } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Staff member' };
+export const generateMetadata = pageTitle('appointments.staff.item');
 
 /** One staff member: details, the services they do, weekly hours and time off; archive or bring back. */
 export default async function StaffMemberPage({ params }: { params: Promise<{ id: string }> }) {
@@ -56,7 +57,7 @@ export default async function StaffMemberPage({ params }: { params: Promise<{ id
           {s.archivedAt ? (
             <ActionButton method="PATCH" url={`/api/v1/service-staff/${s.id}`} body={{ archived: false }} label={t('sstaff.restore')} />
           ) : (
-            <ActionButton method="PATCH" url={`/api/v1/service-staff/${s.id}`} body={{ archived: true }} label={t('sstaff.archive')} confirmText={t('sstaff.archiveConfirm', { name: s.displayName })} />
+            <ArchiveStaff staffId={s.id} name={s.displayName} timezone={tz} />
           )}
         </div>
       )}

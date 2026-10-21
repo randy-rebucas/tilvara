@@ -18,3 +18,5 @@ export * from './readings.js';
 export * from './integrations.js';
 export * from './salon.js';
 export * from './lodging.js';
+export * from './laundry.js';
+export * from './pharmacy.js';

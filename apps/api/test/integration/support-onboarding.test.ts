@@ -172,6 +172,12 @@ describe('support access (ADR-0016 slice 6)', () => {
     expect(products.some((p) => p.id === bProductId)).toBe(false);
     await http().get(`/v1/products/${bProductId}`).set(bearer(supportToken)).expect(404);
     await http().get('/v1/audit-logs').set(bearer(supportToken)).expect(200);
+    // Service notes may hold health details: never shown to support, whatever customers.read says (decision A1).
+    const customer = (await http().post('/v1/customers').set(bearer(a.access)).send({ displayName: 'Liza' }).expect(201)).body.id as string;
+    await http().get(`/v1/customers/${customer}`).set(bearer(supportToken)).expect(200);
+    const notes = (await http().get(`/v1/customers/${customer}/notes`).set(bearer(supportToken)).expect(403)).body.error;
+    expect([notes.code, notes.details.session]).toEqual(['SERVICE_NOTES_RESTRICTED', 'SUPPORT']);
+    await http().get(`/v1/customers/${customer}/notes`).set(bearer(a.access)).expect(200);
 
     // Every write is refused, even ones its read permissions would never reach.
     const write = await http().post('/v1/categories').set(bearer(supportToken)).send({ name: 'Support was here' }).expect(403);
@@ -208,7 +214,7 @@ describe('support access (ADR-0016 slice 6)', () => {
     );
     const listed = (await http().get('/v1/support-access').set(bearer(a.access)).expect(200)).body.data as { id: string; activity: Record<string, unknown> }[];
     expect(listed.find((g) => g.id === grantId)?.activity).toMatchObject({ sessions: 1, refusedWrites: 5, staff: ['Sam Support'] });
-    expect(listed.find((g) => g.id === grantId)!.activity.requests).toBe(6); // me, products, products/:id, audit-logs, support-access, subscription
+    expect(listed.find((g) => g.id === grantId)!.activity.requests).toBe(8); // me, products, products/:id, audit-logs, customers/:id, customers/:id/notes, support-access, subscription
     // And at platform level, outside every business.
     const platform = await asPlatform<{ action: string }>(`SELECT action FROM audit_logs WHERE tenant_id IS NULL AND actor_user_id = $1`, [staff.userId]);
     expect(platform.map((r) => r.action)).toContain('platform.support.opened');

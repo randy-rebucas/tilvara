@@ -7,8 +7,9 @@ import { formatDate, peso, signOf, subtractQty } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { BatchPaymentForm, NewInvoiceForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplier invoices' };
+export const generateMetadata = pageTitle('purchasing.invoices');
 
 const STATUSES: SupplierInvoiceStatus[] = ['OPEN', 'PAID', 'CANCELLED'];
 const BUCKETS = ['current', 'days1to30', 'days31to60', 'days61to90', 'over90'] as const;

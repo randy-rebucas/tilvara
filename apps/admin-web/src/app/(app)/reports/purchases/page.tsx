@@ -5,8 +5,9 @@ import type { PurchasesBySupplier } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Purchases by supplier' };
+export const generateMetadata = pageTitle('reports.purchases');
 
 /** Goods received from each supplier at receipt cost, what went back, the net, and the invoices of the period. */
 export default async function PurchasesPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

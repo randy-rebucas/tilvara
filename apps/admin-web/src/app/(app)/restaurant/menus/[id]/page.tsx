@@ -7,9 +7,10 @@ import { formatDateTime } from '@/lib/format';
 import { branchLabel, isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../../chrome';
-import { MenuEditor, RowAction } from '../../forms';
+import { EditRecord, MenuEditor, RowAction } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Menu' };
+export const generateMetadata = pageTitle('restaurant.menus.item');
 
 /** One menu: its draft (editable), the published version (frozen) and the version history. */
 export default async function MenuPage({ params }: { params: Promise<{ id: string }> }) {
@@ -41,7 +42,12 @@ export default async function MenuPage({ params }: { params: Promise<{ id: strin
             {menu.servedBy.length > 0 && <> · {t('rest.servedBy')}: <span className="text-violet">{menu.servedBy.map((s) => branchLabel(branches?.data, s.branchId)).join(', ')}</span></>}
           </Serial>
         </div>
-        {!menu.archivedAt && menu.servedBy.length === 0 && <RowAction url={`/api/v1/menus/${menu.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: menu.name })} />}
+        {!menu.archivedAt && (
+          <div className="flex flex-wrap items-start gap-2">
+            <EditRecord label={t('rest.menuEditName')} url={`/api/v1/menus/${menu.id}`} fields={[{ name: 'name', label: t('common.name'), value: menu.name }]} />
+            {menu.servedBy.length === 0 && <RowAction url={`/api/v1/menus/${menu.id}/archive`} label={t('common.archive')} danger confirmText={t('rest.archiveConfirm', { name: menu.name })} />}
+          </div>
+        )}
       </div>
 
       <section>

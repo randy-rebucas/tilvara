@@ -5,6 +5,8 @@
  */
 
 export interface PrintableReceipt {
+  /** Printed first, centred, bold and double height (a kitchen "VOID" slip); none on receipts. */
+  banner?: string;
   /** Seller name, registered name, address, TIN — centred. */
   header: string[];
   /** Compliance notice, printed exactly as given (e.g. "THIS IS NOT AN OFFICIAL INVOICE") — centred, bold. */
@@ -91,6 +93,7 @@ export function layout(r: PrintableReceipt, width: PaperWidth): Line[] {
   const pairs = (l: string, rgt: string, style: { bold?: boolean; double?: boolean } = {}): Line[] =>
     pair(printable(l), printable(rgt), width).map((x) => ({ kind: 'text', text: x, align: 'left', ...style }));
   const out: Line[] = [];
+  if (r.banner) out.push(...text(r.banner, 'center', { bold: true, double: true }));
   for (const h of r.header) out.push(...text(h, 'center'));
   out.push(...text(r.notice, 'center', { bold: true }), { kind: 'rule' });
   for (const [l, rgt] of r.meta) out.push(...pairs(l, rgt));

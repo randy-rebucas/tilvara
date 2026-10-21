@@ -7,8 +7,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { LodgingChrome, lodgingAccess, lodgingBranch, RoomStatusTag } from '../chrome';
 import { RoomStatusButtons } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Housekeeping' };
+export const generateMetadata = pageTitle('lodging.housekeeping');
 
 const FILTERS = ['all', 'DIRTY', 'CLEAN', 'INSPECTED', 'OUT_OF_ORDER'] as const;
 
@@ -64,7 +65,7 @@ export default async function HousekeepingPage({ searchParams }: { searchParams:
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {r.occupied && <span className="tag">{t('lod.occupied')}</span>}
-                    {r.departingToday && <span className="tag border-[#ead3a6]! bg-amber-bg! text-[#6b4a12]!">{t('lod.leavesToday')}</span>}
+                    {r.departingToday && <span className="tag border-[#ead3a6]! bg-amber-bg! text-[#6b4a12]!">{t(r.overstay ? 'lod.overstay' : 'lod.leavesToday')}</span>}
                     {r.arrivingToday && <span className="tag border-[#ead3a6]! bg-amber-bg! text-[#6b4a12]!">{t('lod.arrivesToday')}</span>}
                     {!r.occupied && !r.arrivingToday && <span className="tag">{t('lod.vacant')}</span>}
                   </div>

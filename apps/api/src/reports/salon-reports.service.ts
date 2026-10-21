@@ -36,7 +36,11 @@ export class SalonReportsService extends ReportsService {
           SELECT l.service_staff_id, l.commission_rate, 0,
                  -(rl.vatable_sales + rl.vat_exempt_sales + rl.zero_rated_sales + rl.percentage_tax_sales
                    + coalesce((SELECT sum(e.value) FROM customer_package_entries e
-                                WHERE e.kind = 'RESTORED' AND e.sale_return_id = r.id AND e.customer_package_id = l.customer_package_id), 0))
+                                WHERE e.kind = 'RESTORED' AND e.sale_return_id = r.id
+                                  AND (e.sale_line_id = l.id
+                                       -- entries written before RESTORED named its line: the item the line used
+                                       OR (e.sale_line_id IS NULL AND e.customer_package_item_id = (
+                                             SELECT u.customer_package_item_id FROM customer_package_entries u WHERE u.kind = 'REDEEMED' AND u.sale_line_id = l.id)))), 0))
             FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id JOIN sale_lines l ON l.id = rl.sale_line_id
            WHERE l.service_staff_id IS NOT NULL AND r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end})
         SELECT f.staff_id, st.display_name AS name, sum(f.lines)::int AS lines,

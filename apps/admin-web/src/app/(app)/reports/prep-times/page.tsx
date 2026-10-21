@@ -5,8 +5,9 @@ import type { PrepFigures, PrepTimes, PrepTimesGrouped } from '@/lib/api';
 import { duration } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Prep times' };
+export const generateMetadata = pageTitle('reports.prep-times');
 
 const BY = ['station', 'hour', 'item'] as const;
 type By = (typeof BY)[number];

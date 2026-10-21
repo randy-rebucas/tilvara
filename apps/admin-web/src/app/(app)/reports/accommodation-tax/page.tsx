@@ -5,8 +5,9 @@ import type { AccommodationTaxReport } from '@/lib/api';
 import { peso, percentFromRate } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Accommodation tax' };
+export const generateMetadata = pageTitle('reports.accommodation-tax');
 
 /**
  * The local accommodation tax per month (ADR-0023 §10): the nights' net before VAT it was charged on

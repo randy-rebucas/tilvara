@@ -4,8 +4,9 @@ import { RecordTable } from '@/components/record-table';
 import { allProducts } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Recipes' };
+export const generateMetadata = pageTitle('restaurant.recipes');
 
 /**
  * Dishes and their recipes (ADR-0014 §4): an item that does not track stock itself consumes its

@@ -24,7 +24,7 @@ import { toDec } from '@1pos/money';
 import type { CustomerNoteInput, SetPackageItemsInput, UpdateCustomerNoteInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { hasPermission } from '../auth/authorization.js';
-import { assertAppointments } from '../billing/entitlements.js';
+import { assertPackages } from '../billing/entitlements.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -60,8 +60,9 @@ export class SalonService extends TenantService {
   /** Replace what a package holds. Packages already sold keep their own copy. */
   setPackageItems(auth: AuthContext, variantId: string, input: SetPackageItemsInput) {
     return this.mutate(auth, async (db) => {
-      if (!holds(auth, 'catalog.manage')) throw forbidden('catalog.manage');
-      await assertAppointments(db);
+      // The catalog is business-wide: changing it needs a business-wide grant, like products (a branch role cannot).
+      this.assertCan(auth, 'catalog.manage');
+      await assertPackages(db);
       const pkg = await this.packageVariant(db, variantId);
       if (pkg.archivedAt) throw archived('Package');
       const ids = input.items.map((i) => i.serviceVariantId);
@@ -172,7 +173,7 @@ export class SalonService extends TenantService {
         appointments: appts
           .filter((a) => hasPermission(grants, 'appointments.read', { branchId: a.a.branchId, legalEntityId: a.legalEntityId }))
           .map(({ a, branchName }) => ({
-            id: a.id, branchId: a.branchId, branchName, status: a.status, startsAt: a.startsAt, endsAt: a.endsAt, saleId: a.saleId, notes: a.notes,
+            id: a.id, branchId: a.branchId, branchName, status: a.status, startsAt: a.startsAt, endsAt: a.endsAt, saleId: a.saleId, notes: mayReadNotes(auth) ? a.notes : null,
             services: apptServices.filter((x) => x.s.appointmentId === a.id).map((x) => ({
               name: x.variantName ? `${x.productName} — ${x.variantName}` : x.productName, staffName: x.staffName, startsAt: x.s.startsAt,
             })),
@@ -186,6 +187,7 @@ export class SalonService extends TenantService {
   }
 
   notes(auth: AuthContext, customerId: string) {
+    assertNotesReader(auth);
     return this.read(auth, async (db) => {
       await this.customer(db, customerId);
       this.assertRead(auth);
@@ -237,6 +239,21 @@ export class SalonService extends TenantService {
       if (!gone.length) throw notFound('Note');
       await this.audit(db, auth, 'customer.note_removed', 'customer', customerId, { noteId });
       return { removed: true };
+    });
+  }
+}
+
+/**
+ * Service notes may hold health information (allergies): never read by a business's API key or by a
+ * Tilvara support session (audit decision A1, 2026-10-21), whatever their `customers.read` grant says.
+ * Staff who hold `customers.read` keep them. Appointment notes (free text too) are blanked for them.
+ */
+export const mayReadNotes = (auth: AuthContext) => !auth.apiKey && !auth.support;
+
+export function assertNotesReader(auth: AuthContext) {
+  if (!mayReadNotes(auth)) {
+    throw new AppError('SERVICE_NOTES_RESTRICTED', 'Service notes may hold health information and are shown to staff of the business only', HttpStatus.FORBIDDEN, {
+      session: auth.apiKey ? 'API_KEY' : 'SUPPORT',
     });
   }
 }

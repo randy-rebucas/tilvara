@@ -11,9 +11,11 @@ const forbidden = (perm: string) => new AppError('FORBIDDEN', 'You do not have p
 
 /**
  * The drawer the front desk takes money with (ADR-0023 §5.2): an open cashier session of the folio's
- * legal entity (any of its branches), the person's own unless they reconcile drawers there.
+ * legal entity (any of its branches, ADR-0023 §5.2: a resort's front desk may work another branch's
+ * drawer), the person's own unless they reconcile drawers there. `branchId` narrows it to one branch:
+ * a laundry down payment is taken where the job is claimed (ADR-0024 §5, the claim's WRONG_BRANCH).
  */
-export async function frontDeskSession(db: Database, auth: AuthContext, sessionId: string, legalEntityId: string) {
+export async function frontDeskSession(db: Database, auth: AuthContext, sessionId: string, legalEntityId: string, branchId?: string) {
   const { session, scope } = await loadSession(db, sessionId, true);
   const grants = tenantOf(auth).grants;
   if (!hasPermission(grants, 'cash.session', scope) && !hasPermission(grants, 'cash.reconcile', scope)) throw forbidden('cash.session');
@@ -22,6 +24,7 @@ export async function frontDeskSession(db: Database, auth: AuthContext, sessionI
     throw new AppError('NOT_SESSION_OWNER', 'Take payments on your own cashier session', HttpStatus.FORBIDDEN);
   }
   if (scope.legalEntityId !== legalEntityId) throw unprocessable('WRONG_ENTITY', 'Take this guest\'s money at a drawer of the same legal entity');
+  if (branchId && session.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'Take this money at a drawer of the branch that has the job order');
   return { session, scope };
 }
 

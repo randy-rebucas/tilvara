@@ -63,7 +63,7 @@ function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null
  * Mark menu items sold out ("86") at this branch, or back: the floor can no longer order them.
  * The items are those on the branch's published menus (dine-in and takeaway).
  */
-function SoldOutPanel({ branchId }: { branchId: string }) {
+function SoldOutPanel({ branchId, pushes, live }: { branchId: string; pushes: number; live: boolean }) {
   const { t } = useT();
   const [items, setItems] = useState<MenuItem[] | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
@@ -77,7 +77,11 @@ function SoldOutPanel({ branchId }: { branchId: string }) {
       })
       .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
   }, [branchId]);
-  useEffect(load, [load]);
+  // Another screen may mark items too: reload on the branch's push (the kitchen's stream), polling slowly as the fallback.
+  usePoll(load, live ? 60_000 : 15_000, true);
+  useEffect(() => {
+    if (pushes) load();
+  }, [pushes]);
 
   async function toggle(item: MenuItem) {
     setBusy(item.variantId);
@@ -212,7 +216,12 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
       .catch(() => setNotice({ kind: 'warn', text: t('kds.offline') }));
   }, [place.branch.id, place.station?.id]);
   // Pushed changes reload at once; polling stays as a slow safety net (fast when the stream is down).
-  const live = useFloorPush(place.branch.id, load, true);
+  const [pushes, setPushes] = useState(0);
+  const onPush = useCallback(() => {
+    load();
+    setPushes((n) => n + 1);
+  }, [load]);
+  const live = useFloorPush(place.branch.id, onPush, true);
   usePoll(load, live ? 30_000 : 4000, true);
 
   /** Recently finished tickets (everything served or voided), newest first, to look one up again. */
@@ -285,7 +294,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
       </div>
       {notice && <Callout kind={notice.kind}>{notice.text}</Callout>}
       {view === 'soldout' ? (
-        <SoldOutPanel branchId={place.branch.id} />
+        <SoldOutPanel branchId={place.branch.id} pushes={pushes} live={live} />
       ) : view === 'done' ? (
         <DoneTickets tickets={done} showStation={!place.station} />
       ) : tickets === null ? (

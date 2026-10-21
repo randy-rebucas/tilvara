@@ -7,7 +7,7 @@ For: whoever is on call for Tilvara. Background: ADR-0016 slice 3. The alert rul
 | Source | Address | What |
 |---|---|---|
 | API | `http://<METRICS_HOST>:<API_METRICS_PORT>/metrics` (default `127.0.0.1:4329`) | HTTP, checkout, payments, offline sync, refusals, DB pool, Redis, and the business gauges |
-| Worker | `http://<METRICS_HOST>:<WORKER_METRICS_PORT>/metrics` (default `127.0.0.1:4339`) | outbox batches and outcomes, loop errors, heartbeat, DB pool |
+| Worker | `http://<METRICS_HOST>:<WORKER_METRICS_PORT>/metrics` (default `127.0.0.1:4339`) | outbox batches and outcomes, webhook deliveries, laundry notices, loop errors, heartbeat, DB pool |
 | Readiness | `GET /v1/health/ready` on the public API port | database, migration head, Redis |
 
 - The metrics ports serve only `GET /metrics`. They must stay on the internal network: never route the
@@ -21,7 +21,8 @@ For: whoever is on call for Tilvara. Background: ADR-0016 slice 3. The alert rul
 - A wrong or missing token shows as `up == 0`, like a stopped service; Prometheus's targets page then
   says "server returned HTTP status 401".
 - The **business gauges** (`onepos_outbox_*`, `onepos_payment_intents_*`, `onepos_offline_sales_*`,
-  `onepos_tills_*`, `onepos_cashier_sessions_*`, `onepos_worker_heartbeat_age_seconds`, `onepos_workers_alive`)
+  `onepos_tills_*`, `onepos_cashier_sessions_*`, `onepos_worker_heartbeat_age_seconds`, `onepos_workers_alive`,
+  `onepos_lodging_stays_nights_overdue`)
   come from the database function `platform_metrics()`. They are counts and ages across all businesses, with
   no business's records, names or ids. The API queries them at most every 10 seconds, however often it is
   scraped. When the query fails, `onepos_db_up` is 0 and the business gauges keep their last values.
@@ -181,6 +182,37 @@ answering 4xx/5xx, too slow past `WEBHOOK_TIMEOUT_MS`, or not on a public https 
 3. Many endpoints failing at once points at us instead: check outbound network from the worker host and
    that `WEBHOOK_SIGNING_KEY` is the same on the API and the worker (a mismatch makes every receiver
    reject the signature).
+
+### OneposLaundryNoticesFailing
+A laundry notice (ADR-0024 §6: "ready for pickup", a reminder or the final notice) could not be sent on a
+channel: `sum by (channel) (increase(onepos_worker_laundry_notices_total{outcome="failed"}[1h]))`. The
+notice row is settled `FAILED` for that channel and is not retried (each channel is tried once), so the
+customer did not hear from us.
+1. The worker log has the mailer or SMS sender's error (masked recipient, never the text).
+2. Email failing everywhere: the mail relay or its credentials. SMS failing: the SMS provider (only the dev
+   sender exists until D7, so in production this means the adapter is not configured).
+3. Tell the branch, so the attendant can call or text the customer (`job_order_notices` keeps the failed channel).
+   `skipped` is not a fault (notices off for the job, no address, SMS off for the branch).
+
+## Lodging
+
+### OneposNightAuditFailing
+The scheduled night audit (`NightAuditScheduler`, every `NIGHT_AUDIT_INTERVAL_MS`) could not post some
+stays' room nights, or a whole pass failed: `onepos_night_audit_total{outcome="failed"}` (`posted` counts
+nights posted, `skipped` businesses passed over because they are read-only). Nothing is lost: a stay that
+failed stays due and is tried again on the next pass, and each night is posted once (unique per stay and
+night). The API log says `night audit could not post a stay` with the tenant and stay ids, or
+`night audit failed` for a whole pass. Common causes: a closed accounting period with no open day after it,
+a room type whose night item or tax profile is missing, the database unreachable. Fix the cause; the
+manager can also run `POST /v1/lodging/night-audit` for the branch to see the error directly.
+
+### OneposNightsOverdue
+In-house stays have a night that fell due (the branch's `nightAuditTime` after the night) more than a day
+ago and is still not posted: `onepos_lodging_stays_nights_overdue` (from `platform_metrics()`). Either the
+scheduler is off (`NIGHT_AUDIT_INTERVAL_MS=0`, or no API replica runs it), or it keeps failing
+(`OneposNightAuditFailing`), or the business is read-only (suspended or lapsed: its nights are posted,
+exactly, once it can write again). Guests' folios understate what they owe until then. Check the API
+replicas' environment and logs; once fixed the next pass catches up every missed night.
 
 ## Operations
 

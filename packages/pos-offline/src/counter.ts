@@ -8,6 +8,8 @@ export interface CounterCartLine {
   kitchenNote?: string | undefined;
   /** Who performed or sold it (ADR-0022 §5): a staff member of the snapshot. */
   staffId?: string | undefined;
+  /** A prescription medicine (ADR-0025 §6): the item of a prescription recorded with this sale. */
+  prescription?: { prescriptionRef: string; itemRef: string } | undefined;
 }
 
 /** A kitchen ticket the till prints itself (offline counter service): one per station. */
@@ -18,7 +20,7 @@ export interface LocalKitchenTicket {
 
 /** Why a counter cart cannot be sold as it is (the cashier fixes the choices). */
 export class CounterCartError extends Error {
-  constructor(readonly code: 'COUNTER_SERVICE_OFF' | 'NOT_ON_MENU' | 'MODIFIER_NOT_ALLOWED' | 'MODIFIER_COUNT' | 'DUPLICATE_MODIFIER', message: string) {
+  constructor(readonly code: 'COUNTER_SERVICE_OFF' | 'NOT_ON_MENU' | 'MODIFIER_NOT_ALLOWED' | 'MODIFIER_COUNT' | 'DUPLICATE_MODIFIER' | 'SOLD_OUT', message: string) {
     super(message);
     this.name = 'CounterCartError';
   }
@@ -36,6 +38,9 @@ export function expandCounterCart(counter: SnapshotCounter | null | undefined, l
   const parentIndex: (number | null)[] = [];
   const tickets = new Map<string, LocalKitchenTicket>();
   for (const [i, line] of lines.entries()) {
+    // Sold out at the branch when the snapshot was cut (audit 2026-10-21): not sold offline either.
+    const gone = counter?.soldOut?.find((s) => s.variantId === line.variantId);
+    if (gone) throw new CounterCartError('SOLD_OUT', `${gone.name} is sold out`);
     const item = counter?.items.find((m) => m.variantId === line.variantId);
     const asked = Boolean(line.choices?.length || line.kitchenNote);
     if (!counter && asked) throw new CounterCartError('COUNTER_SERVICE_OFF', 'Choices need counter service at this branch');

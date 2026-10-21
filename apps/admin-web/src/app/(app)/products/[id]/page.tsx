@@ -2,28 +2,33 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Note, Serial } from '@/components/note';
-import { allProducts, api, apiOrNull, type CurrentPrice, type Me, type PackageItems, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
-import { servesAppointments } from '@/lib/business-type';
+import { allProducts, api, apiOrNull, type Category, type CurrentPrice, type Me, type PackageItems, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
+import { servesAppointments, servesLaundry, servesPharmacy } from '@/lib/business-type';
+import { genericLabel } from '@/lib/pharmacy';
+import { DrugBadge } from '../drug-fields';
 import { peso } from '@/lib/format';
 import { isUuid, variantOptions } from '@/lib/options';
+import { categoryOptions } from '@/lib/categories';
 import { getT } from '@/i18n/server';
 import { AddCombinations } from '../variant-grid';
 import { AddBarcode, AddPackLink, AddVariant, EditProduct, EditVariant, MakeBarcode, PackageContents, RemoveBarcode } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Product' };
+export const generateMetadata = pageTitle('products.item');
 
 /** One product and its variants: details, barcodes, reference cost and the default price, with edit and archive. */
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t } = await getT();
-  const [me, product, taxes, uoms, lists, links] = await Promise.all([
+  const [me, product, taxes, uoms, lists, links, cats] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<ProductDetail>(`/products/${id}`),
     apiOrNull<{ data: TaxCategory[] }>('/tax-categories'),
     apiOrNull<{ data: Uom[] }>('/uoms'),
     apiOrNull<{ data: PriceList[] }>('/price-lists'),
     apiOrNull<{ data: PackLink[] }>('/pack-conversions'),
+    apiOrNull<{ data: Category[] }>('/categories'),
   ]);
   if (!product) notFound();
   const defaultList = lists?.data.find((l) => l.isDefault);
@@ -32,6 +37,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const canManage = (me.activeTenant?.permissions.includes('catalog.manage') ?? false) && !product.archivedAt;
   const tax = taxes?.data.find((x) => x.id === product.taxCategoryId);
   const uom = uoms?.data.find((u) => u.id === product.uomId);
+  const catOptions = categoryOptions(cats?.data);
+  const categoryLabel = product.categoryId ? (catOptions.find((o) => o.id === product.categoryId)?.label ?? cats?.data.find((c) => c.id === product.categoryId)?.name) : null;
   const live = product.variants.filter((v) => !v.archivedAt);
   // Packs and pieces (ADR-0020): links where one of this product's items is the pack or the piece.
   const mine = new Set(product.variants.map((v) => v.id));
@@ -39,6 +46,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const stocked = product.trackInventory && canManage ? variantOptions((await allProducts())?.data, { stocked: true }) : [];
   // Salons (ADR-0022): a service's duration and supplies used; a package's validity and contents.
   const salon = servesAppointments(me.activeTenant?.businessType);
+  // Laundries (ADR-0024 §2, §7, §11): how a job counts a service, add-ons, machine cycles, supplies used per load.
+  const laundry = servesLaundry(me.activeTenant?.businessType);
+  const supplies = salon || laundry;
   const isPackage = product.productType === 'PACKAGE';
   const contents = isPackage ? await Promise.all(live.map((v) => apiOrNull<PackageItems>(`/variants/${v.id}/package-items`))) : [];
   const serviceOptions = isPackage && canManage
@@ -56,7 +66,15 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <Serial className="mt-1 block">
           {uom?.code ?? '—'} · {product.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')} · {tax?.name ?? '—'} · {kindLabel}
           {product.tracksExpiry && <> · {t('prod.expiryTag')}</>}
+          {' · '}<span data-testid="product-category">{categoryLabel ?? t('prod.noCategory')}</span>
         </Serial>
+        {product.drugClass && (
+          <p className="mt-2 flex flex-wrap items-center gap-2 text-[0.9375rem]" data-testid="drug-line">
+            <DrugBadge drugClass={product.drugClass} />
+            <span>{genericLabel(t, product)}</span>
+            {product.fdaRegistrationNo && <Serial>{t('drug.fdaShort', { no: product.fdaRegistrationNo })}</Serial>}
+          </p>
+        )}
         {product.description && <p className="mt-2 max-w-[68ch] text-muted">{product.description}</p>}
       </div>
 
@@ -64,7 +82,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       {canManage && taxes && (
         <div className="flex flex-wrap items-start gap-2">
-          <EditProduct product={product} taxes={taxes.data} />
+          <EditProduct product={product} taxes={taxes.data} categories={catOptions} pharmacy={servesPharmacy(me.activeTenant?.businessType)} />
           <AddVariant productId={product.id} />
           <AddCombinations product={product} />
           <ActionButton url={`/api/v1/products/${product.id}/archive`} label={t('prod.archive')} confirmText={t('prod.archiveConfirm', { name: product.name })} />
@@ -80,9 +98,12 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="min-w-0">
                   <p className="font-semibold">{v.name ?? product.name}{v.archivedAt && <span className="tag ml-2">{t('prod.archived')}</span>}</p>
                   <Serial className="text-ink">{v.sku}</Serial>
-                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage) && (
+                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage || v.laundryAddon || v.laundryUnit) && (
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {product.productType === 'SERVICE' && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
+                      {product.productType === 'SERVICE' && (salon || !laundry) && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
+                      {v.laundryUnit && <span className="tag border-blue/40 text-blue!" data-testid="laundry-unit">{t(`prod.laundryTag.${v.laundryUnit}`)}{v.laundryMinQuantity && ` · ${t('prod.laundryMinTag', { n: v.laundryMinQuantity })}`}{v.laundryKgPerLoad && ` · ${t('prod.laundryLoadTag', { n: v.laundryKgPerLoad })}`}</span>}
+                      {v.laundryAddon && <span className="tag">{t('prod.laundryAddonTag')}</span>}
+                      {v.machineKind && <span className="tag" data-testid="machine-cycle">{t(`lau.kind.${v.machineKind}`)} · {t('lau.minutesN', { n: v.machineMinutes ?? 0 })}</span>}
                       {isPackage && <span className="tag">{v.packageValidDays ? t('prod.validTag', { n: v.packageValidDays }) : t('prod.noExpiry')}</span>}
                       {Object.entries(v.attributes ?? {}).map(([k, val]) => <span key={k} className="tag">{k}: {val}</span>)}
                       {v.quickKeyPosition && <span className="tag border-blue/40 text-blue!">{t('qk.keyN', { n: v.quickKeyPosition })}</span>}
@@ -109,8 +130,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="flex flex-wrap items-end gap-3">
                   <AddBarcode variantId={v.id} />
                   {v.barcodeIds.length === 0 && <MakeBarcode variantId={v.id} />}
-                  <EditVariant variant={v} productType={product.productType} />
-                  {product.productType === 'SERVICE' && salon && (
+                  <EditVariant variant={v} productType={product.productType} laundry={laundry} />
+                  {product.productType === 'SERVICE' && supplies && (
                     <Link href={`/products/${product.id}/supplies/${v.id}`} className="btn">{t('prod.suppliesUsed')}</Link>
                   )}
                   {live.length > 1 && (

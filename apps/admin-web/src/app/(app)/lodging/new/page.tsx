@@ -6,8 +6,9 @@ import { isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { branchToday, LodgingChrome, lodgingAccess, lodgingBranch } from '../chrome';
 import { StayBookingForm } from './booking-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'New booking' };
+export const generateMetadata = pageTitle('lodging.new');
 
 /** A new booking (ADR-0023 §3): from the front desk, or a free night of the room calendar (room and date filled). */
 export default async function NewBookingPage({ searchParams }: { searchParams: Promise<{ branch?: string; room?: string; arrival?: string }> }) {

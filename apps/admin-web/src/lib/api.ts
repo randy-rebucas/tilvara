@@ -229,15 +229,21 @@ export interface Product {
   uomId?: string;
   /** One of the trial's sample items (ADR-0016 slice 6). */
   isSample?: boolean;
+  /** A medicine (ADR-0025 §2): its class is set; null for ordinary items. */
+  drugClass?: DrugClass | null;
+  genericName?: string | null;
+  strength?: string | null;
+  dosageForm?: DosageForm | null;
+  fdaRegistrationNo?: string | null;
   archivedAt: string | null;
-  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null }[];
+  variants: ({ id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null } & LaundryVariantFields)[];
 }
 /** One product as GET /products/:id returns it (the editor's view). */
 export interface ProductDetail extends Omit<Product, 'variants'> {
   description: string | null;
   taxCategoryId: string;
   uomId: string;
-  variants: {
+  variants: ({
     id: string;
     sku: string;
     name: string | null;
@@ -253,7 +259,7 @@ export interface ProductDetail extends Omit<Product, 'variants'> {
     serviceMinutes?: number | null;
     /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
     packageValidDays?: number | null;
-  }[];
+  } & LaundryVariantFields)[];
 }
 /** A promotion (ADR-0021 §1): terms never change once made; only the name, or ending it. */
 export type PromotionKind = 'MULTI_BUY' | 'BUY_X_GET_Y' | 'QUANTITY_BREAK';
@@ -349,12 +355,23 @@ export interface Uom {
   code: string;
   name: string;
   allowsFraction: boolean;
+  archivedAt?: string | null;
 }
 export interface TaxCategory {
   id: string;
   code: string;
   name: string;
   vatTreatment: string;
+  archivedAt?: string | null;
+}
+/** A product category (GET /categories); `parentId` makes the tree. */
+export interface Category {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sortOrder: number;
+  isSample?: boolean;
+  archivedAt: string | null;
 }
 
 // ---- purchasing (Phase 3) ----
@@ -545,8 +562,13 @@ export interface Sale extends Buckets {
     commissionRate?: string | null;
     customerPackageId?: string | null;
     packageValue?: string | null;
+    /** A medicine line (ADR-0025): its class at the sale and "Paracetamol 500 mg tablet". */
+    drugClass?: DrugClass | null;
+    drugLabel?: string | null;
   })[];
   charges: { id: string; kind: string; rate: string; amountDue: string }[];
+  /** SC/PWD beneficiaries; `purchaseBooklet` is set when the discount covered a medicine (ADR-0025 §8). */
+  beneficiaries?: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
   /** The customer it was rung up for (ADR-0018). */
   customerId?: string | null;
@@ -775,6 +797,9 @@ export interface InventorySettings {
   lowStockAlerts: boolean;
   /** Mail about lots expiring within this many days; 0 = off (ADR-0020). */
   expiryAlertDays?: number;
+  /** ADR-0025 §4: as set (null = the business type's default) and the rule in force. */
+  expiredStock?: 'ALLOW' | 'BLOCK' | null;
+  expiredStockRule?: 'ALLOW' | 'BLOCK';
   updatedAt: string | null;
 }
 
@@ -813,6 +838,8 @@ export interface StockLot {
   quantity: string;
   value: string;
   daysLeft: number;
+  /** A hold (recall, advisory) covers the lot (ADR-0025 §5). */
+  held?: boolean;
 }
 export interface Expiring {
   withinDays: number;
@@ -1004,7 +1031,7 @@ export interface TaxSummary {
 }
 export interface StatutoryBook {
   /** Room nights (ADR-0023) have no register or number. */
-  data: { document: 'SALE' | 'RETURN' | 'ROOM_NIGHT' | 'NIGHT_REVERSAL'; day: string; number: number | null; register: string | null; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[];
+  data: { document: 'SALE' | 'RETURN' | 'ROOM_NIGHT' | 'NIGHT_REVERSAL'; day: string; number: number | null; register: string | null; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string; purchaseBooklet?: boolean | null }[];
 }
 
 export interface ReportFigures {
@@ -1222,9 +1249,10 @@ export interface OfflineSale {
   receivedAt: string;
   resolvedAt: string | null;
   resolveReason: string | null;
-  localReference: string;
-  occurredAt: string;
-  amountDue: string;
+  /** From the envelope as delivered: null when a sale quarantined as unreadable (VALIDATION_FAILED) lacks it. */
+  localReference: string | null;
+  occurredAt: string | null;
+  amountDue: string | null;
 }
 
 /** A till's sync health (`GET /v1/sync/terminals`): silent = an open shift and no contact for `silenceMinutes`. */
@@ -1397,7 +1425,10 @@ export interface HousekeepingBoard {
     roomType: { id: string; code: string; name: string };
     status: HousekeepingStatus;
     lastChange: { at: string; byName: string | null; note: string | null } | null;
+    /** A guest in house holds the room (beside the housekeeping status, never one of its values). */
     occupied: boolean;
+    /** The guest in house should have left before today. */
+    overstay: boolean;
     departingToday: boolean;
     arrivingToday: boolean;
   }[];
@@ -1440,6 +1471,8 @@ export interface StayRow {
   guestDisplayName: string | null;
   guests: { id: string; fullName: string; isPrimary: boolean }[];
   folio: { id: string; status: 'OPEN' | 'SETTLED' } | null;
+  /** In house after the departure date: check-out moves the departure to today and charges the extra nights. */
+  overstay: boolean;
 }
 export interface Stay extends Omit<StayRow, 'folio'> {
   folio: { id: string; status: 'OPEN' | 'SETTLED'; balance: string; charged: string } | null;
@@ -1549,4 +1582,393 @@ export interface SalesSummaryRooms {
 /** The session report's front desk collections: folio payments and deposits at the drawer. */
 export interface SessionReport {
   frontDeskCollections: { data: { kind: string; method: string | null; count: number; amount: string }[]; cash: string };
+  /** Job order down payments taken and given back at this drawer (ADR-0024 §5). */
+  jobOrderDownPayments?: { data: { kind: string; method: string | null; count: number; amount: string }[]; cash: string };
+}
+
+// ---- laundromats and laundry shops (ADR-0024) ----
+export type LaundryUnit = 'KG' | 'LOAD' | 'PIECE';
+export type MachineKind = 'WASHER' | 'DRYER';
+export type JobOrderStatus = 'RECEIVED' | 'WASHING' | 'DRYING' | 'FOLDING' | 'READY' | 'OUT_FOR_DELIVERY' | 'CLAIMED' | 'CANCELLED' | 'DISPOSED';
+export type TripKind = 'PICKUP' | 'DELIVERY';
+export type TripStatus = 'SCHEDULED' | 'DONE' | 'FAILED' | 'CANCELLED';
+/** A product variant's laundry fields (ADR-0024 §2, §7), on GET /products/:id variants. */
+export interface LaundryVariantFields {
+  laundryUnit?: LaundryUnit | null;
+  laundryMinQuantity?: string | null;
+  laundryKgPerLoad?: string | null;
+  laundryAddon?: boolean;
+  machineKind?: MachineKind | null;
+  machineMinutes?: number | null;
+}
+export interface LaundrySettings {
+  branchId: string;
+  regularHours: number;
+  expressHours: number;
+  expressVariantId: string | null;
+  deliveryVariantId: string | null;
+  storageFeeVariantId: string | null;
+  storageFreeDays: number | null;
+  unclaimedDays: number;
+  finalNoticeDays: number;
+  reminderDays: number[];
+  claimPolicyText: string | null;
+  smsEnabled: boolean;
+  updatedAt: string | null;
+}
+export interface GarmentType { id: string; name: string; archivedAt: string | null }
+export interface LaundryMachine {
+  id: string;
+  branchId: string;
+  kind: MachineKind;
+  label: string;
+  capacityKg: string | null;
+  cycleMinutes: number;
+  outOfOrderReason: string | null;
+  isSample?: boolean;
+  archivedAt: string | null;
+}
+export interface MachineBoard {
+  branchId: string;
+  asOf: string | null;
+  data: {
+    id: string;
+    kind: MachineKind;
+    label: string;
+    capacityKg: string | null;
+    cycleMinutes: number;
+    outOfOrderReason: string | null;
+    status: 'FREE' | 'RUNNING' | 'OUT_OF_ORDER';
+    current: { runId: string; source: 'SELF_SERVICE' | 'JOB'; jobOrderId: string | null; jobReference: string | null; saleId: string | null; saleNumber: number | null; startedAt: string; endsAt: string; secondsLeft: number } | null;
+    nextFreeAt: string;
+    /** Runs waiting behind the current one (paid for ahead); they can be called off. */
+    queued: { runId: string; source: 'SELF_SERVICE' | 'JOB'; saleId: string | null; saleNumber: number | null; startsAt: string; endsAt: string }[];
+  }[];
+}
+/** A job order as GET /job-orders lists it. */
+export interface JobOrderRow {
+  id: string;
+  branchId: string;
+  legalEntityId: string;
+  number: number;
+  reference: string;
+  claimCode: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerDisplayName: string | null;
+  serviceLevel: 'REGULAR' | 'EXPRESS';
+  promisedAt: string;
+  status: JobOrderStatus;
+  weightKg: string | null;
+  bagCount: number;
+  specialInstructions: string | null;
+  conditionNotes: string | null;
+  pickupRequested: boolean;
+  deliveryRequested: boolean;
+  notify: boolean;
+  amountDue: string;
+  depositHeld: string;
+  balance: string;
+  overdue: boolean;
+  saleId: string | null;
+  readyAt: string | null;
+  claimedAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  disposedAt?: string | null;
+  disposedReason?: string | null;
+  disposedNote?: string | null;
+  createdAt: string;
+}
+export interface JobOrderLine {
+  id: string;
+  lineNo: number;
+  variantId: string;
+  sku: string;
+  name: string;
+  laundryUnit: LaundryUnit | null;
+  measuredQuantity: string;
+  quantity: string;
+  unitPrice: string;
+  discount: string;
+  vatAmount: string;
+  amountDue: string;
+  customerPackageId: string | null;
+  promotionId: string | null;
+  /** Added by the server (the express or delivery item). */
+  auto: boolean;
+}
+export interface JobOrderTrip {
+  id: string;
+  jobOrderId: string;
+  kind: TripKind;
+  status: TripStatus;
+  address: string | null;
+  contactPhone: string | null;
+  contactName: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  riderMemberId: string | null;
+  riderName: string | null;
+  notes: string | null;
+  failReason?: string | null;
+  doneAt: string | null;
+}
+export interface JobOrder extends JobOrderRow {
+  branchName: string;
+  unclaimed: boolean;
+  storageDays: number;
+  lines: JobOrderLine[];
+  items: { id: string; garmentTypeId: string | null; label: string; count: number; note: string | null }[];
+  trips: JobOrderTrip[];
+  history: { id: string; fromStatus: JobOrderStatus | null; toStatus: JobOrderStatus; note: string | null; changedAt: string }[];
+}
+export interface JobDeposit {
+  id: string;
+  kind: 'RECEIVED' | 'APPLIED' | 'REFUNDED' | 'FORFEITED';
+  amount: string;
+  method: string | null;
+  reference: string | null;
+  reason: string | null;
+  saleId: string | null;
+  createdAt: string;
+}
+export interface JobNotice {
+  id: string;
+  kind: 'READY' | 'REMINDER' | 'FINAL';
+  step: number;
+  status: string;
+  emailStatus: string | null;
+  emailTo: string | null;
+  smsStatus: string | null;
+  smsTo: string | null;
+  createdAt: string;
+  settledAt: string | null;
+}
+export interface JobTicket {
+  stub: {
+    business: string;
+    legalName: string;
+    branch: string;
+    branchAddress: string | null;
+    timezone: string;
+    reference: string;
+    claimCode: string;
+    receivedAt: string;
+    promisedAt: string;
+    serviceLevel: 'REGULAR' | 'EXPRESS';
+    customer: string | null;
+    weightKg: string | null;
+    bagCount: number;
+    lines: { name: string; measuredQuantity: string; quantity: string; unit: LaundryUnit | null; unitPrice: string; amountDue: string; packageSession: boolean }[];
+    amountDue: string;
+    depositHeld: string;
+    balance: string;
+    items: { label: string; count: number; note: string | null }[];
+    pieces: number;
+    specialInstructions: string | null;
+    conditionNotes: string | null;
+    claimPolicy: string | null;
+    notice: string;
+  };
+  tag: { reference: string; customer: string | null; bagCount: number; serviceLevel: 'REGULAR' | 'EXPRESS'; promisedAt: string; specialInstructions: string | null; pieces: number };
+}
+export interface TripRow {
+  id: string;
+  jobOrderId: string;
+  jobReference: string;
+  jobStatus: JobOrderStatus;
+  kind: TripKind;
+  status: TripStatus;
+  customer: string | null;
+  address: string | null;
+  contactPhone: string | null;
+  contactName: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  riderMemberId: string | null;
+  riderName: string | null;
+  notes: string | null;
+  failReason: string | null;
+  doneAt: string | null;
+  bagCount: number;
+  amountDue: string;
+  balance: string;
+}
+export interface JobOrdersReport {
+  days: { day: string; received: number; ready: number; claimed: number; cancelled: number; disposed: number; averageTurnaroundHours: string | null; onTimePercent: string | null }[];
+  services: { variantId: string; name: string; unit: LaundryUnit; measured: string; billed: string; jobs: number; amount: string }[];
+  totals: { received: number; ready: number; claimed: number; cancelled: number; disposed: number; averageTurnaroundHours: string | null; onTimePercent: string | null; kilos: string; loads: string; overdueNow: number; openNow: number };
+}
+export interface MachineUsageReport {
+  machines: { machineId: string; kind: MachineKind; label: string; archived: boolean; selfServiceCycles: number; dropOffCycles: number; selfServiceMinutes: number; dropOffMinutes: number; utilisationPercent: string | null; selfServiceSales: string }[];
+  totals: { selfServiceCycles: number; dropOffCycles: number; selfServiceSales: string };
+}
+export interface JobDepositsReport {
+  legalEntityId: string;
+  held: { jobOrderId: string; reference: string; branchId: string; status: JobOrderStatus; customer: string | null; amountDue: string; held: string }[];
+  unclaimed: { jobOrderId: string; reference: string; branchId: string; customer: string | null; readyAt: string; daysWaiting: number; amountDue: string; held: string; finalNoticeSent: boolean }[];
+  forfeited: { amount: string; entries: number };
+  totals: { held: string; customerDownPaymentsGl: string; difference: string; unclaimedValue: string };
+}
+export interface DeliveriesReport {
+  days: { day: string; kind: TripKind; trips: number; done: number; failed: number; cancelled: number; scheduled: number }[];
+  totals: { trips: number; done: number; failed: number; deliveryFees: string; deliveredJobsWithFee: number };
+}
+
+// ---- pharmacies and drugstores (ADR-0025) ----
+export type DrugClass = 'OTC' | 'RX' | 'ANTIBIOTIC' | 'DANGEROUS';
+export type DosageForm = 'TABLET' | 'CAPSULE' | 'SYRUP' | 'SUSPENSION' | 'DROPS' | 'CREAM' | 'OINTMENT' | 'INJECTION' | 'INHALER' | 'SACHET' | 'OTHER';
+export type PrescriptionStatus = 'OPEN' | 'PARTLY_FILLED' | 'FILLED' | 'VOIDED';
+export interface PrescriptionRow {
+  id: string;
+  branchId: string;
+  customerId: string | null;
+  patientName: string;
+  prescriberName: string;
+  issuedOn: string;
+  yellowFormNo: string | null;
+  createdAt: string;
+  status: PrescriptionStatus;
+  prescribed: string;
+  dispensed: string;
+}
+export interface PrescriptionItem {
+  id: string;
+  lineNo: number;
+  genericName: string;
+  strength: string | null;
+  dosageForm: DosageForm;
+  drugClass: DrugClass;
+  directions: string | null;
+  quantity: string;
+  dispensed: string;
+  left: string;
+}
+export interface Prescription {
+  id: string;
+  branchId: string;
+  branchName: string;
+  legalEntityId: string;
+  customerId: string | null;
+  customerName: string | null;
+  patientName: string;
+  patientAddress: string | null;
+  prescriberName: string;
+  prescriberLicenseNo: string;
+  prescriberS2No: string | null;
+  yellowFormNo: string | null;
+  issuedOn: string;
+  notes: string | null;
+  source: 'COUNTER' | 'ADMIN' | 'OFFLINE';
+  createdAt: string;
+  voidedAt: string | null;
+  voidReason: string | null;
+  status: PrescriptionStatus;
+  editable: boolean;
+  items: PrescriptionItem[];
+  fills: { id: string; itemId: string; saleId: string; saleNumber: number; reference: string; quantity: string; dispensedBy: string | null; needsReview: boolean; returned: boolean; at: string }[];
+}
+export interface LotHold {
+  id: string;
+  variantId: string;
+  lotCode: string;
+  branchId: string | null;
+  branchName: string | null;
+  reason: string;
+  reference: string | null;
+  placedBy: string | null;
+  placedAt: string;
+  releasedBy: string | null;
+  releasedAt: string | null;
+  releaseReason: string | null;
+  sku: string;
+  name: string;
+}
+export interface LotTrace {
+  variantId: string;
+  lotCode: string;
+  movements: {
+    at: string;
+    branchId: string;
+    branch: string;
+    variantId: string;
+    sku: string;
+    name: string;
+    type: string;
+    quantity: string;
+    expiresOn: string | null;
+    sale: { id: string; saleNumber: number; reference: string } | null;
+    customer: { id: string; name: string | null } | null;
+    prescriptionIds: string[] | null;
+    goodsReceiptId: string | null;
+    supplier: string | null;
+    stockAdjustmentId: string | null;
+    packOpeningId: string | null;
+    stockTransferId: string | null;
+    reason: string | null;
+  }[];
+  onHand: { branchId: string; branch: string; variantId: string; sku: string; name: string; expiresOn: string | null; quantity: string }[];
+}
+export interface PrescriptionBook {
+  branchId: string;
+  timezone: string;
+  from: string;
+  to: string;
+  data: {
+    day: string;
+    saleReference: string;
+    saleId: string;
+    prescriptionId: string;
+    patientName: string;
+    prescriberName: string;
+    prescriberLicenseNo: string;
+    prescriberS2No: string | null;
+    yellowFormNo: string | null;
+    issuedOn: string;
+    genericName: string;
+    strength: string | null;
+    dosageForm: DosageForm;
+    drugClass: DrugClass;
+    brand: string;
+    quantity: string;
+    returned: boolean;
+    needsReview: boolean;
+    pharmacist: string | null;
+  }[];
+}
+export interface DangerousDrugsBook {
+  branchId: string;
+  timezone: string;
+  from: string;
+  to: string;
+  data: {
+    variantId: string;
+    sku: string;
+    name: string;
+    genericName: string;
+    strength: string | null;
+    dosageForm: DosageForm;
+    opening: string;
+    received: string;
+    dispensed: string;
+    returned: string;
+    writtenOff: string;
+    adjusted: string;
+    otherOut: string;
+    closing: string;
+    dispensings: { day: string; saleReference: string; quantity: string; yellowFormNo: string | null; patientName: string; patientAddress: string | null; prescriberName: string; prescriberLicenseNo: string; prescriberS2No: string | null; pharmacist: string | null }[];
+  }[];
+}
+export interface Pharmacist {
+  membershipId: string;
+  name: string;
+  licenseNo: string | null;
+  validUntil: string | null;
+  dispensesDangerousDrugs: boolean;
+}
+export interface PharmacySettings {
+  requirePurchaseBooklet: boolean;
+  updatedAt: string | null;
 }

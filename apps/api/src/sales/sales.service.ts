@@ -38,14 +38,22 @@ import {
   terminalTransactions,
   type Database,
   inSequence,
+  jobOrderDeposits,
+  jobOrderLines,
+  jobOrders,
+  jobOrderTrips,
+  laundryMachines,
+  machineRuns,
+  productVariants,
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
-import type { CreateCheckInput, CreateExchangeInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput, TipInput } from '@1pos/validation';
+import type { ClaimJobOrderInput, CreateCheckInput, CreateExchangeInput, CreateSaleInput, LinePrescriptionInput, PermissionCode, PreviewCheckInput, SaleListQuery, SalePrescriptionInput, TendersInput, TipInput } from '@1pos/validation';
 import { dbNow } from '../common/clock.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
+import { voidedChecks } from '../restaurant/bills.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { hasFeature, readOnlyReason } from '../billing/entitlements.js';
+import { assertLaundry, hasFeature, readOnlyReason } from '../billing/entitlements.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -66,12 +74,16 @@ import { loadSettings } from '../restaurant/floor.service.js';
 import { MenusService } from '../restaurant/menus.service.js';
 import { assertStockAvailable } from './stock-policy.js';
 import { openPacksForSale } from '../inventory/packs.service.js';
+import { assertNotExpired, expiredDraws, expiredStockRule } from '../pharmacy/drugs.js';
+import { bookletOf, planDispensing, recordDispensing } from '../pharmacy/dispensing.js';
 import { addFraction, compareFraction, frac, fractionDec, ONE_FRACTION, ratioOf, subFraction, ZERO_FRACTION, type Fraction } from '../common/fraction.js';
 import { PricingService } from '../catalog/pricing.service.js';
-import { commissionRates } from '../salon/staff.service.js';
+import { assertStaffDoServices, commissionRates } from '../salon/staff.service.js';
 import { completeAppointment } from '../salon/appointments.service.js';
 import { EMPTY_PLAN, planPackages, recordPackages, splitByWeight } from '../salon/packages.js';
 import { insertEntry, planRoomCharge, stayGuestName, surnameOf } from '../lodging/folio.js';
+import { downPaymentRefundedPosting } from '@1pos/accounting';
+import { branchLaundrySettings, depositsHeld, isOpen, jobEnded, jobNumber, jobScope, liveTrip, loadJob, lockJobDeposits, lockMachine, priceJob, recordStatus, storageDays, type PricedJobLine } from '../laundry/job.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -79,6 +91,8 @@ type SaleRow = typeof sales.$inferSelect;
 const CLOCK_TOLERANCE_MS = 5 * 60_000;
 
 const fixed = (v: string) => toDec(v).toFixed(2);
+/** Sales a `GET /v1/sales` request examines at most while filling a page with what the caller may read. */
+const LIST_SCAN_LIMIT = 2000;
 const MONEY_FIELDS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
   'vatExemptSales', 'zeroRatedSales', 'percentageTaxSales', 'amountDue',
@@ -138,12 +152,18 @@ interface RecordLine extends Buckets {
   allocation?: { billLineId: string; share: Fraction };
   /** A check's share of a bill line: what earlier checks already sold of that line (recipe consumption rounds on the running total). */
   soldBefore?: string;
+  /** A check's share of a bill line one of whose checks was voided: how much of the line was consumed so far (voided checks included). */
+  consumedBefore?: string;
   /** Counter lines (ADR-0022): STANDARD, SERVICE or PACKAGE; a check's lines leave it out (never a package). */
   productType?: string;
   /** A session of this customer package (priced at zero). */
   packageId?: string | null;
   /** Who performed or sold it. */
   staffId?: string | null;
+  /** A self-service cycle's washer or dryer (ADR-0024 §7); counter sales only. */
+  machineId?: string | null;
+  /** The prescription item a medicine fills (ADR-0025 §6). */
+  prescription?: LinePrescriptionInput | undefined;
 }
 
 interface RecordCharge extends Buckets {
@@ -165,7 +185,7 @@ interface PricedSale {
   /** Header: Σ lines + Σ charges. */
   totals: Buckets;
   lines: RecordLine[];
-  beneficiaries: { ref: string; schemeCode: string; schemeVersion: number; name: string; idNumber: string; tin: string | null }[];
+  beneficiaries: { ref: string; schemeCode: string; schemeVersion: number; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | undefined }[];
   charges: RecordCharge[];
   orderBillId: string | null;
   /** A sale rung up offline and recorded at sync (ADR-0015 §5). */
@@ -182,6 +202,11 @@ interface PricedSale {
   counter?: CounterPlan | null;
   /** The appointment this sale rings up (ADR-0022 §4). */
   appointmentId?: string | null;
+  /** A laundry claim (ADR-0024 §5): its job order and the down payment that pays first. */
+  jobOrder?: { id: string; downPayment: Dec } | null;
+  /** Prescriptions recorded with the sale and a pharmacist's approval (ADR-0025 §6). */
+  prescriptions?: SalePrescriptionInput[];
+  dispenseApprovalId?: string | undefined;
 }
 
 /** What a terminal's offline sale needs besides the envelope: who sent it and what it had been told. */
@@ -201,8 +226,8 @@ export interface OfflineContext {
 }
 
 
-/** What a priced line was asked with: its SC/PWD beneficiary, if any. */
-type LineAsked = { variantId: string; statutory?: { beneficiary?: string } | undefined };
+/** What a priced line was asked with: its SC/PWD beneficiary, if any, and a self-service cycle's machine. */
+type LineAsked = { variantId: string; statutory?: { beneficiary?: string } | undefined; machineId?: string | undefined; prescription?: LinePrescriptionInput | undefined };
 
 /**
  * A retail cart from the tax path, ready to record (counter checkout and offline sales). `lines` are
@@ -242,11 +267,13 @@ function pricedFromCart(cart: CartComputation, lines: LineAsked[], beneficiaries
         productType: l.productType,
         packageId: l.packageId,
         staffId: l.staffId,
+        machineId: lines[i]!.machineId ?? null,
+        prescription: lines[i]!.prescription,
       };
     }),
     beneficiaries: beneficiaries.map((b) => {
       const scheme = cart.lines.find((_, i) => lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
-      return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null };
+      return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null, purchaseBooklet: b.purchaseBooklet };
     }),
     charges: [],
     orderBillId: null,
@@ -268,6 +295,7 @@ export class SalesService extends TenantService {
     terminal_transactions_txn_unique: ['DUPLICATE_TRANSACTION', 'This terminal already delivered this transaction'],
     sale_lines_price_override_once: ['PRICE_OVERRIDE_USED', 'This approved price was already used on a sale'],
     sale_tenders_exchange_once: ['ALREADY_EXCHANGED', 'This return already paid for an exchange'],
+    prescriptions_yellow_form_once: ['YELLOW_FORM_USED', 'This yellow prescription form number is already on another prescription'],
   };
 
   constructor(
@@ -317,7 +345,10 @@ export class SalesService extends TenantService {
     return this.mutate(auth, async (db) => {
       const session = await this.checkoutSession(db, auth, input.cashierSessionId, input.clientTransactionId);
       const customerId = input.customerId ? (await activeCustomer(db, input.customerId)).id : null;
-      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input)), enforceStock: true, customerId, appointmentId: input.appointmentId ?? null };
+      const priced = {
+        ...(await this.priceCounterCart(db, auth, session.branchId, input)), enforceStock: true, customerId, appointmentId: input.appointmentId ?? null,
+        prescriptions: input.prescriptions, dispenseApprovalId: input.dispenseApprovalId,
+      };
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
     });
@@ -339,7 +370,10 @@ export class SalesService extends TenantService {
         ...(input.expectedRefund !== undefined && { expectedRefund: input.expectedRefund }),
       }, { exchange: true });
       const customerId = input.sale.customerId ? (await activeCustomer(db, input.sale.customerId)).id : null;
-      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input.sale)), enforceStock: true, customerId };
+      const priced = {
+        ...(await this.priceCounterCart(db, auth, session.branchId, input.sale)), enforceStock: true, customerId,
+        prescriptions: input.sale.prescriptions, dispenseApprovalId: input.sale.dispenseApprovalId,
+      };
       const refund = toDec(back.amountDue);
       const sale = await this.record(db, auth, session, input.sale, priced, refund.gt(0) ? { saleReturnId: back.id, amount: refund.toString() } : undefined);
       // The refund went out before the new sale came in: only the net may not exceed the drawer.
@@ -367,6 +401,8 @@ export class SalesService extends TenantService {
       if (bill.status !== 'ACTIVE') throw new AppError('BILL_NOT_ACTIVE', `This bill is ${bill.status.toLowerCase()}`, HttpStatus.CONFLICT, { status: bill.status });
 
       const { recordLines, recordCharges, settles, beneficiaries } = await this.priceCheck(db, bill, input.allocations);
+      // A check may name its customer (ADR-0018): purchase history, and store credit can pay it.
+      const customerId = input.customerId ? (await activeCustomer(db, input.customerId)).id : null;
       const used = new Set(recordLines.flatMap((l) => (l.beneficiaryRef ? [l.beneficiaryRef] : [])));
       const sale = await this.record(db, auth, session, input, {
         legalEntityId: bill.legalEntityId,
@@ -379,11 +415,13 @@ export class SalesService extends TenantService {
         beneficiaries: beneficiaries.filter((b) => used.has(b.id)).map((b) => ({ ref: b.id, schemeCode: b.schemeCode, schemeVersion: b.schemeVersion, name: b.name, idNumber: b.idNumber, tin: b.tin })),
         charges: recordCharges,
         orderBillId: bill.id,
+        customerId,
       });
 
       if (settles) {
         await db.update(orderBills).set({ status: 'SETTLED', settledAt: sql`now()` }).where(eq(orderBills.id, bill.id));
-        await db.update(restaurantOrders).set({ status: 'SETTLED', closedBy: auth.userId, closedAt: sql`now()` }).where(eq(restaurantOrders.id, bill.orderId));
+        // An order left SETTLED when a voided check reopened its bill (its table was taken) stays so.
+        await db.update(restaurantOrders).set({ status: 'SETTLED', closedBy: auth.userId, closedAt: sql`now()` }).where(and(eq(restaurantOrders.id, bill.orderId), eq(restaurantOrders.status, 'BILLED')));
         await this.audit(db, auth, 'order.settled', 'restaurant_order', bill.orderId, { orderBillId: bill.id, billNumber: bill.billNumber });
       }
       return { ...(await this.view(db, sale)), billSettled: settles };
@@ -418,6 +456,122 @@ export class SalesService extends TenantService {
   }
 
   /**
+   * A laundry claim (ADR-0024 §5): the job order's frozen lines (plus a storage fee for the days it
+   * waited beyond the branch's free days) recorded as a sale through `record()`. The down payment pays
+   * first (a JOB_DEPOSIT tender, APPLIED in the same transaction); anything held beyond the total goes
+   * back in cash from this drawer. Released with the claim code, a manager's override, or by the rider
+   * at the door (the delivery trip is done with it). The job becomes CLAIMED with the sale.
+   */
+  createFromJobOrder(auth: AuthContext, jobOrderId: string, input: ClaimJobOrderInput) {
+    return this.mutate(auth, async (db) => {
+      const session = await this.checkoutSession(db, auth, input.cashierSessionId, input.clientTransactionId);
+      const job = await loadJob(db, jobOrderId, true);
+      const scope = jobScope(job);
+      const delivery = input.releasedVia === 'DELIVERY';
+      if (!this.can(auth, 'laundry.manage', scope) && !(delivery && this.can(auth, 'laundry.deliver', scope))) this.assertCan(auth, 'laundry.manage', scope);
+      await assertLaundry(db);
+      if (job.branchId !== session.branchId) throw unprocessable('WRONG_BRANCH', 'Release a job order at the branch that took it in');
+      if (!isOpen(job.status)) throw jobEnded(job);
+      if (!job.pricedAt || !job.taxProfileId) throw unprocessable('JOB_NOT_PRICED', 'Weigh and price the job order before releasing it');
+      const trip = delivery ? await liveTrip(db, job.id, 'DELIVERY') : undefined;
+      if (delivery) {
+        if (!trip) throw new AppError('NO_DELIVERY_TRIP', 'This job order has no delivery on its way', HttpStatus.CONFLICT);
+        if (job.status !== 'READY' && job.status !== 'OUT_FOR_DELIVERY') throw new AppError('JOB_NOT_READY', 'Only finished laundry goes out for delivery', HttpStatus.CONFLICT, { status: job.status });
+      } else if (input.claimCode !== undefined) {
+        if (input.claimCode !== job.claimCode) throw unprocessable('CLAIM_CODE_MISMATCH', 'This claim code is not this job order\'s');
+      } else this.assertCan(auth, 'laundry.release_override', scope);
+
+      // The days it waited beyond the free days: one storage-fee line, priced now on the same profile
+      // as the frozen lines (re-pricing the whole job only if the tax profile changed meanwhile).
+      const settings = await branchLaundrySettings(db, job.branchId);
+      const days = await storageDays(db, job, settings);
+      let lines: PricedJobLine[] = (await db.select().from(jobOrderLines).where(eq(jobOrderLines.jobOrderId, job.id)).orderBy(jobOrderLines.lineNo)) as unknown as PricedJobLine[];
+      let header = { taxProfileId: job.taxProfileId, taxSnapshot: job.taxSnapshot, requiresProfessionalReview: job.requiresProfessionalReview, currency: job.currency };
+      if (days > 0) {
+        const extra = [{ variantId: settings.storageFeeVariantId!, quantity: String(days) }];
+        const fee = await priceJob(this.tax, db, auth, job, [], settings, extra, { auto: false });
+        if (fee && fee.taxProfileId === job.taxProfileId) lines = [...lines, ...fee.lines];
+        else {
+          const again = await priceJob(this.tax, db, auth, job, lines.map((l) => ({ variantId: l.variantId, quantity: toDec(l.measuredQuantity).toString(), ...(l.customerPackageId && { packageId: l.customerPackageId }) })), settings, extra);
+          lines = again!.lines;
+          header = { taxProfileId: again!.taxProfileId, taxSnapshot: again!.taxSnapshot, requiresProfessionalReview: again!.requiresProfessionalReview, currency: again!.currency };
+        }
+      }
+      const recordLines: RecordLine[] = lines.map((l, i) => ({
+        ...pick(l),
+        clientLineId: `job-${job.number}-${i + 1}`,
+        variantId: l.variantId,
+        sku: l.sku,
+        name: l.name,
+        taxCategoryCode: l.taxCategoryCode,
+        vatTreatment: l.vatTreatment,
+        quantity: toDec(l.quantity).toString(),
+        unitPrice: toDec(l.unitPrice).toString(),
+        priceIncludesTax: l.priceIncludesTax,
+        priceId: l.priceId,
+        priceListId: l.priceListId,
+        trackInventory: l.trackInventory,
+        beneficiaryRef: null,
+        schemeShare: null,
+        snapshot: l.taxSnapshot,
+        parentIndex: null,
+        promotionId: l.promotionId,
+        productType: l.productType,
+        packageId: l.customerPackageId,
+      }));
+      const totals = sumBuckets(recordLines);
+      await lockJobDeposits(db, job.id);
+      const held = await depositsHeld(db, job.id);
+      const applied = Dec.min(held, toDec(totals.amountDue));
+      const sale = await this.record(db, auth, session, input, {
+        legalEntityId: job.legalEntityId,
+        currency: header.currency,
+        taxProfileId: header.taxProfileId!,
+        taxSnapshot: header.taxSnapshot,
+        requiresProfessionalReview: header.requiresProfessionalReview,
+        totals,
+        lines: recordLines,
+        beneficiaries: [],
+        charges: [],
+        orderBillId: null,
+        customerId: job.customerId,
+        // The work is done and the laundry handed over: stock is flagged, never a reason to refuse.
+        enforceStock: false,
+        jobOrder: { id: job.id, downPayment: applied },
+      });
+
+      // Held beyond what the claim cost (lines reduced after the down payment): back in cash, now.
+      const excess = held.minus(applied);
+      if (excess.gt(0)) {
+        const drawer = toDec(await expectedCash(db, session.id));
+        if (drawer.lt(excess)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer to give back the rest of the down payment', { available: drawer.toFixed(2) });
+        const [row] = await db.insert(jobOrderDeposits).values({
+          tenantId: job.tenantId, jobOrderId: job.id, legalEntityId: job.legalEntityId, branchId: job.branchId, kind: 'REFUNDED', amount: excess.negated().toString(),
+          method: 'CASH', cashierSessionId: session.id, reason: `Rest of the down payment at claim, sale #${sale.saleNumber}`, createdBy: auth.userId,
+        }).returning();
+        await db.insert(cashMovements).values({ tenantId: job.tenantId, cashierSessionId: session.id, type: 'JOB_DEPOSIT_REFUND', amount: excess.negated().toString(), jobOrderDepositId: row!.id, reason: 'Rest of the down payment', createdBy: auth.userId });
+        await post(db, {
+          tenantId: job.tenantId, legalEntityId: job.legalEntityId, branchId: job.branchId, sourceType: 'JOB_ORDER_DEPOSIT', sourceId: row!.id, memo: `Rest of the down payment given back at claim, sale #${sale.saleNumber}`,
+          lines: downPaymentRefundedPosting(excess, 'CASH', job.branchId), createdBy: auth.userId,
+        });
+      }
+
+      await db.update(jobOrders).set({ status: 'CLAIMED', saleId: sale.id, claimedAt: sql`now()`, claimedBy: auth.userId, updatedBy: auth.userId, updatedAt: sql`now()` }).where(eq(jobOrders.id, job.id));
+      await recordStatus(db, job, job.status, 'CLAIMED', auth.userId, delivery ? 'Delivered' : null);
+      if (trip) await db.update(jobOrderTrips).set({ status: 'DONE', doneAt: sql`now()`, doneBy: auth.userId, updatedAt: sql`now()` }).where(eq(jobOrderTrips.id, trip.id));
+      await this.audit(db, auth, 'job_order.claimed', 'job_order', job.id, {
+        saleId: sale.id, saleNumber: sale.saleNumber, reference: jobNumber(job.number), downPaymentApplied: applied.toFixed(2),
+        ...(excess.gt(0) && { downPaymentReturned: excess.toFixed(2) }),
+        ...(days > 0 && { storageDays: days }),
+        ...(delivery && { releasedVia: 'DELIVERY', tripId: trip!.id }),
+        ...(!delivery && input.claimCode === undefined && { override: true, overrideReason: input.overrideReason ?? null }),
+      });
+      await emitEvent(db, { tenantId: job.tenantId, topic: 'job_order.claimed', payload: { jobOrderId: job.id, saleId: sale.id, branchId: job.branchId }, correlationId: auth.correlationId });
+      return { ...(await this.view(db, sale)), jobOrder: { id: job.id, reference: jobNumber(job.number), status: 'CLAIMED', downPaymentApplied: applied.toFixed(2), downPaymentReturned: excess.toFixed(2), storageDays: days } };
+    });
+  }
+
+  /**
    * An offline cash sale delivered by its terminal (ADR-0015 §5), recorded as the shift's cashier
    * (`auth`). Re-priced as of the terminal's snapshot, so the server reproduces the total the terminal
    * charged or refuses (TOTAL_MISMATCH); flagged, never refused, when prices moved meanwhile, the
@@ -443,15 +597,22 @@ export class SalesService extends TenantService {
         ? { menuVersionId: env.menuVersionId, items: await versionMenuItems(db, env.menuVersionId), pickupName: env.pickupName ?? null, offline: true }
         : null;
       const expanded = expandCounterLines<CounterLineInput>(env.lines, menu);
-      const cartAt = (at: Date) => this.tax.computeCart(db, auth, { branchId: session.branchId, lines: expanded.lines }, at, { promotions: true });
-      const cart = await cartAt(ctx.snapshotAsOf);
+      const cartAt = (at: Date, knownAt?: Date) =>
+        this.tax.computeCart(db, auth, { branchId: session.branchId, lines: expanded.lines }, at, { promotions: true, ...(knownAt && { knownAt }) });
+      // As the snapshot held it: a price or promotion made later (even back-dated within the minute
+      // allowed) was not on the till (audit 2026-10-21); it still flags PRICE_CHANGED below.
+      const cart = await cartAt(ctx.snapshotAsOf, ctx.snapshotAsOf);
 
       const flags: OfflineFlag[] = [];
       const now = await dbNow(db);
       const occurred = new Date(env.occurredAt);
       const completedAt = new Date(Math.min(Math.max(occurred.getTime(), session.openedAt.getTime()), now.getTime()));
       // Clamped always; flagged when the device clock was off by more than ordinary drift.
-      if (Math.abs(completedAt.getTime() - occurred.getTime()) > CLOCK_TOLERANCE_MS) flags.push('CLOCK_ADJUSTED');
+      // So is a sale the till says it rang before it was given the snapshot it was priced from (impossible
+      // with an honest clock; the device time is kept as it is clamped, the flag tells a person to look).
+      if (Math.abs(completedAt.getTime() - occurred.getTime()) > CLOCK_TOLERANCE_MS || occurred.getTime() < ctx.snapshotAsOf.getTime() - CLOCK_TOLERANCE_MS) {
+        flags.push('CLOCK_ADJUSTED');
+      }
       // Prices or the tax profile that were in force when the sale happened, if the terminal could not know them.
       const then = await cartAt(completedAt).catch(() => null);
       const sameAsThen = then && then.taxProfile.id === cart.taxProfile.id && then.lines.every((l, i) => l.priceId === cart.lines[i]!.priceId && l.promotionId === cart.lines[i]!.promotionId);
@@ -459,7 +620,7 @@ export class SalesService extends TenantService {
       if (completedAt.getTime() > ctx.snapshotAsOf.getTime() + ctx.windowHours * 3_600_000) flags.push('SNAPSHOT_EXPIRED');
       if (readOnly && flags.includes('SNAPSHOT_EXPIRED')) throw readOnly;
 
-      const priced = { ...pricedFromCart(cart, expanded.lines, [], expanded.parentIndex), counter: expanded.plan };
+      const priced = { ...pricedFromCart(cart, expanded.lines, [], expanded.parentIndex), counter: expanded.plan, prescriptions: env.prescriptions ?? [] };
       priced.offline = { terminalId: ctx.terminalId, reference: env.localReference, flags, completedAt };
       // The number the till printed for the kitchen and the customer (its device number) stays the call number.
       if (priced.counter) priced.counter = { ...priced.counter, tillCallNumber: env.deviceSeq };
@@ -517,8 +678,15 @@ export class SalesService extends TenantService {
         .innerJoin(saleLines, eq(saleLines.id, orderBillAllocations.saleLineId))
         .where(eq(orderBillAllocations.orderBillId, billId)),
     );
+    // A voided check paid nothing (audit 2026-10-21): its share is owed again. Its food was still made,
+    // and recipe-made lines are never restocked, so `consumed` counts it: paying the share again does
+    // not consume the ingredients twice.
+    const voided = await voidedChecks(db, billId);
+    const consumedBefore = new Map<string, Dec>();
+    for (const p of prior) consumedBefore.set(p.a.billLineId, (consumedBefore.get(p.a.billLineId) ?? new Dec(0)).plus(p.l.quantity));
     const paid = new Map<string, { share: Fraction; quantity: Dec; buckets: Buckets[] }>();
     for (const p of prior) {
+      if (voided.has(p.a.saleId)) continue;
       const acc = paid.get(p.a.billLineId) ?? { share: ZERO_FRACTION, quantity: new Dec(0), buckets: [] };
       acc.share = addFraction(acc.share, frac(p.a.shareNum, p.a.shareDen));
       acc.quantity = acc.quantity.plus(p.l.quantity);
@@ -581,6 +749,7 @@ export class SalesService extends TenantService {
         parentIndex: line.parentLineId ? indexOf.get(line.parentLineId)! : null,
         allocation: { billLineId: line.id, share },
         soldBefore: before.quantity.toString(),
+        ...(consumedBefore.has(line.id) && !consumedBefore.get(line.id)!.equals(before.quantity) && { consumedBefore: consumedBefore.get(line.id)!.toString() }),
       });
     }
 
@@ -592,7 +761,7 @@ export class SalesService extends TenantService {
     const ratio = billItemsDue.isZero() ? new Dec(0) : checkItemsDue.dividedBy(billItemsDue);
     const recordCharges: RecordCharge[] = [];
     for (const c of charges) {
-      const before = await db.select().from(saleCharges).where(eq(saleCharges.orderBillChargeId, c.id));
+      const before = (await db.select().from(saleCharges).where(eq(saleCharges.orderBillChargeId, c.id))).filter((x) => !voided.has(x.saleId));
       const amounts = settles ? rest(pick(c), sumBuckets([ZERO_BUCKETS, ...before.map(pick)])) : prorate(pick(c), ratio, r2);
       // A charge is priced ex VAT: its gross is its sales, whatever rounding gave the parts.
       amounts.gross = exVat(amounts).toString();
@@ -673,14 +842,16 @@ export class SalesService extends TenantService {
       if (p.purpose !== 'SALE') throw unprocessable('TIP_PAYMENT_AS_TENDER', 'This payment was taken for the tip, not the sale', { paymentIntentId: pid });
     }
     const electronic = intents.reduce((a, p) => a.plus(p.amount), new Dec(0));
-    if (electronic.gt(due)) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: due.toFixed(2) });
+    // A laundry claim's down payment pays first (ADR-0024 §5); only the claim path sets it, never a client.
+    const downPayment = priced.jobOrder?.downPayment ?? new Dec(0);
+    if (electronic.gt(due.minus(downPayment))) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: due.minus(downPayment).toFixed(2) });
 
     // Store credit (ADR-0018) next: the customer's balance with this legal entity, never more than is left to pay.
     const creditTender = input.tenders.find((t): t is Extract<TendersInput[number], { method: 'STORE_CREDIT' }> => t.method === 'STORE_CREDIT');
     const storeCredit = creditTender ? toDec(creditTender.amount) : new Dec(0);
     if (creditTender) {
       if (!priced.customerId) throw unprocessable('STORE_CREDIT_NEEDS_CUSTOMER', 'Store credit needs the customer on the sale');
-      if (storeCredit.gt(due.minus(electronic))) throw unprocessable('OVERPAYMENT', 'Store credit is more than what is left to pay', { amountDue: due.minus(electronic).toFixed(2) });
+      if (storeCredit.gt(due.minus(downPayment).minus(electronic))) throw unprocessable('OVERPAYMENT', 'Store credit is more than what is left to pay', { amountDue: due.minus(downPayment).minus(electronic).toFixed(2) });
       // One redemption per customer at a time (the insert trigger takes the same lock and re-checks).
       await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`credit:${priced.customerId}:${priced.legalEntityId}`}, 0))`);
       const balance = await creditBalance(db, priced.customerId, priced.legalEntityId);
@@ -693,7 +864,7 @@ export class SalesService extends TenantService {
     let room: Awaited<ReturnType<typeof planRoomCharge>> | null = null;
     if (roomTender) {
       if (priced.offline) throw unprocessable('ROOM_CHARGE_OFFLINE', 'A charge to a room needs the server; the offline till cannot take it');
-      const left = due.minus(electronic).minus(storeCredit);
+      const left = due.minus(downPayment).minus(electronic).minus(storeCredit);
       roomCharge = roomTender.amount ? toDec(roomTender.amount) : left;
       if (roomCharge.lte(0)) throw unprocessable('UNNECESSARY_TENDER', 'The sale is already paid');
       if (roomCharge.gt(left)) throw unprocessable('OVERPAYMENT', 'The room charge is more than what is left to pay', { amountDue: left.toFixed(2) });
@@ -720,7 +891,7 @@ export class SalesService extends TenantService {
     const cashTip = input.tip && !tipIntent ? tip : new Dec(0);
 
     // Cash covers the rest (and a cash tip); only the last cash tender may give change.
-    let remaining = due.minus(electronic).minus(storeCredit).minus(roomCharge).plus(cashTip);
+    let remaining = due.minus(downPayment).minus(electronic).minus(storeCredit).minus(roomCharge).plus(cashTip);
     const cashTenders: { t: { tendered: string }; i: number; exchangeReturnId?: string }[] = [
       ...(exchangeCredit ? [{ t: { tendered: exchangeCredit.amount }, i: -1, exchangeReturnId: exchangeCredit.saleReturnId }] : []),
       ...input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : [])),
@@ -742,7 +913,7 @@ export class SalesService extends TenantService {
       last.tendered = last.tendered.minus(cashTip);
     }
     const cashApplied = cash.reduce((a, t) => a.plus(t.applied), new Dec(0));
-    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit).plus(roomCharge));
+    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit).plus(roomCharge).plus(downPayment));
     const change = tendered.minus(due);
 
     // Staff on the lines (ADR-0022 §5): of this branch; their commission rate at the sale goes on the line.
@@ -760,6 +931,18 @@ export class SalesService extends TenantService {
         )
       : EMPTY_PLAN;
     const packageValue = new Map(packages.redeemed.map((r) => [r.index, r.value]));
+    // Self-service cycles (ADR-0024 §7): each named machine checked before anything is written.
+    const cycles = await this.planCycles(db, session.branchId, priced);
+    // Medicines (ADR-0025 §6, §8): the prescriptions filled, who dispenses, SC/PWD purchase booklets.
+    const dispenseCtx = {
+      tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, userId: auth.userId, membershipId: tenantOf(auth).membershipId, offline: Boolean(priced.offline),
+      can: (perm: PermissionCode) => this.can(auth, perm, { legalEntityId: priced.legalEntityId, branchId: session.branchId, registerId: session.registerId }),
+    };
+    const dispensing = await planDispensing(db, dispenseCtx, priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, name: l.name, prescription: l.prescription })), {
+      prescriptions: priced.prescriptions ?? [], dispenseApprovalId: priced.dispenseApprovalId,
+    });
+    if (dispensing.review && priced.offline && !priced.offline.flags.includes('PRESCRIPTION_REVIEW')) priced.offline.flags.push('PRESCRIPTION_REVIEW');
+    const booklets = await bookletOf(db, priced.beneficiaries, priced.lines, dispensing.drugs);
 
     const saleNumber = await nextNumber(db, tenantId, session.registerId, 'SALE');
     const [sale] = await db
@@ -782,6 +965,7 @@ export class SalesService extends TenantService {
         taxSnapshot: priced.taxSnapshot,
         orderBillId: priced.orderBillId,
         customerId: priced.customerId ?? null,
+        jobOrderId: priced.jobOrder?.id ?? null,
         ...(priced.offline && {
           origin: 'OFFLINE',
           terminalId: priced.offline.terminalId,
@@ -796,7 +980,7 @@ export class SalesService extends TenantService {
     for (const b of priced.beneficiaries) {
       const [row] = await db
         .insert(saleBeneficiaries)
-        .values({ tenantId, saleId: sale!.id, schemeCode: b.schemeCode, schemeVersion: b.schemeVersion, name: b.name, idNumber: b.idNumber, tin: b.tin })
+        .values({ tenantId, saleId: sale!.id, schemeCode: b.schemeCode, schemeVersion: b.schemeVersion, name: b.name, idNumber: b.idNumber, tin: b.tin, purchaseBooklet: booklets.get(b.ref) ?? null })
         .returning({ id: saleBeneficiaries.id });
       beneficiaryIds.set(b.ref, row!.id);
     }
@@ -830,6 +1014,9 @@ export class SalesService extends TenantService {
         commissionRate: l.staffId ? rates.get(`${l.staffId}:${l.variantId}`)! : null,
         customerPackageId: l.packageId ?? null,
         packageValue: packageValue.get(i)?.toString() ?? null,
+        machineId: l.machineId ?? null,
+        drugClass: dispensing.drugs.get(l.variantId)?.drugClass ?? null,
+        drugLabel: dispensing.drugs.get(l.variantId)?.label ?? null,
       }) as typeof saleLines.$inferInsert;
     for (const pass of [false, true]) {
       const batch = priced.lines.map((l, i) => ({ l, i })).filter(({ l }) => (l.parentIndex !== null) === pass);
@@ -852,16 +1039,22 @@ export class SalesService extends TenantService {
         tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, customerId: priced.customerId!, saleId: sale!.id, userId: auth.userId, localDate: today,
       }, packages, lineIds);
     }
+    const dispensed = dispensing.fills.length || dispensing.newPrescriptions.length || dispensing.approvalId
+      ? await recordDispensing(db, dispenseCtx, dispensing, sale!.id, lineIds)
+      : null;
     const appointment = priced.appointmentId
       ? await completeAppointment(db, { appointmentId: priced.appointmentId, branchId: session.branchId, saleId: sale!.id, userId: auth.userId, customerId: priced.customerId ?? null })
       : null;
 
-    await db.insert(saleTenders).values([
+    const tenderRows = [
       ...intents.map((p) => ({ tenantId, saleId: sale!.id, method: p.method, paymentIntentId: p.id, amount: p.amount, tendered: p.amount, change: '0' })),
       ...(creditTender ? [{ tenantId, saleId: sale!.id, method: 'STORE_CREDIT', amount: storeCredit.toString(), tendered: storeCredit.toString(), change: '0' }] : []),
+      ...(downPayment.gt(0) ? [{ tenantId, saleId: sale!.id, method: 'JOB_DEPOSIT', jobOrderId: priced.jobOrder!.id, amount: downPayment.toString(), tendered: downPayment.toString(), change: '0' }] : []),
       ...(room ? [{ tenantId, saleId: sale!.id, method: 'ROOM_CHARGE', stayId: room.stay.id, amount: roomCharge.toString(), tendered: roomCharge.toString(), change: '0' }] : []),
       ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString(), exchangeReturnId: t.exchangeReturnId })),
-    ]);
+    ];
+    // A laundry claim paid in full by package sessions has nothing to tender (ADR-0024 §10).
+    if (tenderRows.length) await db.insert(saleTenders).values(tenderRows);
     for (const p of intents) {
       await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, p.id));
       await db.insert(paymentEvents).values({ tenantId, paymentIntentId: p.id, type: 'CONSUMED', detail: { saleId: sale!.id }, createdBy: auth.userId });
@@ -870,6 +1063,18 @@ export class SalesService extends TenantService {
       await db.insert(customerCreditEntries).values({
         tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, customerId: priced.customerId!, kind: 'REDEEM',
         amount: storeCredit.negated().toString(), saleId: sale!.id, createdBy: auth.userId,
+      });
+    }
+    if (downPayment.gt(0)) {
+      await db.insert(jobOrderDeposits).values({
+        tenantId, jobOrderId: priced.jobOrder!.id, legalEntityId: priced.legalEntityId, branchId: session.branchId, kind: 'APPLIED',
+        amount: downPayment.negated().toString(), saleId: sale!.id, createdBy: auth.userId,
+      });
+    }
+    for (const c of cycles) {
+      await db.insert(machineRuns).values({
+        tenantId, branchId: session.branchId, machineId: c.machineId, source: 'SELF_SERVICE', saleId: sale!.id, saleLineId: lineIds[c.index]!,
+        startedAt: c.startsAt, plannedMinutes: c.minutes, endsAt: new Date(c.startsAt.getTime() + c.minutes * 60_000), createdBy: auth.userId,
       });
     }
     if (room) {
@@ -901,18 +1106,25 @@ export class SalesService extends TenantService {
     // Items made from a recipe consume their ingredients with the sale (ADR-0014 §4).
     const consumed = await planConsumption(
       db,
-      priced.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineIds[i]!, variantId: l.variantId, quantity: l.quantity, ...(l.soldBefore && { soldBefore: l.soldBefore }) }])),
+      priced.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineIds[i]!, variantId: l.variantId, quantity: l.quantity, ...(l.soldBefore && { soldBefore: l.soldBefore }), ...(l.consumedBefore && { consumedBefore: l.consumedBefore }) }])),
     );
     for (const c of consumed) {
       stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });
     }
     // Tingi (ADR-0020): pieces this sale needs and does not have come out of packs it opens itself.
     const entryDate = priced.offline ? await this.localDate(db, session.branchId, priced.offline.completedAt) : undefined;
+    // Only a sale that moves stock asks the branch's expired-stock rule (ADR-0025 §4).
+    const expiredRule = stock.length ? await expiredStockRule(db, session.branchId) : 'ALLOW';
     const opened = await openPacksForSale(
       db,
       { tenantId, branchId: session.branchId, legalEntityId: priced.legalEntityId, userId: auth.userId, saleId: sale!.id, saleNumber: String(saleNumber), ...(entryDate && { entryDate }) },
       stock.map((m) => ({ variantId: m.variantId, quantity: toDec(m.quantity).negated().toString() })),
+      { sellableOnly: !priced.offline && expiredRule === 'BLOCK' },
     );
+    // Expired or held lots are not sold where the branch blocks them (ADR-0025 §4); offline sales are flagged instead.
+    if (!priced.offline && expiredRule === 'BLOCK') {
+      await assertNotExpired(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
+    }
     if (priced.enforceStock) {
       await assertStockAvailable(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
     }
@@ -920,6 +1132,10 @@ export class SalesService extends TenantService {
     const moved = stock.length
       ? await db.insert(stockMovements).values(stock.sort((a, b) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0))).returning({ value: stockMovements.value })
       : [];
+    const expiredOut = expiredRule === 'BLOCK' && stock.length ? await expiredDraws(db, sale!.id) : [];
+    if (expiredOut.length) {
+      await emitEvent(db, { tenantId, topic: 'stock.expired_sold', payload: { saleId: sale!.id, branchId: session.branchId, lots: expiredOut.length }, correlationId: auth.correlationId });
+    }
 
     // Books (ADR-0013): money in, revenue (items) and service charge payable (charges), output VAT,
     // COGS at the ledger's cost — same transaction.
@@ -942,6 +1158,7 @@ export class SalesService extends TenantService {
         electronic,
         storeCredit,
         roomCharge,
+        downPayment,
         cogs: moved.reduce((a, m) => a.minus(m.value), new Dec(0)),
         ...(input.tip && { tip: { amount: tip, electronic: tipIntent !== null } }),
         packagesSold: packages.deferred,
@@ -965,6 +1182,11 @@ export class SalesService extends TenantService {
       ...(priced.orderBillId && { orderBillId: priced.orderBillId }),
       ...(opened.length > 0 && { packOpenings: opened.map((o) => o.id) }),
       ...(appointment && { appointmentId: appointment.id }),
+      ...(priced.jobOrder && { jobOrderId: priced.jobOrder.id, downPayment: downPayment.toFixed(2) }),
+      ...(cycles.length > 0 && { machineRuns: cycles.length }),
+      ...(dispensed && { prescriptionsRecorded: dispensed.prescriptions, prescriptionFills: dispensed.fills, dispensedBy: dispensing.dispensedBy, ...(dispensing.approvalId && { dispenseApprovalId: dispensing.approvalId }) }),
+      ...(dispensing.review && { prescriptionReview: true }),
+      ...(expiredOut.length > 0 && { expiredStockLots: expiredOut.length }),
       ...(packages.sold.length > 0 && { packagesSold: packages.sold.reduce((a, p) => a + p.units.length, 0) }),
       ...(packages.redeemed.length > 0 && { packageSessions: packages.redeemed.reduce((a, r) => a + r.sessions, 0) }),
       ...(priced.offline && { origin: 'OFFLINE', terminalId: priced.offline.terminalId, offlineReference: priced.offline.reference, flags: priced.offline.flags }),
@@ -976,6 +1198,39 @@ export class SalesService extends TenantService {
       correlationId: auth.correlationId,
     });
     return sale!;
+  }
+
+  /**
+   * Self-service cycles (ADR-0024 §7): a line naming a washer or dryer is a cycle item of that kind, in
+   * whole cycles, on a machine of the sale's branch that is in service. Each run starts when the
+   * machine's current run ends (a dryer's "+10 min" queues behind itself), else now; one machine at a
+   * time (lock), the exclusion constraint as the backstop. Online only.
+   */
+  private async planCycles(db: Database, branchId: string, priced: PricedSale) {
+    const named = priced.lines.flatMap((l, i) => (l.machineId ? [{ machineId: l.machineId, variantId: l.variantId, quantity: l.quantity, i }] : []));
+    if (!named.length) return [];
+    if (priced.offline) throw unprocessable('MACHINE_OFFLINE', 'A machine is started from the till online only');
+    const out: { index: number; machineId: string; minutes: number; startsAt: Date }[] = [];
+    for (const n of named) {
+      const [m] = await db.select().from(laundryMachines).where(eq(laundryMachines.id, n.machineId));
+      if (!m) throw new AppError('NOT_FOUND', 'Machine not found', HttpStatus.NOT_FOUND, { line: n.i, machineId: n.machineId });
+      if (m.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This machine is at another branch', { line: n.i });
+      if (m.archivedAt) throw unprocessable('MACHINE_ARCHIVED', `${m.label} is no longer in use`, { line: n.i });
+      if (m.outOfOrderReason) throw new AppError('MACHINE_OUT_OF_ORDER', `${m.label} is out of order`, HttpStatus.CONFLICT, { line: n.i });
+      const [v] = await db.select({ kind: productVariants.machineKind, minutes: productVariants.machineMinutes }).from(productVariants).where(eq(productVariants.id, n.variantId));
+      if (!v?.kind || !v.minutes) throw unprocessable('NOT_A_CYCLE', 'Only a washer or dryer cycle runs on a machine', { line: n.i });
+      if (v.kind !== m.kind) throw unprocessable('MACHINE_KIND_MISMATCH', `This is a ${v.kind.toLowerCase()} cycle; ${m.label} is a ${m.kind.toLowerCase()}`, { line: n.i });
+      if (!toDec(n.quantity).isInteger()) throw unprocessable('QUANTITY_NOT_ALLOWED', 'Machine cycles are whole cycles', { line: n.i });
+      await lockMachine(db, m.id);
+      const minutes = v.minutes * toDec(n.quantity).toNumber();
+      if (minutes > 240) throw unprocessable('CYCLE_TOO_LONG', 'At most 4 hours on one machine per line', { line: n.i });
+      const queued = out.filter((o) => o.machineId === m.id).map((o) => new Date(o.startsAt.getTime() + o.minutes * 60_000));
+      const { rows } = await db.execute<{ at: string }>(sql`
+        SELECT greatest(now(), coalesce((SELECT max(coalesce(stopped_at, ends_at)) FROM machine_runs WHERE machine_id = ${m.id} AND coalesce(stopped_at, ends_at) > now()), now()))::text AS at`);
+      const startsAt = new Date(Math.max(new Date(rows[0]!.at).getTime(), ...queued.map((d) => d.getTime())));
+      out.push({ index: n.i, machineId: m.id, minutes, startsAt });
+    }
+    return out;
   }
 
   /**
@@ -993,6 +1248,9 @@ export class SalesService extends TenantService {
       if (s.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This staff member works at another branch', { line: n.i });
       if (s.archivedAt && !priced.offline) throw unprocessable('STAFF_ARCHIVED', `${s.displayName} no longer works here`, { line: n.i });
     }
+    // The booking's rule at the till (audit 2026-10-21): a service line names someone who does that
+    // service (no list = every service). Online only, like the archived check: offline, the work is done.
+    if (!priced.offline) await assertStaffDoServices(db, named, staff);
     return commissionRates(db, named);
   }
 
@@ -1060,6 +1318,14 @@ export class SalesService extends TenantService {
       const staffIds = [...new Set(lines.flatMap((l) => (l.serviceStaffId ? [l.serviceStaffId] : [])))];
       const staffNames = staffIds.length ? await db.select({ id: serviceStaff.id, name: serviceStaff.displayName }).from(serviceStaff).where(inArray(serviceStaff.id, staffIds)) : [];
       const firstName = (id: string | null) => (id ? (staffNames.find((x) => x.id === id)?.name.trim().split(/\s+/)[0] ?? null) : null);
+      // The lots each medicine line was drawn from (ADR-0025 §5).
+      const { rows: lotRows } = lines.some((l) => l.drugClass)
+        ? await db.execute<{ sale_line_id: string; lot_code: string | null; expires_on: string }>(sql`
+            SELECT m.sale_line_id, l.lot_code, l.expires_on::text FROM stock_movements m
+              JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id
+              JOIN stock_lots l ON l.tenant_id = lm.tenant_id AND l.id = lm.lot_id
+             WHERE m.sale_id = ${id} AND m.type = 'SALE' GROUP BY 1, 2, 3 ORDER BY 3, 2`)
+        : { rows: [] };
       return buildReceipt({
         invoicingMode: entity!.invoicingMode,
         seller: { registeredName: entity!.registeredName, tradeName: entity!.tradeName, registeredAddress: entity!.registeredAddress, tin: entity!.tin, vatStatus: snapshot.vatStatus },
@@ -1088,6 +1354,8 @@ export class SalesService extends TenantService {
           promotion: l.promotionId ? (promos.get(l.promotionId) ?? null) : null,
           staff: firstName(l.serviceStaffId),
           packageSession: l.customerPackageId !== null,
+          drugLabel: l.drugLabel,
+          lots: lotRows.filter((r) => r.sale_line_id === l.id).map((r) => ({ lotCode: r.lot_code, expiresOn: r.expires_on })),
         })),
         tenders: tenders.map((t) => ({
           method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change),
@@ -1121,21 +1389,38 @@ export class SalesService extends TenantService {
 
   list(auth: AuthContext, q: SaleListQuery) {
     return this.read(auth, async (db) => {
-      const rows = await db
-        .select()
-        .from(sales)
-        .where(
-          and(
-            q.cashierSessionId ? eq(sales.cashierSessionId, q.cashierSessionId) : undefined,
-            q.registerId ? eq(sales.registerId, q.registerId) : undefined,
-            q.saleNumber ? eq(sales.saleNumber, q.saleNumber) : undefined,
-            q.cursor ? sql`${sales.id} < ${q.cursor}` : undefined,
-          ),
-        )
-        .orderBy(desc(sales.id))
-        .limit(q.limit + 1);
-      const visible = rows.filter((s) => this.canRead(auth, s));
-      const page = visible.slice(0, q.limit);
+      // What the caller may read depends on scoped grants (or being the sale's cashier), so rows are
+      // filtered here, a batch at a time until the page is full. The cursor is the last row examined,
+      // never one past a row left out, so pages neither repeat nor skip; each request examines at most
+      // LIST_SCAN_LIMIT rows (a short page with a cursor then just means "look further").
+      const page: SaleRow[] = [];
+      let cursor = q.cursor;
+      let more = true;
+      for (let scanned = 0; more && page.length < q.limit && scanned < LIST_SCAN_LIMIT; ) {
+        const batch = await db
+          .select()
+          .from(sales)
+          .where(
+            and(
+              q.cashierSessionId ? eq(sales.cashierSessionId, q.cashierSessionId) : undefined,
+              q.registerId ? eq(sales.registerId, q.registerId) : undefined,
+              q.saleNumber ? eq(sales.saleNumber, q.saleNumber) : undefined,
+              cursor ? sql`${sales.id} < ${cursor}` : undefined,
+            ),
+          )
+          .orderBy(desc(sales.id))
+          .limit(q.limit + 1);
+        let examined = 0;
+        for (const s of batch) {
+          if (page.length === q.limit) break;
+          examined += 1;
+          cursor = s.id;
+          if (this.canRead(auth, s)) page.push(s);
+        }
+        scanned += examined;
+        // Rows left in this batch, or a full batch examined to its end: there may be more.
+        more = examined < batch.length || batch.length > q.limit;
+      }
       // How each sale was paid and whether it was voided or returned since (a sale row never changes).
       const ids = page.map((s) => s.id);
       const [{ rows: tenders }, { rows: backs }] = ids.length
@@ -1149,7 +1434,7 @@ export class SalesService extends TenantService {
           const back = backs.find((b) => b.sale_id === s.id);
           return { ...this.summary(s), tenderMethods: tenders.find((x) => x.sale_id === s.id)?.methods ?? [], voided: back?.voided ?? false, returnCount: back?.returns ?? 0 };
         }),
-        nextCursor: rows.length > q.limit ? rows[q.limit - 1]!.id : null,
+        nextCursor: more ? (cursor ?? null) : null,
       };
     });
   }

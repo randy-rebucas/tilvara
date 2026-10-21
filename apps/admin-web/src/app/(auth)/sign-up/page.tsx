@@ -3,8 +3,9 @@ import { AuthFace, AuthStub } from '@/components/auth-note';
 import { stripe, type Denomination } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { SignUpForm } from './sign-up-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Create your business' };
+export const generateMetadata = pageTitle('sign-up');
 
 /** What an owner sets up, in the hierarchy's order, each in the colour its records will carry. */
 const SETUP: [Denomination, 'auth.setupLocations' | 'auth.setupRegisters' | 'auth.setupCatalog' | 'auth.setupTeam'][] = [

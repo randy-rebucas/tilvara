@@ -7,8 +7,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { branchToday, LodgingChrome, lodgingAccess, lodgingBranch, RoomStatusTag } from '../chrome';
 import { AddBlock, AddRoom, AddRoomType, EditRoom, EditRoomType, LodgingSettingsForm, NightAuditButton, RemoveButton } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Lodging set-up' };
+export const generateMetadata = pageTitle('lodging.setup');
 
 /**
  * Set-up (ADR-0023 §2, §7, §9, §10): room types with their room-night item (its branch price is the

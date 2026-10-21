@@ -8,8 +8,9 @@ import { variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { ReserveForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Reservations' };
+export const generateMetadata = pageTitle('inventory.reservations');
 
 /** Stock set aside at the branch (session 20): available = on hand − reserved; released once collected, sold or cancelled. */
 export default async function ReservationsPage({ searchParams }: { searchParams: Promise<{ branch?: string; all?: string }> }) {

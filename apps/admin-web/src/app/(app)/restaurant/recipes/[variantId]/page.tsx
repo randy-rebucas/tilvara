@@ -7,8 +7,9 @@ import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../../chrome';
 import { RecipeForm } from '../../forms';
 import { RecipeHistory } from '../recipe-history';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Recipe' };
+export const generateMetadata = pageTitle('restaurant.recipes.item');
 
 /** A dish's recipe versions: the one in force, scheduled ones, and the history (append-only, never backdated). */
 export default async function RecipePage({ params }: { params: Promise<{ variantId: string }> }) {

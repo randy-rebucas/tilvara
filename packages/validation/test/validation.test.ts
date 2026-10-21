@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { isPrivilegedSet, LODGING_CODES, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, servesAppointments, servesLodging, servesTables, signupSchema, tendersSchema, usesRecipes } from '../src/index.js';
+import { isPrivilegedSet, LAUNDRY_CODES, PHARMACY_CODES, LODGING_CODES, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, servesAppointments, servesLaundry, servesLodging, servesTables, signupSchema, tendersSchema, usesPackages, usesRecipes } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -44,8 +44,25 @@ describe('role templates', () => {
     const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
     expect([...of('restaurant_manager')].sort()).toEqual([...of('branch_manager'), 'restaurant.manage'].sort());
     expect(of('kitchen_crew')).toEqual(['kitchen.operate']);
-    expect(isPrivilegedSet(of('restaurant_manager'))).toBe(false);
+    expect(isPrivilegedSet(of('restaurant_manager'), 'RESTAURANT')).toBe(false);
     expect(isPrivilegedSet(of('kitchen_crew'))).toBe(false);
+  });
+
+  it('decision A3: recording pharmacist licences and disposing of laundry need two-step sign-in, where the business has that industry', () => {
+    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
+    expect(isPrivilegedSet(['pharmacy.setup'])).toBe(true);
+    expect(isPrivilegedSet(['laundry.dispose'])).toBe(true);
+    expect(isPrivilegedSet(['pharmacy.setup'], 'PHARMACY')).toBe(true);
+    expect(isPrivilegedSet(['pharmacy.setup'], 'HYBRID')).toBe(true);
+    expect(isPrivilegedSet(['pharmacy.setup'], 'RETAIL')).toBe(false);
+    expect(isPrivilegedSet(['laundry.dispose'], 'LAUNDRY')).toBe(true);
+    expect(isPrivilegedSet(['laundry.dispose'], 'RESTAURANT')).toBe(false);
+    // A laundry's branch manager may dispose: privileged there, not in a shop.
+    expect(isPrivilegedSet(of('branch_manager'), 'LAUNDRY')).toBe(true);
+    expect(isPrivilegedSet(of('branch_manager'), 'RETAIL')).toBe(false);
+    expect(isPrivilegedSet(of('laundry_attendant'), 'LAUNDRY')).toBe(false);
+    // Other privileged codes count everywhere.
+    expect(isPrivilegedSet(['tax.manage'], 'RETAIL')).toBe(true);
   });
 
   it.each([
@@ -53,6 +70,8 @@ describe('role templates', () => {
     ['0081_role_templates_senior_cashier_purchasing.sql', ['senior_cashier', 'purchasing_officer']],
     ['0099_salons_appointments_packages_rls.sql', ['front_desk', 'stylist']],
     ['0102_lodging_rooms_folios_rls.sql', ['housekeeping']],
+    ['0104_laundry_job_orders_rls.sql', ['laundry_attendant', 'rider']],
+    ['0106_pharmacy_prescriptions_lots_rls.sql', ['pharmacist', 'pharmacy_assistant']],
   ])('migration %s back-fills exactly these templates into existing businesses', (file, keys) => {
     const sql = readFileSync(fileURLToPath(new URL(`../../database/drizzle/${file}`, import.meta.url)), 'utf8');
     for (const key of keys) {
@@ -63,6 +82,8 @@ describe('role templates', () => {
       const later = [
         ...(file < '0099' ? ['appointments.read', 'appointments.manage', 'staff.manage'] : []),
         ...(file < '0102' ? LODGING_CODES : []),
+        ...(file < '0104' ? LAUNDRY_CODES : []),
+        ...(file < '0106' ? PHARMACY_CODES : []),
       ];
       expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).sort()).toEqual(t.permissions.filter((p) => !later.includes(p)).sort());
     }
@@ -82,7 +103,12 @@ describe('role templates', () => {
     expect(roleTemplatesFor('RETAIL').map((t) => t.key)).not.toEqual(expect.arrayContaining(['restaurant_manager']));
     expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'kitchen_crew')).toBe(false);
     expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'cashier')).toBe(true);
-    expect(roleTemplatesFor('RESTAURANT')).toEqual(ROLE_TEMPLATES.filter((t) => !t.salon && !t.lodging));
+    expect(roleTemplatesFor('RESTAURANT')).toEqual(ROLE_TEMPLATES.filter((t) => !t.salon && !t.lodging && !t.laundry && !t.pharmacy));
+    // A pharmacy (ADR-0025): the shop set plus the pharmacist and the assistant; the pharmacist needs two-step sign-in.
+    expect(roleTemplatesFor('PHARMACY').map((t) => t.key)).toEqual([...roleTemplatesFor('RETAIL').map((t) => t.key).filter((k) => !['pharmacist', 'pharmacy_assistant'].includes(k)), 'pharmacist', 'pharmacy_assistant'].sort((x, y) => ROLE_TEMPLATES.findIndex((t) => t.key === x) - ROLE_TEMPLATES.findIndex((t) => t.key === y)));
+    expect(isPrivilegedSet(ROLE_TEMPLATES.find((t) => t.key === 'pharmacist')!.permissions)).toBe(true);
+    expect(isPrivilegedSet(ROLE_TEMPLATES.find((t) => t.key === 'pharmacy_assistant')!.permissions)).toBe(false);
+    expect(servesTables('PHARMACY')).toBe(false);
     expect(roleTemplatesFor('HYBRID')).toEqual(ROLE_TEMPLATES);
     // A sari-sari store or grocery (ADR-0020) is a shop: the retail set.
     expect(roleTemplatesFor('GROCERY')).toEqual(roleTemplatesFor('RETAIL'));
@@ -124,6 +150,26 @@ describe('role templates', () => {
     expect(of('branch_manager')).toEqual(expect.arrayContaining([...LODGING_CODES]));
     for (const k of ['cashier', 'senior_cashier', 'accountant']) expect(of(k)).toContain('lodging.read');
     expect(isPrivilegedSet(of('housekeeping'))).toBe(false);
+  });
+
+  it('a laundry (ADR-0024) gets the attendant and rider roles, packages and recipes; nobody but HYBRID gets them; a client never tenders a down payment', () => {
+    const keys = (t: Parameters<typeof roleTemplatesFor>[0]) => roleTemplatesFor(t).map((x) => x.key);
+    expect(keys('LAUNDRY')).toEqual(expect.arrayContaining(['laundry_attendant', 'rider', 'cashier', 'branch_manager']));
+    expect(keys('LAUNDRY')).not.toEqual(expect.arrayContaining(['kitchen_crew']));
+    expect(keys('LAUNDRY')).not.toContain('front_desk');
+    for (const t of ['RETAIL', 'GROCERY', 'RESTAURANT', 'SALON', 'LODGING'] as const) expect(keys(t)).not.toContain('rider');
+    expect(keys('HYBRID')).toEqual(expect.arrayContaining(['laundry_attendant', 'rider']));
+    expect([servesLaundry('LAUNDRY'), servesLaundry('HYBRID'), servesLaundry('SALON'), servesTables('LAUNDRY')]).toEqual([true, true, false, false]);
+    expect([usesPackages('LAUNDRY'), usesPackages('SALON'), usesPackages('RETAIL'), usesRecipes('LAUNDRY')]).toEqual([true, true, false, true]);
+    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
+    expect(of('branch_manager')).toEqual(expect.arrayContaining([...LAUNDRY_CODES]));
+    expect(of('rider')).toEqual(['laundry.read', 'laundry.deliver', 'sales.create', 'cash.session']);
+    expect(of('laundry_attendant')).not.toContain('laundry.dispose');
+    expect(of('laundry_attendant')).not.toContain('laundry.release_override');
+    for (const k of ['cashier', 'senior_cashier']) expect(of(k)).toEqual(expect.arrayContaining(['laundry.read', 'laundry.manage']));
+    expect(isPrivilegedSet(of('rider'))).toBe(false);
+    const jobOrderId = '0195f0a0-0000-7000-8000-000000000001';
+    expect(tendersSchema.safeParse([{ method: 'JOB_DEPOSIT', jobOrderId }]).success).toBe(false);
   });
 
   it('charge to room: once per sale', () => {

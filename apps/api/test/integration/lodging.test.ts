@@ -114,6 +114,19 @@ describe('business type and set-up', () => {
     await inHouse(h, h.rooms.r101, 0, 1);
     expect((await http().patch('/v1/business').set(h.auth).send({ businessType: 'RETAIL' }).expect(409)).body.error.code).toBe('OPEN_STAYS');
   });
+
+  it('room types are business-wide: a branch grant cannot set them up; making their night item needs catalog.manage and prices.manage', async () => {
+    const h = await hotel('lod-scope');
+    await http().post('/v1/roles').set(h.auth).send({ key: 'room_setup', name: 'Room set-up', permissions: ['lodging.setup', 'lodging.read'] }).expect(201);
+    const atBranch = bearer(await loginToken(app, (await addMember(owner, h.tenantId, 'room_setup', { type: 'BRANCH', id: h.h1 })).email));
+    const wide = bearer(await loginToken(app, (await addMember(owner, h.tenantId, 'room_setup')).email));
+    await http().post('/v1/room-types').set(idem(atBranch)).send({ code: 'DLX', name: 'Deluxe', nightVariantId: h.dinner }).expect(403);
+    await http().patch(`/v1/room-types/${h.type.id}`).set(atBranch).send({ name: 'Renamed' }).expect(403);
+    // Business-wide, but without the catalog: only with a night item that already exists.
+    const refused = (await http().post('/v1/room-types').set(idem(wide)).send({ code: 'DLX', name: 'Deluxe', rackRate: '3500.00' }).expect(403)).body.error;
+    expect(refused.details.missing).toEqual(['catalog.manage']);
+    await http().post('/v1/room-types').set(idem(wide)).send({ code: 'DLX', name: 'Deluxe', nightVariantId: h.dinner }).expect(201);
+  });
 });
 
 describe('stays', () => {
@@ -184,6 +197,24 @@ describe('stays', () => {
     expect(nights[0]!.n).toBe(1);
     expect((await http().get(`/v1/stays/${early.id}`).set(h.desk).expect(200)).body.departureDate).toBe(day(0));
     expect(await asOwnerInTenant(owner, h.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it("a guest's data export lists their stays with the registry; anonymising blanks stay notes, ended stays included", async () => {
+    const h = await hotel('lod-privacy');
+    const customer = (await http().post('/v1/customers').set(h.auth).send({ displayName: 'Liza Reyes' }).expect(201)).body.id as string;
+    const staying = await inHouse(h, h.rooms.r101, 0, 2, { customerId: customer, notes: 'Liza asks for a quiet room' });
+    const cancelled = (await book(h, { roomId: h.rooms.r102, arrivalDate: day(10), departureDate: day(11), customerId: customer, notes: 'Liza: late arrival' }).expect(201)).body;
+    await http().post(`/v1/stays/${cancelled.id}/cancel`).set(h.desk).send({ reason: 'Plans changed' }).expect(200);
+    const dump = (await http().post(`/v1/customers/${customer}/export`).set(h.auth).expect(200)).body;
+    expect(dump.stays).toHaveLength(2);
+    expect(dump.stays.find((s: { status: string }) => s.status === 'IN_HOUSE')).toMatchObject({ notes: 'Liza asks for a quiet room', guests: [{ fullName: 'Liza Reyes', idNumber: 'P1234567', isPrimary: true }] });
+    expect(dump.stays.find((s: { status: string }) => s.status === 'CANCELLED')).toMatchObject({ notes: 'Liza: late arrival', cancelReason: 'Plans changed' });
+
+    await http().post(`/v1/customers/${customer}/anonymise`).set(h.auth).send({ reason: 'Asked to be forgotten' }).expect(200);
+    expect(await sql(h, `SELECT notes FROM stays WHERE id = ANY($1) ORDER BY id`, [[staying.id, cancelled.id]])).toEqual([{ notes: null }, { notes: null }]);
+    expect(await sql(h, `SELECT id FROM stay_guests WHERE stay_id = $1`, [staying.id])).toEqual([]);
+    // An ended stay may only have its notes blanked, never rewritten (0107).
+    await expect(sql(h, `UPDATE stays SET notes = 'Someone else' WHERE id = $1`, [cancelled.id])).rejects.toThrow(/has ended/);
   });
 });
 
@@ -274,7 +305,16 @@ describe('charge to room', () => {
     const drawerBefore = (await http().get(`/v1/cashier-sessions/${h.outletSession}`).set(h.cashier).expect(200)).body.expectedCash;
     const manager2 = await addMember(owner, h.tenantId, 'branch_manager', { type: 'BRANCH', id: h.h2 });
     const mgr2 = bearer(await loginToken(app, manager2.email));
-    const back = (await http().post(`/v1/sales/${sale.id}/returns`).set(idem(mgr2)).send({ cashierSessionId: h.outletSession, kind: 'RETURN', reason: 'Cold', lines: [{ saleLineId: sale.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201)).body;
+    // An exchange would turn the room charge into cash change (audit 2026-10-21): refused, at the preview too.
+    const returnLines = [{ saleLineId: sale.lines[0].id, quantity: '1', disposition: 'DAMAGED' }];
+    expect((await http().post(`/v1/sales/${sale.id}/returns/preview`).set(mgr2).send({ lines: returnLines }).expect(409)).body.error.code).toBe('EXCHANGE_ROOM_CHARGE');
+    const reg9 = (await http().post('/v1/registers').set(h.auth).send({ branchId: h.h2, code: 'R9', name: 'Exchange desk' }).expect(201)).body.id;
+    const mgrSession = (await http().post('/v1/cashier-sessions').set(mgr2).send({ registerId: reg9, openingFloat: '1000.00' }).expect(201)).body.id;
+    expect((await http().post('/v1/exchanges').set(idem(mgr2)).send({
+      cashierSessionId: mgrSession, saleId: sale.id, reason: 'Other dish', returnLines,
+      sale: { clientTransactionId: randomUUID(), lines: [{ variantId: h.dinner, quantity: '1' }], tenders: [] },
+    }).expect(409)).body.error.code).toBe('EXCHANGE_ROOM_CHARGE');
+    const back =(await http().post(`/v1/sales/${sale.id}/returns`).set(idem(mgr2)).send({ cashierSessionId: h.outletSession, kind: 'RETURN', reason: 'Cold', lines: [{ saleLineId: sale.lines[0].id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201)).body;
     expect(back.refundMethod).toBe('ROOM_CHARGE');
     expect((await http().get(`/v1/cashier-sessions/${h.outletSession}`).set(h.cashier).expect(200)).body.expectedCash).toBe(drawerBefore);
     const f = await folio(h, stay.folio.id);
@@ -368,5 +408,151 @@ describe('folio payments and deposits', () => {
     expect(credit.balance).toBe('2520.00');
     expect((await http().post(`/v1/folios/${stay.folio.id}/adjustments`).set(idem(h.manager)).send({ amount: '-3000.00', reason: 'Too much' }).expect(409)).body.error.code).toBe('FOLIO_OVERPAID');
     expect(cents(await gl(h, 'ROOM_REVENUE'))).toBe(-225000);
+  });
+});
+
+describe('audit 2026-10-21', () => {
+  it('check-in refuses a room a guest still holds; an early check-in starts the stay today; a guest in house moves only to a ready, empty room', async () => {
+    const h = await hotel('lod-a-room');
+    // A guest past their departure but not checked out still holds 101: the booking rule no longer sees them.
+    const overstay = await inHouse(h, h.rooms.r101, -2, -1);
+    const next = (await book(h, { roomId: h.rooms.r101, arrivalDate: day(0), departureDate: day(1), guests: [guest] }).expect(201)).body;
+    expect((await http().post(`/v1/stays/${next.id}/check-in`).set(h.desk).send({}).expect(409)).body.error).toMatchObject({ code: 'ROOM_OCCUPIED', details: { stayId: overstay.id } });
+    // Early (the day before arrival): the stay starts tonight, so tonight is charged and checked against other bookings.
+    const early = (await book(h, { roomId: h.rooms.r102, arrivalDate: day(1), departureDate: day(3), guests: [guest] }).expect(201)).body;
+    const inEarly = (await http().post(`/v1/stays/${early.id}/check-in`).set(h.desk).send({}).expect(200)).body;
+    expect([inEarly.status, inEarly.arrivalDate]).toEqual(['IN_HOUSE', day(0)]);
+    expect(await sql(h, `SELECT metadata->>'earlyCheckIn' AS e, metadata->>'previousArrivalDate' AS p FROM audit_logs WHERE action = 'stay.checked_in' AND resource_id = $1`, [early.id]))
+      .toEqual([{ e: 'true', p: day(1) }]);
+    await inHouse(h, h.rooms.r103, 0, 1);
+    const tomorrow = (await book(h, { roomId: h.rooms.r103, arrivalDate: day(1), departureDate: day(2), guests: [guest] }).expect(201)).body;
+    expect((await http().post(`/v1/stays/${tomorrow.id}/check-in`).set(h.desk).send({}).expect(409)).body.error.code).toBe('ROOM_OCCUPIED');
+    // Moving the early guest: not into a room someone holds, not into a dirty room; the room left is dirty.
+    expect((await http().patch(`/v1/stays/${early.id}`).set(h.desk).send({ roomId: h.rooms.r101 }).expect(409)).body.error.code).toBe('ROOM_OCCUPIED');
+    await http().post(`/v1/stays/${next.id}/cancel`).set(h.manager).send({ reason: 'Moved' }).expect(200);
+    await http().post(`/v1/rooms/${h.rooms.r101}/status`).set(h.housekeeping).send({ status: 'DIRTY' }).expect(200);
+    expect((await http().patch(`/v1/stays/${early.id}`).set(h.desk).send({ roomId: h.rooms.r101 }).expect(409)).body.error.code).toBe('ROOM_NOT_READY');
+    await http().post(`/v1/rooms/${h.rooms.r101}/status`).set(h.housekeeping).send({ status: 'CLEAN' }).expect(200);
+    // 101 is clean but the overstaying guest is still in it.
+    expect((await http().patch(`/v1/stays/${early.id}`).set(h.desk).send({ roomId: h.rooms.r101 }).expect(409)).body.error.code).toBe('ROOM_OCCUPIED');
+    await sql(h, `UPDATE stays SET status = 'CHECKED_OUT', checked_out_at = now() WHERE id = $1`, [overstay.id]);
+    await http().patch(`/v1/stays/${early.id}`).set(h.desk).send({ roomId: h.rooms.r101 }).expect(200);
+    expect((await http().get(`/v1/rooms/${h.rooms.r102}`).set(h.desk).expect(200)).body.housekeepingStatus).toBe('DIRTY');
+  });
+
+  it('the registry of an ended stay is closed; a guest in house keeps a primary guest', async () => {
+    const h = await hotel('lod-a-guests');
+    const stay = await inHouse(h, h.rooms.r101, 0, 1);
+    const [primary] = (await http().get(`/v1/stays/${stay.id}/guests`).set(h.desk).expect(200)).body.data;
+    expect((await http().patch(`/v1/stays/${stay.id}/guests/${primary.id}`).set(h.desk).send({ isPrimary: false }).expect(409)).body.error.code).toBe('PRIMARY_GUEST_REQUIRED');
+    const booked = (await book(h, { roomId: h.rooms.r102, arrivalDate: day(3), departureDate: day(4), guests: [guest] }).expect(201)).body;
+    const [g] = (await http().get(`/v1/stays/${booked.id}/guests`).set(h.desk).expect(200)).body.data;
+    await http().post(`/v1/stays/${booked.id}/cancel`).set(h.manager).send({ reason: 'Plans changed' }).expect(200);
+    expect((await http().patch(`/v1/stays/${booked.id}/guests/${g.id}`).set(h.desk).send({ fullName: 'Someone Else' }).expect(409)).body.error.code).toBe('STAY_ENDED');
+    expect((await http().delete(`/v1/stays/${booked.id}/guests/${g.id}`).set(h.desk).expect(409)).body.error.code).toBe('STAY_ENDED');
+  });
+
+  it("refunding a booking's deposit where the branch keeps deposits needs lodging.rates", async () => {
+    const h = await hotel('lod-a-refund');
+    const stay = (await book(h, { roomId: h.rooms.r102, arrivalDate: day(5), departureDate: day(6), guestName: 'Ana' }).expect(201)).body;
+    await http().post(`/v1/stays/${stay.id}/deposits`).set(idem(h.desk)).send({ method: 'CASH', cashierSessionId: h.deskSession, amount: '500.00' }).expect(201);
+    const refund = { reason: 'Guest asked', refund: { method: 'CASH', cashierSessionId: h.deskSession } };
+    expect((await http().post(`/v1/stays/${stay.id}/deposits/refund`).set(idem(h.desk)).send(refund).expect(403)).body.error.details.missing).toEqual(['lodging.rates']);
+    await http().post(`/v1/stays/${stay.id}/deposits/refund`).set(idem(h.manager)).send({ reason: 'Guest asked', refund: { method: 'BANK_TRANSFER', reference: 'BDO-9' } }).expect(200);
+    // A branch that refunds on cancel lets the front desk give it back.
+    await http().patch(`/v1/branches/${h.h1}/lodging-settings`).set(h.manager).send({ forfeitOnCancel: false }).expect(200);
+    await http().post(`/v1/stays/${stay.id}/deposits`).set(idem(h.desk)).send({ method: 'CASH', cashierSessionId: h.deskSession, amount: '300.00' }).expect(201);
+    await http().post(`/v1/stays/${stay.id}/deposits/refund`).set(idem(h.desk)).send(refund).expect(200);
+  });
+
+  it("the statement counts a reversed night's accommodation tax with the tax, not with the nights", async () => {
+    const h = await hotel('lod-a-stmt');
+    await http().patch(`/v1/branches/${h.h1}/lodging-settings`).set(h.manager).send({ accommodationTaxRate: '0.01' }).expect(200);
+    const stay = await inHouse(h, h.rooms.r101, -1, 1);
+    await http().post('/v1/lodging/night-audit').set(h.desk).send({ branchId: h.h1 }).expect(200);
+    const night = (await folio(h, stay.folio.id)).entries.find((e: { kind: string }) => e.kind === 'ROOM_NIGHT');
+    const before = (await http().get(`/v1/folios/${stay.folio.id}/statement`).set(h.desk).expect(200)).body.totals;
+    expect(before).toMatchObject({ roomNights: '2800.00', accommodationTax: '25.00' });
+    await http().post(`/v1/folios/${stay.folio.id}/night-reversals`).set(idem(h.manager)).send({ entryId: night.id, reason: 'Wrong night' }).expect(201);
+    const after = (await http().get(`/v1/folios/${stay.folio.id}/statement`).set(h.desk).expect(200)).body.totals;
+    expect(after).toMatchObject({ roomNights: '0.00', accommodationTax: '0.00', balance: '0.00' });
+  });
+
+  it("a folio's writers take its locks in one order: a payment, an adjustment, a room charge and a check-out at once never deadlock", async () => {
+    const h = await hotel('lod-a-locks');
+    for (const roomId of [h.rooms.r101, h.rooms.r102, h.rooms.r103]) {
+      const stay = await inHouse(h, roomId, 0, 1);
+      await http().post(`/v1/stays/${stay.id}/prepare-check-out`).set(h.desk).send({}).expect(200);
+      const results = await Promise.all([
+        http().post(`/v1/folios/${stay.folio.id}/payments`).set(idem(h.desk)).send({ method: 'CASH', cashierSessionId: h.deskSession, tendered: '100.00' }),
+        http().post(`/v1/folios/${stay.folio.id}/adjustments`).set(idem(h.manager)).send({ amount: '-50.00', reason: 'Late towels' }),
+        http().post('/v1/sales').set(idem(h.cashier)).send({ cashierSessionId: h.outletSession, clientTransactionId: randomUUID(), lines: [{ variantId: h.dinner, quantity: '1' }], tenders: [{ method: 'ROOM_CHARGE', stayId: stay.id }] }),
+        http().post(`/v1/stays/${stay.id}/check-out`).set(h.desk).send({}),
+      ]);
+      // Check-out is refused (a balance is due); nothing fails on a lock cycle (40P01 would be a 5xx).
+      expect(results.map((r) => r.status)).toEqual([201, 201, 201, 409]);
+    }
+  });
+});
+
+describe('fixes 2026-10-21 (overstays, occupied, night audit, rates)', () => {
+  it('an overstay is shown, counted by the night audit, and charged at check-out once the departure moves to today; a booking in the way is named', async () => {
+    const h = await hotel('lod-f-over');
+    const stay = await inHouse(h, h.rooms.r101, -3, -1); // should have left yesterday
+    expect((await http().get(`/v1/stays/${stay.id}`).set(h.desk).expect(200)).body).toMatchObject({ status: 'IN_HOUSE', overstay: true });
+    expect((await http().get('/v1/stays').query({ branchId: h.h1, status: 'IN_HOUSE' }).set(h.desk).expect(200)).body.data[0]).toMatchObject({ id: stay.id, overstay: true });
+    // Occupied sits beside the housekeeping status (no status of its own).
+    const board = (await http().get('/v1/lodging/housekeeping').query({ branchId: h.h1 }).set(h.housekeeping).expect(200)).body.data;
+    expect(board.find((r: { number: string }) => r.number === '101')).toMatchObject({ status: 'CLEAN', occupied: true, overstay: true, departingToday: true });
+    expect(board.find((r: { number: string }) => r.number === '102')).toMatchObject({ occupied: false, overstay: false });
+    expect((await http().get(`/v1/rooms/${h.rooms.r101}`).set(h.desk).expect(200)).body).toMatchObject({ housekeepingStatus: 'CLEAN', occupied: true, occupiedByStayId: stay.id });
+    const avail = (await http().get('/v1/lodging/availability').query({ branchId: h.h1, from: day(0), to: day(1) }).set(h.desk).expect(200)).body;
+    expect(avail.rooms.find((r: { roomId: string }) => r.roomId === h.rooms.r101)).toMatchObject({ occupied: true });
+    // The night audit still stops at the departure, and reports the overstay.
+    const audit = (await http().post('/v1/lodging/night-audit').set(h.desk).send({ branchId: h.h1 }).expect(200)).body;
+    expect(audit).toMatchObject({ nights: 2, failed: [], overstays: 1, overstayStayIds: [stay.id] });
+    // A booking of the room starting yesterday is in the way: named, nothing changes.
+    const next = (await book(h, { arrivalDate: day(-1), departureDate: day(2), guestName: 'Next' }).expect(201)).body;
+    const refused = (await http().post(`/v1/stays/${stay.id}/prepare-check-out`).set(h.desk).send({}).expect(409)).body.error;
+    expect(refused).toMatchObject({ code: 'ROOM_DOUBLE_BOOKED', details: { overstay: true, conflictingStayId: next.id, extendTo: day(0) } });
+    expect((await http().get(`/v1/stays/${stay.id}`).set(h.desk).expect(200)).body.departureDate).toBe(day(-1));
+    await http().post(`/v1/stays/${next.id}/cancel`).set(h.desk).send({ reason: 'Moved to another room' }).expect(200);
+    // Now the departure moves to today and last night is charged: three nights.
+    expect((await http().post(`/v1/stays/${stay.id}/prepare-check-out`).set(h.desk).send({}).expect(200)).body).toMatchObject({ balance: '8400.00' });
+    const after = (await http().get(`/v1/stays/${stay.id}`).set(h.desk).expect(200)).body;
+    expect([after.departureDate, after.overstay, after.nightsPosted]).toEqual([day(0), false, 3]);
+    expect((await sql<{ metadata: Record<string, unknown> }>(h, `SELECT metadata FROM audit_logs WHERE action = 'stay.changed' AND resource_id = $1`, [stay.id]))[0]!.metadata)
+      .toMatchObject({ overstay: true, departureDate: day(0), previousDepartureDate: day(-1) });
+    await http().post(`/v1/folios/${stay.folio.id}/payments`).set(idem(h.desk)).send({ method: 'CASH', cashierSessionId: h.deskSession, tendered: '8400.00' }).expect(201);
+    await http().post(`/v1/stays/${stay.id}/check-out`).set(h.desk).send({}).expect(200);
+    expect(await asOwnerInTenant(owner, h.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('the manual night audit posts each stay in its own transaction: one that cannot post is reported, the others are charged', async () => {
+    const h = await hotel('lod-f-audit');
+    const pc = ((await http().get('/v1/uoms').set(h.auth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
+    const vat = ((await http().get('/v1/tax-categories').set(h.auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
+    // A suite whose night item has no price yet: its nights cannot be priced.
+    const unpriced = (await http().post('/v1/products').set(h.auth).send({ name: 'Suite night', uomId: pc, taxCategoryId: vat, productType: 'SERVICE', trackInventory: false, variants: [{ sku: uniq('STE') }] }).expect(201)).body.variants[0].id as string;
+    const suite = (await http().post('/v1/room-types').set(idem(h.auth)).send({ code: 'STE', name: 'Suite', nightVariantId: unpriced }).expect(201)).body;
+    const r201 = (await http().post('/v1/rooms').set(idem(h.auth)).send({ branchId: h.h1, roomTypeId: suite.id, number: '201' }).expect(201)).body.id as string;
+    const ok = await inHouse(h, h.rooms.r101, -2, 2);
+    const broken = await inHouse(h, r201, -2, 2);
+    const run = (await http().post('/v1/lodging/night-audit').set(h.desk).send({ branchId: h.h1 }).expect(200)).body;
+    expect(run).toMatchObject({ nights: 2, stays: [{ stayId: ok.id, nights: [day(-2), day(-1)] }], failed: [{ stayId: broken.id, code: 'ITEM_NOT_PRICED' }], overstays: 0 });
+    expect(await sql(h, `SELECT count(*)::int AS n FROM folio_entries WHERE stay_id = $1`, [broken.id])).toEqual([{ n: 0 }]);
+  });
+
+  it('a new rate for a guest in house charges the nights already due at the old rate first', async () => {
+    const h = await hotel('lod-f-rate');
+    const stay = await inHouse(h, h.rooms.r101, -2, 2);
+    await http().patch(`/v1/stays/${stay.id}`).set(h.desk).send({ nightlyRate: '2000.00' }).expect(403); // lodging.rates
+    const changed = (await http().patch(`/v1/stays/${stay.id}`).set(h.manager).send({ nightlyRate: '2000.00' }).expect(200)).body;
+    expect([changed.nightlyRate, changed.nightsPosted]).toEqual(['2000.00', 2]);
+    await http().post(`/v1/stays/${stay.id}/prepare-check-out`).set(h.desk).send({}).expect(200);
+    const f = await folio(h, stay.folio.id);
+    expect(f.entries.map((e: { nightDate: string; amount: string }) => [e.nightDate, e.amount])).toEqual([[day(-2), '2800.00'], [day(-1), '2800.00'], [day(0), '2000.00'], [day(1), '2000.00']]);
+    expect((await sql<{ metadata: Record<string, unknown> }>(h, `SELECT metadata FROM audit_logs WHERE action = 'stay.changed' AND resource_id = $1`, [stay.id]))[0]!.metadata)
+      .toMatchObject({ nightlyRate: '2000.00', previousNightlyRate: null, nightsPostedAtPreviousRate: [day(-2), day(-1)] });
   });
 });

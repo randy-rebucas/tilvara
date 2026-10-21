@@ -67,14 +67,21 @@ export class ReceivingService extends TenantService {
       const tenantId = tenantOf(auth).tenantId;
       // An item that keeps expiry dates comes in with one (ADR-0020 §3).
       const dated = await db
-        .select({ id: productVariants.id })
+        .select({ id: productVariants.id, drugClass: products.drugClass })
         .from(productVariants)
         .innerJoin(products, eq(products.id, productVariants.productId))
         .where(and(inArray(productVariants.id, [...new Set(input.lines.map((l) => l.variantId))]), eq(products.tracksExpiry, true)));
       input.lines.forEach((l, i) => {
-        if (!l.expiresOn && toDec(l.quantity).gt(0) && dated.some((d) => d.id === l.variantId)) {
+        const item = dated.find((d) => d.id === l.variantId);
+        if (!item || !toDec(l.quantity).gt(0)) return;
+        if (!l.expiresOn) {
           const message = 'This item keeps expiry dates: enter the date on the pack';
           throw unprocessable('EXPIRY_DATE_REQUIRED', message, { line: i, issues: [{ path: `lines.${i}.expiresOn`, message }] });
+        }
+        // A medicine's batch is traced and recalled by its lot number (ADR-0025 §5).
+        if (item.drugClass && !l.lotCode) {
+          const message = 'This medicine needs its lot (batch) number from the pack';
+          throw unprocessable('LOT_CODE_REQUIRED', message, { line: i, issues: [{ path: `lines.${i}.lotCode`, message }] });
         }
       });
 

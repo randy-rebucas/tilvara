@@ -154,6 +154,7 @@ Engineering alone cannot meet the exit: it needs D1–D6.
 - **D4 Pilot businesses**: how many, which kinds (retail/restaurant), which branches and devices, and the pilot length N.
 - **D5 Invoicing during the pilot**: confirm with the tax adviser that pilots keep their current registered invoicing and that Tilvara receipts carry "not an invoice" (as built).
 - **D6 PayMongo**: sandbox keys for Phase 5 slice 6. The pilot is cash-only plus the existing dev provider (refused in production) until then.
+- **D7 SMS provider and account** (session 29, ADR-0024 §6; e.g. Semaphore, Twilio, M360): laundry "ready for pickup" texts go through the worker's `SmsSender` port, whose only adapter is `DevSmsSender` (`SMS_DRIVER=dev`, refused in production). Email notices and the "Copy message" text work meanwhile.
 
 ★ = engineer's default; the user may revisit.
 
@@ -199,7 +200,7 @@ Engineering alone cannot meet the exit: it needs D1–D6.
 
 ## As built — slice 2 (session 9)
 - **Rate limiter** (`infrastructure/rate-limit.store.ts`, `rate-limit.guard.ts`):
-  - Counters live in Redis when `REDIS_URL` is set: one atomic Lua `INCR` + `PEXPIRE`, keys `RATE_LIMIT_PREFIX` + `bucket:key`. Production refuses to boot without `REDIS_URL`.
+  - Counters live in Redis when `REDIS_URL` is set: one atomic Lua `INCR` + `PEXPIRE`, keys `RATE_LIMIT_PREFIX` + `bucket:key`. Production refuses to boot without `REDIS_URL`. A call that Redis does not answer within `RATE_LIMIT_REDIS_TIMEOUT_MS` (default 300) is counted in the process instead (added 2026-10-21; the Redis tests raise it so a loaded machine does not fall back).
   - ioredis fails fast: no offline queue, 300 ms command timeout. A failed hit is counted in the process instead (`fallbacks` counter, a warning at most once a minute). An outage degrades to per-instance limits; it never removes limits and never refuses sign-in.
   - Boot waits up to 2.5 s for the first connection, so early requests are not split between memory and Redis. That split was found by the first test run and fixed.
   - `@RateLimit(...rules)`: every rule must pass. `by: 'ip' | 'account' | 'terminal'`.

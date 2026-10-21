@@ -78,7 +78,7 @@ try {
 
   // ---- 3* before a scan; the promotion prices three tees ----
   await scan(`3*${TEE}-S-BLK`);
-  check('3* sells three on one line', await evaluate(`document.querySelector('[aria-label=Cart] .money.w-10')?.textContent.trim() === '3'`));
+  check('3* sells three on one line', await evaluate(`document.querySelector('[data-testid=cart] .money.w-10')?.textContent.trim() === '3'`));
   check('the tees promotion shows on the line, total ₱800.00', await totalShows('₱800.00') && await waitFor(`document.querySelector('[data-testid=line-promotion]')?.innerText.includes('3 tees for 800')`, 8000).then(() => true, () => false));
 
   // ---- quick keys and buy 2, get 1 ----

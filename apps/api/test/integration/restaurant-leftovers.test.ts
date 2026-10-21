@@ -212,6 +212,16 @@ describe('floor push stream', () => {
     // No token, no stream.
     expect((await fetch(`${base}/v1/restaurant/stream?branchId=${r.branchId}`)).status).toBe(401);
   });
+
+  it('marking an item sold out or available again reaches the branch’s screens (audit 2026-10-21)', async () => {
+    const r = await restaurant('rl-push-86');
+    const serverToken = (r.server.Authorization as string).slice('Bearer '.length);
+    const mark = (soldOut: boolean) => http().put(`/v1/branches/${r.branchId}/sold-out`).set(r.crew).send({ variantId: r.tea, soldOut }).expect(200);
+    const out = await listen(r, serverToken, r.branchId, (e) => e.includes('changed'), () => mark(true));
+    expect(out.events).toContain('changed');
+    const back = await listen(r, serverToken, r.branchId, (e) => e.includes('changed'), () => mark(false));
+    expect(back.events).toContain('changed');
+  });
 });
 
 describe('prep times by hour and by item', () => {

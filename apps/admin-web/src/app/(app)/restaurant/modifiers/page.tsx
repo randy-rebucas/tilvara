@@ -4,8 +4,9 @@ import { variantNames, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../chrome';
 import { EditRecord, ModifierGroupForm, OptionForm, RowAction } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Modifiers' };
+export const generateMetadata = pageTitle('restaurant.modifiers');
 
 /** Choices offered with menu items (ADR-0014 §3): free instructions, or priced options that sell an item. */
 export default async function ModifiersPage() {

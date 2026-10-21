@@ -9,11 +9,12 @@ import { branchLabel, docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { sourceHref } from '../../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
 /** Undone through their document (cancel the invoice, void the payment, an opposite note), never by hand; the API refuses it too. */
 const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE', 'SALE_TIP_REFUND'];
 
-export const metadata = { title: 'Journal entry' };
+export const generateMetadata = pageTitle('books.entries.item');
 
 export default async function EntryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

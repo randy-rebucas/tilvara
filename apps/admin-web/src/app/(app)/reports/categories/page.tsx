@@ -4,8 +4,9 @@ import type { ByCategory } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by category' };
+export const generateMetadata = pageTitle('reports.categories');
 
 /** Net sales and gross profit per top-level category, then each category on its own (same figures as By product). */
 export default async function ByCategoryPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

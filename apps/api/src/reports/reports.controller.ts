@@ -6,7 +6,9 @@ import {
   consolidatedRangeSchema,
   type ConsolidatedRangeQuery,
   guestLedgerQuerySchema,
+  jobOrderDepositsQuerySchema,
   type GuestLedgerQuery,
+  type JobOrderDepositsQuery,
   idParamSchema,
   prepTimesBySchema,
   reportDaySchema,
@@ -23,6 +25,7 @@ import { AnalysisReportsService } from './analysis-reports.service.js';
 import { RestaurantReportsService } from './restaurant-reports.service.js';
 import { SalonReportsService } from './salon-reports.service.js';
 import { LodgingReportsService } from './lodging-reports.service.js';
+import { LaundryReportsService } from './laundry-reports.service.js';
 
 const range = new ZodPipe(reportRangeSchema);
 const id = new ZodPipe(idParamSchema);
@@ -37,6 +40,7 @@ export class ReportsController {
     @Inject(AnalysisReportsService) private readonly analysis: AnalysisReportsService,
     @Inject(SalonReportsService) private readonly salon: SalonReportsService,
     @Inject(LodgingReportsService) private readonly lodging: LodgingReportsService,
+    @Inject(LaundryReportsService) private readonly laundry: LaundryReportsService,
   ) {}
 
   // Session 20 (SPEC §6.10)
@@ -199,6 +203,32 @@ export class ReportsController {
   @Get('accommodation-tax')
   accommodationTax(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
     return this.lodging.accommodationTax(auth, q);
+  }
+
+  // Session 29 (ADR-0024): laundromats and laundry shops.
+
+  /** Job orders received, ready, claimed, cancelled and disposed of per day; turnaround, on-time share, kilos and loads. */
+  @Get('job-orders')
+  jobOrders(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.laundry.jobOrders(auth, q);
+  }
+
+  /** Cycles, minutes and utilisation per washer and dryer; self-service cycle sales. */
+  @Get('machine-usage')
+  machineUsage(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.laundry.machineUsage(auth, q);
+  }
+
+  /** Down payments held beside GL 2330, unclaimed laundry and what was kept. */
+  @Get('job-order-deposits')
+  jobOrderDeposits(@Auth() auth: AuthContext, @Query(new ZodPipe(jobOrderDepositsQuerySchema)) q: JobOrderDepositsQuery) {
+    return this.laundry.jobOrderDeposits(auth, q);
+  }
+
+  /** Pickups and deliveries per day; delivery fees on claimed jobs. */
+  @Get('deliveries')
+  deliveries(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.laundry.deliveries(auth, q);
   }
 
   @Get('cashier-sessions/:id')

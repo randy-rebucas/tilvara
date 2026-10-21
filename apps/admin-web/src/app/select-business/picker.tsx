@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { FormError } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import type { Me } from '@/lib/api';
+import { useT } from '@/i18n/client';
+import { extraFor } from '@/i18n/titles';
 
 export function BusinessPicker({ memberships, activeTenantId }: { memberships: Me['memberships']; activeTenantId: string | null }) {
   const router = useRouter();
+  const { lang } = useT();
   const { pending, error, submit } = useSubmit();
 
   async function choose(tenantId: string) {
@@ -34,7 +37,7 @@ export function BusinessPicker({ memberships, activeTenantId }: { memberships: M
                 </span>
               </span>
               {m.tenantId === activeTenantId ? (
-                <Check aria-label="current" className="size-5 text-blue" />
+                <Check aria-label={extraFor(lang, 'a11y.current')} className="size-5 text-blue" />
               ) : (
                 <ChevronRight aria-hidden className="size-5 text-muted" />
               )}

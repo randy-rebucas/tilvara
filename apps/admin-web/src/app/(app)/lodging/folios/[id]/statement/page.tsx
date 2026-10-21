@@ -7,8 +7,9 @@ import { formatDate, formatTin, peso, signed } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Guest folio' };
+export const generateMetadata = pageTitle('lodging.folios.item.statement');
 
 /**
  * The folio statement the guest is shown and signs at check-out (ADR-0023 §5.2). While invoicing is

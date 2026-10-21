@@ -5,8 +5,9 @@ import { allProducts, api, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { ProductsTabs } from '../tabs';
 import { SetQuickKey } from './set-key';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Quick keys' };
+export const generateMetadata = pageTitle('products.quick-keys');
 
 const SLOTS = Array.from({ length: 48 }, (_, i) => i + 1);
 

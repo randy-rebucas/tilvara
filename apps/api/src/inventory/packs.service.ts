@@ -11,6 +11,10 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { negativeStockPolicy } from '../sales/stock-policy.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { reservedAt } from './reservations.service.js';
+import { unsellableAt } from '../pharmacy/drugs.js';
+
+/** How far up a sale opens packs to get pieces: a strip for tablets, a box for strips, a case for boxes (ADR-0025 §7). */
+const MAX_PACK_LEVELS = 3;
 
 type LinkRow = {
   id: string;
@@ -91,48 +95,68 @@ async function recordOpening(db: Database, ctx: OpeningContext, link: { id: stri
 /**
  * A sale short of pieces opens packs by itself (ADR-0020 §2), in the sale's transaction, before its
  * own movements and the BLOCK check. `outbound`: what the sale and its recipes take out, per item.
- * Every balance involved is locked first, in one call in variant order (as the sale's movements will
- * lock them a moment later), so two tills cannot open the same last pack for themselves.
- * Returns the openings made (none in the usual case: one indexed query).
+ * Chains (ADR-0025 §7): when the pack above is short too, the next pack up is opened first (a box for
+ * strips, then strips for tablets), at most three levels up. Every balance involved is locked first, in
+ * one call in variant order (as the sale's movements will lock them a moment later), so two tills cannot
+ * open the same last pack for themselves. `sellableOnly` (expired stock blocked, ADR-0025 §4): expired or
+ * held stock neither counts as available nor gets opened. Returns the openings made (none in the usual
+ * case: one indexed query).
  */
-export async function openPacksForSale(db: Database, ctx: OpeningContext, outbound: readonly { variantId: string; quantity: string }[]) {
+export async function openPacksForSale(db: Database, ctx: OpeningContext, outbound: readonly { variantId: string; quantity: string }[], options: { sellableOnly?: boolean } = {}) {
   const need = new Map<string, Dec>();
   for (const o of outbound) {
     const q = toDec(o.quantity);
     if (q.gt(0)) need.set(o.variantId, (need.get(o.variantId) ?? new Dec(0)).plus(q));
   }
   if (need.size === 0) return [];
-  const { rows: links } = await db.execute<{ id: string; pack_variant_id: string; piece_variant_id: string; pieces_per_pack: string; pack_sku: string }>(sql`
-    SELECT c.id, c.pack_variant_id, c.piece_variant_id, c.pieces_per_pack::text, pv.sku AS pack_sku
-      FROM pack_conversions c
-      JOIN product_variants pv ON pv.tenant_id = c.tenant_id AND pv.id = c.pack_variant_id
-      JOIN products pp ON pp.tenant_id = pv.tenant_id AND pp.id = pv.product_id
-     WHERE c.archived_at IS NULL AND c.auto_open AND pv.archived_at IS NULL AND pp.track_inventory
-       AND c.piece_variant_id IN (${sql.join([...need.keys()].map((id) => sql`${id}::uuid`), sql`, `)})
-     ORDER BY c.piece_variant_id`);
+  type Link = { id: string; pack_variant_id: string; piece_variant_id: string; pieces_per_pack: string; pack_sku: string };
+  const links: Link[] = [];
+  const seen = new Set(need.keys());
+  let frontier = [...need.keys()];
+  for (let level = 0; level < MAX_PACK_LEVELS && frontier.length; level++) {
+    const { rows } = await db.execute<Link>(sql`
+      SELECT c.id, c.pack_variant_id, c.piece_variant_id, c.pieces_per_pack::text, pv.sku AS pack_sku
+        FROM pack_conversions c
+        JOIN product_variants pv ON pv.tenant_id = c.tenant_id AND pv.id = c.pack_variant_id
+        JOIN products pp ON pp.tenant_id = pv.tenant_id AND pp.id = pv.product_id
+       WHERE c.archived_at IS NULL AND c.auto_open AND pv.archived_at IS NULL AND pp.track_inventory
+         AND c.piece_variant_id IN (${sql.join(frontier.map((id) => sql`${id}::uuid`), sql`, `)})
+       ORDER BY c.piece_variant_id`);
+    links.push(...rows);
+    frontier = rows.map((r) => r.pack_variant_id).filter((id) => !seen.has(id));
+    for (const id of frontier) seen.add(id);
+  }
   if (links.length === 0) return [];
 
-  const ids = [...new Set([...need.keys(), ...links.map((l) => l.pack_variant_id)])].sort();
+  const ids = [...seen].sort();
   const { rows: locked } = await db.execute<{ variant_id: string; quantity: string }>(
     sql`SELECT variant_id, quantity::text FROM app_lock_stock_balances(${ctx.branchId}, ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
   );
   const onHand = new Map(locked.map((r) => [r.variant_id, toDec(r.quantity)]));
   const reserved = await reservedAt(db, ctx.branchId, ids);
-  const free = (id: string) => (onHand.get(id) ?? new Dec(0)).minus(reserved.get(id) ?? 0);
+  const blocked = options.sellableOnly ? await unsellableAt(db, ctx.branchId, ids) : new Map<string, Dec>();
+  const free = (id: string) => (onHand.get(id) ?? new Dec(0)).minus(reserved.get(id) ?? 0).minus(blocked.get(id) ?? 0);
 
-  const made = [];
-  for (const l of links) {
-    const short = need.get(l.piece_variant_id)!.minus(Dec.max(free(l.piece_variant_id), 0));
-    if (short.lte(0)) continue;
-    // Packs this sale sells as packs are not there to open.
-    const packsFree = free(l.pack_variant_id).minus(need.get(l.pack_variant_id) ?? 0).floor();
-    if (packsFree.lt(1)) continue;
+  const made: Awaited<ReturnType<typeof recordOpening>>[] = [];
+  // Opens enough packs above `variantId` for `wanted` of it to be free, opening the pack above first when needed.
+  const ensure = async (variantId: string, wanted: Dec, level: number): Promise<void> => {
+    const l = links.find((x) => x.piece_variant_id === variantId);
+    if (!l) return;
+    const short = wanted.minus(Dec.max(free(variantId), 0));
+    if (short.lte(0)) return;
     const per = toDec(l.pieces_per_pack);
-    const packs = Dec.min(short.div(per).ceil(), packsFree);
+    const packsWanted = short.div(per).ceil();
+    // Packs this sale sells as packs are not there to open.
+    const soldAsPacks = need.get(l.pack_variant_id) ?? new Dec(0);
+    if (level + 1 < MAX_PACK_LEVELS) await ensure(l.pack_variant_id, packsWanted.plus(soldAsPacks), level + 1);
+    const packsFree = free(l.pack_variant_id).minus(soldAsPacks).floor();
+    if (packsFree.lt(1)) return;
+    const packs = Dec.min(packsWanted, packsFree);
     made.push(await recordOpening(db, ctx, { id: l.id, packVariantId: l.pack_variant_id, pieceVariantId: l.piece_variant_id, piecesPerPack: per, packSku: l.pack_sku }, packs));
     onHand.set(l.pack_variant_id, (onHand.get(l.pack_variant_id) ?? new Dec(0)).minus(packs));
     onHand.set(l.piece_variant_id, (onHand.get(l.piece_variant_id) ?? new Dec(0)).plus(packs.times(per)));
-  }
+  };
+  for (const [variantId, quantity] of [...need.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) await ensure(variantId, quantity, 0);
   return made;
 }
 
@@ -165,8 +189,10 @@ export class PacksService extends TenantService {
     return this.mutate(auth, async (db) => {
       // One link change at a time per business, so two cannot close a loop between them.
       await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(app_current_tenant_id()::text || ':pack-links'))`);
-      const { rows: items } = await db.execute<{ id: string; archived_at: string | null; track_inventory: boolean; product_archived_at: string | null; allows_fraction: boolean }>(sql`
-        SELECT v.id, v.archived_at, p.track_inventory, p.archived_at AS product_archived_at, u.allows_fraction
+      const { rows: items } = await db.execute<{
+        id: string; archived_at: string | null; track_inventory: boolean; product_archived_at: string | null; allows_fraction: boolean; drug_class: string | null; generic_key: string | null;
+      }>(sql`
+        SELECT v.id, v.archived_at, p.track_inventory, p.archived_at AS product_archived_at, u.allows_fraction, p.drug_class, p.generic_key
           FROM product_variants v
           JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
           JOIN units_of_measure u ON u.tenant_id = p.tenant_id AND u.id = p.uom_id
@@ -178,6 +204,13 @@ export class PacksService extends TenantService {
       if (!pack.track_inventory || !piece.track_inventory) throw unprocessable('NOT_TRACKED', 'Both the pack and the piece must count their stock');
       if (!piece.allows_fraction && !toDec(input.piecesPerPack).isInteger()) {
         throw unprocessable('FRACTIONAL_PIECES', 'This piece is counted in whole units, so a pack holds a whole number of them', { path: ['piecesPerPack'] });
+      }
+      // A box of a prescription medicine holds that medicine (ADR-0025 §2, §6): the same drug class and
+      // generic (name, strength, form), or neither is a medicine, so a pack never sells without the prescription its pieces need.
+      if (pack.drug_class !== piece.drug_class || (pack.drug_class !== null && pack.generic_key !== piece.generic_key)) {
+        throw unprocessable('PACK_DRUG_MISMATCH', 'The pack and the piece must be the same medicine (drug class, generic name, strength and form)', {
+          pack: { drugClass: pack.drug_class, genericKey: pack.generic_key }, piece: { drugClass: piece.drug_class, genericKey: piece.generic_key },
+        });
       }
       // A loop (the piece is, through its packs, the pack's own source) would open packs in a circle.
       let current = input.packVariantId;
@@ -232,10 +265,13 @@ export class PacksService extends TenantService {
       if (link.archivedAt) throw archived('Pack link');
       const packs = toDec(input.packs);
       if ((await negativeStockPolicy(db, branch.id)) === 'BLOCK') {
-        const { rows } = await db.execute<{ quantity: string }>(
-          sql`SELECT quantity::text FROM app_lock_stock_balances(${branch.id}, ARRAY[${link.pack.variantId}]::uuid[])`,
+        // Both balances, sorted, as `recordOpening` and a sale opening packs lock them: locking the pack
+        // alone first and the piece later could deadlock against them.
+        const ids = [link.pack.variantId, link.piece.variantId].sort();
+        const { rows } = await db.execute<{ variant_id: string; quantity: string }>(
+          sql`SELECT variant_id, quantity::text FROM app_lock_stock_balances(${branch.id}, ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
         );
-        const available = toDec(rows[0]?.quantity ?? '0').minus((await reservedAt(db, branch.id, [link.pack.variantId])).get(link.pack.variantId) ?? 0);
+        const available = toDec(rows.find((r) => r.variant_id === link.pack.variantId)?.quantity ?? '0').minus((await reservedAt(db, branch.id, [link.pack.variantId])).get(link.pack.variantId) ?? 0);
         if (packs.gt(available)) {
           throw new AppError('INSUFFICIENT_STOCK', `Not enough stock: ${link.pack.name} (${available.toString()} available)`, HttpStatus.CONFLICT, {
             lines: [{ variantId: link.pack.variantId, name: link.pack.name, available: available.toString(), requested: packs.toString() }],

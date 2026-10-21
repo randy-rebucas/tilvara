@@ -4,8 +4,9 @@ import type { ByTender } from '@/lib/api';
 import { peso, sumDecimal } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by tender' };
+export const generateMetadata = pageTitle('reports.tenders');
 
 /** Money taken by method (cash, card, QR), refunds, and the net to reconcile against the drawer and the bank. */
 export default async function ByTenderPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

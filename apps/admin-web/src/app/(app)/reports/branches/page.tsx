@@ -4,8 +4,9 @@ import type { ByBranch } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by branch' };
+export const generateMetadata = pageTitle('reports.branches');
 
 /** Every branch the person may report on, side by side, each in its own local days, and the total. */
 export default async function ByBranchPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

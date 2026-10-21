@@ -8,8 +8,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { TransferForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Transfers' };
+export const generateMetadata = pageTitle('inventory.transfers');
 
 export default async function TransfersPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t, lang } = await getT();

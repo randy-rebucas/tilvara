@@ -10,8 +10,9 @@ import { branchLabel, docNo, isUuid, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { EditDraftForm, ReceiveForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Purchase order' };
+export const generateMetadata = pageTitle('purchasing.orders.item');
 
 export default async function OrderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

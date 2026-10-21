@@ -3,8 +3,9 @@ import { getT } from '@/i18n/server';
 import { api, type Business, type Me } from '@/lib/api';
 import { SubscriptionTabs } from '../tabs';
 import { BusinessNameForm, BusinessTypeForm } from './business-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Business' };
+export const generateMetadata = pageTitle('subscription.business');
 
 export default async function BusinessPage() {
   const { t } = await getT();

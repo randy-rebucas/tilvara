@@ -73,7 +73,7 @@ try {
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.getElementById('scan')`);
   check('shift opened; counter shows the scan field focused', await evaluate(`document.activeElement?.id === 'scan'`));
-  check('retail shop: no Tables tab', !(await evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent === 'Tables')`)));
+  check('retail shop: no Tables tab', !(await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent === 'Tables')`)));
 
   // Customer display (session 16): opened before the sale. A same-origin iframe stands in for the
   // second window (the till feeds it over a BroadcastChannel, which reaches both alike).
@@ -107,7 +107,7 @@ try {
   check('Esc returns to the same cart (₱78.40), and F8 behind the guide did not fill in the cash', await totalShows('₱78.40') && (await cashValue()) === cashBefore);
   await pressKey('F1');
   check('F1 opens the guide too', await waitFor(`document.getElementById('guide-sell')`).then(() => true, () => false));
-  const lang = (l) => evaluate(`[...document.querySelectorAll('[role=group][aria-label=Language] button')].find((x) => x.textContent === ${JSON.stringify(l)}).click()`);
+  const lang = (l) => evaluate(`[...document.querySelectorAll('[role=group][data-testid=language] button')].find((x) => x.textContent === ${JSON.stringify(l)}).click()`);
   await lang('fil');
   check('Filipino: the guide is translated', await shown('Gabay sa paggamit') && (await text()).includes('Narito ka'));
   await lang('en');

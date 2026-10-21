@@ -11,6 +11,7 @@ import {
   lte,
   products,
   productVariants,
+  registers,
   taxCategories,
   taxProfiles,
   unitsOfMeasure,
@@ -133,10 +134,11 @@ export class TaxService extends TenantService {
   /**
    * Server-authoritative prices and taxes for a cart at a branch, right now: the branch's price
    * in force, each item's VAT treatment, the seller's tax profile in force and statutory schemes.
-   * Read-only; checkout persists the same computation with its snapshot.
+   * Read-only; checkout persists the same computation with its snapshot. `promotions: false` prices
+   * as a restaurant bill does (no promotions, ADR-0021 §1).
    */
   quote(auth: AuthContext, input: TaxQuoteInput) {
-    return this.read(auth, (db) => this.computeCart(db, auth, input, undefined, { promotions: true }));
+    return this.read(auth, (db) => this.computeCart(db, auth, input, undefined, { promotions: input.promotions !== false }));
   }
 
   /**
@@ -146,13 +148,23 @@ export class TaxService extends TenantService {
    * are append-only and effective-dated, so the result is what was in force then.
    * `promotions` (ADR-0021 §1): counter sales, their quote and offline sales are promoted; restaurant
    * bills are not (they keep their own order discount).
+   * `knownAt` (an offline sale at its snapshot): price rows and promotions created after this instant
+   * are ignored, even back-dated ones, so the server sees what the till's snapshot could hold.
    */
-  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date, opts: { promotions?: boolean } = {}) {
+  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date, opts: { promotions?: boolean; knownAt?: Date } = {}) {
     const at = asOf ?? (await effectiveNow(db));
     const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
     if (!branch) throw notFound('Branch');
     const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };
-    this.assertCan(auth, 'sales.create', scope);
+    // A cashier granted one register prices at its branch too (audit 2026-10-21); the sale itself is
+    // checked against the session's register.
+    if (!this.can(auth, 'sales.create', scope)) {
+      const registerIds = tenantOf(auth).grants.filter((g) => g.permission === 'sales.create' && g.scopeType === 'REGISTER' && g.scopeId).map((g) => g.scopeId!);
+      const [own] = registerIds.length
+        ? await db.select({ id: registers.id }).from(registers).where(and(eq(registers.branchId, branch.id), inArray(registers.id, registerIds))).limit(1)
+        : [];
+      if (!own) this.assertCan(auth, 'sales.create', scope);
+    }
     if (branch.archivedAt) throw archived('Branch');
     if (input.lines.some((l) => (l.discount && !toDec(l.discount).isZero()) || l.discountRate)) this.assertCan(auth, 'sales.discount', scope);
 
@@ -185,7 +197,7 @@ export class TaxService extends TenantService {
     const schemeCodes = [...new Set(input.lines.flatMap((l) => (l.statutory ? [l.statutory.scheme] : [])))];
     const schemes = await this.schemesInForce(db, schemeCodes, at);
 
-    const prices = await this.pricing.effectivePrices(db, branch.id, variantIds, at);
+    const prices = await this.pricing.effectivePrices(db, branch.id, variantIds, at, opts.knownAt);
     // Approved prices replace the list price for their line (an offline re-pricing never carries one).
     const overrides = await overridesForCart(db, auth, branch.id, at, input.lines);
 
@@ -248,7 +260,7 @@ export class TaxService extends TenantService {
 
     if (opts.promotions) {
       // A line with its own discount, an approved price or SC/PWD takes no promotion (ADR-0021 §1).
-      const inForce = await promotionsInForce(db, branch.id, at, variantIds);
+      const inForce = await promotionsInForce(db, branch.id, at, variantIds, opts.knownAt);
       if (inForce.length) {
         try {
           const applied = applyPromotions(

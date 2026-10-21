@@ -402,6 +402,12 @@ export const kitchenTickets = pgTable(
     printClaimedBy: uuid('print_claimed_by'),
     printedAt: timestamp('printed_at', { withTimezone: true }),
     printCount: integer('print_count').notNull().default(0),
+    /**
+     * VOID slips (audit 2026-10-21): an item voided after this ticket printed asks for a VOID slip
+     * (`void_print_requested_at`); the till that prints it settles `void_printed_at` (its claim time).
+     */
+    voidPrintRequestedAt: timestamp('void_print_requested_at', { withTimezone: true }),
+    voidPrintedAt: timestamp('void_printed_at', { withTimezone: true }),
   },
   (t) => [
     unique('kitchen_tickets_tenant_id_id_unique').on(t.tenantId, t.id),

@@ -6,8 +6,9 @@ import { formatDate, peso, qty } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { WriteOffLot } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Expiry' };
+export const generateMetadata = pageTitle('inventory.expiry');
 
 const WINDOWS = [7, 30, 90] as const;
 
@@ -24,6 +25,9 @@ export default async function ExpiryPage({ searchParams }: { searchParams: Promi
   ]);
   const canAdjust = me.activeTenant?.permissions.includes('inventory.adjust') ?? false;
   const within = list?.withinDays ?? days ?? 30;
+  // ADR-0025 §5: a held lot (recall, advisory) is not sold where expired stock is blocked; it can be written off.
+  const writable = (r: StockLot) => r.daysLeft < 0 || !!r.held;
+  const held = (r: StockLot) => (r.held ? <span className="tag ml-1 border-[#ead3a6]! bg-amber-bg! text-[#6b4a12]!" data-lot-held>{t('exp.onHold')}</span> : null);
   const when = (r: StockLot) =>
     r.daysLeft < 0 ? <span className="tag text-red">{t('exp.expiredAgo', { n: String(-r.daysLeft) })}</span> : r.daysLeft === 0 ? <span className="tag">{t('exp.today')}</span> : t('exp.inDays', { n: String(r.daysLeft) });
 
@@ -53,19 +57,19 @@ export default async function ExpiryPage({ searchParams }: { searchParams: Promi
               columns={[
                 { header: t('prod.sku'), cell: (r) => <Serial className="text-ink">{r.sku}</Serial> },
                 { header: t('common.item'), cell: (r) => r.name },
-                { header: t('exp.lot'), cell: (r) => (r.lotCode ? <Serial>{r.lotCode}</Serial> : '—') },
+                { header: t('exp.lot'), cell: (r) => <>{r.lotCode ? <Serial>{r.lotCode}</Serial> : '—'}{held(r)}</> },
                 { header: t('exp.expiresOn'), cell: (r) => formatDate(r.expiresOn, lang) },
                 { header: t('exp.left'), cell: when },
                 { header: t('common.quantity'), num: true, cell: (r) => <b>{qty(r.quantity)}</b> },
                 { header: t('common.value'), num: true, cell: (r) => <span className="money">{peso(r.value)}</span> },
                 ...(canAdjust && branch
-                  ? [{ header: '', cell: (r: StockLot) => (r.daysLeft < 0 ? <WriteOffLot branchId={branch.id} lot={r} confirmText={t('exp.writeOffConfirm', { qty: qty(r.quantity), name: r.name, date: formatDate(r.expiresOn, lang) })} /> : null) }]
+                  ? [{ header: '', cell: (r: StockLot) => (writable(r) ? <WriteOffLot branchId={branch.id} lot={r} confirmText={t('exp.writeOffConfirm', { qty: qty(r.quantity), name: r.name, date: formatDate(r.expiresOn, lang) })} /> : null) }]
                   : []),
               ]}
               stacked={{
                 title: (r) => `${r.name} × ${qty(r.quantity)}`,
-                meta: (r) => <Serial>{r.sku}{r.lotCode ? ` · ${r.lotCode}` : ''} · {formatDate(r.expiresOn, lang)}</Serial>,
-                figure: (r) => (canAdjust && branch && r.daysLeft < 0 ? <WriteOffLot branchId={branch.id} lot={r} confirmText={t('exp.writeOffConfirm', { qty: qty(r.quantity), name: r.name, date: formatDate(r.expiresOn, lang) })} /> : when(r)),
+                meta: (r) => <><Serial>{r.sku}{r.lotCode ? ` · ${r.lotCode}` : ''} · {formatDate(r.expiresOn, lang)}</Serial>{held(r)}</>,
+                figure: (r) => (canAdjust && branch && writable(r) ? <WriteOffLot branchId={branch.id} lot={r} confirmText={t('exp.writeOffConfirm', { qty: qty(r.quantity), name: r.name, date: formatDate(r.expiresOn, lang) })} /> : when(r)),
               }}
             />
           ) : (

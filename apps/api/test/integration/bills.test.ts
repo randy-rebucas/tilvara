@@ -393,6 +393,71 @@ describe('returns of a check with a service charge', () => {
   });
 });
 
+describe('voiding a check, and a check for a customer (audit 2026-10-21)', () => {
+  it('a voided check gives its share back: the bill and order reopen, the rest is paid again (by store credit, for the customer) without consuming twice; a return does not reopen', async () => {
+    const r = await restaurant('bill-void');
+    const orderId = await servedOrder(r, r.t1, [{ variantId: r.burger, quantity: '2', modifierOptionIds: [r.medium, r.cheeseOpt] }, { variantId: r.tea, quantity: '2' }]);
+    const bill = (await billOrder(r, orderId, { expectedAmountDue: '473.00' }).expect(201)).body;
+    const half = { num: 1, den: 2 };
+    const c1 = (await check(r, bill.id, { allocations: bill.lines.filter((l: { parentLineId: string | null }) => !l.parentLineId).map((l: { id: string }) => ({ billLineId: l.id, share: half })) }).expect(201)).body;
+    const c2 = (await check(r, bill.id, {}).expect(201)).body;
+    expect([c1.amountDue, c2.amountDue, c2.billSettled]).toEqual(['236.50', '236.50', true]);
+
+    // The second diner's check is voided, its money going to her store credit.
+    const maria = (await http().post('/v1/customers').set(r.manager).send({ displayName: 'Maria Santos', marketingConsent: false, consentSource: 'COUNTER' }).expect(201)).body;
+    const voided = (await http().post(`/v1/sales/${c2.id}/returns`).set(r.manager).set(key())
+      .send({ cashierSessionId: r.session, kind: 'VOID', reason: 'Wrong table charged', refundTo: 'STORE_CREDIT', customerId: maria.id }).expect(201)).body;
+    expect(voided.amountDue).toBe('236.50');
+    const reopened = (await http().get(`/v1/restaurant/bills/${bill.id}`).set(r.server).expect(200)).body;
+    expect([reopened.status, reopened.amountPaid, reopened.amountRemaining, reopened.lines.map((l: { paidShare: string }) => l.paidShare)])
+      .toEqual(['ACTIVE', '236.50', '236.50', ['1/2', '1/2', '1/2']]);
+    expect(reopened.checks.map((c: { id: string; voided: boolean }) => [c.id, c.voided])).toEqual([[c1.id, false], [c2.id, true]]);
+    expect((await http().get(`/v1/restaurant/orders/${orderId}`).set(r.server).expect(200)).body.status).toBe('BILLED');
+    const audit = await sql<{ metadata: Record<string, unknown> }>(r, `SELECT metadata FROM audit_logs WHERE action = 'sale.voided' AND resource_id = $1::text`, [c2.id]);
+    expect(audit[0]!.metadata).toMatchObject({ orderBillId: bill.id, billReopened: true });
+
+    // The rest is owed again: the preview and the check price it as before, and store credit pays it for Maria.
+    expect((await http().post(`/v1/restaurant/bills/${bill.id}/checks/preview`).set(r.server).send({}).expect(200)).body.amountDue).toBe('236.50');
+    expect(code(await check(r, bill.id, { tenders: [{ method: 'STORE_CREDIT', amount: '236.50' }] }).expect(422))).toBe('STORE_CREDIT_NEEDS_CUSTOMER');
+    const c3 = (await check(r, bill.id, { customerId: maria.id, tenders: [{ method: 'STORE_CREDIT', amount: '236.50' }], expectedAmountDue: '236.50' }).expect(201)).body;
+    expect([c3.amountDue, c3.billSettled, c3.customerId]).toEqual(['236.50', true, maria.id]);
+    const settled = (await http().get(`/v1/restaurant/orders/${orderId}`).set(r.server).expect(200)).body;
+    expect([settled.status, settled.bill.status]).toEqual(['SETTLED', 'SETTLED']);
+    expect((await http().get(`/v1/customers/${maria.id}/sales`).set(r.manager).expect(200)).body.data.map((s: { id: string }) => s.id)).toContain(c3.id);
+
+    // The voided check's burger was cooked and never restocked: paying it again consumes nothing more.
+    // The cheese slices went back on the shelf with the void and leave again with the new check.
+    const moved = await sql<{ variant_id: string; type: string; q: string }>(r, `SELECT variant_id, type, sum(quantity)::text AS q FROM stock_movements WHERE sale_id = ANY($1::uuid[]) GROUP BY 1, 2`, [[c1.id, c2.id, c3.id]]);
+    const q = (v: string, t: string) => moved.find((m) => m.variant_id === v && m.type === t)?.q;
+    expect([q(r.bun, 'CONSUMPTION'), q(r.beef, 'CONSUMPTION'), q(r.cheese, 'SALE'), q(r.cheese, 'RETURN')]).toEqual(['-2.0000', '-0.3000', '-3.0000', '1.0000']);
+    expect(await sql(r, `SELECT 1 FROM stock_movements WHERE sale_id = $1 AND type = 'CONSUMPTION'`, [c3.id])).toEqual([]);
+    // Σ checks not voided = the bill; the books and sub-ledgers reconcile.
+    const [paid] = await sql<{ n: string }>(r, `SELECT sum(amount_due)::text AS n FROM sales s WHERE order_bill_id = $1 AND NOT EXISTS (SELECT 1 FROM sale_returns x WHERE x.sale_id = s.id AND x.kind = 'VOID')`, [bill.id]);
+    expect(paid!.n).toBe('473.0000');
+    expect(await asOwnerInTenant(owner, r.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+
+    // A return of part of a check (not a void) leaves the bill settled.
+    const tea = c3.lines.find((l: { name: string }) => l.name === 'Iced tea');
+    await http().post(`/v1/sales/${c3.id}/returns`).set(r.manager).set(key()).send({ cashierSessionId: r.session, kind: 'RETURN', reason: 'Spilled', refundTo: 'STORE_CREDIT', lines: [{ saleLineId: tea.id, quantity: '1', disposition: 'DAMAGED' }] }).expect(201);
+    expect((await http().get(`/v1/restaurant/bills/${bill.id}`).set(r.server).expect(200)).body.status).toBe('SETTLED');
+  });
+
+  it('a voided check on a table seated again since reopens the bill only; it can still be paid, and the order stays settled', async () => {
+    const r = await restaurant('bill-void-seated');
+    const orderId = await servedOrder(r, r.t1, [{ variantId: r.tea, quantity: '1' }]);
+    const bill = (await billOrder(r, orderId).expect(201)).body;
+    const c1 = (await check(r, bill.id, {}).expect(201)).body;
+    const next = (await http().post('/v1/restaurant/orders').set(r.server).send({ branchId: r.branchId, orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body;
+    await http().post(`/v1/sales/${c1.id}/returns`).set(r.manager).set(key()).send({ cashierSessionId: r.session, kind: 'VOID', reason: 'Charged twice' }).expect(201);
+    const b = (await http().get(`/v1/restaurant/bills/${bill.id}`).set(r.server).expect(200)).body;
+    expect([b.status, b.amountRemaining]).toEqual(['ACTIVE', '49.50']);
+    expect((await http().get(`/v1/restaurant/orders/${orderId}`).set(r.server).expect(200)).body.status).toBe('SETTLED');
+    expect((await check(r, bill.id, {}).expect(201)).body.billSettled).toBe(true);
+    expect((await http().get(`/v1/restaurant/bills/${bill.id}`).set(r.server).expect(200)).body.status).toBe('SETTLED');
+    await http().post(`/v1/restaurant/orders/${next.id}/cancel`).set(r.server).set(key()).send({ reason: 'Seated elsewhere' }).expect(200);
+  });
+});
+
 describe('database guards', () => {
   it('a bill line is never paid beyond the whole; bills move forward only; bill evidence is append-only', async () => {
     const r = await restaurant('bill-guard');

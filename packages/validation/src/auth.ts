@@ -17,7 +17,7 @@ export const tenantSlugSchema = z
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use 2–63 lowercase letters, digits or hyphens');
 
 /** What the business does; it decides which features its people see (`tenants.business_type`). */
-export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID', 'GROCERY', 'SALON', 'LODGING'] as const;
+export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID', 'GROCERY', 'SALON', 'LODGING', 'LAUNDRY', 'PHARMACY'] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 export const businessTypeSchema = z.enum(BUSINESS_TYPES);
 /**
@@ -29,8 +29,14 @@ export const servesTables = (t: BusinessType): boolean => t === 'RESTAURANT' || 
 export const servesAppointments = (t: BusinessType): boolean => t === 'SALON' || t === 'HYBRID';
 /** Rooms, stays, folios and housekeeping (ADR-0023) are for hotels, resorts and transient houses, and HYBRID. */
 export const servesLodging = (t: BusinessType): boolean => t === 'LODGING' || t === 'HYBRID';
-/** Recipes ("supplies used"): restaurant service, or a salon's services (ADR-0022 §9). */
-export const usesRecipes = (t: BusinessType): boolean => servesTables(t) || t === 'SALON';
+/** Job orders, machines, pickup and delivery (ADR-0024) are for laundry shops and laundromats, and HYBRID. */
+export const servesLaundry = (t: BusinessType): boolean => t === 'LAUNDRY' || t === 'HYBRID';
+/** Prescriptions, the pharmacy roles and books, expired stock blocked by default (ADR-0025) are for pharmacies and drugstores, and HYBRID. */
+export const servesPharmacy = (t: BusinessType): boolean => t === 'PHARMACY' || t === 'HYBRID';
+/** Prepaid packages (ADR-0022 §6): a salon's services, a laundry's loads (ADR-0024 §10), and HYBRID. */
+export const usesPackages = (t: BusinessType): boolean => t === 'SALON' || t === 'LAUNDRY' || t === 'HYBRID';
+/** Recipes ("supplies used"): restaurant service, a salon's services (ADR-0022 §9), a laundry's loads (ADR-0024 §11). */
+export const usesRecipes = (t: BusinessType): boolean => servesTables(t) || t === 'SALON' || t === 'LAUNDRY';
 
 export const signupSchema = z.object({
   email: emailSchema,

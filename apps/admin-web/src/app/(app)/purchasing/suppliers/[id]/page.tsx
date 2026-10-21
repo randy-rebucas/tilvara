@@ -9,8 +9,9 @@ import { branchLabel, docNo, isUuid, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { AddSupplierItemForm, EditSupplierForm, EditSupplierItemForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplier' };
+export const generateMetadata = pageTitle('purchasing.suppliers.item');
 
 const OPEN = ['DRAFT', 'APPROVED', 'PARTIALLY_RECEIVED'];
 

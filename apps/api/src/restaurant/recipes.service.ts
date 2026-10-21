@@ -70,8 +70,9 @@ export class RecipesService extends TenantService {
     return this.mutate(auth, async (db) => {
       const tenantId = tenantOf(auth).tenantId;
       const item = await this.item(db, variantId);
-      // A salon's "supplies used" are part of its catalog (ADR-0022 §9); a kitchen's recipes are restaurant set-up.
-      this.assertCan(auth, (await businessType(db)) === 'SALON' ? 'catalog.manage' : 'restaurant.manage');
+      // A salon's or a laundry's "supplies used" are part of its catalog (ADR-0022 §9, ADR-0024 §11); a kitchen's recipes are restaurant set-up.
+      const type = await businessType(db);
+      this.assertCan(auth, type === 'SALON' || type === 'LAUNDRY' ? 'catalog.manage' : 'restaurant.manage');
       await assertRecipes(db);
       if (item.archivedAt) throw archived('Item');
       if (item.trackInventory) {

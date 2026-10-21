@@ -37,7 +37,7 @@ try {
   await shot('overview-empty.png');
 
   // 2b. Business type: a retail shop sees no restaurant; changing the type brings it into view.
-  const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Main] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
+  const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=main-nav] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
   check('retail shop: no Restaurant tab', !(await navHas('Restaurant')));
   await go('/restaurant');
   check('retail shop: restaurant set-up says it is off', await evaluate(`document.body.innerText.includes('set up as a shop (retail, or sari-sari store and grocery)')`));

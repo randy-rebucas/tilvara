@@ -6,8 +6,9 @@ import { formatDateTime, peso, qty } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { OpenPackForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Packs' };
+export const generateMetadata = pageTitle('inventory.packs');
 
 /** Packs opened into pieces at the branch (ADR-0020 §2): by a sale short of pieces, or by hand. */
 export default async function PacksPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {

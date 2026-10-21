@@ -120,6 +120,11 @@ try {
   await clickText('Publish');
   check('published: v1 frozen, no draft left', await shownI('Published · v1') && await shown('No draft'));
   await shot('restaurant-menu-published.png');
+  // Rename the menu in place (PATCH /menus/:id); branches that serve it keep it.
+  await panel('Edit name', 'name');
+  await fill('name', 'All day menu');
+  await submitPanel();
+  check('menu renamed', await shown('All day menu') && (await bff('GET', `/api/v1/menus/${(await evaluate('location.pathname')).split('/').at(-1)}`)).body?.name === 'All day menu');
 
   // Recipe
   await open('/restaurant/recipes');

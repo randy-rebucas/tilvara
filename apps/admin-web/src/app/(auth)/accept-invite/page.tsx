@@ -1,8 +1,9 @@
 import { AuthFace, AuthStub } from '@/components/auth-note';
 import { getT } from '@/i18n/server';
 import { AcceptInviteForm } from './accept-invite-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Accept invitation' };
+export const generateMetadata = pageTitle('accept-invite');
 
 export default async function AcceptInvitePage({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
   const { t } = await getT();

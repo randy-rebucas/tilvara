@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { sql, withTenant } from '@1pos/database';
 import type { Pool } from 'pg';
 import { enrichLogContext } from '@1pos/observability';
-import { isPermissionCode, isPrivilegedSet, SUPPORT_PERMISSIONS, type PermissionCode } from '@1pos/validation';
+import { isPermissionCode, isPrivilegedSet, SUPPORT_PERMISSIONS, type BusinessType, type PermissionCode } from '@1pos/validation';
 import type { ServerEnv } from '@1pos/config';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
@@ -81,9 +81,9 @@ export class AuthGuard implements CanActivate {
       if (!ctx.membership_id || !ctx.tenant_status || !['ACTIVE', 'SUSPENDED'].includes(ctx.tenant_status)) {
         throw new AppError('TENANT_ACCESS_REVOKED', 'You no longer have access to this business', HttpStatus.FORBIDDEN);
       }
-      const grants = await loadGrants(this.database.pool, claims.tid, ctx.membership_id, claims.sub);
+      const { grants, businessType } = await loadMemberGrants(this.database.pool, claims.tid, ctx.membership_id, claims.sub);
       auth.tenant = { tenantId: claims.tid, membershipId: ctx.membership_id, status: ctx.tenant_status, grants };
-      if (isPrivilegedSet(grants.map((g) => g.permission))) {
+      if (isPrivilegedSet(grants.map((g) => g.permission), businessType)) {
         auth.mfa.required = true;
         if (!ctx.session_mfa && !ctx.mfa_enrolled) {
           const since = ctx.privileged_since ?? (await this.notePrivileged(claims.sub));
@@ -251,11 +251,17 @@ export class AuthGuard implements CanActivate {
 }
 
 /** A member's grants in a tenant, read under RLS (the guard, and the cashier behind an offline sale). */
-export function loadGrants(pool: Pool, tenantId: string, membershipId: string, userId: string): Promise<Grant[]> {
+export async function loadGrants(pool: Pool, tenantId: string, membershipId: string, userId: string): Promise<Grant[]> {
+  return (await loadMemberGrants(pool, tenantId, membershipId, userId)).grants;
+}
+
+/** The grants and the business's type (privileged industry codes count only where the industry is served). */
+export function loadMemberGrants(pool: Pool, tenantId: string, membershipId: string, userId: string): Promise<{ grants: Grant[]; businessType: BusinessType }> {
   return withTenant(
     pool,
     tenantId,
     async (_db, client) => {
+      const type = await client.query<{ business_type: BusinessType }>('SELECT business_type FROM tenants');
       const { rows } = await client.query<{ permission_code: string; scope_type: Grant['scopeType']; scope_id: string | null }>(
         `SELECT DISTINCT rp.permission_code, mr.scope_type, mr.scope_id
            FROM membership_roles mr
@@ -264,9 +270,10 @@ export function loadGrants(pool: Pool, tenantId: string, membershipId: string, u
           WHERE mr.membership_id = $1`,
         [membershipId],
       );
-      return rows
+      const grants = rows
         .filter((r) => isPermissionCode(r.permission_code))
         .map((r) => ({ permission: r.permission_code as PermissionCode, scopeType: r.scope_type, scopeId: r.scope_id }));
+      return { grants, businessType: type.rows[0]?.business_type ?? 'HYBRID' };
     },
     { userId },
   );

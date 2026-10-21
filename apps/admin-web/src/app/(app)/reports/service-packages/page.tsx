@@ -6,8 +6,9 @@ import type { ServicePackagesReport } from '@/lib/api';
 import { formatDate, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Service packages' };
+export const generateMetadata = pageTitle('reports.service-packages');
 
 /**
  * Service packages (ADR-0022 §6): value sold, used (turned into sales), refunded and restored at the

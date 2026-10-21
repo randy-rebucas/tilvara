@@ -1,5 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
+  and,
   asc,
   eq,
   inArray,
@@ -11,6 +12,7 @@ import {
   orderItems,
   restaurantOrders,
   saleLines,
+  saleReturns,
   sales,
   sql,
   type Database,
@@ -38,6 +40,35 @@ const MONEY_FIELDS = [
 ] as const;
 const m2 = (v: string) => toDec(v).toFixed(2);
 const conflict = (code: string, message: string, details?: Record<string, unknown>) => new AppError(code, message, HttpStatus.CONFLICT, details);
+
+/** Sales of this bill voided since (a VOID return): their shares are no longer paid (ADR-0014 §8, audit 2026-10-21). */
+export async function voidedChecks(db: Database, billId: string): Promise<Set<string>> {
+  const rows = await db.select({ saleId: saleReturns.saleId }).from(saleReturns)
+    .innerJoin(sales, eq(sales.id, saleReturns.saleId))
+    .where(and(eq(sales.orderBillId, billId), eq(saleReturns.kind, 'VOID')));
+  return new Set(rows.map((r) => r.saleId));
+}
+
+/**
+ * A check was voided (in the void's transaction, after its VOID return row): its share of the bill is
+ * owed again. A settled bill becomes ACTIVE and its table order BILLED, so the rest can be paid through
+ * `createFromBill`; the order stays SETTLED when its table has since been given to another order (the
+ * bill can still be paid). Lock order as checks: bill, then order. The floor triggers push the change.
+ */
+export async function reopenForVoidedCheck(db: Database, billId: string) {
+  const [bill] = await db.select().from(orderBills).where(eq(orderBills.id, billId)).for('update');
+  if (!bill || bill.status !== 'SETTLED') return { billReopened: false, orderReopened: false };
+  await db.update(orderBills).set({ status: 'ACTIVE', settledAt: null }).where(eq(orderBills.id, billId));
+  const [order] = await db.select().from(restaurantOrders).where(eq(restaurantOrders.id, bill.orderId)).for('update');
+  if (!order || order.status !== 'SETTLED' || order.orderType === 'COUNTER') return { billReopened: true, orderReopened: false };
+  if (order.tableId) {
+    const [taken] = await db.select({ id: restaurantOrders.id }).from(restaurantOrders)
+      .where(and(eq(restaurantOrders.tableId, order.tableId), inArray(restaurantOrders.status, ['OPEN', 'BILLED']))).limit(1);
+    if (taken) return { billReopened: true, orderReopened: false };
+  }
+  await db.update(restaurantOrders).set({ status: 'BILLED', closedAt: null, updatedAt: sql`now()` }).where(eq(restaurantOrders.id, order.id));
+  return { billReopened: true, orderReopened: true };
+}
 
 /**
  * Bills (ADR-0014 §8): the order's live items priced and taxed once through the tax path
@@ -237,7 +268,8 @@ export class BillsService extends TenantService {
       await assertFeature(db, 'restaurant');
       await db.select({ id: restaurantOrders.id }).from(restaurantOrders).where(eq(restaurantOrders.id, bill.orderId)).for('update');
       if (bill.status !== 'ACTIVE') throw conflict('BILL_NOT_ACTIVE', `This bill is ${bill.status.toLowerCase()}`, { status: bill.status });
-      const [paid] = await db.select({ id: orderBillAllocations.id }).from(orderBillAllocations).where(eq(orderBillAllocations.orderBillId, billId)).limit(1);
+      const voided = await voidedChecks(db, billId);
+      const paid = (await db.select({ saleId: orderBillAllocations.saleId }).from(orderBillAllocations).where(eq(orderBillAllocations.orderBillId, billId))).some((a) => !voided.has(a.saleId));
       if (paid) throw conflict('BILL_HAS_CHECKS', 'Part of this bill is already paid; it can no longer be reopened');
       const [row] = await db.update(orderBills).set({ status: 'VOIDED', voidedBy: auth.userId, voidedAt: sql`now()`, voidReason: input.reason }).where(eq(orderBills.id, billId)).returning();
       await db.update(restaurantOrders).set({ status: 'OPEN' }).where(eq(restaurantOrders.id, bill.orderId));
@@ -247,7 +279,7 @@ export class BillsService extends TenantService {
   }
 
   async view(db: Database, b: Bill) {
-    const [lines, charges, beneficiaries, allocations, checks] = await inSequence(
+    const [lines, charges, beneficiaries, allAllocations, allChecks, voided] = await inSequence(
       () => db.select().from(orderBillLines).where(eq(orderBillLines.orderBillId, b.id)).orderBy(asc(orderBillLines.lineNo)),
       () => db.select().from(orderBillCharges).where(eq(orderBillCharges.orderBillId, b.id)),
       () => db.select().from(orderBillBeneficiaries).where(eq(orderBillBeneficiaries.orderBillId, b.id)),
@@ -256,7 +288,11 @@ export class BillsService extends TenantService {
         .where(eq(orderBillAllocations.orderBillId, b.id)),
       () => db.select({ id: sales.id, saleNumber: sales.saleNumber, registerId: sales.registerId, amountDue: sales.amountDue, completedAt: sales.completedAt })
         .from(sales).where(eq(sales.orderBillId, b.id)).orderBy(asc(sales.completedAt)),
+      () => voidedChecks(db, b.id),
     );
+    // A voided check paid nothing: its share is owed again (it is still listed, marked voided).
+    const allocations = allAllocations.filter((a) => !voided.has(a.a.saleId));
+    const checks = allChecks.filter((c) => !voided.has(c.id));
     const money = <T extends Record<string, unknown>>(row: T) => {
       const out: Record<string, unknown> = { ...row };
       for (const k of MONEY_FIELDS) if (typeof out[k] === 'string') out[k] = m2(out[k] as string);
@@ -287,7 +323,7 @@ export class BillsService extends TenantService {
       }),
       charges: charges.map((c) => ({ ...money(c), base: m2(c.base), rate: toDec(c.rate).toString() })),
       beneficiaries,
-      checks: checks.map((c) => ({ ...c, amountDue: m2(c.amountDue) })),
+      checks: allChecks.map((c) => ({ ...c, amountDue: m2(c.amountDue), voided: voided.has(c.id) })),
       amountPaid: paidAmount.toFixed(2),
       amountRemaining: toDec(b.amountDue).minus(paidAmount).toFixed(2),
     };

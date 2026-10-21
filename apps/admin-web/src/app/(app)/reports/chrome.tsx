@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
-import { hasRestaurant, servesAppointments, servesLodging } from '@/lib/business-type';
+import { hasRestaurant, servesAppointments, servesLaundry, servesLodging } from '@/lib/business-type';
 import { RestaurantOff } from '@/components/restaurant-off';
 import { PrintButton } from '@/components/print-button';
 import { datePresets, formatDateTime, todayManila } from '@/lib/format';
@@ -17,7 +17,8 @@ export type ReportTab =
   | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge' | 'tips'
   | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments'
   | 'commissions' | 'servicePackages' | 'staffTips'
-  | 'occupancy' | 'guestLedger' | 'accommodationTax';
+  | 'occupancy' | 'guestLedger' | 'accommodationTax'
+  | 'jobOrders' | 'machineUsage' | 'jobDeposits' | 'deliveries';
 const PATHS: Record<ReportTab, string> = {
   sales: '/reports/sales',
   products: '/reports/products',
@@ -47,11 +48,15 @@ const PATHS: Record<ReportTab, string> = {
   occupancy: '/reports/occupancy',
   guestLedger: '/reports/guest-ledger',
   accommodationTax: '/reports/accommodation-tax',
+  jobOrders: '/reports/job-orders',
+  machineUsage: '/reports/machine-usage',
+  jobDeposits: '/reports/job-order-deposits',
+  deliveries: '/reports/deliveries',
 };
 /** All branches at once: no branch to pick. */
 const CONSOLIDATED: readonly ReportTab[] = ['branches'];
 /** As things stand now: no dates to pick. */
-const UNDATED: readonly ReportTab[] = ['payments', 'guestLedger'];
+const UNDATED: readonly ReportTab[] = ['payments', 'guestLedger', 'jobDeposits'];
 const GROUPS = {
   // ADR-0021: promotions and sizes and colours sit with the everyday sales reports (every plan).
   sales: ['sales', 'products', 'promotions', 'attributes', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'z'],
@@ -62,6 +67,8 @@ const GROUPS = {
   salon: ['commissions', 'servicePackages', 'staffTips'],
   // ADR-0023: a hotel's occupancy and room revenue, the guest ledger beside the books, the local accommodation tax.
   lodging: ['occupancy', 'guestLedger', 'accommodationTax'],
+  // ADR-0024: a laundry's job orders and turnaround, machine usage, down payments and unclaimed laundry beside the books, deliveries.
+  laundry: ['jobOrders', 'machineUsage', 'jobDeposits', 'deliveries'],
 } as const satisfies Record<string, readonly ReportTab[]>;
 
 export interface ReportQuery {
@@ -122,6 +129,18 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   const restaurant = hasRestaurant(tenant?.businessType);
   const salon = servesAppointments(tenant?.businessType);
   const lodging = servesLodging(tenant?.businessType);
+  const laundry = servesLaundry(tenant?.businessType);
+  if (group === 'laundry' && !laundry) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
+        <Callout>
+          {t('biz.laundryOff')}{' '}
+          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
+        </Callout>
+      </div>
+    );
+  }
   if (group === 'lodging' && !lodging) {
     return (
       <div className="flex flex-col gap-6">
@@ -162,7 +181,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : group === 'salon' ? 'rep.salonLede' : group === 'lodging' ? 'rep.lodgingLede' : 'rep.lede')} />
+      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : group === 'salon' ? 'rep.salonLede' : group === 'lodging' ? 'rep.lodgingLede' : group === 'laundry' ? 'rep.laundryLede' : 'rep.lede')} />
       {/* On paper (or a saved PDF): which report, branch and range, and when it was printed. */}
       {branch && (
         <p className="hidden text-[0.9375rem] print:block" data-testid="print-heading">
@@ -171,7 +190,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
         </p>
       )}
       <div className="contents print:hidden">
-      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => (g !== 'restaurant' || restaurant) && (g !== 'salon' || salon) && (g !== 'lodging' || lodging)).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
+      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => (g !== 'restaurant' || restaurant) && (g !== 'salon' || salon) && (g !== 'lodging' || lodging) && (g !== 'laundry' || laundry)).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav level={2} label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }), ...extra })}`} />}
       {branch && (

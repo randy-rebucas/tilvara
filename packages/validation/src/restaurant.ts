@@ -311,6 +311,8 @@ export const createCheckSchema = z.object({
   tenders: tendersSchema,
   expectedAmountDue: amountSchema.optional(),
   tip: tipSchema.optional(),
+  /** The customer the check is for (ADR-0018, audit 2026-10-21): purchase history, and needed to pay with store credit. */
+  customerId: z.uuid().optional(),
 });
 export type CreateCheckInput = z.infer<typeof createCheckSchema>;
 

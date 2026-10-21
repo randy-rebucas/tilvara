@@ -4,8 +4,9 @@ import { ApiError, apiOrNull, type TrialBalance } from '@/lib/api';
 import { peso, signOf, todayManila } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Trial balance' };
+export const generateMetadata = pageTitle('books.trial-balance');
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 

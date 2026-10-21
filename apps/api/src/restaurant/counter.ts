@@ -14,6 +14,7 @@ import {
 import { nextNumber } from '../common/sequence.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { assertItemAvailable, chooseModifiers, type MenuItemChoices } from './choices.js';
+import { requestVoidSlips } from './kitchen-print.js';
 
 type Item = typeof orderItems.$inferSelect;
 
@@ -155,6 +156,8 @@ export async function recallCounterOrder(db: Database, saleId: string, userId: s
     .set({ status: 'VOIDED', voidedAt: sql`now()`, voidedBy: userId, voidReason: reason })
     .where(and(eq(orderItems.orderId, order.id), inArray(orderItems.status, ['FIRED', 'IN_PREP', 'READY'])))
     .returning({ id: orderItems.id, kind: orderItems.kind });
+  // A ticket the kitchen already has on paper gets a VOID slip.
+  await requestVoidSlips(db, voided.map((v) => v.id));
   return voided.filter((v) => v.kind === 'ITEM').length;
 }
 

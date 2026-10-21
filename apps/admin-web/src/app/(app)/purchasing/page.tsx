@@ -7,8 +7,9 @@ import { branchLabel, docNo, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { AddSupplierForm, NewOrderForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Purchasing' };
+export const generateMetadata = pageTitle('purchasing');
 
 type List<T> = { data: T[] };
 const STATUSES = ['DRAFT', 'APPROVED', 'PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED', 'CANCELLED'] as const;

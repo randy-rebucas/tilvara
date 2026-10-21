@@ -189,6 +189,8 @@ export const inventorySettings = pgTable(
     lowStockAlerts: boolean('low_stock_alerts').notNull().default(true),
     /** Mail the stock keepers about lots expiring within this many days (0: no mail). ADR-0020 §3. */
     expiryAlertDays: integer('expiry_alert_days').notNull().default(30),
+    /** Expired or held lots may be sold (ALLOW) or not (BLOCK); null = BLOCK for a pharmacy, else ALLOW (ADR-0025 §4). */
+    expiredStock: text('expired_stock'),
     updatedBy: uuid('updated_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -197,6 +199,7 @@ export const inventorySettings = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     check('inventory_settings_policy_check', sql`${t.negativeStockPolicy} IN ('ALLOW','ALLOW_WITH_FLAG','BLOCK')`),
     check('inventory_settings_expiry_days_check', sql`${t.expiryAlertDays} BETWEEN 0 AND 365`),
+    check('inventory_settings_expired_stock_check', sql`${t.expiredStock} IS NULL OR ${t.expiredStock} IN ('ALLOW','BLOCK')`),
   ],
 );
 

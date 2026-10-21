@@ -283,13 +283,13 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
             <TextField label={t('pur.accept')} name={`lines.${i}.quantity`} inputMode="decimal" defaultValue={qty(l.remainingQuantity).replaceAll(',', '')} error={lineError(i, 'quantity')} />
             <TextField label={t('pur.reject')} name={`lines.${i}.rejectedQuantity`} inputMode="decimal" placeholder="0" error={lineError(i, 'rejectedQuantity')} />
             <TextField label={t('pur.rejectReason')} name={`lines.${i}.rejectionReason`} error={lineError(i, 'rejectionReason')} />
-            {/* ADR-0020: required for an item that keeps expiry dates (the API says which line). */}
+            {/* ADR-0020: required for an item that keeps expiry dates (the API says which line); a medicine's lot code too (ADR-0025 §5). */}
             <TextField label={t('pur.expiresOn')} name={`lines.${i}.expiresOn`} type="date" error={lineError(i, 'expiresOn')} />
-            <TextField label={`${t('pur.lotCode')} (${t('common.optional')})`} name={`lines.${i}.lotCode`} maxLength={40} error={lineError(i, 'lotCode')} />
+            <TextField label={t('pur.lotCodeMedicine')} name={`lines.${i}.lotCode`} maxLength={64} error={lineError(i, 'lotCode')} />
           </li>
         ))}
       </ul>
-      <Actions pending={pending} general={general(error) ?? fieldError('lines') ?? null} submitLabel={t('pur.receive')} close={close} />
+      <Actions pending={pending} general={(error?.code === 'LOT_CODE_REQUIRED' ? null : general(error)) ?? fieldError('lines') ?? null} submitLabel={t('pur.receive')} close={close} />
     </form>
   );
 }

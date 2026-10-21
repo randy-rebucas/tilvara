@@ -8,8 +8,9 @@ import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { CountForm } from '../forms';
 import { StartSheetForm } from '../sheets';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Counts' };
+export const generateMetadata = pageTitle('inventory.counts');
 
 export default async function CountsPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t, lang } = await getT();

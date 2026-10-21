@@ -100,7 +100,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       return;
     }
     try {
-      const r = await api<{ id: string; amountDue: string; returnNumber: number; cardTipRefund?: { method: string; amount: string } | null; tipRefundPending?: boolean }>(
+      const r = await api<{ id: string; amountDue: string; returnNumber: number; refundMethod?: string; refunds?: { method: string; amount: string }[]; cardTipRefund?: { method: string; amount: string } | null; tipRefundPending?: boolean }>(
         'POST',
         `/v1/sales/${selected.detail.id}/returns`,
         {
@@ -113,7 +113,9 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       setKey(uuid());
       await open(selected.detail.id);
       // After reloading the sale (which clears messages), confirm the refund and show its slip to hand over.
-      const refunded = t(f.get('toCredit') === 'on' ? 'history.creditGiven' : 'history.refund', { amount: peso(r.amountDue) });
+      // A sale paid with store credit gives that share back to the credit, the rest in cash (ADR-0018).
+      const parts = r.refunds?.length ? r.refunds : [{ method: f.get('toCredit') === 'on' ? 'STORE_CREDIT' : (r.refundMethod ?? 'CASH'), amount: r.amountDue }];
+      const refunded = parts.map((p) => t(p.method === 'STORE_CREDIT' ? 'history.creditGiven' : 'history.refund', { amount: peso(p.amount) })).join(' · ');
       const tipBack = r.cardTipRefund ? ` ${t(r.cardTipRefund.method === 'CARD' ? 'tipback.card' : 'tipback.cash', { amount: peso(r.cardTipRefund.amount) })}` : '';
       setMessage({ kind: 'info', text: refunded + tipBack });
       setPendingTip(r.tipRefundPending ? r.id : null);

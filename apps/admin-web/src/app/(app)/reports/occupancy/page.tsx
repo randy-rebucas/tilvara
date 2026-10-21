@@ -5,8 +5,9 @@ import type { OccupancyReport } from '@/lib/api';
 import { formatDate, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Occupancy' };
+export const generateMetadata = pageTitle('reports.occupancy');
 
 const pct = (v: string | null) => (v === null ? '—' : `${v}%`);
 

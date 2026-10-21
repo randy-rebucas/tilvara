@@ -6,8 +6,9 @@ import { getT } from '@/i18n/server';
 import { BookingForm } from '../booking-form';
 import { AppointmentsChrome, appointmentsAccess, appointmentsBranch } from '../chrome';
 import { bookableServices, branchStaff } from '../data';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'New appointment' };
+export const generateMetadata = pageTitle('appointments.new');
 
 /** Book an appointment (ADR-0022 §4); the calendar's empty slots open this with the staff and time filled. */
 export default async function NewAppointmentPage({ searchParams }: { searchParams: Promise<{ branch?: string; date?: string; staff?: string; time?: string }> }) {

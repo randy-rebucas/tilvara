@@ -21,7 +21,7 @@ const b = await openBrowser({ base: BASE, out: OUT, port: 9343 });
 const { evaluate, viewport, waitFor, go, fill, clickText, shot } = b;
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
-const tab = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+const tab = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
 /** Fill a React-controlled input by id (the counter's own inputs have ids, not names). */
 const set = (id, value) => evaluate(`(() => { const el = document.getElementById(${JSON.stringify(id)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 const scan = async (code) => {

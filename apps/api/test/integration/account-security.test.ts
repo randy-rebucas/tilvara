@@ -301,14 +301,37 @@ describe('grace period', () => {
     await http().get('/v1/pos/workstations').set(bearer(token)).expect(200);
   });
 
-  it('the built-in accountant role is privileged; the branch manager is not', async () => {
+  it('the built-in accountant role is privileged; the branch manager of a shop is not', async () => {
     const t = await signup(app, 'grace3');
+    await http().patch('/v1/business').set(bearer(t.access)).send({ businessType: 'RETAIL' }).expect(200);
     for (const [role, required] of [['accountant', true], ['branch_manager', false], ['inventory_officer', false], ['admin', true]] as const) {
       const m = await addMember(owner, t.tenantId, role);
       const token = (await login(m.email).expect(200)).body.tokens.accessToken;
       const me = await http().get('/v1/me').set(bearer(token)).expect(200);
       expect([role, me.body.mfa.required]).toEqual([role, required]);
     }
+  });
+
+  it('decision A3: disposing of laundry and recording pharmacist licences need two-step sign-in where the business has them', async () => {
+    // A laundry's branch manager may dispose of unclaimed laundry (laundry.dispose): privileged.
+    const laundry = await signup(app, 'grace-laundry');
+    await http().patch('/v1/business').set(bearer(laundry.access)).send({ businessType: 'LAUNDRY' }).expect(200);
+    const bm = await addMember(owner, laundry.tenantId, 'branch_manager');
+    const bmToken = (await login(bm.email).expect(200)).body.tokens.accessToken;
+    expect((await http().get('/v1/me').set(bearer(bmToken)).expect(200)).body.mfa.required).toBe(true);
+    await backdatePrivilege(bm.userId, 8);
+    expect((await http().get('/v1/job-orders').set(bearer(bmToken)).expect(403)).body.error.code).toBe('MFA_REQUIRED');
+    const attendant = await addMember(owner, laundry.tenantId, 'laundry_attendant');
+    const attendantToken = (await login(attendant.email).expect(200)).body.tokens.accessToken;
+    expect((await http().get('/v1/me').set(bearer(attendantToken)).expect(200)).body.mfa.required).toBe(false);
+
+    // A pharmacy role holding pharmacy.setup only (pharmacist licences): privileged.
+    const pharmacy = await signup(app, 'grace-pharmacy');
+    await http().patch('/v1/business').set(bearer(pharmacy.access)).send({ businessType: 'PHARMACY' }).expect(200);
+    await http().post('/v1/roles').set(bearer(pharmacy.access)).send({ key: 'licences', name: 'Licences', permissions: ['pharmacy.setup', 'pharmacy.read'] }).expect(201);
+    const clerk = await addMember(owner, pharmacy.tenantId, 'licences');
+    const clerkToken = (await login(clerk.email).expect(200)).body.tokens.accessToken;
+    expect((await http().get('/v1/me').set(bearer(clerkToken)).expect(200)).body.mfa.required).toBe(true);
   });
 });
 

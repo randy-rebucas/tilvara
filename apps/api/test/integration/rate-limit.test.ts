@@ -13,7 +13,9 @@ import { createApp, PASSWORD, signup } from './helpers.js';
  */
 const REDIS = process.env.TEST_REDIS_URL;
 const limited = (prefix: string, redis: string | undefined = REDIS) =>
-  createApp({ RATE_LIMITS_ENABLED: true, REDIS_URL: redis, RATE_LIMIT_PREFIX: `test:${prefix}:` });
+  // A generous Redis timeout: under a full gate's load a 300 ms answer can be late, and the fallback to
+  // per-instance counting (correct behaviour) would then fail the shared-count assertions.
+  createApp({ RATE_LIMITS_ENABLED: true, REDIS_URL: redis, RATE_LIMIT_PREFIX: `test:${prefix}:`, RATE_LIMIT_REDIS_TIMEOUT_MS: 5_000 });
 
 describe.skipIf(!REDIS)('rate limits shared through Redis', () => {
   let a: INestApplication;

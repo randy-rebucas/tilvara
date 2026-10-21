@@ -8,8 +8,9 @@ import { api, apiOrNull, type Branch, type Me, type SupplierPayment } from '@/li
 import { formatDate, formatDateTime, peso } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplier payment' };
+export const generateMetadata = pageTitle('purchasing.payments.item');
 
 /**
  * One supplier payment (session 22): the invoices it settles, its journal entry, and voiding it when it

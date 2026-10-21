@@ -1,14 +1,14 @@
-import { CalendarClock, ChefHat, MonitorUp, Minus, PauseCircle, Pin, Plus, ScanLine, Ticket, Trash2, UserRound } from 'lucide-react';
+import { CalendarClock, ChefHat, FileText, MonitorUp, Minus, PauseCircle, Pill, Pin, Plus, ScanLine, ShieldCheck, Ticket, Trash2, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
 import { add, gte, isPositive, isZero, peso, sub } from '../lib/money';
-import { clockTime } from '../lib/calendar';
+import { clockTime, zonedDay } from '../lib/calendar';
 import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
 import { openCustomerDisplay, usePublishDisplay, type DisplayState } from '../lib/customer-display';
-import type { AppointmentRingUp, CounterCustomer, CustomerNote, CustomerPackage, LookupItem, Quote, Receipt as ReceiptData } from '../types';
+import type { AppointmentRingUp, CounterCustomer, CustomerNote, CustomerPackage, DrugInfo, LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
 import { errorText, PaymentPanel, unanswered, usePayment, type Notice, type TipStaff } from './Payment';
 import type { Shift } from './Registers';
@@ -18,6 +18,8 @@ import { Callout, Empty, Field, Money, Note } from './ui';
 import { QuickKeys } from './QuickKeys';
 import { CartDiscountPanel, CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
 import { CounterChoicesPanel, useCounterMenu, type CounterItem } from './Choices';
+import { MachinePicker } from './Laundry';
+import { ApprovalPanel, DrugLine, EquivalentsPanel, linePrescriptionBody, needsRx, pharmacyErrorText, PrescriptionPanel, type DispenseApproval, type LinePrescription, type NewPrescription } from './Pharmacy';
 
 interface CartLine {
   id: string;
@@ -37,6 +39,14 @@ interface CartLine {
   staffId?: string;
   packageId?: string;
   packageName?: string;
+  /** ADR-0024 §7: the washer or dryer a self-service cycle runs on (online only). */
+  machineId?: string;
+  machineLabel?: string;
+  /** ADR-0025: a medicine (generic label, class badge, equivalents) and the prescription the line fills. */
+  drug?: DrugInfo;
+  prescription?: LinePrescription;
+  /** What the lookup said is sellable here when expired or held stock is blocked (online). */
+  sellable?: string;
 }
 
 /** A service staff member as the till offers them on a line (from the server, or the till's snapshot offline). */
@@ -62,6 +72,8 @@ function lineBody(l: CartLine, forQuote = false) {
     ...(!forQuote && l.kitchenNote && { kitchenNote: l.kitchenNote }),
     ...(l.staffId && { staffId: l.staffId }),
     ...(l.packageId && { packageId: l.packageId }),
+    ...(!forQuote && l.machineId && { machineId: l.machineId }),
+    ...(!forQuote && l.prescription && { prescription: linePrescriptionBody(l.prescription) }),
   };
 }
 
@@ -85,12 +97,30 @@ interface Beneficiary {
   scheme: 'SC' | 'PWD';
   name: string;
   idNumber: string;
+  /** Medicines on the discount (ADR-0025 §8): the purchase booklet was presented and filled in. */
+  purchaseBooklet?: boolean;
 }
 interface ProductHit {
   id: string;
   name: string;
+  drugClass?: DrugInfo['drugClass'] | null;
+  genericName?: string | null;
+  strength?: string | null;
+  dosageForm?: string | null;
   variants: { id: string; sku: string; name: string | null }[];
 }
+/** A search hit as the till lists it (server product list online, the snapshot offline). */
+interface Hit {
+  key: string;
+  sku: string;
+  name: string;
+  drug: Pick<DrugInfo, 'drugClass' | 'genericName' | 'strength' | 'dosageForm'> | null;
+}
+const hitsOf = (ps: ProductHit[]): Hit[] =>
+  ps.flatMap((p) => p.variants.map((v) => ({
+    key: v.id, sku: v.sku, name: v.name ? `${p.name} — ${v.name}` : p.name,
+    drug: p.drugClass && p.genericName && p.dosageForm ? { drugClass: p.drugClass, genericName: p.genericName, strength: p.strength ?? null, dosageForm: p.dosageForm } : null,
+  })));
 
 /**
  * The counter: scan → cart priced by the server (/v1/tax/quote) → tender → POST /v1/sales.
@@ -100,7 +130,7 @@ interface ProductHit {
  * Items and prices come from the till's snapshot, priced by the same tax engine the server re-runs
  * at sync; the sale is kept on the till under this checkout's transaction id.
  */
-export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd, salon = false, ringUp = null, onRingUpTaken, lodging = false }: {
+export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd, salon = false, ringUp = null, onRingUpTaken, lodging = false, laundry = false }: {
   shift: Shift;
   cashierUserId: string;
   active?: boolean;
@@ -116,6 +146,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   onRingUpTaken?: () => void;
   /** A hotel, resort or hybrid business (ADR-0023): the "Charge to room" tender, online only. */
   lodging?: boolean;
+  /** A laundry shop or hybrid business (ADR-0024): a self-service cycle asks for its machine, online only. */
+  laundry?: boolean;
 }) {
   const { t } = useT();
   const till = useTill();
@@ -129,15 +161,25 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
-  const [hits, setHits] = useState<ProductHit[] | null>(null);
+  const [hits, setHits] = useState<Hit[] | null>(null);
   /** The line whose SC/PWD, discount or price form is open. */
-  const [panel, setPanel] = useState<{ lineId: string; kind: 'sc' | 'discount' | 'price' } | null>(null);
+  const [panel, setPanel] = useState<{ lineId: string; kind: PanelKind } | null>(null);
+  // Pharmacies (ADR-0025): prescriptions recorded with this sale, and a pharmacist's approval for it.
+  const [prescriptions, setPrescriptions] = useState<NewPrescription[]>([]);
+  const [approval, setApproval] = useState<DispenseApproval | null>(null);
+  const [approving, setApproving] = useState(false);
+  /** Set when a sale was refused for want of a pharmacist: it is sent again once they approve. */
+  const retryAfterApproval = useRef(false);
+  const canDispense = permissions.includes('pharmacy.dispense');
+  const canDangerous = canDispense && permissions.includes('pharmacy.dangerous_drugs');
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [held, setHeld] = useState<HeldCart[]>([]);
   // Counter service (session 25): the takeaway menu's choices, the item being chosen for, the pickup name.
   const counter = useCounterMenu(shift, offline);
   const [choosing, setChoosing] = useState<{ item: LookupItem; menuItem: CounterItem; lineId?: string } | null>(null);
   const [pickupName, setPickupName] = useState('');
+  // A self-service cycle waiting for its washer or dryer (ADR-0024 §7).
+  const [machineFor, setMachineFor] = useState<{ item: LookupItem; times?: string } | null>(null);
   const hasKitchen = Boolean(counter && cart.some((l) => counter.items.has(l.variantId)));
   const [showHeld, setShowHeld] = useState(false);
   const [discountingCart, setDiscountingCart] = useState(false);
@@ -301,13 +343,25 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       soldBy: item.wholeUnits ? 'UNIT' : 'WEIGHT', uom: { code: '', allowsFraction: !item.wholeUnits },
       ...(item.quantity && { quantity: item.quantity }),
       ...(item.productType && { productType: item.productType as LookupItem['productType'] }),
+      ...(item.drug && { drug: item.drug }),
     };
   }
 
   /** Add an item; `times` is a quantity typed before the scan ("5*", ADR-0021 §3). */
-  function addItem(item: LookupItem, times?: string) {
+  function addItem(item: LookupItem, times?: string, noMachine = false) {
     if (!item.price) {
       setNotice({ kind: 'warn', text: t('sell.unpriced', { name: item.name }) });
+      return;
+    }
+    // A self-service cycle online: which washer or dryer it runs on (offline it is sold without one).
+    if (laundry && !offline && !noMachine && item.laundry?.machineKind) {
+      setNotice(null);
+      setMachineFor({ item, ...(times && { times }) });
+      return;
+    }
+    // A dangerous drug needs the pharmacist and the yellow form checked online (ADR-0025 §6): never offline.
+    if (offline && item.drug?.drugClass === 'DANGEROUS') {
+      setNotice({ kind: 'error', text: t('rx.dangerousOffline', { name: item.name }) });
       return;
     }
     // A package needs the server (the customer's balance, ADR-0022 §6): the till refuses it offline.
@@ -338,12 +392,25 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       return;
     }
     const n = times ?? '1';
+    // Expired or held stock is not sold here (ADR-0025 §4): say so now, not when the sale is refused.
+    const sellable = item.sellable?.sellable;
+    const already = cart.filter((l) => l.variantId === item.variantId).reduce((a, l) => a.plus(l.quantity), toDec('0'));
+    if (sellable !== undefined && toDec(sellable).lt(already.plus(n))) setNotice({ kind: 'warn', text: t('rx.expiredWarn', { n: sellable, name: item.name }) });
+    const med = { ...(item.drug && { drug: item.drug }), ...(sellable !== undefined && { sellable }) };
     setCart((c) => {
       // Never into a discounted or manager-priced line: the approval was for what was on it then.
-      const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && !l.discount && !l.override && l.wholeUnits && !l.choices?.length && !l.kitchenNote);
-      if (existing) return c.map((l) => (l === existing ? { ...l, quantity: toDec(l.quantity).plus(n).toString() } : l));
-      return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: toDec(n).toString(), wholeUnits }];
+      const existing = c.find((l) => l.variantId === item.variantId && !l.machineId && !l.statutory && !l.discount && !l.override && l.wholeUnits && !l.choices?.length && !l.kitchenNote);
+      if (existing) return c.map((l) => (l === existing ? { ...l, ...med, quantity: toDec(l.quantity).plus(n).toString() } : l));
+      return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: toDec(n).toString(), wholeUnits, ...med }];
     });
+  }
+
+  /** A cycle on its machine: always its own line (one run per line), as many cycles as asked for. */
+  function addCycle(item: LookupItem, machine: { id: string; label: string }, times?: string) {
+    setMachineFor(null);
+    const n = times && toDec(times).isInteger() && toDec(times).gt(0) ? toDec(times).toString() : '1';
+    setCart((c) => [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: n, wholeUnits: true, machineId: machine.id, machineLabel: machine.label }]);
+    focusScan();
   }
 
   async function scan(e: FormEvent<HTMLFormElement>) {
@@ -367,7 +434,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       if (item) {
         addItem(item, times);
         scanRef.current!.value = '';
-      } else setNotice({ kind: 'warn', text: t('till.notFoundOffline', { q }) });
+        return;
+      }
+      // By name or a medicine's generic name, from the till's own list (ADR-0025 §3).
+      const found = await till.engine!.search(q);
+      if (found.length) setHits(found.map((i) => ({ key: i.variantId, sku: i.sku, name: i.name, drug: i.drug ?? null })));
+      else setNotice({ kind: 'warn', text: t('till.notFoundOffline', { q }) });
     };
     try {
       if (offline) await fromSnapshot();
@@ -389,7 +461,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         // A failed search is an error to show, not "no such item".
         try {
           const found = await api<{ data: ProductHit[] }>('GET', `/v1/products?q=${encodeURIComponent(q)}&limit=8`);
-          if (found.data.length) setHits(found.data);
+          if (found.data.length) setHits(hitsOf(found.data));
           else setNotice({ kind: 'warn', text: t('sell.notFound', { q }) });
         } catch (searchErr) {
           setNotice({ kind: 'error', text: errorText(searchErr, t('common.error'), t('common.network')) });
@@ -401,7 +473,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   async function pick(sku: string) {
     try {
-      addItem(await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(sku)}&branchId=${shift.branch.id}`));
+      const item = offline ? await lookupOffline(sku) : await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(sku)}&branchId=${shift.branch.id}`);
+      if (!item) return setNotice({ kind: 'warn', text: t('till.notFoundOffline', { q: sku }) });
+      addItem(item);
       setHits(null);
       if (scanRef.current) scanRef.current.value = '';
     } catch (err) {
@@ -443,9 +517,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     const name = String(f.get('name') ?? '').trim();
     const idNumber = String(f.get('idNumber') ?? '').trim();
     if (!name || !idNumber) return;
+    // The booklet tick is offered on a medicine line only (ADR-0025 §8); once ticked it stays for that person.
+    const booklet = f.get('booklet') === 'on';
     const existing = beneficiaries.find((b) => b.scheme === scheme && b.idNumber === idNumber);
     const ref = existing?.ref ?? `b${beneficiaries.length + 1}`;
-    if (!existing) setBeneficiaries((b) => [...b, { ref, scheme, name, idNumber }]);
+    if (!existing) setBeneficiaries((b) => [...b, { ref, scheme, name, idNumber, ...(booklet && { purchaseBooklet: true }) }]);
+    else if (booklet && !existing.purchaseBooklet) setBeneficiaries((bs) => bs.map((b) => (b.ref === ref ? { ...b, purchaseBooklet: true } : b)));
     patchLine(lineId, (l) => {
       // SC/PWD and an ordinary discount never stack on one line (the tax engine refuses it).
       const { discount: _, ...rest } = l;
@@ -505,10 +582,10 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         label,
         // A package session needs the customer, who is not held with the cart: the line is held without it.
         lines: cart.map((l) => {
-          const { packageId: _p, ...body } = lineBody(l);
+          const { packageId: _p, machineId: _m, prescription: _rx, ...body } = lineBody(l);
           return { ...body, name: l.name, sku: l.sku || (quote?.lines.find((q) => q.id === l.id)?.sku ?? l.variantId.slice(0, 8)), wholeUnits: l.wholeUnits };
         }),
-        beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)),
+        beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)).map(({ purchaseBooklet: _b, ...b }) => b),
         ...(quote && { amountDue: quote.totals.amountDue }),
       }, { 'idempotency-key': uuid() });
       setHolding(false);
@@ -564,12 +641,19 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     void loadHeld();
   }
 
+  /** The prescriptions recorded with this sale that a line still fills (one may have lost its line). */
+  const usedPrescriptions = prescriptions.filter((p) => cart.some((l) => l.prescription?.kind === 'new' && l.prescription.prescriptionRef === p.ref));
+
   async function completeOffline() {
     if (!pay.cashAmount || pay.intents.length > 0) return;
     try {
       const { receipt: kept, kitchen } = await till.engine!.ringUp({
         cashierUserId, terminalTxnId: pay.txId, tendered: pay.cashAmount,
-        lines: cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity, choices: l.choices?.map((c) => c.id), kitchenNote: l.kitchenNote, staffId: l.staffId })),
+        lines: cart.map((l) => ({
+          variantId: l.variantId, quantity: l.quantity, choices: l.choices?.map((c) => c.id), kitchenNote: l.kitchenNote, staffId: l.staffId,
+          ...(l.prescription?.kind === 'new' && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
+        })),
+        ...(usedPrescriptions.length > 0 && { prescriptions: usedPrescriptions }),
         ...(pickupName.trim() && { pickupName: pickupName.trim() }),
         ...(isPositive(pay.cashTip) && { tip: pay.cashTip }),
       });
@@ -586,12 +670,21 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     }
   }
 
-  async function complete() {
+  async function complete(approvalId?: string) {
     if (!quote) return;
     if (offline) return completeOffline();
     const lines = cart.map((l) => lineBody(l));
-    const used = beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref));
-    const withCustomer = { ...(customer && { customerId: customer.id }) };
+    // The booklet is said only for a discount that covers a medicine (the server records null otherwise).
+    const used = beneficiaries
+      .filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref))
+      .map(({ purchaseBooklet, ...b }) => (cart.some((l) => l.drug && l.statutory?.beneficiary === b.ref) ? { ...b, purchaseBooklet: Boolean(purchaseBooklet) } : b));
+    const dispenseApprovalId = approvalId ?? approval?.id;
+    const withCustomer = {
+      ...(customer && { customerId: customer.id }),
+      ...(usedPrescriptions.length > 0 && { prescriptions: usedPrescriptions }),
+      ...(dispenseApprovalId && { dispenseApprovalId }),
+    };
+    let refusal: unknown = null;
     const creditTender = isPositive(credit) ? [{ method: 'STORE_CREDIT' as const, amount: credit }] : [];
     const saleId = await pay.submit(
       (body, key) =>
@@ -619,8 +712,21 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
             ),
       () => setCart((c) => [...c]),
       () => till.reportUnreachable(),
+      (err) => (refusal = err),
     );
-    if (!saleId) return;
+    if (!saleId) {
+      // Pharmacy refusals (ADR-0025) in plain words; a missing pharmacist opens the approval here.
+      const code = refusal instanceof ApiFailure ? refusal.error.code : null;
+      if (code === 'DISPENSE_APPROVAL_INVALID') setApproval(null);
+      if (code === 'DISPENSE_APPROVAL_REQUIRED') {
+        setApproval(null);
+        retryAfterApproval.current = true;
+        setApproving(true);
+      }
+      const text = pharmacyErrorText(refusal, t, (i) => cart[i]?.name ?? '');
+      if (text) setNotice({ kind: code === 'DISPENSE_APPROVAL_REQUIRED' ? 'warn' : 'error', text });
+      return;
+    }
     try {
       setReceipt(await api<ReceiptData>('GET', `/v1/sales/${saleId}/receipt`));
     } catch (e) {
@@ -649,6 +755,10 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     setPanel(null);
     setChoosing(null);
     setPickupName('');
+    setPrescriptions([]);
+    setApproval(null);
+    setApproving(false);
+    retryAfterApproval.current = false;
     pay.reset();
     setReceipt(null);
     setOfflineReceipt(null);
@@ -738,8 +848,56 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   const dropPackage = (lineId: string) => patchLine(lineId, ({ packageId: _p, packageName: _n, ...rest }) => rest);
   // A package sold needs a customer to own it (ADR-0022 §6): said before payment, not by a refused sale.
   const packageNeedsCustomer = !customer && Boolean(quote?.lines.some((l) => l.productType === 'PACKAGE'));
-  const isOpen = (lineId: string, kind: 'sc' | 'discount' | 'price') => panel?.lineId === lineId && panel.kind === kind;
-  const toggle = (lineId: string, kind: 'sc' | 'discount' | 'price') => setPanel(isOpen(lineId, kind) ? null : { lineId, kind });
+  const isOpen = (lineId: string, kind: PanelKind) => panel?.lineId === lineId && panel.kind === kind;
+  const toggle = (lineId: string, kind: PanelKind) => setPanel(isOpen(lineId, kind) ? null : { lineId, kind });
+  // Pharmacies (ADR-0025): every Rx, antibiotic or dangerous-drug line names its prescription before payment.
+  const rxMissing = cart.filter((l) => needsRx(l.drug) && !l.prescription);
+  const rxLines = cart.filter((l) => needsRx(l.drug));
+  const hasDangerous = cart.some((l) => l.drug?.drugClass === 'DANGEROUS');
+  // A cashier who may not dispense asks a pharmacist first (online; offline the server flags it for review).
+  const approvalNeeded = !offline && rxLines.length > 0 && (hasDangerous ? !canDangerous && !approval?.allowsDangerous : !canDispense && !approval);
+  const rxLineOf = (l: CartLine) => ({ id: l.id, name: l.name, quantity: l.quantity, drug: l.drug!, prescription: l.prescription });
+  function recordPrescription(p: NewPrescription, fills: Record<string, string>) {
+    setPrescriptions((ps) => [...ps, p]);
+    setCart((c) => c.map((l) => (fills[l.id] ? { ...l, prescription: { kind: 'new' as const, prescriptionRef: p.ref, itemRef: fills[l.id]! } } : l)));
+    setPanel(null);
+    focusScan();
+  }
+  function addPrescriptionItem(lineId: string, ref: string, item: NewPrescription['items'][number]) {
+    setPrescriptions((ps) => ps.map((p) => (p.ref === ref ? { ...p, items: [...p.items, item] } : p)));
+    patchLine(lineId, (l) => ({ ...l, prescription: { kind: 'new', prescriptionRef: ref, itemRef: item.ref } }));
+    setPanel(null);
+  }
+  function pickPrescription(lineId: string, p: LinePrescription) {
+    patchLine(lineId, (l) => ({ ...l, prescription: p }));
+    setPanel(null);
+    focusScan();
+  }
+  /** Swap a medicine line for another brand of the same medicine (its prescription still fits). */
+  async function swapLine(lineId: string, e: { variantId: string; sku: string }) {
+    try {
+      const item = offline ? await lookupOffline(e.sku) : await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(e.sku)}&branchId=${shift.branch.id}`);
+      if (!item) return;
+      patchLine(lineId, ({ discount: _d, override: _o, sellable: _s, ...l }) => ({
+        ...l, variantId: item.variantId, sku: item.sku, name: item.name, ...(item.drug && { drug: item.drug }), ...(item.sellable && { sellable: item.sellable.sellable }),
+      }));
+      setPanel(null);
+      setNotice({ kind: 'info', text: t('rx.swapped', { name: item.name }) });
+    } catch (err) {
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+    }
+    focusScan();
+  }
+  function approved(a: DispenseApproval) {
+    setApproval(a);
+    setApproving(false);
+    setNotice({ kind: 'info', text: t('rx.approvedBy', { name: a.approvedByName }) });
+    // Refused for want of a pharmacist: the same sale goes again with the approval.
+    if (retryAfterApproval.current) {
+      retryAfterApproval.current = false;
+      void complete(a.id);
+    }
+  }
 
   return (
     <div className={`mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px] ${cart.length > 0 ? 'pb-28 lg:pb-5' : ''}`}>
@@ -842,6 +1000,17 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         {discountingCart && !offline && <CartDiscountPanel eligible={cartDiscountLines.length} onApply={discountCart} onCancel={() => setDiscountingCart(false)} />}
         {showHeld && held.length > 0 && <HeldCartsPanel carts={held} cartEmpty={cart.length === 0} timezone={shift.branch.timezone} onResume={resume} onDiscard={discard} />}
 
+        {machineFor && (
+          <MachinePicker
+            branchId={shift.branch.id}
+            kind={machineFor.item.laundry!.machineKind!}
+            name={machineFor.item.name}
+            onPick={(m) => addCycle(machineFor.item, m, machineFor.times)}
+            onNone={() => { const f = machineFor; setMachineFor(null); addItem(f.item, f.times, true); focusScan(); }}
+            onCancel={() => { setMachineFor(null); focusScan(); }}
+          />
+        )}
+
         {choosing && (
           <CounterChoicesPanel
             key={choosing.lineId ?? choosing.item.variantId}
@@ -858,16 +1027,17 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           <Note className="p-4">
             <h2 className="section-title mb-2">{t('sell.results')}</h2>
             <ul className="grid gap-1">
-              {hits.flatMap((p) =>
-                p.variants.map((v) => (
-                  <li key={v.id}>
-                    <button className="flex w-full items-center justify-between rounded px-2 py-2 text-left hover:bg-paper" onClick={() => pick(v.sku)}>
-                      <span>{v.name ? `${p.name} — ${v.name}` : p.name}</span>
-                      <span className="serial text-[0.8125rem] text-muted">{v.sku}</span>
-                    </button>
-                  </li>
-                )),
-              )}
+              {hits.map((h) => (
+                <li key={h.key}>
+                  <button className="flex w-full items-center justify-between gap-3 rounded px-2 py-2 text-left hover:bg-paper" data-testid="search-hit" data-sku={h.sku} onClick={() => pick(h.sku)}>
+                    <span className="min-w-0">
+                      <span className="block">{h.name}</span>
+                      {h.drug && <DrugLine drug={h.drug} />}
+                    </span>
+                    <span className="serial shrink-0 text-[0.8125rem] text-muted">{h.sku}</span>
+                  </button>
+                </li>
+              ))}
             </ul>
           </Note>
         )}
@@ -878,7 +1048,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           {cart.length === 0 ? (
             <Empty>{t('sell.emptyCart')}</Empty>
           ) : (
-            <ul aria-label="Cart">
+            <ul aria-label={t('a11y.cart')} data-testid="cart">
               {cart.map((l) => {
                 const q = quoteLine(l.id);
                 const b = l.statutory && beneficiaries.find((x) => x.ref === l.statutory!.beneficiary);
@@ -888,10 +1058,26 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                     <div className="grid grid-cols-[1fr_auto] items-start gap-3 xl:grid-cols-[1fr_auto_auto]">
                       <div className="min-w-0">
                         <p className="font-semibold">{l.name}</p>
+                        {l.drug && <DrugLine drug={l.drug} />}
                         <p className="serial text-[0.75rem] text-muted">
                           {l.sku || q?.sku}
                           {q && <> · <Money value={q.unitPrice} /></>}
                         </p>
+                        {l.sellable !== undefined && toDec(l.sellable).lt(l.quantity) && (
+                          <p className="mt-1 text-[0.8125rem]" data-testid="line-expired"><span className="tag tag-bad">{t('rx.expiredChip', { n: l.sellable })}</span></p>
+                        )}
+                        {l.prescription && (
+                          <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]" data-testid="line-rx">
+                            <span className="chip bg-violet">
+                              {l.prescription.kind === 'record'
+                                ? t('rx.recordChip', { patient: l.prescription.patientName, left: l.prescription.left })
+                                : t('rx.newChip', { patient: (() => { const ref = l.prescription.prescriptionRef; return prescriptions.find((p) => p.ref === ref)?.patientName ?? ''; })() })}
+                            </span>
+                          </p>
+                        )}
+                        {l.machineId && (
+                          <p className="mt-1 text-[0.8125rem]" data-testid="line-machine"><span className="chip bg-blue">{t('laundry.onMachineLabel', { machine: l.machineLabel ?? '' })}</span></p>
+                        )}
                         {l.packageId && (
                           <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]" data-testid="line-package">
                             <span className="chip bg-green">{t('pkg.fromPackage', { name: l.packageName ?? '' })}</span>
@@ -931,6 +1117,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                         {b && (
                           <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]">
                             <span className="chip bg-blue">{b.scheme}</span>
+                            {l.drug && b.purchaseBooklet && <span className="tag" data-testid="line-booklet">{t('rx.bookletChip')}</span>}
                             <span>{b.name}</span>
                             <span className="serial text-muted">{b.idNumber}</span>
                             <button className="btn btn-sm btn-danger" onClick={() => clearStatutory(l.id)}>{t('sell.removeDiscount')}</button>
@@ -989,6 +1176,16 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                             </button>
                           );
                         })()}
+                        {needsRx(l.drug) && (
+                          <button className={`btn btn-sm ${l.prescription || isOpen(l.id, 'rx') ? '' : 'btn-primary'}`} aria-pressed={isOpen(l.id, 'rx')} data-testid="rx-button" onClick={() => toggle(l.id, 'rx')}>
+                            <FileText className="size-4" aria-hidden /> {l.prescription ? t('rx.change') : t('rx.button')}
+                          </button>
+                        )}
+                        {l.drug && (
+                          <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'equiv')} data-testid="equiv-button" onClick={() => toggle(l.id, 'equiv')}>
+                            <Pill className="size-4" aria-hidden /> {t('rx.equivalents')}
+                          </button>
+                        )}
                         {/* Discounts and price changes need the server: not offered offline (ADR-0015 §1). A package session takes none. */}
                         {!l.statutory && !offline && !l.packageId && (
                           <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'sc')} onClick={() => toggle(l.id, 'sc')}>
@@ -1042,6 +1239,25 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                         onCancel={() => setPanel(null)}
                       />
                     )}
+                    {isOpen(l.id, 'rx') && l.drug && (
+                      <PrescriptionPanel
+                        key={l.id}
+                        line={rxLineOf(l)}
+                        others={rxMissing.filter((o) => o.id !== l.id).map(rxLineOf)}
+                        customer={customer}
+                        branchId={shift.branch.id}
+                        offline={offline}
+                        prescriptions={prescriptions}
+                        today={zonedDay(new Date(), shift.branch.timezone)}
+                        onPick={(p) => pickPrescription(l.id, p)}
+                        onRecord={recordPrescription}
+                        onAddItem={(ref, item) => addPrescriptionItem(l.id, ref, item)}
+                        onCancel={() => setPanel(null)}
+                      />
+                    )}
+                    {isOpen(l.id, 'equiv') && l.drug && (
+                      <EquivalentsPanel branchId={shift.branch.id} variantId={l.variantId} drug={l.drug} offline={offline} engine={till.engine} onSwap={(e) => void swapLine(l.id, e)} onCancel={() => setPanel(null)} />
+                    )}
                     {isOpen(l.id, 'sc') && (
                       <form className="mt-3 grid gap-3 rounded-[5px] border border-hair bg-white p-4" onSubmit={(e) => applyStatutory(l.id, e)}>
                         <p className="font-semibold">{t('sell.scTitle')}</p>
@@ -1057,6 +1273,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                           <Field id={`bn-${l.id}`} name="name" required label={t('sell.beneficiaryName')} autoFocus />
                           <Field id={`bid-${l.id}`} name="idNumber" required label={t('sell.idNumber')} />
                         </div>
+                        {l.drug && (
+                          <label className="flex items-start gap-2 text-[0.875rem]" data-testid="booklet">
+                            <input type="checkbox" name="booklet" className="mt-1" />
+                            <span><span className="font-semibold">{t('rx.booklet')}</span><span className="block text-[0.8125rem] text-muted">{t('rx.bookletHint')}</span></span>
+                          </label>
+                        )}
                         <div className="flex gap-2">
                           <button className="btn btn-primary">{t('sell.apply')}</button>
                           <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
@@ -1101,14 +1323,31 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         )}
 
         {packageNeedsCustomer && <Callout kind="warn">{t('pkg.needsCustomer')}</Callout>}
+        {rxMissing.length > 0 && <div data-testid="rx-missing"><Callout kind="warn">{t('rx.needed', { names: rxMissing.map((l) => l.name).join(', ') })}</Callout></div>}
+        {approval && rxLines.length > 0 && (
+          <p className="no-print flex items-center gap-2 text-[0.9375rem]" data-testid="rx-approved">
+            <ShieldCheck className="size-4 text-green" aria-hidden /> {t('rx.approvedBy', { name: approval.approvedByName })}
+          </p>
+        )}
+        {approvalNeeded && !approving && (
+          <Note className="no-print grid gap-2 p-4" data-testid="rx-approval-needed">
+            <p className="text-[0.9375rem]">{t(hasDangerous ? 'rx.approvalNeededDd' : 'rx.approvalNeeded')}</p>
+            <button type="button" className="btn justify-self-start" onClick={() => setApproving(true)}>
+              <ShieldCheck className="size-4" aria-hidden /> {t('rx.approvalAsk')}
+            </button>
+          </Note>
+        )}
+        {approving && !offline && (
+          <ApprovalPanel branchId={shift.branch.id} needsDangerous={hasDangerous} onApproved={approved} onCancel={() => { setApproving(false); retryAfterApproval.current = false; }} />
+        )}
         {offline && appointment && <Callout kind="warn">{t('appt.offlineRingUp')}</Callout>}
 
         <PaymentPanel
           pay={pay}
           priced={cart.length > 0 && !!quote && !quoting}
           submitLabel={offline ? t('till.offlineSubmit') : exchange ? t('exch.complete') : t('pay.complete')}
-          onSubmit={complete}
-          canSubmit={cart.length > 0 && !packageNeedsCustomer && !(offline && (cart.some((l) => l.statutory || l.discount || l.override || l.packageId) || exchange || appointment))}
+          onSubmit={() => void complete()}
+          canSubmit={cart.length > 0 && !packageNeedsCustomer && rxMissing.length === 0 && !approvalNeeded && !(offline && (cart.some((l) => l.statutory || l.discount || l.override || l.packageId) || exchange || appointment))}
           cashOnly={offline}
         />
       </aside>
@@ -1130,6 +1369,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     </div>
   );
 }
+
+/** The form open under a cart line. */
+type PanelKind = 'sc' | 'discount' | 'price' | 'rx' | 'equiv';
 
 /** A held cart's line as the server gives it back on resume. */
 interface HeldLine {

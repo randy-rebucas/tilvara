@@ -5,8 +5,9 @@ import { getT } from '@/i18n/server';
 import { api, type MfaStatus } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { SecurityPanel } from './security-panel';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Two-step sign-in' };
+export const generateMetadata = pageTitle('security');
 
 /**
  * Outside the app shell on purpose: once two-step sign-in is required, business pages answer

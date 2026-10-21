@@ -2,6 +2,7 @@
 // kitchen → void → bill with service charge → split evenly → cash + card checks → table free.
 // Usage: node apps/pos-desktop/e2e/tables.mjs [posUrl] [screenshotDir] [apiUrl]
 // Requires the API (RATE_LIMITS_ENABLED=false) and the POS (vite preview) running.
+import { randomUUID } from 'node:crypto';
 import { checklist, openBrowser, sleep } from '../../admin-web/e2e/cdp.mjs';
 import { arrangeRestaurant, PASSWORD } from './restaurant.mjs';
 
@@ -273,9 +274,68 @@ try {
   await shown('Go to the bill');
   await clickText('Floor');
 
-  // The drawer took the cash check only: 1000 + 236.50
+  // Audit 2026-10-21: a customer on a check. Rosa has ₱45.00 of store credit (a counter tea, cash,
+  // returned to her credit through the API); she pays T2's bill #4 (₱99.00) with it and ₱54.00 in cash.
+  const idem = () => ({ 'idempotency-key': randomUUID() });
+  const rosa = await call('POST', '/v1/customers', tk, { displayName: 'Rosa Lim', phone: '0917 555 0199' });
+  const teaSale = await call('POST', '/v1/sales', tk, { cashierSessionId: ws.openSession.id, clientTransactionId: randomUUID(), customerId: rosa.id, lines: [{ variantId: r.tea, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '45.00' }] }, idem());
+  await call('POST', `/v1/sales/${teaSale.id}/returns`, tk, { cashierSessionId: ws.openSession.id, kind: 'RETURN', reason: 'Changed her mind', refundTo: 'STORE_CREDIT', lines: [{ saleLineId: teaSale.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }, idem());
+  await waitFor(`[...document.querySelectorAll('[aria-label^="T2 —"]')].some((x) => x.getClientRects().length)`);
+  await clickLabel('T2 —');
+  await shown('Go to the bill');
+  await clickText('Go to the bill');
+  await shown('Bill #4');
+  await clickExact('Customer');
+  await waitFor(`document.getElementById('custSearch')`);
+  await fill('custSearch', 'Rosa');
+  await evaluate(`void [...document.querySelectorAll('form')].find((f) => f.querySelector('[name=custSearch]')).requestSubmit()`);
+  await waitFor(`[...document.querySelectorAll('button')].some((x) => x.getClientRects().length && x.textContent.includes('Rosa Lim'))`, 10000);
+  await evaluate(`void [...document.querySelectorAll('button')].find((x) => x.getClientRects().length && x.textContent.includes('Rosa Lim')).click()`);
+  check('the customer is on the check, with ₱45.00 of store credit', await waitFor(`document.querySelector('[data-testid=check-customer]')?.innerText.includes('Rosa Lim') && document.querySelector('[data-testid=check-customer]').innerText.includes('₱45.00')`, 10000).then(() => true, () => false));
+  await clickText('Use store credit');
+  check('the credit pays ₱45.00; ₱54.00 is left for cash', await waitFor(`document.querySelector('[data-testid=check-customer]').innerText.includes('Paid with store credit') && [...document.querySelectorAll('button')].some((x) => x.getClientRects().length && x.textContent.trim() === '₱54.00')`, 8000).then(() => true, () => false));
+  await shot('tables-check-customer.png', false);
+  await clickExact('₱100.00');
+  check('change ₱46.00 on the cash part', await shown('₱46.00'));
+  await clickText('Take payment');
+  await waitFor(`document.body.innerText.includes('NOT AN OFFICIAL INVOICE')`);
+  const rc = await text();
+  check('the check receipt names the customer and the store credit tender', rc.includes('Rosa Lim') && rc.includes('STORE CREDIT'));
+  check('the credit check settles bill #4', await shown('The bill is paid'));
+  const creditCheck = (await call('GET', `/v1/sales?cashierSessionId=${ws.openSession.id}`, tk)).data.find((s) => s.amountDue === '99.00');
+  check('server: the ₱99.00 check is recorded and her credit is spent', Boolean(creditCheck) && (await call('GET', `/v1/customers/${rosa.id}`, tk)).storeCredit[0].balance === '0.00');
+  await clickText('Back to the floor');
+  await waitFor(`document.body.innerText.includes('T1')`);
+
+  // Void that check from the shift's history: the bill is to pay again, the credit comes back.
+  await clickText('This shift');
+  await waitFor(`[...document.querySelectorAll('main li button')].some((x) => x.getClientRects().length && x.textContent.includes('#' + ${JSON.stringify(String(creditCheck?.saleNumber ?? 0).padStart(6, '0'))}))`, 10000);
+  await evaluate(`void [...document.querySelectorAll('main li button')].find((x) => x.getClientRects().length && x.textContent.includes('#' + ${JSON.stringify(String(creditCheck?.saleNumber ?? 0).padStart(6, '0'))})).click()`);
+  await shown('Rosa Lim', 10000);
+  await clickExact('Void sale');
+  await waitFor(`[...document.querySelectorAll('input[name=reason]')].some((x) => x.getClientRects().length)`);
+  await evaluate(`(() => { const el = [...document.querySelectorAll('input[name=reason]')].find((x) => x.getClientRects().length); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, 'Wrong table'); el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await evaluate(`void [...document.querySelectorAll('form .btn-danger')].find((x) => x.getClientRects().length).click()`);
+  const voidedMsg = await waitFor(`document.body.innerText.includes('Store credit given: ₱45.00')`, 10000).then(() => true, () => false);
+  if (!voidedMsg) console.log((await text()).slice(0, 1500));
+  check('voided: ₱45.00 back to her credit, ₱54.00 back in cash', voidedMsg && (await text()).includes('Refund ₱54.00 in cash'));
+  check('server: her store credit is ₱45.00 again', (await call('GET', `/v1/customers/${rosa.id}`, tk)).storeCredit[0].balance === '45.00');
+  await clickText('Tables');
+  await waitFor(`[...document.querySelectorAll('[aria-label^="T2 —"]')].some((x) => x.getClientRects().length)`);
+  check('floor: T2 is to pay again', await waitFor(`[...document.querySelectorAll('[aria-label^="T2 —"]')].some((x) => x.getClientRects().length && !x.getAttribute('aria-label').endsWith('Free'))`, 8000).then(() => true, () => false));
+  await clickLabel('T2 —');
+  await shown('Go to the bill');
+  await clickText('Go to the bill');
+  check(`the bill is payable again: "Check #${creditCheck?.saleNumber} was voided…"`, await shown('Bill #4') && await shown('was voided: its share is to be paid again') && (await text()).includes('₱99.00'));
+  await shot('tables-check-voided.png', false);
+  await clickText('Order');
+  await shown('Go to the bill');
+  await clickText('Floor');
+
+  // The drawer: 1000 + 236.50 (cash check) + 45 (the tea sale; its return went to credit); the
+  // voided check's ₱54.00 came in and went back out.
   await clickText('Close shift');
-  check('expected drawer ₱1,236.50', await shown('₱1,236.50'));
+  check('expected drawer ₱1,281.50', await shown('₱1,281.50'));
 
   await clickText('fil');
   await clickText('Mga mesa');

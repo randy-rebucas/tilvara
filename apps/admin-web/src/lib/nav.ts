@@ -1,5 +1,5 @@
 import type { MessageKey } from '@/i18n/messages';
-import { hasRestaurant, servesAppointments, servesLodging, type BusinessType } from './business-type';
+import { hasRestaurant, servesAppointments, servesLaundry, servesLodging, servesPharmacy, type BusinessType } from './business-type';
 
 /**
  * The band's tabs. A plain module (not the client nav component) so server pages such as the user
@@ -8,6 +8,8 @@ import { hasRestaurant, servesAppointments, servesLodging, type BusinessType } f
  * `restaurant`: only for a business that serves tables (not RETAIL, GROCERY or SALON).
  * `salon`: only for a business that takes appointments (SALON or HYBRID, ADR-0022).
  * `lodging`: only for a business with rooms (LODGING or HYBRID, ADR-0023).
+ * `laundry`: only for a laundry shop or laundromat (LAUNDRY or HYBRID, ADR-0024).
+ * `pharmacy`: only for a pharmacy or drugstore (PHARMACY or HYBRID, ADR-0025).
  */
 export interface NavItem {
   href: string;
@@ -17,11 +19,15 @@ export interface NavItem {
   restaurant?: true;
   salon?: true;
   lodging?: true;
+  laundry?: true;
+  pharmacy?: true;
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/', key: 'nav.overview' },
   { href: '/lodging', key: 'nav.lodging', needs: ['lodging.read', 'lodging.housekeeping', 'lodging.setup'], lodging: true },
+  { href: '/laundry', key: 'nav.laundry', needs: ['laundry.read', 'laundry.deliver', 'laundry.setup'], laundry: true },
+  { href: '/pharmacy', key: 'nav.pharmacy', needs: ['pharmacy.read', 'pharmacy.setup'], pharmacy: true },
   { href: '/appointments', key: 'nav.appointments', needs: ['appointments.read', 'appointments.manage', 'staff.manage'], salon: true },
   { href: '/products', key: 'nav.products', needs: ['catalog.read'] },
   { href: '/prices', key: 'nav.prices', needs: ['catalog.read'] },
@@ -37,8 +43,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
 ];
 
 /** The business offers this area (business type and, when known, the plan's features). */
-export const offered = (item: Pick<NavItem, 'restaurant' | 'salon' | 'lodging'>, businessType: BusinessType, features?: readonly string[]) =>
-  (!item.restaurant || hasRestaurant(businessType, features)) && (!item.salon || servesAppointments(businessType)) && (!item.lodging || servesLodging(businessType));
+export const offered = (item: Pick<NavItem, 'restaurant' | 'salon' | 'lodging' | 'laundry' | 'pharmacy'>, businessType: BusinessType, features?: readonly string[]) =>
+  (!item.restaurant || hasRestaurant(businessType, features)) && (!item.salon || servesAppointments(businessType)) && (!item.lodging || servesLodging(businessType)) &&
+  (!item.laundry || servesLaundry(businessType)) && (!item.pharmacy || servesPharmacy(businessType));
 
 /** The person's permissions open this area (UI hint only; the API enforces access). */
 export const permitted = (item: Pick<NavItem, 'needs'>, permissions: readonly string[]) =>

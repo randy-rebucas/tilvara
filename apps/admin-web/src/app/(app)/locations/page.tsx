@@ -4,8 +4,9 @@ import { api, apiOrNull, type Branch, type LegalEntity, type Me, type Register, 
 import { formatDateTime, formatTin } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { AddBranchForm, AddEntityForm, AddRegisterForm, EditBranchForm, EditRegisterForm, PairTerminalForm, RowAction } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Locations' };
+export const generateMetadata = pageTitle('locations');
 
 type List<T> = { data: T[] };
 

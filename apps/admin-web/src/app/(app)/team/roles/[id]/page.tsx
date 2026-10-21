@@ -8,8 +8,9 @@ import { PERMISSION_GROUPS, PRIVILEGED_PERMISSIONS } from '@/lib/permissions';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { EditRoleForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Role' };
+export const generateMetadata = pageTitle('team.roles.item');
 
 /** One role: what it allows in words, who holds it, and edit/archive for custom roles. */
 export default async function RolePage({ params }: { params: Promise<{ id: string }> }) {

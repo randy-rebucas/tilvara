@@ -7,8 +7,9 @@ import { isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { RecipeForm } from '../../../../restaurant/forms';
 import { RecipeHistory } from '../../../../restaurant/recipes/recipe-history';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplies used' };
+export const generateMetadata = pageTitle('products.item.supplies');
 
 /**
  * A salon service's supplies used (ADR-0022 §9): the recipe of the service, consumed from stock at

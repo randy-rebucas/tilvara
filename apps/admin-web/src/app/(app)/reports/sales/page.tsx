@@ -5,8 +5,9 @@ import type { SaleBuckets, SalesSummary } from '@/lib/api';
 import { formatDate, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales summary' };
+export const generateMetadata = pageTitle('reports.sales');
 
 /** Per local day: sales, returns and voids, and the net, in the receipt's buckets. */
 export default async function SalesSummaryPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

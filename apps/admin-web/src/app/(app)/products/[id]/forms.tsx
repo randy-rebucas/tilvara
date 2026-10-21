@@ -8,6 +8,9 @@ import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { ProductDetail, TaxCategory } from '@/lib/api';
 import type { VariantOption } from '@/components/line-items';
+import { drugBody } from '@/lib/pharmacy';
+import { DrugFields } from '../drug-fields';
+import { draftOf, LaundryFields, laundryBody } from '../laundry-fields';
 
 type Variant = ProductDetail['variants'][number];
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -25,9 +28,13 @@ function Actions({ pending, label, close, error }: { pending: boolean; label: st
 }
 
 // ---------------------------------------------------------------- product
-function ProductFields({ close, product, taxes }: { close: () => void; product: ProductDetail; taxes: TaxCategory[] }) {
+function ProductFields({ close, product, taxes, categories, pharmacy }: { close: () => void; product: ProductDetail; taxes: TaxCategory[]; categories: { id: string; label: string }[]; pharmacy: boolean }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
+  // ADR-0025 §2: the medicine section; turning it off makes it an ordinary item again (drug: null).
+  const wasDrug = !!product.drugClass;
+  const [drug, setDrug] = useState(wasDrug);
+  const [expiry, setExpiry] = useState(product.tracksExpiry ?? false);
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -36,7 +43,9 @@ function ProductFields({ close, product, taxes }: { close: () => void; product: 
       name: text(f, 'name'),
       description: description || null,
       taxCategoryId: f.get('taxCategoryId'),
-      ...(product.productType !== 'STANDARD' ? {} : { trackInventory: f.get('trackInventory') === 'on', tracksExpiry: f.get('tracksExpiry') === 'on' }),
+      ...((text(f, 'categoryId') || null) !== product.categoryId ? { categoryId: text(f, 'categoryId') || null } : {}),
+      ...(product.productType !== 'STANDARD' ? {} : { trackInventory: f.get('trackInventory') === 'on', tracksExpiry: expiry || drug }),
+      ...(product.productType === 'STANDARD' && (drug || wasDrug) ? { drug: drugBody(f, drug) } : {}),
     });
     if (r.ok) close();
   }
@@ -46,6 +55,12 @@ function ProductFields({ close, product, taxes }: { close: () => void; product: 
       <SelectField label={t('prod.tax')} name="taxCategoryId" defaultValue={product.taxCategoryId}>
         {taxes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </SelectField>
+      {(categories.length > 0 || product.categoryId) && (
+        <SelectField label={t('prod.category')} name="categoryId" defaultValue={product.categoryId ?? ''} hint={t('prod.categoryHint')} error={fieldError('categoryId')}>
+          <option value="">{t('prod.noCategory')}</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </SelectField>
+      )}
       <div className="sm:col-span-2">
         <TextField label={`${t('prod.description')} (${t('common.optional')})`} name="description" defaultValue={product.description ?? ''} error={fieldError('description')} />
       </div>
@@ -57,16 +72,17 @@ function ProductFields({ close, product, taxes }: { close: () => void; product: 
       )}
       {product.productType === 'STANDARD' && (
         <label className="flex items-start gap-2 text-[0.9375rem] sm:col-span-2">
-          <input type="checkbox" name="tracksExpiry" defaultChecked={product.tracksExpiry ?? false} className="mt-1 size-4 accent-[var(--color-blue)]" />
-          <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
+          <input type="checkbox" name="tracksExpiry" checked={expiry || drug} disabled={drug} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
+          <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{drug ? t('drug.expiryNote') : t('prod.tracksExpiryHint')}</span></span>
         </label>
       )}
+      {product.productType === 'STANDARD' && <DrugFields on={drug} onToggle={setDrug} pharmacy={pharmacy} values={product} fieldError={fieldError} />}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );
 }
 
-export function EditProduct(props: { product: ProductDetail; taxes: TaxCategory[] }) {
+export function EditProduct(props: { product: ProductDetail; taxes: TaxCategory[]; categories: { id: string; label: string }[]; pharmacy: boolean }) {
   const { t } = useT();
   return <Disclosure kind="edit" label={t('prod.edit')}>{(close) => <ProductFields close={close} {...props} />}</Disclosure>;
 }
@@ -107,9 +123,10 @@ export function AddVariant({ productId }: { productId: string }) {
   return <Disclosure label={t('prod.addVariant')}>{(close) => <AddVariantFields close={close} productId={productId} />}</Disclosure>;
 }
 
-function VariantFields({ close, variant, productType }: { close: () => void; variant: Variant; productType: string }) {
+function VariantFields({ close, variant, productType, laundry }: { close: () => void; variant: Variant; productType: string; laundry: boolean }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
+  const [wash, setWash] = useState(() => draftOf(variant));
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -121,6 +138,7 @@ function VariantFields({ close, variant, productType }: { close: () => void; var
       referenceCost: cost || null,
       ...(productType === 'SERVICE' ? { serviceMinutes: minutes ? Number(minutes) : null } : {}),
       ...(productType === 'PACKAGE' ? { packageValidDays: days ? Number(days) : null } : {}),
+      ...(laundry && productType !== 'PACKAGE' ? laundryBody(f, wash, productType === 'SERVICE') : {}),
     });
     if (r.ok) close();
   }
@@ -130,14 +148,15 @@ function VariantFields({ close, variant, productType }: { close: () => void; var
       <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
       {productType === 'SERVICE' && <TextField label={t('prod.serviceMinutes')} name="serviceMinutes" type="number" min={5} max={720} step={5} inputMode="numeric" defaultValue={variant.serviceMinutes ?? ''} hint={t('prod.serviceMinutesHint')} error={fieldError('serviceMinutes')} />}
       {productType === 'PACKAGE' && <TextField label={`${t('prod.packageValidDays')} (${t('common.optional')})`} name="packageValidDays" type="number" min={1} max={3650} inputMode="numeric" defaultValue={variant.packageValidDays ?? ''} hint={t('prod.packageValidDaysHint')} error={fieldError('packageValidDays')} />}
+      {laundry && productType !== 'PACKAGE' && <LaundryFields draft={wash} onChange={setWash} service={productType === 'SERVICE'} values={variant} fieldError={fieldError} />}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );
 }
 
-export function EditVariant({ variant, productType = 'STANDARD' }: { variant: Variant; productType?: string }) {
+export function EditVariant({ variant, productType = 'STANDARD', laundry = false }: { variant: Variant; productType?: string; laundry?: boolean }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} productType={productType} />}</Disclosure>;
+  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} productType={productType} laundry={laundry} />}</Disclosure>;
 }
 
 /** Scan or type another barcode for this variant (e.g. a new pack design). */

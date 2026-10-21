@@ -3,8 +3,9 @@ import { api, apiOrNull, type InventorySettings, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
 import { InventorySettingsForm } from '../sheets';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Inventory settings' };
+export const generateMetadata = pageTitle('inventory.settings');
 
 export default async function InventorySettingsPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t } = await getT();

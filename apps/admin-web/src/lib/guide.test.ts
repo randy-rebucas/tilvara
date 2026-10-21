@@ -51,6 +51,8 @@ describe('user guide', () => {
     expect([topicFor('/inventory/packs', 'GROCERY'), topicFor('/inventory/expiry'), topicFor('/inventory/movements', 'GROCERY')]).toEqual(['tingi', 'tingi', 'inventory']);
     // ADR-0021: promotions, quick keys and labels have their own part; the rest of Prices and Products stay put.
     expect([topicFor('/prices/promotions/abc'), topicFor('/products/labels'), topicFor('/products/quick-keys'), topicFor('/prices'), topicFor('/products/abc')]).toEqual(['retail', 'retail', 'retail', 'prices', 'products']);
+    // Categories, units and tax categories are part of Products.
+    expect([topicFor('/products/categories'), topicFor('/products/units')]).toEqual(['products', 'products']);
   });
 
   it('leaves restaurant service out for a retail shop, and selling by weight out for a restaurant', () => {
@@ -107,5 +109,34 @@ describe('lodging guide (ADR-0023)', () => {
     expect(topicFor('/reports/occupancy', 'LODGING')).toBe('lodging');
     expect(topicFor('/reports/guest-ledger', 'HYBRID')).toBe('lodging');
     expect(topicFor('/lodging', 'RETAIL')).toBe('subscription');
+  });
+});
+
+describe('laundry guide (ADR-0024)', () => {
+  it('a laundry gets its part and no tables; other types do not get it', () => {
+    const laundry = guideFor('LAUNDRY', [...ALL, 'laundry.read']).map((s) => s.id);
+    expect(laundry).toContain('laundry');
+    expect(laundry).not.toContain('restaurant');
+    expect(laundry).not.toContain('lodging');
+    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('laundry');
+    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('laundry');
+    expect(topicFor('/laundry/jobs/abc', 'LAUNDRY')).toBe('laundry');
+    expect(topicFor('/reports/machine-usage', 'LAUNDRY')).toBe('laundry');
+    expect(topicFor('/laundry', 'SALON')).toBe('subscription');
+  });
+});
+
+describe('pharmacy guide (ADR-0025)', () => {
+  it('a pharmacy gets its part and no tables; other types do not get it', () => {
+    const pharmacy = guideFor('PHARMACY', [...ALL, 'pharmacy.read']).map((s) => s.id);
+    expect(pharmacy).toContain('pharmacy');
+    expect(pharmacy).toContain('tingi');
+    expect(pharmacy).not.toContain('restaurant');
+    expect(pharmacy).not.toContain('laundry');
+    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('pharmacy');
+    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('pharmacy');
+    expect(topicFor('/pharmacy/prescriptions/abc', 'PHARMACY')).toBe('pharmacy');
+    expect(topicFor('/pharmacy/batches', 'HYBRID')).toBe('pharmacy');
+    expect(topicFor('/pharmacy', 'GROCERY')).toBe('subscription');
   });
 });

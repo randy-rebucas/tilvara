@@ -70,6 +70,15 @@ describe('business type', () => {
     expect(await typeChanges(b.tenantId)).toEqual([{ from: 'HYBRID', to: 'RETAIL' }, { from: 'RETAIL', to: 'RESTAURANT' }]);
   });
 
+  it('a refusal of restaurant service names the business type as it is set up (a pharmacy is not "a retail shop")', async () => {
+    for (const [type, words] of [['PHARMACY', 'a pharmacy or drugstore'], ['LAUNDRY', 'a laundry shop or laundromat'], ['RETAIL', 'a retail shop']] as const) {
+      const b = await business(`bt-msg-${type.toLowerCase()}`, type);
+      const refused = await http().post('/v1/dining-areas').set(b.auth).send({ branchId: b.branchId, name: 'Hall' }).expect(403);
+      expect(refused.body.error).toMatchObject({ code: 'BUSINESS_TYPE_EXCLUDES_FEATURE', details: { feature: 'restaurant', businessType: type } });
+      expect(refused.body.error.message).toBe(`This business is set up as ${words}. Change its type to use restaurant service.`);
+    }
+  });
+
   it('a sari-sari store or grocery (ADR-0020) gates like a retail shop and gets its own sample items', async () => {
     const store = await business('bt-sari', 'GROCERY');
     expect((await http().get('/v1/me').set(store.auth).expect(200)).body.activeTenant.businessType).toBe('GROCERY');
@@ -86,7 +95,7 @@ describe('business type', () => {
 
     // Taking on a restaurant adds the restaurant roles, as from RETAIL.
     await http().patch('/v1/business').set(store.auth).send({ businessType: 'HYBRID' }).expect(200);
-    expect(await typeChanges(store.tenantId)).toEqual([{ from: 'GROCERY', to: 'HYBRID', rolesAdded: ['restaurant_manager', 'kitchen_crew', 'front_desk', 'stylist', 'housekeeping'] }]);
+    expect(await typeChanges(store.tenantId)).toEqual([{ from: 'GROCERY', to: 'HYBRID', rolesAdded: ['restaurant_manager', 'kitchen_crew', 'front_desk', 'stylist', 'housekeeping', 'laundry_attendant', 'rider', 'pharmacist', 'pharmacy_assistant'] }]);
     await http().post('/v1/dining-areas').set(store.auth).send({ branchId: store.branchId, name: 'Hall' }).expect(201);
     // Back to GROCERY is refused while an order is open, like RETAIL.
     await http().post('/v1/restaurant/orders').set(store.auth).send({ branchId: store.branchId, orderType: 'TAKEAWAY' }).expect(201);
@@ -136,7 +145,7 @@ describe('business type', () => {
     expect(await keys()).toEqual(expect.arrayContaining(['kitchen_crew', 'restaurant_manager']));
     const crew = ((await http().get('/v1/roles').set(shop.auth)).body.data as { key: string; permissions: string[]; isSystem: boolean }[]).find((r) => r.key === 'kitchen_crew');
     expect(crew).toMatchObject({ isSystem: true, permissions: ['kitchen.operate'] });
-    expect(await typeChanges(shop.tenantId)).toEqual([{ from: 'RETAIL', to: 'HYBRID', rolesAdded: ['restaurant_manager', 'kitchen_crew', 'front_desk', 'stylist', 'housekeeping'] }]);
+    expect(await typeChanges(shop.tenantId)).toEqual([{ from: 'RETAIL', to: 'HYBRID', rolesAdded: ['restaurant_manager', 'kitchen_crew', 'front_desk', 'stylist', 'housekeeping', 'laundry_attendant', 'rider', 'pharmacist', 'pharmacy_assistant'] }]);
     // Back and forth again: nothing new to add, roles kept.
     await http().patch('/v1/business').set(shop.auth).send({ businessType: 'RETAIL' }).expect(200);
     await http().patch('/v1/business').set(shop.auth).send({ businessType: 'RESTAURANT' }).expect(200);

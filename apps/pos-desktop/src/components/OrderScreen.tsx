@@ -73,11 +73,9 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
       .then(setOrder)
       .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
   }, [orderId]);
-  const pushed = useFloorPush(shift.branch.id, load, active);
-  usePoll(load, pushed ? 30_000 : 5000, active);
-
   const orderType = order?.orderType;
-  useEffect(() => {
+  // The menu follows the kitchen's sold-out marks: reloaded on every push, else polled slowly.
+  const loadMenu = useCallback(() => {
     if (!orderType) return;
     api<BranchMenu>('GET', `/v1/branches/${shift.branch.id}/menu?orderType=${orderType}`)
       .then(({ menu: m }) => {
@@ -86,6 +84,13 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
       })
       .catch((err) => setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) }));
   }, [orderType, shift.branch.id]);
+  const onPush = useCallback(() => {
+    load();
+    loadMenu();
+  }, [load, loadMenu]);
+  const pushed = useFloorPush(shift.branch.id, onPush, active);
+  usePoll(load, pushed ? 30_000 : 5000, active);
+  usePoll(loadMenu, pushed ? 60_000 : 15_000, active && !!orderType);
 
   // Server-priced subtotal of what is live on the order (before the service charge, which the bill adds).
   const liveKey = order ? JSON.stringify(order.items.filter(LIVE).map((i) => [i.id, i.quantity, i.modifiers.filter(LIVE).map((m) => m.id)])) : '';
@@ -100,7 +105,8 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
       return;
     }
     let live = true;
-    api<Quote>('POST', '/v1/tax/quote', { branchId: shift.branch.id, lines })
+    // Priced as the bill will be: restaurant bills are never promoted (ADR-0021 §1).
+    api<Quote>('POST', '/v1/tax/quote', { branchId: shift.branch.id, lines, promotions: false })
       .then((q) => live && setSubtotal(q.totals.amountDue))
       .catch(() => live && setSubtotal(null));
     return () => {

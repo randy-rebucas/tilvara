@@ -57,6 +57,12 @@ describe('layout', () => {
     expect(text).toContain(['--------------------------------', 'Senior citizen: Lola Cruz', 'ID OSCA-123', 'Discount              -PHP 26.79', '', '', '_'.repeat(32), '  Signature of the beneficiary'].join('\n'));
   });
 
+  it('prints a banner first, centred, bold and double height (a kitchen VOID slip)', () => {
+    const lines = layout({ ...receipt, banner: '*** VOID ***' }, 32);
+    expect(lines[0]).toEqual({ kind: 'text', text: '*** VOID ***', align: 'center', bold: true, double: true });
+    expect(layout(receipt, 32)[0]).toMatchObject({ text: 'Tindahan ni Aling Nena' });
+  });
+
   it('spells what a printer code page lacks and never prints an unknown character as garbage', () => {
     expect(printable('₱5.20 — “ok” × 2 · Peña')).toBe(`PHP 5.20 - "ok" x 2 - Peña`);
     expect(printable('日本')).toBe('??');

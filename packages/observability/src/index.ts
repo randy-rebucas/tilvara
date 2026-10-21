@@ -48,6 +48,10 @@ export const PERSONAL_KEYS = [
   'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient', 'guestName',
   // The guest registry (ADR-0023 §8).
   'nationality', 'idType', 'birthDate', 'contact',
+  // Laundry job orders and trips (ADR-0024): a walk-in's phone, where and whom a rider calls on, the rider's name.
+  'customerPhone', 'contactPhone', 'contactName', 'riderName',
+  // Prescriptions and pharmacist licences (ADR-0025 §6): health data and licence numbers.
+  'patientName', 'patientAddress', 'prescriberName', 'prescriberLicenseNo', 'prescriberS2No', 'yellowFormNo', 'licenseNo', 'prescriptions',
 ];
 
 /**
@@ -64,6 +68,12 @@ export const REDACT_PATHS = [
 export function maskEmail(email: string): string {
   const at = email.lastIndexOf('@');
   return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
+}
+
+/** `***-***-4567`: the last four digits, enough to tell two numbers apart in a log, not to call the person. */
+export function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length > 4 ? `***${digits.slice(-4)}` : '***';
 }
 
 export interface CreateLoggerOptions {

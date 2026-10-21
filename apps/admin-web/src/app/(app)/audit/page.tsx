@@ -6,8 +6,9 @@ import { api, apiOrNull, ApiError, type Member } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Audit log' };
+export const generateMetadata = pageTitle('audit');
 
 interface AuditRow {
   id: string;

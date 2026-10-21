@@ -10,8 +10,9 @@ import { describePromotion } from '@/lib/promotions';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { RenamePromotion, StateMark } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Promotion' };
+export const generateMetadata = pageTitle('prices.promotions.item');
 
 /** One promotion: its terms in words, where and when it applies, its items; rename, end or copy it. */
 export default async function PromotionPage({ params }: { params: Promise<{ id: string }> }) {

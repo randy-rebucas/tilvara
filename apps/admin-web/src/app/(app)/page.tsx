@@ -22,8 +22,9 @@ import { daysUntil, formatDateTime, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import type { MessageKey } from '@/i18n/messages';
 import { SampleCard } from './sample-card';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Overview' };
+export const generateMetadata = pageTitle('overview');
 
 type List<T> = { data: T[] };
 

@@ -45,7 +45,7 @@ import { emitEvent } from '../outbox/outbox.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { TaxService, unprocessable } from '../tax/tax.service.js';
 import { DepositsService } from './deposits.service.js';
-import { chargedSoFar, depositsHeld, ensureFolio, folioBalance, folioOfStay, loadStay, type StayRow } from './folio.js';
+import { chargedSoFar, depositsHeld, ensureFolio, folioBalance, folioOfStay, loadStay, lockFolio, type StayRow } from './folio.js';
 import { postDueNights } from './night-audit.js';
 import { branchLodgingSettings, changeRoomStatus } from './setup.service.js';
 
@@ -132,8 +132,9 @@ export class StaysService extends TenantService {
     return this.read(auth, async (db) => {
       const { scope } = await branchScope(db, q.branchId);
       this.assertCan(auth, 'lodging.read', scope);
-      const { rows } = await db.execute<{ night: string; room_id: string; number: string; room_type_id: string; free: boolean; status: string }>(sql`
+      const { rows } = await db.execute<{ night: string; room_id: string; number: string; room_type_id: string; free: boolean; status: string; occupied: boolean }>(sql`
         SELECT d.night::date::text AS night, r.id AS room_id, r.number, r.room_type_id, r.housekeeping_status AS status,
+               EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status = 'IN_HOUSE') AS occupied,
                NOT EXISTS (SELECT 1 FROM stays s WHERE s.room_id = r.id AND s.status IN ('BOOKED', 'IN_HOUSE')
                               AND s.arrival_date <= d.night::date AND s.departure_date > d.night::date)
            AND NOT EXISTS (SELECT 1 FROM room_blocks b WHERE b.room_id = r.id AND b.starts_on <= d.night::date AND b.ends_on > d.night::date) AS free
@@ -161,7 +162,7 @@ export class StaysService extends TenantService {
         }),
         rooms: roomIds.map((id) => {
           const of = rows.filter((r) => r.room_id === id);
-          return { roomId: id, number: of[0]!.number, roomTypeId: of[0]!.room_type_id, housekeepingStatus: of[0]!.status, availableAllNights: of.every((r) => r.free), freeNights: of.filter((r) => r.free).map((r) => r.night) };
+          return { roomId: id, number: of[0]!.number, roomTypeId: of[0]!.room_type_id, housekeepingStatus: of[0]!.status, occupied: of[0]!.occupied, availableAllNights: of.every((r) => r.free), freeNights: of.filter((r) => r.free).map((r) => r.night) };
         }),
       };
     });
@@ -261,7 +262,24 @@ export class StaysService extends TenantService {
       await assertLodging(db);
       if (!(ACTIVE as readonly string[]).includes(stay.status)) throw stayEnded(stay.status);
       if (input.nightlyRate !== undefined) this.assertRates(auth, scope);
+      // A new rate for a guest in house applies from the next night due (ADR-0023 §7 amendment): the
+      // nights already due are charged first, at the rate in force when they were due.
+      const rateChanges = input.nightlyRate !== undefined && (input.nightlyRate === null ? stay.nightlyRate !== null : stay.nightlyRate === null || !toDec(stay.nightlyRate).equals(input.nightlyRate));
+      const caughtUp = rateChanges && stay.status === 'IN_HOUSE'
+        ? await postDueNights(db, this.tax, stay.id, { tenantId: stay.tenantId, userId: auth.userId, correlationId: auth.correlationId ?? null, through: 'DUE', production: this.env.NODE_ENV === 'production' })
+        : [];
       const room = input.roomId && input.roomId !== stay.roomId ? await this.roomAt(db, input.roomId, stay.branchId) : null;
+      // A guest in house moves now: the new room must be ready and empty, the old one is left to clean.
+      let vacated: typeof rooms.$inferSelect | null = null;
+      if (room && stay.status === 'IN_HOUSE') {
+        const locked = await this.lockRooms(db, [stay.roomId, room.id]);
+        const target = locked.get(room.id)!;
+        if (target.housekeepingStatus !== 'CLEAN' && target.housekeepingStatus !== 'INSPECTED') {
+          throw new AppError('ROOM_NOT_READY', `The room is ${target.housekeepingStatus.toLowerCase().replace(/_/g, ' ')}`, HttpStatus.CONFLICT, { housekeepingStatus: target.housekeepingStatus });
+        }
+        await this.assertRoomFree(db, room.id, stay.id);
+        vacated = locked.get(stay.roomId) ?? null;
+      }
       const type = await this.typeOf(db, room?.roomTypeId ?? stay.roomTypeId);
       const adults = input.adults ?? stay.adults;
       const children = input.children ?? stay.children;
@@ -299,13 +317,15 @@ export class StaysService extends TenantService {
         .where(eq(stays.id, id))
         .returning();
       if (!updated!.customerId && !updated!.guestName) throw unprocessable('VALIDATION_FAILED', 'Name the guest or the customer', { path: ['guestName'] });
+      if (vacated) await changeRoomStatus(db, { tenantId: stay.tenantId, room: vacated, to: 'DIRTY', note: null, userId: auth.userId, stayId: stay.id });
       // Field names only (the guest's name is personal data); dates, room and rate are operational.
       await this.audit(db, auth, 'stay.changed', 'stay', id, {
         fields: Object.keys(input),
         ...(room && { fromRoomId: stay.roomId, toRoomId: room.id }),
         ...(input.arrivalDate !== undefined && { arrivalDate: arrival }),
         ...(input.departureDate !== undefined && { departureDate: departure, previousDepartureDate: stay.departureDate }),
-        ...(input.nightlyRate !== undefined && { nightlyRate: input.nightlyRate }),
+        ...(input.nightlyRate !== undefined && { nightlyRate: input.nightlyRate, previousNightlyRate: stay.nightlyRate }),
+        ...(caughtUp.length > 0 && { nightsPostedAtPreviousRate: caughtUp }),
       });
       return (await this.views(db, [updated!], true))[0]!;
     });
@@ -350,6 +370,7 @@ export class StaysService extends TenantService {
       await db.update(stays).set({ status, cancelReason: input.reason, cancelledAt: sql`now()`, cancelledBy: auth.userId, updatedBy: auth.userId, updatedAt: sql`now()` }).where(eq(stays.id, id));
       // A folio opened only for deposits closes with them.
       const folio = await folioOfStay(db, stay.id);
+      if (folio?.status === 'OPEN') await lockFolio(db, folio.id);
       if (folio?.status === 'OPEN') await db.update(folios).set({ status: 'SETTLED', settledAt: sql`now()`, settledBy: auth.userId }).where(eq(folios.id, folio.id));
       await this.audit(db, auth, status === 'CANCELLED' ? 'stay.cancelled' : 'stay.no_show', 'stay', id, { reason: input.reason, ...(deposits && { deposits, amount: held.toFixed(2) }) });
       return (await this.views(db, [await loadStay(db, id)], true))[0]!;
@@ -372,20 +393,30 @@ export class StaysService extends TenantService {
     await assertLodging(db);
     if (stay.status !== 'BOOKED') throw new AppError('STAY_NOT_BOOKED', `This stay is ${stay.status.toLowerCase().replace('_', ' ')}`, HttpStatus.CONFLICT, { status: stay.status });
     // Arrival today or earlier; the day before is an early check-in.
-    const tomorrow = await addDays(db, await branchToday(db, stay.branchId), 1);
+    const today = await branchToday(db, stay.branchId);
+    const tomorrow = await addDays(db, today, 1);
     if (stay.arrivalDate > tomorrow) throw new AppError('TOO_EARLY', 'Check in on the arrival day (or the day before)', HttpStatus.CONFLICT, { arrivalDate: stay.arrivalDate });
+    const early = stay.arrivalDate > today;
     const [room] = await db.select().from(rooms).where(eq(rooms.id, stay.roomId)).for('update');
     if (!(room!.housekeepingStatus === 'CLEAN' || room!.housekeepingStatus === 'INSPECTED') && !input.overrideHousekeeping) {
       throw new AppError('ROOM_NOT_READY', `The room is ${room!.housekeepingStatus.toLowerCase().replace(/_/g, ' ')}`, HttpStatus.CONFLICT, { housekeepingStatus: room!.housekeepingStatus });
     }
+    // A guest not yet checked out (past their departure, so no longer caught by the booking rule) still holds the room.
+    await this.assertRoomFree(db, stay.roomId, stay.id);
     await this.addGuests(db, auth, stay, input.guests);
     const [primary] = await db.select({ id: stayGuests.id }).from(stayGuests).where(and(eq(stayGuests.stayId, stay.id), eq(stayGuests.isPrimary, true)));
     if (!primary) throw new AppError('GUEST_REGISTRY_REQUIRED', 'Record the primary guest in the registry first', HttpStatus.CONFLICT);
     const folio = await ensureFolio(db, stay, auth.userId);
-    await db.update(stays).set({ status: 'IN_HOUSE', checkedInAt: sql`now()`, checkedInBy: auth.userId, updatedBy: auth.userId, updatedAt: sql`now()` }).where(eq(stays.id, stay.id));
-    if (input.applyDeposits) await this.deposits.applyHeld(db, auth, { ...stay, status: 'IN_HOUSE' }, folio, null);
+    // An early check-in starts the stay tonight, in the same update (an in-house stay keeps its arrival):
+    // the booking rule re-checks tonight, and the night audit charges it.
+    await db
+      .update(stays)
+      .set({ status: 'IN_HOUSE', ...(early && { arrivalDate: today }), checkedInAt: sql`now()`, checkedInBy: auth.userId, updatedBy: auth.userId, updatedAt: sql`now()` })
+      .where(eq(stays.id, stay.id));
+    if (input.applyDeposits) await this.deposits.applyHeld(db, auth, { ...stay, status: 'IN_HOUSE', ...(early && { arrivalDate: today }) }, folio, null);
     await this.audit(db, auth, 'stay.checked_in', 'stay', stay.id, {
       roomId: stay.roomId, folioId: folio.id,
+      ...(early && { earlyCheckIn: true, arrivalDate: today, previousArrivalDate: stay.arrivalDate }),
       ...(input.overrideHousekeeping && room!.housekeepingStatus !== 'CLEAN' && room!.housekeepingStatus !== 'INSPECTED' && { overrideHousekeeping: room!.housekeepingStatus }),
     });
     await emitEvent(db, { tenantId: stay.tenantId, topic: 'stay.checked_in', payload: { stayId: stay.id, folioId: folio.id, branchId: stay.branchId, roomId: stay.roomId }, correlationId: auth.correlationId });
@@ -431,8 +462,9 @@ export class StaysService extends TenantService {
     if (stay.status !== 'IN_HOUSE') throw new AppError('STAY_NOT_IN_HOUSE', `This stay is ${stay.status.toLowerCase().replace('_', ' ')}`, HttpStatus.CONFLICT, { status: stay.status });
     const folio = await folioOfStay(db, stay.id);
     if (!folio) throw notFound('Folio');
+    const today = await branchToday(db, stay.branchId);
+    if (stay.departureDate < today) stay = await this.extendOverstay(db, auth, stay, today);
     if (input.departEarly) {
-      const today = await branchToday(db, stay.branchId);
       const nextDay = await addDays(db, stay.arrivalDate, 1);
       const departure = today > nextDay ? today : nextDay;
       if (departure < stay.departureDate) {
@@ -444,6 +476,32 @@ export class StaysService extends TenantService {
     await postDueNights(db, this.tax, stay.id, { tenantId: stay.tenantId, userId: auth.userId, correlationId: auth.correlationId ?? null, through: 'DEPARTURE', production: this.env.NODE_ENV === 'production' });
     await this.deposits.applyHeld(db, auth, stay, folio, null);
     return { stay, folio };
+  }
+
+  /**
+   * An overstay (§4): a guest still in house after their departure date leaves today. The departure
+   * moves to today in the same update a change of dates makes, so the no-double-booking exclusion and
+   * the room-block trigger check the extra nights; check-out then charges them. A booking of the room
+   * that starts in those nights is named, so the front desk moves one of the two first.
+   */
+  private async extendOverstay(db: Database, auth: AuthContext, stay: StayRow, today: string): Promise<StayRow> {
+    const [next] = await db
+      .select({ id: stays.id, arrivalDate: stays.arrivalDate })
+      .from(stays)
+      .where(and(
+        eq(stays.roomId, stay.roomId), sql`${stays.id} <> ${stay.id}`, inArray(stays.status, [...ACTIVE]),
+        sql`${stays.arrivalDate} < ${today}::date`, sql`${stays.departureDate} > ${stay.departureDate}::date`,
+      ))
+      .orderBy(stays.arrivalDate)
+      .limit(1);
+    if (next) {
+      throw new AppError('ROOM_DOUBLE_BOOKED', `The guest stayed past their departure into another booking of this room (from ${next.arrivalDate}); move that booking or this guest to another room, then check out`, HttpStatus.CONFLICT, {
+        overstay: true, departureDate: stay.departureDate, extendTo: today, conflictingStayId: next.id, conflictingArrivalDate: next.arrivalDate,
+      });
+    }
+    await db.update(stays).set({ departureDate: today, updatedBy: auth.userId, updatedAt: sql`now()` }).where(eq(stays.id, stay.id));
+    await this.audit(db, auth, 'stay.changed', 'stay', stay.id, { fields: ['departureDate'], departureDate: today, previousDepartureDate: stay.departureDate, overstay: true });
+    return loadStay(db, stay.id, true);
   }
 
   // ---------------------------------------------------------------- guest registry (§8)
@@ -472,8 +530,12 @@ export class StaysService extends TenantService {
       const stay = await loadStay(db, id, true);
       this.assertCan(auth, 'lodging.manage', this.scopeOf(stay));
       await assertLodging(db);
+      if (!(ACTIVE as readonly string[]).includes(stay.status)) throw stayEnded(stay.status);
       const [guest] = await db.select().from(stayGuests).where(and(eq(stayGuests.id, guestId), eq(stayGuests.stayId, id)));
       if (!guest) throw notFound('Guest');
+      if (input.isPrimary === false && guest.isPrimary && stay.status === 'IN_HOUSE') {
+        throw new AppError('PRIMARY_GUEST_REQUIRED', 'A guest in house keeps a primary guest; make another one primary instead', HttpStatus.CONFLICT);
+      }
       if (input.isPrimary === true && !guest.isPrimary) {
         await db.update(stayGuests).set({ isPrimary: false, updatedAt: sql`now()` }).where(and(eq(stayGuests.stayId, id), eq(stayGuests.isPrimary, true)));
       }
@@ -488,6 +550,7 @@ export class StaysService extends TenantService {
       const stay = await loadStay(db, id, true);
       this.assertCan(auth, 'lodging.manage', this.scopeOf(stay));
       await assertLodging(db);
+      if (!(ACTIVE as readonly string[]).includes(stay.status)) throw stayEnded(stay.status);
       const [guest] = await db.select().from(stayGuests).where(and(eq(stayGuests.id, guestId), eq(stayGuests.stayId, id)));
       if (!guest) throw notFound('Guest');
       if (guest.isPrimary && stay.status === 'IN_HOUSE') throw new AppError('PRIMARY_GUEST_REQUIRED', 'A guest in house keeps a primary guest; make another one primary first', HttpStatus.CONFLICT);
@@ -581,6 +644,26 @@ export class StaysService extends TenantService {
     return room;
   }
 
+  /** Lock rooms in id order (two moves the other way round never wait on each other). */
+  private async lockRooms(db: Database, ids: string[]) {
+    const out = new Map<string, typeof rooms.$inferSelect>();
+    for (const id of [...new Set(ids)].sort()) {
+      const [row] = await db.select().from(rooms).where(eq(rooms.id, id)).for('update');
+      if (row) out.set(id, row);
+    }
+    return out;
+  }
+
+  /** No other guest in house in the room (the caller holds the room's row lock). */
+  private async assertRoomFree(db: Database, roomId: string, stayId: string) {
+    const [occupied] = await db
+      .select({ id: stays.id })
+      .from(stays)
+      .where(and(eq(stays.roomId, roomId), eq(stays.status, 'IN_HOUSE'), sql`${stays.id} <> ${stayId}`))
+      .limit(1);
+    if (occupied) throw new AppError('ROOM_OCCUPIED', 'Another guest is still in this room; check them out or move them first', HttpStatus.CONFLICT, { stayId: occupied.id });
+  }
+
   private async typeOf(db: Database, id: string) {
     const [row] = await db.select().from(roomTypes).where(eq(roomTypes.id, id));
     return row!;
@@ -614,9 +697,13 @@ export class StaysService extends TenantService {
       await db.select({ id: stayGuests.id, stayId: stayGuests.stayId, fullName: stayGuests.fullName, isPrimary: stayGuests.isPrimary }).from(stayGuests).where(inArray(stayGuests.stayId, ids)),
       await db.select({ id: customers.id, displayName: customers.displayName }).from(customers).where(inArray(customers.id, rows.flatMap((r) => (r.customerId ? [r.customerId] : [])).concat(['00000000-0000-0000-0000-000000000000']))),
     ];
+    // An overstay: in house after the departure date, in the branch's calendar.
+    const { rows: todays } = await db.execute<{ id: string; d: string }>(sql`
+      SELECT b.id, (now() AT TIME ZONE b.timezone)::date::text AS d FROM branches b WHERE b.id IN (${sql.join([...new Set(rows.map((r) => r.branchId))].map((b) => sql`${b}::uuid`), sql`, `)})`);
     const out = [];
     for (const s of rows) {
       const folio = folioRows.find((f) => f.stayId === s.id) ?? null;
+      const branchDay = todays.find((t) => t.id === s.branchId)?.d ?? null;
       const guests = guestRows.filter((g) => g.stayId === s.id).sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary));
       const base = {
         ...s,
@@ -628,6 +715,7 @@ export class StaysService extends TenantService {
         guestDisplayName: guests[0]?.fullName ?? s.guestName ?? customerRows.find((c) => c.id === s.customerId)?.displayName ?? null,
         guests: guests.map((g) => ({ id: g.id, fullName: g.fullName, isPrimary: g.isPrimary })),
         folio: folio ? { id: folio.id, status: folio.status } : null,
+        overstay: s.status === 'IN_HOUSE' && branchDay !== null && s.departureDate < branchDay,
       };
       if (!detailed) {
         out.push(base);

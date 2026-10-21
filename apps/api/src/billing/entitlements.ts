@@ -1,7 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { sql, type BusinessType, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
 import { AppError } from '../infrastructure/http-error.filter.js';
-import { servesAppointments, servesLodging, servesTables } from '@1pos/validation';
+import { servesAppointments, servesLaundry, servesLodging, servesPharmacy, servesTables, usesPackages } from '@1pos/validation';
 
 export const TRIAL_PLAN = 'growth';
 export const TRIAL_DAYS = 14;
@@ -116,11 +116,66 @@ export async function assertLodging(db: Database): Promise<void> {
   }
 }
 
-/** Recipes ("supplies used"): a salon's services need no restaurant plan (ADR-0022 §9); otherwise restaurant service. */
+/**
+ * Job orders, machines, trips and laundry settings (ADR-0024): only for a laundry shop or laundromat (or
+ * HYBRID). Writes are refused for other types; reads stay open.
+ */
+/**
+ * Prescriptions and the prescription classes of medicine (ADR-0025 §1): only for a pharmacy or drugstore
+ * (or HYBRID). Over-the-counter medicines and lot tracing work for every type; reads stay open.
+ */
+export async function assertPharmacy(db: Database): Promise<void> {
+  const type = await businessType(db);
+  if (!servesPharmacy(type)) {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is not set up as a pharmacy or drugstore. Change its type to dispense prescription medicines.',
+      HttpStatus.FORBIDDEN,
+      { feature: 'pharmacy', businessType: type },
+    );
+  }
+}
+
+export async function assertLaundry(db: Database): Promise<void> {
+  const type = await businessType(db);
+  if (!servesLaundry(type)) {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is not set up as a laundry shop or laundromat. Change its type to take job orders.',
+      HttpStatus.FORBIDDEN,
+      { feature: 'laundry', businessType: type },
+    );
+  }
+}
+
+/** Prepaid packages (ADR-0022 §6): a salon's services or a laundry's loads (ADR-0024 §10), or HYBRID. */
+export async function assertPackages(db: Database): Promise<void> {
+  const type = await businessType(db);
+  if (!usesPackages(type)) {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is not set up as a salon or a laundry. Change its type to sell packages.',
+      HttpStatus.FORBIDDEN,
+      { feature: 'packages', businessType: type },
+    );
+  }
+}
+
+/** Recipes ("supplies used"): a salon's services or a laundry's loads need no restaurant plan (ADR-0022 §9, ADR-0024 §11); otherwise restaurant service. */
 export async function assertRecipes(db: Database): Promise<void> {
-  if ((await businessType(db)) === 'SALON') return;
+  const type = await businessType(db);
+  if (type === 'SALON' || type === 'LAUNDRY') return;
   await assertFeature(db, 'restaurant');
 }
+
+/** How a business type without table service is named in a refusal. */
+const NO_TABLES_TYPE_NAMES: Partial<Record<BusinessType, string>> = {
+  RETAIL: 'a retail shop',
+  GROCERY: 'a sari-sari store or grocery',
+  SALON: 'a salon, spa or barber shop',
+  LAUNDRY: 'a laundry shop or laundromat',
+  PHARMACY: 'a pharmacy or drugstore',
+};
 
 /**
  * Refuse a feature the plan does not include, or (restaurant service) one the business type leaves
@@ -131,11 +186,7 @@ export async function assertFeature(db: Database, feature: PlanFeature): Promise
   if (type && !servesTables(type)) {
     throw new AppError(
       'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      type === 'GROCERY'
-        ? 'This business is set up as a sari-sari store or grocery. Change its type to use restaurant service.'
-        : type === 'SALON'
-          ? 'This business is set up as a salon, spa or barber shop. Change its type to use restaurant service.'
-          : 'This business is set up as a retail shop. Change its type to use restaurant service.',
+      `This business is set up as ${NO_TABLES_TYPE_NAMES[type] ?? 'a retail shop'}. Change its type to use restaurant service.`,
       HttpStatus.FORBIDDEN,
       { feature, businessType: type },
     );

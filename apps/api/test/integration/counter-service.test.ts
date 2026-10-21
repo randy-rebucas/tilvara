@@ -288,8 +288,14 @@ describe('tips', () => {
     const back = (await http().post(`/v1/sales/${cash.id}/returns`).set(c.manager.auth).set(key()).send({ cashierSessionId: c.session, kind: 'VOID', reason: 'Wrong drink' }).expect(201)).body;
     expect(back).toMatchObject({ amountDue: '45.00', tipRefund: '10.00' });
     // Tips handed to staff from the drawer.
+    // Never more than the tips owed (the ₱15 card tip; the cash tip went back with the void), even with cash in the drawer.
+    expect((await http().post(`/v1/cashier-sessions/${c.session}/movements`).set(c.cashier.auth).send({ type: 'TIP_PAYOUT', amount: '15.01', reason: 'Too much' }).expect(409)).body.error)
+      .toMatchObject({ code: 'TIPS_EXCEEDED', details: { owed: '15.00' } });
     await http().post(`/v1/cashier-sessions/${c.session}/movements`).set(c.cashier.auth).send({ type: 'TIP_PAYOUT', amount: '15.00', reason: 'Card tips to the crew' }).expect(201);
     await http().post(`/v1/cashier-sessions/${c.session}/movements`).set(c.cashier.auth).send({ type: 'TIP_PAYOUT', amount: '99999.00', reason: 'Too much' }).expect(422);
+    // A pay-out cannot take the drawer below zero either.
+    expect((await http().post(`/v1/cashier-sessions/${c.session}/movements`).set(c.cashier.auth).send({ type: 'PAY_OUT', amount: '985.01', reason: 'Too much' }).expect(422)).body.error)
+      .toMatchObject({ code: 'INSUFFICIENT_DRAWER_CASH', details: { available: '985.00' } });
     // Drawer: float 1000 + 45 + 10 − 45 − 10 − 15 (the card sale moved no cash).
     expect((await http().get(`/v1/cashier-sessions/${c.session}`).set(c.cashier.auth).expect(200)).body.expectedCash).toBe('985.00');
 
@@ -438,5 +444,126 @@ describe('selling by weight', () => {
     expect((await create().expect(422)).body.error).toMatchObject({ code: 'BUSINESS_TYPE_EXCLUDES_FEATURE', details: { feature: 'sold_by_weight' } });
     await http().patch('/v1/business').set(c.auth).send({ businessType: 'HYBRID' }).expect(200);
     await create().expect(201);
+  });
+});
+
+describe('kitchen printing after the floor changed things (audit 2026-10-21)', () => {
+  it('a reprint after a merge prints the table the food goes to now; a ticket voided before printing is settled, never printed empty', async () => {
+    const c = await cafe('cs-print-moved', false);
+    const area = (await sql<{ id: string }>(c, `SELECT id FROM dining_areas`))[0]!.id;
+    const t2 = (await http().post('/v1/restaurant-tables').set(c.auth).send({ areaId: area, code: 'T2' }).expect(201)).body.id as string;
+    const openOn = async (tableId: string) => (await http().post('/v1/restaurant/orders').set(c.cashier.auth).send({ branchId: c.branchId, orderType: 'DINE_IN', tableId }).expect(201)).body as { id: string; orderNumber: number };
+    const addFire = async (orderId: string, items: unknown[]) => {
+      await http().post(`/v1/restaurant/orders/${orderId}/items`).set(c.cashier.auth).set(key()).send({ items }).expect(201);
+      await http().post(`/v1/restaurant/orders/${orderId}/fire`).set(c.cashier.auth).send({}).expect(200);
+    };
+    const claim = async (stationIds: string[]) =>
+      (await http().post('/v1/terminal/kitchen-tickets/claim').set(c.till1.headers).send({ stationIds }).expect(200)).body.data as KitchenTicketPrint[];
+
+    const o1 = await openOn(c.t1);
+    await addFire(o1.id, [{ variantId: c.burger, quantity: '1', modifierOptionIds: [c.medium] }]);
+    const [first] = await claim([c.grill]);
+    expect(first!.order).toMatchObject({ orderNumber: o1.orderNumber, tableCode: 'T1' });
+    await http().post(`/v1/terminal/kitchen-tickets/${first!.id}/printed`).set(c.till1.headers).expect(200);
+    // T1 joins T2: the burger now goes to T2, and a reprint says so (as the kitchen screen does).
+    const o2 = await openOn(t2);
+    await http().post(`/v1/restaurant/orders/${o1.id}/merge`).set(c.cashier.auth).send({ intoOrderId: o2.id }).expect(200);
+    await http().post(`/v1/kitchen/tickets/${first!.id}/reprint`).set(c.cashier.auth).expect(200);
+    const [again] = await claim([c.grill]);
+    expect(again).toMatchObject({ id: first!.id, reprint: true, order: { orderNumber: o2.orderNumber, tableCode: 'T2' } });
+    await http().post(`/v1/terminal/kitchen-tickets/${again!.id}/printed`).set(c.till1.headers).expect(200);
+
+    // A tea fired and voided before any till printed it: nothing to print, and it does not stay pending.
+    await addFire(o2.id, [{ variantId: c.tea, quantity: '1' }]);
+    const tea = ((await http().get(`/v1/restaurant/orders/${o2.id}`).set(c.cashier.auth).expect(200)).body.items as { id: string; name: string }[]).find((i) => i.name === 'Iced tea')!;
+    await http().post(`/v1/order-items/${tea.id}/void`).set(c.manager.auth).set(key()).send({ reason: 'Changed their mind' }).expect(200);
+    expect(await claim([c.grill, c.bar])).toEqual([]);
+    expect(await sql(c, `SELECT k.printed_at IS NOT NULL AS settled, k.print_count, k.print_claimed_by FROM kitchen_tickets k JOIN kitchen_stations s ON s.id = k.station_id WHERE s.code = 'BAR'`))
+      .toEqual([{ settled: true, print_count: 0, print_claimed_by: null }]);
+    expect(await audit(c)).toEqual({});
+  });
+});
+
+describe('VOID slips and sold-out items offline (audit 2026-10-21)', () => {
+  const claimAs = (c: C) => async (stationIds: string[]) =>
+    (await http().post('/v1/terminal/kitchen-tickets/claim').set(c.till1.headers).send({ stationIds }).expect(200)).body.data as KitchenTicketPrint[];
+  const printed = (c: C, id: string) => http().post(`/v1/terminal/kitchen-tickets/${id}/printed`).set(c.till1.headers);
+
+  it('a counter sale voided after its ticket printed prints a VOID slip once; one voided before printing prints nothing', async () => {
+    const c = await cafe('cs-void-slip');
+    const claim = claimAs(c);
+    const sale = (await sell(c, { lines: [burgerLine(c), { variantId: c.tea, quantity: '1' }], pickupName: 'Di' }).expect(201)).body;
+    const tickets = await claim([c.grill, c.bar]);
+    expect(tickets.map((t) => [t.station.code, t.kind])).toEqual([['GRILL', 'TICKET'], ['BAR', 'TICKET']]);
+    const grill = tickets.find((t) => t.station.code === 'GRILL')!;
+    await printed(c, grill.id).expect(200);
+    // The bar ticket is still held by the till (printing) when the sale is voided: it was never on paper.
+    await http().post(`/v1/sales/${sale.id}/returns`).set(c.manager.auth).set(key()).send({ cashierSessionId: c.session, kind: 'VOID', reason: 'Wrong order' }).expect(201);
+    const [slip, ...more] = await claim([c.grill, c.bar]);
+    expect(more).toEqual([]);
+    expect(slip).toMatchObject({ id: grill.id, kind: 'VOID', ticketNumber: grill.ticketNumber, station: { code: 'GRILL' }, order: { orderType: 'COUNTER', customerName: 'Di' } });
+    expect(slip!.items).toEqual([{ name: 'Burger', quantity: '1', seat: null, note: null, choices: ['Medium', 'Cheese', 'No onions'] }]);
+    // Another till cannot settle it; released, it comes back; printed, it is done (the ticket's print count stays).
+    await http().post(`/v1/terminal/kitchen-tickets/${slip!.id}/printed`).set(c.till2.headers).expect(409);
+    await http().post(`/v1/terminal/kitchen-tickets/${slip!.id}/release`).set(c.till1.headers).expect(200);
+    expect((await claim([c.grill])).map((t) => [t.id, t.kind])).toEqual([[grill.id, 'VOID']]);
+    await printed(c, slip!.id).expect(200);
+    expect(await claim([c.grill, c.bar])).toEqual([]);
+    expect(await sql(c, `SELECT print_count, void_printed_at IS NOT NULL AS done FROM kitchen_tickets WHERE id = $1`, [grill.id])).toEqual([{ print_count: 1, done: true }]);
+    expect(await audit(c)).toEqual({});
+  });
+
+  it('a table item or a choice voided after printing prints a VOID slip of just that, even when a reprint finds nothing left', async () => {
+    const c = await cafe('cs-void-table', false);
+    const claim = claimAs(c);
+    const o = (await http().post('/v1/restaurant/orders').set(c.cashier.auth).send({ branchId: c.branchId, orderType: 'DINE_IN', tableId: c.t1 }).expect(201)).body as { id: string; orderNumber: number };
+    await http().post(`/v1/restaurant/orders/${o.id}/items`).set(c.cashier.auth).set(key()).send({ items: [
+      { variantId: c.burger, quantity: '1', modifierOptionIds: [c.medium, c.noOnions] }, { variantId: c.burger, quantity: '2', modifierOptionIds: [c.wellDone] },
+    ] }).expect(201);
+    await http().post(`/v1/restaurant/orders/${o.id}/fire`).set(c.cashier.auth).send({}).expect(200);
+    const [ticket] = await claim([c.grill]);
+    await printed(c, ticket!.id).expect(200);
+    const items = (await http().get(`/v1/restaurant/orders/${o.id}`).set(c.cashier.auth).expect(200)).body.items as { id: string; quantity: string; modifiers: { id: string; name: string }[] }[];
+    const noOnions = items.flatMap((i) => i.modifiers).find((m) => m.name === 'No onions')!;
+    const second = items.find((i) => i.quantity === '2')!;
+    await http().post(`/v1/order-items/${noOnions.id}/void`).set(c.manager.auth).set(key()).send({ reason: 'Onions after all' }).expect(200);
+    await http().post(`/v1/order-items/${second.id}/void`).set(c.manager.auth).set(key()).send({ reason: 'Ordered twice' }).expect(200);
+    const [slip] = await claim([c.grill]);
+    expect(slip).toMatchObject({ id: ticket!.id, kind: 'VOID', order: { orderNumber: o.orderNumber, tableCode: 'T1' } });
+    expect(slip!.items).toEqual([
+      { name: 'No onions (Burger)', quantity: '1', seat: null, note: null, choices: [] },
+      { name: 'Burger', quantity: '2', seat: null, note: null, choices: ['Well done'] },
+    ]);
+    await printed(c, slip!.id).expect(200);
+    expect(await claim([c.grill])).toEqual([]);
+
+    // A reprint after the last item was voided has nothing to reprint; the VOID slip of that item still prints.
+    const first = items.find((i) => i.quantity === '1')!;
+    await http().post(`/v1/order-items/${first.id}/void`).set(c.manager.auth).set(key()).send({ reason: 'Left' }).expect(200);
+    await http().post(`/v1/kitchen/tickets/${ticket!.id}/reprint`).set(c.cashier.auth).expect(200);
+    const [last, ...none] = await claim([c.grill]);
+    expect(none).toEqual([]);
+    expect(last).toMatchObject({ id: ticket!.id, kind: 'VOID', items: [{ name: 'Burger', quantity: '1', choices: ['Medium'] }] });
+    await printed(c, last!.id).expect(200);
+    expect(await claim([c.grill])).toEqual([]);
+    expect(await audit(c)).toEqual({});
+  });
+
+  it('the snapshot names what is sold out at the branch, and a sold-out mark moves the catalog version', async () => {
+    const c = await cafe('cs-sold-out-offline');
+    const before = (await http().get('/v1/terminal/catalog-version').set(c.till1.headers).expect(200)).body.version as number;
+    await http().put(`/v1/branches/${c.branchId}/sold-out`).set(c.crew.auth).send({ variantId: c.burger, soldOut: true }).expect(200);
+    await http().put(`/v1/branches/${c.branchId}/sold-out`).set(c.crew.auth).send({ variantId: c.cheese, soldOut: true }).expect(200);
+    expect((await http().get('/v1/terminal/catalog-version').set(c.till1.headers).expect(200)).body.version).toBeGreaterThan(before);
+    const snap = (await http().get('/v1/terminal/snapshot').set(c.till1.headers).expect(200)).body as Snapshot;
+    expect(snap.counter!.items.map((i) => i.name)).toEqual(['Iced tea']);
+    expect(snap.counter!.soldOut).toEqual(expect.arrayContaining([{ variantId: c.burger, name: 'Burger' }, { variantId: c.cheese, name: 'Cheese' }]));
+    expect(snap.counter!.soldOut).toHaveLength(2);
+    // Back on: the next snapshot no longer names it.
+    await http().put(`/v1/branches/${c.branchId}/sold-out`).set(c.crew.auth).send({ variantId: c.burger, soldOut: false }).expect(200);
+    const again = (await http().get('/v1/terminal/snapshot').set(c.till1.headers).expect(200)).body as Snapshot;
+    expect(again.counter!.soldOut).toEqual([{ variantId: c.cheese, name: 'Cheese' }]);
+    const burger = again.counter!.items.find((i) => i.variantId === c.burger)!;
+    expect(burger.modifierGroups.find((g) => g.name === 'Extras')!.options.map((o) => o.name)).toEqual(['No onions']);
   });
 });

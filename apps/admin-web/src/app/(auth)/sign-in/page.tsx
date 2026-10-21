@@ -3,8 +3,9 @@ import { AuthFace, AuthStub } from '@/components/auth-note';
 import { Callout } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { SignInForm } from './sign-in-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sign in' };
+export const generateMetadata = pageTitle('sign-in');
 
 export default async function SignInPage({ searchParams }: { searchParams: Promise<{ next?: string; closed?: string }> }) {
   const { t } = await getT();

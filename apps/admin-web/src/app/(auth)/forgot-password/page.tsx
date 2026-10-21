@@ -2,8 +2,9 @@ import Link from 'next/link';
 import { AuthFace, AuthStub } from '@/components/auth-note';
 import { getT } from '@/i18n/server';
 import { ForgotPasswordForm } from './forgot-password-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Reset password' };
+export const generateMetadata = pageTitle('forgot-password');
 
 export default async function ForgotPasswordPage() {
   const { t } = await getT();

@@ -9,8 +9,9 @@ import { formatDate } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { AppointmentsChrome, appointmentsAccess, appointmentsBranch, StatusTag, staffColor } from './chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Appointments' };
+export const generateMetadata = pageTitle('appointments');
 
 /** Pixels per minute in the day view: an hour is 72px, a 15-minute service still shows its time. */
 const PX = 1.2;

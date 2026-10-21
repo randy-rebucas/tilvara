@@ -1,4 +1,5 @@
 import { HttpStatus } from '@nestjs/common';
+import type { PostingLine } from '@1pos/accounting';
 import { and, eq, folioEntries, folios, sql, stays, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { notFound } from '../common/tenant-service.js';
@@ -26,9 +27,15 @@ export async function depositsHeld(db: Database, stayId: string): Promise<Dec> {
   return toDec(rows[0]!.v);
 }
 
+/**
+ * With `lock`: FOR NO KEY UPDATE, which still serialises changes to the stay but lets folio entries and
+ * deposits (whose foreign keys take KEY SHARE on the stay) be written meanwhile; FOR UPDATE made a
+ * check-out holding the stay and waiting for the folio lock deadlock with a payment holding the folio
+ * lock and inserting an entry (audit 2026-10-21).
+ */
 export async function loadStay(db: Database, id: string, lock = false): Promise<StayRow> {
   const q = db.select().from(stays).where(eq(stays.id, id));
-  const [row] = lock ? await q.for('update') : await q;
+  const [row] = lock ? await q.for('no key update') : await q;
   if (!row) throw notFound('Stay');
   return row;
 }
@@ -48,6 +55,14 @@ export async function ensureFolio(db: Database, stay: StayRow, userId: string): 
     .returning();
   return row!;
 }
+
+/**
+ * Money taken or given back at a drawer (§5.2): the lines post with the drawer's branch, except the
+ * guest's own account (guest ledger, guest deposits), which stays with the stay's branch, as the nights
+ * and the deposits applied do. The entry stays balanced (only the branch tag moves).
+ */
+export const liabilityAtStayBranch = (lines: PostingLine[], account: 'GUEST_LEDGER' | 'GUEST_DEPOSITS', stayBranchId: string): PostingLine[] =>
+  lines.map((l) => (l.account === account ? { ...l, branchId: stayBranchId } : l));
 
 export const folioSettled = () => new AppError('FOLIO_SETTLED', 'This folio is settled and takes no more entries', HttpStatus.CONFLICT);
 

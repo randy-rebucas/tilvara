@@ -4,10 +4,10 @@ import {
   type ClaimKitchenTicketsInput,
   snapshotItemsQuerySchema,
   snapshotPageQuerySchema,
-  syncSalesRequestSchema,
+  syncSalesBatchSchema,
   type SnapshotItemsQuery,
   type SnapshotPageQuery,
-  type SyncSalesRequest,
+  type SyncSalesBatch,
 } from '@1pos/sync-protocol';
 import { dismissOfflineSchema, idParamSchema, offlineListQuerySchema, type DismissOfflineInput, type OfflineListQuery } from '@1pos/validation';
 import { Auth, RequireTenant, TerminalAuth, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
@@ -58,7 +58,8 @@ export class SyncController {
   @RateLimit(...TERMINAL_LIMITS)
   @HttpCode(200)
   @Post('sync/sales')
-  async syncSales(@Req() req: AuthedRequest, @Body(new ZodPipe(syncSalesRequestSchema)) body: SyncSalesRequest) {
+  async syncSales(@Req() req: AuthedRequest, @Body(new ZodPipe(syncSalesBatchSchema)) body: SyncSalesBatch) {
+    // Only each envelope's head is checked here: the service checks each one alone (a malformed one is quarantined).
     const terminal = await this.sync.authenticate((h) => req.header(h), req.correlationId);
     return { results: await this.sync.syncSales(terminal, body.sales, req.receivedAt) };
   }

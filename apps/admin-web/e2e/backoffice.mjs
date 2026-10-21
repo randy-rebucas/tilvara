@@ -1,7 +1,7 @@
 // End-to-end test of the back-office screens added from the leftovers (session 10): product editing,
 // price lists and branch assignment, supplier edit/archive, draft order editing, return to supplier,
 // all reorder points, journal filters and document links (sale, return, pay-in, shift), custom roles
-// and member access, and the tax registration history. Setup goes through the API; every check is on
+// and member access, the tax registration history, product categories and units of measure. Setup goes through the API; every check is on
 // the real admin screens.
 // Usage: node e2e/backoffice.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
@@ -95,6 +95,45 @@ try {
   await evaluate(`document.querySelector('[aria-label="Remove barcode 4807770270099"]').click()`);
   check('barcode removed (archived)', await waitFor(`!document.body.innerText.includes('4807770270099')`).then(() => true, () => false));
   await shot('bo-product.png');
+
+  // 1b. Categories: a tree (Groceries › Noodles), one given to the canton, the list filtered by it,
+  // a parent with a sub-category refused archiving. Then a unit added under "Units and tax".
+  await go('/products');
+  await clickText('Categories');
+  await waitFor(`location.pathname === '/products/categories'`);
+  check('categories tab: empty tree explains the reports', await shown('No categories yet'));
+  await clickText('Add category');
+  await fill('name', 'Groceries');
+  await submitFormOf('name');
+  check('category created', await waitFor(`document.querySelector('[data-category="Groceries"]')`).then(() => true, () => false));
+  await clickText('Add sub-category');
+  await fill('name', 'Noodles');
+  await submitFormOf('name');
+  check('sub-category listed under its parent', await waitFor(`[...document.querySelectorAll('[data-category]')].map((x) => x.dataset.category).join('|') === 'Groceries|Noodles'`).then(() => true, () => false));
+  await shot('bo-categories.png');
+  const noodles = (await evaluate(`fetch('/api/v1/categories').then((r) => r.json())`)).data.find((c) => c.name === 'Noodles');
+  await go(`/products/${canton.id}`);
+  check('product without a category says so', await shown('No category'));
+  await clickText('Edit product');
+  await fill('categoryId', noodles.id);
+  await submitFormOf('name');
+  // textContent: the header line is styled in capitals, which innerText would return.
+  check('category given to the product, shown by its path', await waitFor(`(document.querySelector('[data-testid="product-category"]')?.textContent ?? '').includes('Groceries › Noodles')`).then(() => true, () => false));
+  await go(`/products?category=${noodles.id}`);
+  check('product list filtered by category: the canton, not the cola', (await shown('Category: Groceries › Noodles')) && (await has('Lucky Me Pancit Canton')) && !(await has('Coke Mismo')));
+  await go('/products/categories');
+  await acceptConfirms();
+  await evaluate(`[...document.querySelector('[data-category="Groceries"]').querySelectorAll('button')].find((x) => x.textContent.trim() === 'Archive').click()`);
+  check('a category with a sub-category is not archived', await shown('Move or archive its sub-categories and products first'));
+  await clickText('Units and tax');
+  await waitFor(`location.pathname === '/products/units'`);
+  check('units and tax categories listed', (await shown('Units of measure')) && (await has('PC', 'Tax categories', 'VATable')));
+  await clickText('Add unit');
+  await fill('code', 'TRAY');
+  await fill('name', 'Tray');
+  await submitFormOf('code');
+  check('unit added', await waitFor(`[...document.querySelectorAll('main table tbody td')].some((td) => td.innerText.trim() === 'TRAY')`).then(() => true, () => false));
+  await shot('bo-units.png');
 
   // 2. Price lists: create one, use it at a branch, then back to the default.
   await go('/prices');
@@ -265,7 +304,7 @@ try {
 
   // 11. Phone width and Filipino.
   await viewport(390, 844, true);
-  const pages = [`/products/${canton.id}`, '/prices', `/purchasing/suppliers/${supplier.id}`, `/sales/${sale.id}`, `/shifts/${shift.id}`, '/team', `/locations/entities/${le.id}`, `/books?entity=${le.id}`, '/reports/sales', '/reports/products', '/reports/tax'];
+  const pages = [`/products/${canton.id}`, '/products/categories', '/products/units', '/prices', `/purchasing/suppliers/${supplier.id}`, `/sales/${sale.id}`, `/shifts/${shift.id}`, '/team', `/locations/entities/${le.id}`, `/books?entity=${le.id}`, '/reports/sales', '/reports/products', '/reports/tax'];
   const wide = [];
   for (const p of pages) {
     await go(p);

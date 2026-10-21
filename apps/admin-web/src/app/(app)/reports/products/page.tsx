@@ -4,8 +4,9 @@ import type { ByProduct } from '@/lib/api';
 import { peso, qty, sumDecimal } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sales by product' };
+export const generateMetadata = pageTitle('reports.products');
 
 /** Each item sold: quantities, net sales, revenue ex VAT, cost and gross profit; charges listed apart. */
 export default async function ByProductPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {

@@ -8,6 +8,9 @@ import {
   depositForfeitedPosting,
   depositReceivedPosting,
   depositRefundedPosting,
+  downPaymentForfeitedPosting,
+  downPaymentReceivedPosting,
+  downPaymentRefundedPosting,
   folioPaymentPosting,
   goodsReceiptPosting,
   roomChargePosting,
@@ -67,6 +70,9 @@ describe('posting rules', () => {
     const spent = salePosting({ salesExVat: '56.00', vatAmount: '0', statutoryDiscount: '0', cash: '33.60', electronic: '0', storeCredit: '22.40', cogs: '40.00' });
     expect(net(spent)).toEqual({ CASH_ON_HAND: '33.60', CUSTOMER_STORE_CREDIT: '22.40', SALES: '-56.00', COGS: '40.00', INVENTORY: '-40.00' });
     expect(DEFAULT_CHART.find((a) => a.key === 'CUSTOMER_STORE_CREDIT')).toMatchObject({ code: '2300', type: 'LIABILITY' });
+    // Returning that sale in cash: the credit share goes back to the credit, only the cash share leaves the drawer.
+    const back = saleReturnPosting({ salesExVat: '56.00', vatAmount: '0', statutoryDiscount: '0', refund: '56.00', storeCredit: '22.40', restocked: '40.00' });
+    expect(net(back)).toEqual({ SALES_RETURNS: '56.00', CUSTOMER_STORE_CREDIT: '-22.40', CASH_ON_HAND: '-33.60', INVENTORY: '40.00', COGS: '-40.00' });
   });
 
   it('tips (session 25): owed to staff, never sales or VAT; a void gives them back; paying out clears them', () => {
@@ -145,6 +151,22 @@ describe('posting rules', () => {
     expect(sum(depositForfeitedPosting({ amount: '1120.00', exVat: '1000.00', vatAmount: '120.00' })))
       .toEqual({ GUEST_DEPOSITS: '1120.00', CANCELLATION_INCOME: '-1000.00', OUTPUT_VAT: '-120.00' });
     for (const [key, code, type] of [['GUEST_LEDGER', '1150', 'ASSET'], ['ACCOMMODATION_TAX_PAYABLE', '2120', 'LIABILITY'], ['GUEST_DEPOSITS', '2320', 'LIABILITY'], ['ROOM_REVENUE', '4100', 'REVENUE'], ['CANCELLATION_INCOME', '4110', 'REVENUE']]) {
+      expect(DEFAULT_CHART.find((a) => a.key === key)).toMatchObject({ code, type });
+    }
+  });
+
+  it('laundry down payments (ADR-0024 §5): held without VAT, paying the claim, refunded or kept with VAT', () => {
+    const sum = (lines: PostingLine[]) => net(lines);
+    expect(sum(downPaymentReceivedPosting('200.00', 'CASH'))).toEqual({ CASH_ON_HAND: '200.00', CUSTOMER_DOWN_PAYMENTS: '-200.00' });
+    expect(sum(downPaymentReceivedPosting('200.00', 'ELECTRONIC'))).toEqual({ PAYMENT_CLEARING: '200.00', CUSTOMER_DOWN_PAYMENTS: '-200.00' });
+    // The claim: ₱448.00 VAT-inclusive, ₱200.00 paid by the down payment and ₱248.00 in cash.
+    expect(sum(salePosting({ salesExVat: '400.00', vatAmount: '48.00', statutoryDiscount: '0', cash: '248.00', electronic: '0', cogs: '0', downPayment: '200.00' })))
+      .toEqual({ CASH_ON_HAND: '248.00', CUSTOMER_DOWN_PAYMENTS: '200.00', SALES: '-400.00', OUTPUT_VAT: '-48.00' });
+    expect(sum(downPaymentRefundedPosting('50.00', 'CASH'))).toEqual({ CUSTOMER_DOWN_PAYMENTS: '50.00', CASH_ON_HAND: '-50.00' });
+    expect(sum(downPaymentRefundedPosting('50.00', 'BANK'))).toEqual({ CUSTOMER_DOWN_PAYMENTS: '50.00', CASH_IN_BANK: '-50.00' });
+    expect(sum(downPaymentForfeitedPosting({ amount: '224.00', exVat: '200.00', vatAmount: '24.00' })))
+      .toEqual({ CUSTOMER_DOWN_PAYMENTS: '224.00', FORFEITED_DOWN_PAYMENTS: '-200.00', OUTPUT_VAT: '-24.00' });
+    for (const [key, code, type] of [['CUSTOMER_DOWN_PAYMENTS', '2330', 'LIABILITY'], ['FORFEITED_DOWN_PAYMENTS', '4120', 'REVENUE']]) {
       expect(DEFAULT_CHART.find((a) => a.key === key)).toMatchObject({ code, type });
     }
   });

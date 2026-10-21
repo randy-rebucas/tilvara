@@ -8,8 +8,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { EditEntityForm } from '../../forms';
 import { ChangeTaxForm } from './tax-form';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Legal entity' };
+export const generateMetadata = pageTitle('locations.entities.item');
 
 const STATE_TONE = { IN_FORCE: 'chip bg-violet', SCHEDULED: 'tag tag-warn', SUPERSEDED: 'tag' } as const;
 

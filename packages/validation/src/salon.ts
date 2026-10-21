@@ -28,10 +28,14 @@ export const createServiceStaffSchema = z.object({
 });
 export type CreateServiceStaffInput = z.infer<typeof createServiceStaffSchema>;
 
+/**
+ * `keepAppointments`: archive even though they have bookings to come (audit 2026-10-21); without it,
+ * archiving someone with open future appointments is refused with 409 STAFF_HAS_APPOINTMENTS.
+ */
 export const updateServiceStaffSchema = z
-  .object({ ...staffFields, archived: z.boolean() })
+  .object({ ...staffFields, archived: z.boolean(), keepAppointments: z.boolean() })
   .partial()
-  .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
+  .refine((v) => Object.keys(v).some((k) => k !== 'keepAppointments'), 'Nothing to update');
 export type UpdateServiceStaffInput = z.infer<typeof updateServiceStaffSchema>;
 
 export const serviceStaffListQuerySchema = z.object({
@@ -70,8 +74,9 @@ export const setStaffHoursSchema = z.object({
 });
 export type SetStaffHoursInput = z.infer<typeof setStaffHoursSchema>;
 
+/** `keepAppointments`: as for archiving; without it, time off over open bookings is a 409 STAFF_HAS_APPOINTMENTS. */
 export const createTimeOffSchema = z
-  .object({ startsAt: instant, endsAt: instant, reason: z.string().trim().min(1).max(200).optional() })
+  .object({ startsAt: instant, endsAt: instant, reason: z.string().trim().min(1).max(200).optional(), keepAppointments: z.boolean().optional() })
   .refine((v) => Date.parse(v.endsAt) > Date.parse(v.startsAt), { message: 'Ends after it starts', path: ['endsAt'] });
 export type CreateTimeOffInput = z.infer<typeof createTimeOffSchema>;
 

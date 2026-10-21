@@ -29,6 +29,7 @@ import { taxProfiles } from './tax.js';
 import { customers } from './customers.js';
 import { customerPackages, serviceStaff } from './salon.js';
 import { folioPayments, folios, stayDeposits, stays } from './lodging.js';
+import { jobOrderDeposits, jobOrders, laundryMachines } from './laundry.js';
 
 const money = (name: string) => numeric(name, { precision: 20, scale: 4 });
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -80,7 +81,8 @@ export const cashierSessions = pgTable(
  * FOLIO_PAYMENT, DEPOSIT, DEPOSIT_REFUND (ADR-0023 §5.2, §6): cash a hotel's front desk took for a folio
  * or a booking deposit, or gave back from a deposit. In the drawer's expected cash; never sales.
  */
-export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT', 'FOLIO_PAYMENT', 'DEPOSIT', 'DEPOSIT_REFUND'] as const;
+/** JOB_DEPOSIT, JOB_DEPOSIT_REFUND (ADR-0024 §5): a laundry job order's down payment taken or given back in cash; never sales. */
+export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT', 'FOLIO_PAYMENT', 'DEPOSIT', 'DEPOSIT_REFUND', 'JOB_DEPOSIT', 'JOB_DEPOSIT_REFUND'] as const;
 export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
 
 /** Append-only drawer ledger; expected cash = Σ amount (signed: + into the drawer). */
@@ -97,6 +99,7 @@ export const cashMovements = pgTable(
     saleReturnId: uuid('sale_return_id'),
     folioPaymentId: uuid('folio_payment_id'),
     stayDepositId: uuid('stay_deposit_id'),
+    jobOrderDepositId: uuid('job_order_deposit_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -105,14 +108,16 @@ export const cashMovements = pgTable(
     foreignKey({ columns: [t.tenantId, t.folioPaymentId], foreignColumns: [folioPayments.tenantId, folioPayments.id] }),
     foreignKey({ columns: [t.tenantId, t.stayDepositId], foreignColumns: [stayDeposits.tenantId, stayDeposits.id] }),
     check('cash_movements_lodging_link', sql`(${t.type} = 'FOLIO_PAYMENT') = (${t.folioPaymentId} IS NOT NULL) AND (${t.type} IN ('DEPOSIT','DEPOSIT_REFUND')) = (${t.stayDepositId} IS NOT NULL)`),
+    foreignKey({ columns: [t.tenantId, t.jobOrderDepositId], foreignColumns: [jobOrderDeposits.tenantId, jobOrderDeposits.id] }),
+    check('cash_movements_job_deposit_link', sql`(${t.type} IN ('JOB_DEPOSIT','JOB_DEPOSIT_REFUND')) = (${t.jobOrderDepositId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
     // Declared later in this file; resolved lazily.
     foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
     index('cash_movements_session_idx').on(t.tenantId, t.cashierSessionId),
-    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND','TIP','TIP_REFUND','TIP_PAYOUT','FOLIO_PAYMENT','DEPOSIT','DEPOSIT_REFUND')`),
+    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND','TIP','TIP_REFUND','TIP_PAYOUT','FOLIO_PAYMENT','DEPOSIT','DEPOSIT_REFUND','JOB_DEPOSIT','JOB_DEPOSIT_REFUND')`),
     check(
       'cash_movements_sign_check',
-      sql`(${t.type} IN ('PAY_OUT','REFUND','TIP_REFUND','TIP_PAYOUT','DEPOSIT_REFUND') AND ${t.amount} < 0) OR (${t.type} IN ('PAY_IN','TIP','FOLIO_PAYMENT','DEPOSIT') AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
+      sql`(${t.type} IN ('PAY_OUT','REFUND','TIP_REFUND','TIP_PAYOUT','DEPOSIT_REFUND','JOB_DEPOSIT_REFUND') AND ${t.amount} < 0) OR (${t.type} IN ('PAY_IN','TIP','FOLIO_PAYMENT','DEPOSIT','JOB_DEPOSIT') AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
     ),
     check('cash_movements_refund_link', sql`(${t.type} IN ('REFUND','TIP_REFUND')) = (${t.saleReturnId} IS NOT NULL)`),
     check('cash_movements_tip_link', sql`${t.type} <> 'TIP' OR ${t.saleId} IS NOT NULL`),
@@ -218,9 +223,13 @@ export const sales = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true }).notNull().defaultNow(),
     /** The customer the sale was rung up for (session 20, ADR-0018), if any. */
     customerId: uuid('customer_id'),
+    /** A laundry claim (ADR-0024 §5): the job order this sale releases (once). */
+    jobOrderId: uuid('job_order_id'),
   },
-  (t) => [
+  (t): PgTableExtraConfigValue[] => [
     unique('sales_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.jobOrderId], foreignColumns: [jobOrders.tenantId, jobOrders.id] }),
+    uniqueIndex('sales_job_order_once').on(t.tenantId, t.jobOrderId).where(sql`${t.jobOrderId} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.customerId], foreignColumns: [customers.tenantId, customers.id] }),
     index('sales_customer_idx').on(t.tenantId, t.customerId, t.completedAt.desc()).where(sql`${t.customerId} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.orderBillId], foreignColumns: [orderBills.tenantId, orderBills.id] }),
@@ -258,6 +267,8 @@ export const saleBeneficiaries = pgTable(
     name: text('name').notNull(),
     idNumber: text('id_number').notNull(),
     tin: text('tin'),
+    /** A medicine on the discount (ADR-0025 §8): whether the purchase booklet was presented; null without one. */
+    purchaseBooklet: boolean('purchase_booklet'),
   },
   (t) => [
     unique('sale_beneficiaries_tenant_id_id_unique').on(t.tenantId, t.id),
@@ -302,11 +313,17 @@ export const saleLines = pgTable(
     /** A session of this package used (ADR-0022 §6): priced at zero; `package_value` turned from owed into sales. */
     customerPackageId: uuid('customer_package_id'),
     packageValue: money('package_value'),
+    /** A self-service cycle (ADR-0024 §7): the washer or dryer it ran on (its run is a `machine_runs` row). */
+    machineId: uuid('machine_id'),
+    /** A medicine (ADR-0025): its class and "generic strength form" as sold, printed under the brand. */
+    drugClass: text('drug_class'),
+    drugLabel: text('drug_label'),
   },
   (t) => [
     unique('sale_lines_tenant_id_id_unique').on(t.tenantId, t.id),
     foreignKey({ columns: [t.tenantId, t.serviceStaffId], foreignColumns: [serviceStaff.tenantId, serviceStaff.id] }),
     foreignKey({ columns: [t.tenantId, t.customerPackageId], foreignColumns: [customerPackages.tenantId, customerPackages.id] }),
+    foreignKey({ columns: [t.tenantId, t.machineId], foreignColumns: [laundryMachines.tenantId, laundryMachines.id] }),
     index('sale_lines_staff_idx').on(t.tenantId, t.serviceStaffId).where(sql`${t.serviceStaffId} IS NOT NULL`),
     index('sale_lines_package_idx').on(t.tenantId, t.customerPackageId).where(sql`${t.customerPackageId} IS NOT NULL`),
     check('sale_lines_staff_rate', sql`(${t.serviceStaffId} IS NULL) = (${t.commissionRate} IS NULL)`),
@@ -444,15 +461,22 @@ export const paymentIntents = pgTable(
     purpose: text('purpose').notNull().default('SALE'),
     /** A FOLIO payment consumed by this folio's payment or deposit (ADR-0023 §5.2, §6). */
     folioId: uuid('folio_id'),
+    /** A JOB_ORDER payment consumed by this job order's down payment (ADR-0024 §5). */
+    jobOrderId: uuid('job_order_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('payment_intents_tenant_id_id_unique').on(t.tenantId, t.id),
-    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE','TIP','FOLIO')`),
+    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE','TIP','FOLIO','JOB_ORDER')`),
     foreignKey({ columns: [t.tenantId, t.folioId], foreignColumns: [folios.tenantId, folios.id] }),
-    check('payment_intents_consumer_check', sql`(${t.saleId} IS NULL OR ${t.purpose} IN ('SALE','TIP')) AND (${t.folioId} IS NULL OR (${t.purpose} = 'FOLIO' AND ${t.status} = 'SUCCEEDED'))`),
+    foreignKey({ columns: [t.tenantId, t.jobOrderId], foreignColumns: [jobOrders.tenantId, jobOrders.id] }),
+    check(
+      'payment_intents_consumer_check',
+      sql`(${t.saleId} IS NULL OR ${t.purpose} IN ('SALE','TIP')) AND (${t.folioId} IS NULL OR (${t.purpose} = 'FOLIO' AND ${t.status} = 'SUCCEEDED'))
+          AND (${t.jobOrderId} IS NULL OR (${t.purpose} = 'JOB_ORDER' AND ${t.status} = 'SUCCEEDED'))`,
+    ),
     unique('payment_intents_request_key_unique').on(t.tenantId, t.requestKey),
     foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
@@ -491,7 +515,7 @@ export const paymentEvents = pgTable(
   ],
 );
 
-export const TENDER_METHODS = ['CASH', ...PAYMENT_METHODS, 'STORE_CREDIT', 'ROOM_CHARGE'] as const;
+export const TENDER_METHODS = ['CASH', ...PAYMENT_METHODS, 'STORE_CREDIT', 'ROOM_CHARGE', 'JOB_DEPOSIT'] as const;
 
 export const saleTenders = pgTable(
   'sale_tenders',
@@ -514,10 +538,14 @@ export const saleTenders = pgTable(
     exchangeReturnId: uuid('exchange_return_id'),
     /** ROOM_CHARGE (ADR-0023 §5.1): the in-house stay it was charged to. */
     stayId: uuid('stay_id'),
+    /** JOB_DEPOSIT (ADR-0024 §5): the job order whose down payment paid this part of its claim. */
+    jobOrderId: uuid('job_order_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t): PgTableExtraConfigValue[] => [
     unique('sale_tenders_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.jobOrderId], foreignColumns: [jobOrders.tenantId, jobOrders.id] }),
+    check('sale_tenders_job_deposit_check', sql`(${t.method} = 'JOB_DEPOSIT') = (${t.jobOrderId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.stayId], foreignColumns: [stays.tenantId, stays.id] }),
     check('sale_tenders_room_charge_check', sql`(${t.method} = 'ROOM_CHARGE') = (${t.stayId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.exchangeReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
@@ -525,8 +553,8 @@ export const saleTenders = pgTable(
     check('sale_tenders_exchange_cash', sql`${t.exchangeReturnId} IS NULL OR ${t.method} = 'CASH'`),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     index('sale_tenders_sale_idx').on(t.tenantId, t.saleId),
-    check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET','STORE_CREDIT','ROOM_CHARGE')`),
-    check('sale_tenders_intent_check', sql`(${t.method} IN ('CASH','STORE_CREDIT','ROOM_CHARGE')) = (${t.paymentIntentId} IS NULL)`),
+    check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET','STORE_CREDIT','ROOM_CHARGE','JOB_DEPOSIT')`),
+    check('sale_tenders_intent_check', sql`(${t.method} IN ('CASH','STORE_CREDIT','ROOM_CHARGE','JOB_DEPOSIT')) = (${t.paymentIntentId} IS NULL)`),
     check('sale_tenders_no_electronic_change', sql`${t.method} = 'CASH' OR ${t.change} = 0`),
     foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
     uniqueIndex('sale_tenders_intent_once').on(t.tenantId, t.paymentIntentId).where(sql`${t.paymentIntentId} IS NOT NULL`),
@@ -939,6 +967,8 @@ export const stockLotMovements = pgTable(
     lotId: uuid('lot_id').notNull(),
     movementId: uuid('movement_id').notNull(),
     quantity: qty('quantity').notNull(),
+    /** A draw from a lot that was expired or on hold at the time (ADR-0025 §4), set by the trigger. */
+    expired: boolean('expired').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

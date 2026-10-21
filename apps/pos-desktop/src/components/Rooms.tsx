@@ -171,7 +171,7 @@ export function Rooms({ shift, permissions, active }: { shift: Shift; permission
                   <span className="truncate text-[0.8125rem] text-muted">{r.roomType.name}{r.floor ? ` · ${t('rooms.floor', { floor: r.floor })}` : ''}</span>
                   <span className={`truncate text-[0.9375rem] ${s ? 'font-semibold' : 'text-muted'}`}>{s ? s.guestDisplayName : t('rooms.vacant')}</span>
                   <span className="flex flex-wrap gap-1">
-                    {r.departingToday && <span className="tag tag-warn">{t('rooms.departsToday')}</span>}
+                    {r.departingToday && <span className="tag tag-warn">{t(r.overstay ? 'rooms.overstay' : 'rooms.departsToday')}</span>}
                     {a && <span className="tag tag-warn" title={a.guestDisplayName ?? ''}>{t('rooms.arrivesToday')}</span>}
                   </span>
                 </button>
@@ -505,6 +505,7 @@ function InHousePanel({ stayId, day, shift, permissions, onChanged }: { stayId: 
           {t('rooms.dates', { from: dateLabel(stay.arrivalDate), to: dateLabel(stay.departureDate) })} · {t('rooms.guests', { n: String(stay.adults + stay.children) })}
         </p>
       </div>
+      {stay.overstay && <Callout kind="warn"><span data-testid="overstay">{t('rooms.overstayHint', { date: dateLabel(stay.departureDate) })}</span></Callout>}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[0.9375rem] sm:grid-cols-4">
         <div><dt className="text-[0.8125rem] text-muted">{t('rooms.balance')}</dt><dd data-testid="stay-balance"><Money value={balance} className="font-semibold" /></dd></div>
         <div><dt className="text-[0.8125rem] text-muted">{t('rooms.depositsHeld')}</dt><dd data-testid="stay-deposits"><Money value={stay.depositsHeld ?? '0.00'} /></dd></div>

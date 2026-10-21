@@ -82,3 +82,36 @@ export async function expiryAlertMail(client: PoolClient, payload: Record<string
     ].join('\n'),
   };
 }
+
+/**
+ * A sale that drew expired or held stock where it is blocked (ADR-0025 §4): an offline sale recorded at
+ * sync, or a recipe's consumption. Read from the sale's lot draws; null when there are none.
+ */
+export async function expiredSoldMail(client: PoolClient, payload: Record<string, unknown>): Promise<{ subject: string; text: string } | null> {
+  const { rows: [sale] } = await client.query<{ sale_number: number; branch: string; code: string }>(
+    `SELECT s.sale_number, b.name AS branch, r.code FROM sales s JOIN branches b ON b.id = s.branch_id JOIN registers r ON r.id = s.register_id WHERE s.id = $1`,
+    [String(payload.saleId ?? '')],
+  );
+  if (!sale) return null;
+  const { rows } = await client.query<{ name: string; sku: string; lot_code: string | null; expires_on: string; quantity: string }>(
+    `SELECT concat_ws(' ', p.name, v.name) AS name, v.sku, l.lot_code, l.expires_on::text, trim_scale(-sum(lm.quantity))::text AS quantity
+       FROM stock_movements m
+       JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id AND lm.expired
+       JOIN stock_lots l ON l.tenant_id = lm.tenant_id AND l.id = lm.lot_id
+       JOIN product_variants v ON v.tenant_id = m.tenant_id AND v.id = m.variant_id
+       JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
+      WHERE m.sale_id = $1 AND m.type IN ('SALE', 'CONSUMPTION')
+      GROUP BY 1, 2, 3, 4 ORDER BY 1`,
+    [String(payload.saleId)],
+  );
+  if (rows.length === 0) return null;
+  const reference = `${sale.code}-${String(sale.sale_number).padStart(6, '0')}`;
+  return {
+    subject: `Expired or held stock sold at ${sale.branch}`,
+    text: [
+      `Sale ${reference} at ${sale.branch} took stock that is expired or on hold:`,
+      ...rows.map((r) => `- ${r.name} (${r.sku})${r.lot_code ? `, lot ${r.lot_code}` : ''}, expiry ${r.expires_on}: ${r.quantity}`),
+      'Check the sale with the pharmacist, and write off or return what is left of these lots.',
+    ].join('\n'),
+  };
+}

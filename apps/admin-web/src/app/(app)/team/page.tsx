@@ -6,8 +6,9 @@ import { getT } from '@/i18n/server';
 import { en, type MessageKey } from '@/i18n/messages';
 import { RowAction } from '../locations/forms';
 import { InviteForm, NewRoleForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Team' };
+export const generateMetadata = pageTitle('team');
 
 type List<T> = { data: T[] };
 

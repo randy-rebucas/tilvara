@@ -13,8 +13,9 @@ import { getT } from '@/i18n/server';
 import { branchToday, lodgingAccess, nightsBetween, StayTag } from '../../chrome';
 import { RemoveButton } from '../../forms';
 import { BeneficiaryForm, CheckIn, CheckOut, EditStay, EndStay, FolioAdjustment, GuestForm, ReceiveDeposit, RefundDeposit } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Stay' };
+export const generateMetadata = pageTitle('lodging.stays.item');
 
 /**
  * One stay (ADR-0023 §3–§8): the booking and its changes, check-in with the guest registry and the
@@ -63,6 +64,7 @@ export default async function StayPage({ params }: { params: Promise<{ id: strin
       {(stay.status === 'CANCELLED' || stay.status === 'NO_SHOW') && <Callout>{t(stay.status === 'CANCELLED' ? 'lod.cancelledBecause' : 'lod.noShowBecause', { reason: stay.cancelReason ?? '—' })}</Callout>}
       {stay.status === 'CHECKED_OUT' && <Callout>{t('lod.checkedOutAt', { at: formatDateTime(stay.checkedOutAt, lang) })}</Callout>}
       {stay.status === 'BOOKED' && stay.arrivalDate < today && <Callout tone="warn">{t('lod.lateArrival')}</Callout>}
+      {stay.overstay && <Callout tone="warn"><span className="font-semibold">{t('lod.overstay')}.</span> {t('lod.overstayHint', { date: formatDate(stay.departureDate, lang) })}</Callout>}
 
       <Note denom="violet" className="grid grid-cols-2 gap-4 px-5 py-4 pr-8 lg:grid-cols-5">
         <Figure label={t('lod.nightlyRate')}>{stay.nightlyRate ? peso(stay.nightlyRate) : <span className="text-[1rem]">{t('lod.rackRate')}</span>}</Figure>

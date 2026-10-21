@@ -57,7 +57,8 @@ try {
   await viewport(1440, 900);
   // ---- sign-up offers the salon type ----
   await go('/sign-up');
-  check('sign-up offers “Salon, spa or barber shop”', await evaluate(`Boolean(document.querySelector('input[name=businessType][value=SALON]'))`) && (await text()).includes('Salon, spa or barber shop'));
+  // The type is on the form's second step (hidden on the first, so not in innerText).
+  check('sign-up offers “Salon, spa or barber shop”', await evaluate(`Boolean(document.querySelector('input[name=businessType][value=SALON]')) && document.body.textContent.includes('Salon, spa or barber shop')`));
 
   await go('/sign-in');
   await fill('email', email);
@@ -240,6 +241,21 @@ try {
   await shot('salon-calendar-390.png');
   // Mark has no hours: the whole day is open to him (not used further; here so the fixture is not unused).
   check('a staff member without hours is bookable all day', (await call('GET', `/v1/appointments/availability?branchId=${br.id}&variantId=${haircutId}&date=${target}&staffId=${mark.id}`, tk)).staff[0]?.slots.length > 0);
+
+  // ---- archiving someone with a booking to come (audit 2026-10-21): listed first, kept on purpose ----
+  await viewport(1440, 900);
+  const markAppt = await call('POST', '/v1/appointments', tk, { branchId: br.id, guestName: 'Ana Lim', services: [{ variantId: haircutId, staffId: mark.id, startsAt: `${target}T15:00:00+08:00` }] }, idem());
+  await go(`/appointments/staff/${mark.id}`);
+  await evaluate('window.confirm = () => true');
+  await clickButton('Archive');
+  check('archiving Mark lists his booking still to come', await waitFor(`[...document.querySelectorAll('[role=alert]')].some((x) => x.innerText.includes('1 open booking') && x.querySelector('a[href="/appointments/${markAppt.id}"]'))`, 8000).then(() => true, () => false));
+  check('… and he is not archived yet', !(await call('GET', `/v1/service-staff/${mark.id}`, tk)).archivedAt);
+  await shot('salon-archive-conflict.png', false);
+  await clickButton('Keep the bookings and archive');
+  check('“Keep the bookings and archive” archives him', await shown('Archived: no new bookings', 8000));
+  const markAfter = await call('GET', `/v1/service-staff/${mark.id}`, tk);
+  const kept = await call('GET', `/v1/appointments/${markAppt.id}`, tk);
+  check('… the API: Mark archived, the booking kept with him', Boolean(markAfter.archivedAt) && kept.status === 'BOOKED' && kept.services.some((x) => x.staffId === mark.id));
   b.close();
 } catch (e) {
   console.error(e);

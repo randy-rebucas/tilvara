@@ -3,7 +3,7 @@
  * what it sends back (offline sale envelopes) and what each envelope became (results). Shared by the
  * API and the POS offline engine; no runtime dependencies beyond zod.
  */
-import { amountSchema, counterChoicesSchema, kitchenNoteSchema, quantitySchema } from '@1pos/validation';
+import { amountSchema, counterChoicesSchema, kitchenNoteSchema, quantitySchema, salePrescriptionSchema } from '@1pos/validation';
 import type { Promotion } from '@1pos/pricing';
 import { z } from 'zod';
 
@@ -33,6 +33,42 @@ export interface SnapshotItem {
   quickKey?: number | null;
   /** STANDARD, SERVICE or PACKAGE (ADR-0022; absent from older servers). A package is sold online only. */
   productType?: 'STANDARD' | 'SERVICE' | 'PACKAGE';
+  /** A laundry service, add-on or self-service cycle (ADR-0024 §2, §7); absent for ordinary items and from older servers. */
+  laundry?: SnapshotLaundry | null;
+  /** A medicine (ADR-0025 §2): searched by generic name, equivalents by `genericKey`; absent for other items and from older servers. */
+  drug?: SnapshotDrug | null;
+}
+
+/** A medicine's details as the till shows and searches them (ADR-0025 §3). */
+export interface SnapshotDrug {
+  drugClass: 'OTC' | 'RX' | 'ANTIBIOTIC' | 'DANGEROUS';
+  genericName: string;
+  strength: string | null;
+  dosageForm: string;
+  genericKey: string;
+  /** Pieces in one unit down its pack links (a box of 10 strips of 10: "100"); a prescription counts pieces. Absent from older servers. */
+  piecesPerUnit?: string;
+}
+
+/** How a laundry job line counts an item, and the machine a self-service cycle runs on (ADR-0024). Quantities are decimal strings. */
+export interface SnapshotLaundry {
+  unit: 'KG' | 'LOAD' | 'PIECE' | null;
+  minQuantity: string | null;
+  kgPerLoad: string | null;
+  addon: boolean;
+  machineKind: 'WASHER' | 'DRYER' | null;
+  machineMinutes: number | null;
+}
+
+/** The laundry fields of a variant row, or null when it has none (ADR-0024). */
+export function laundryOf(v: { laundryUnit: string | null; laundryMinQuantity: string | null; laundryKgPerLoad: string | null; laundryAddon: boolean; machineKind: string | null; machineMinutes: number | null }): SnapshotLaundry | null {
+  if (!v.laundryUnit && !v.laundryAddon && !v.machineKind) return null;
+  // "3.000" → "3", "7.500" → "7.5" (numeric columns keep their scale).
+  const q = (x: string | null) => (x === null ? null : x.includes('.') ? x.replace(/0+$/, '').replace(/\.$/, '') : x);
+  return {
+    unit: v.laundryUnit as SnapshotLaundry['unit'], minQuantity: q(v.laundryMinQuantity), kgPerLoad: q(v.laundryKgPerLoad), addon: v.laundryAddon,
+    machineKind: v.machineKind as SnapshotLaundry['machineKind'], machineMinutes: v.machineMinutes,
+  };
 }
 
 /**
@@ -51,6 +87,11 @@ export interface SnapshotCounter {
   }[];
   /** Active stations of the branch; an item goes to the one with its code, else the default. */
   stations: { id: string; code: string; name: string; isDefault: boolean }[];
+  /**
+   * Menu items and priced choices sold out at the branch when the snapshot was cut (left out of
+   * `items` and the options): the till refuses them offline (audit 2026-10-21). Absent from older servers.
+   */
+  soldOut?: { variantId: string; name: string }[];
 }
 
 export interface Snapshot {
@@ -149,9 +190,16 @@ export const offlineSaleSchema = z.object({
       kitchenNote: kitchenNoteSchema.optional(),
       /** Who performed or sold it (ADR-0022 §5): a staff member from the snapshot. */
       staffId: z.uuid().optional(),
+      /** A prescription medicine (ADR-0025 §6): the item of a prescription recorded with this sale. */
+      prescription: z.object({ prescriptionRef: z.string().trim().min(1).max(64), itemRef: z.string().trim().min(1).max(64) }).optional(),
     }))
     .min(1)
     .max(200),
+  /**
+   * Prescriptions recorded at the offline till (ADR-0025 §6); the snapshot has no patient data, so an
+   * offline sale never fills an earlier prescription. A dangerous drug is never sold offline.
+   */
+  prescriptions: z.array(salePrescriptionSchema).max(10).optional(),
   /** Counter service: the menu version the till sold from (its snapshot's), and the name called at pickup. */
   menuVersionId: z.uuid().optional(),
   pickupName: z.string().trim().min(1).max(60).optional(),
@@ -173,13 +221,35 @@ export const offlineSaleSchema = z.object({
 });
 export type OfflineSale = z.infer<typeof offlineSaleSchema>;
 
+/** What a till sends (each envelope valid: the engine checks it with offlineSaleSchema before queueing it). */
 export const syncSalesRequestSchema = z.object({ sales: z.array(offlineSaleSchema).min(1).max(50) });
 export type SyncSalesRequest = z.infer<typeof syncSalesRequestSchema>;
+
+/**
+ * What the server accepts: only each envelope's id and device number are required here, so one malformed
+ * envelope (an older or faulty till) cannot block the queue behind it. The server checks each envelope with
+ * `offlineSaleSchema` on its own and quarantines one that fails (VALIDATION_FAILED), stored as received.
+ * A batch without even these is not a till's: 400.
+ */
+export const syncSalesBatchSchema = z.object({
+  sales: z
+    .array(offlineSaleSchema.pick({ terminalTxnId: true, deviceSeq: true }).loose()
+      .describe('An offline sale envelope (OfflineSale, @1pos/sync-protocol). Only terminalTxnId and deviceSeq are checked with the batch; an envelope that fails the full check is quarantined with VALIDATION_FAILED.'))
+    .min(1)
+    .max(50),
+});
+export type SyncSalesBatch = z.infer<typeof syncSalesBatchSchema>;
+/** One envelope as received: its head is known, the rest is unchecked. */
+export type ReceivedEnvelope = SyncSalesBatch['sales'][number];
 
 // ------------------------------------------------------------------ results (server → terminal)
 
 /** Recorded, but a person should look: none of these refuse a sale (the cash was taken). */
-export const OFFLINE_FLAGS = ['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED'] as const;
+/**
+ * PRESCRIPTION_REVIEW (ADR-0025 §6): a prescription medicine was dispensed without a valid prescription
+ * record; EXPIRED_STOCK (§4): it drew expired or held lots (read from the lot draws, not stored on the sale).
+ */
+export const OFFLINE_FLAGS = ['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'PRESCRIPTION_REVIEW', 'EXPIRED_STOCK'] as const;
 export type OfflineFlag = (typeof OFFLINE_FLAGS)[number];
 
 export type SyncResult =
@@ -202,6 +272,12 @@ export type ClaimKitchenTicketsInput = z.infer<typeof claimKitchenTicketsSchema>
 /** A kitchen ticket as a till prints it (claimed for a minute; mark it printed, or release it). */
 export interface KitchenTicketPrint {
   id: string;
+  /**
+   * TICKET: the ticket itself (its live items). VOID (audit 2026-10-21): items voided after the ticket
+   * printed, to print as a "VOID" slip; `items` lists what was voided since the last VOID slip. Settle
+   * it with `printed` / `released` like a ticket.
+   */
+  kind: 'TICKET' | 'VOID';
   ticketNumber: number;
   /** Printed before: print "REPRINT". */
   reprint: boolean;

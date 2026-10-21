@@ -30,12 +30,15 @@ export const DEFAULT_CHART = [
   { key: 'PREPAID_SERVICES', code: '2310', name: 'Prepaid service packages', type: 'LIABILITY' },
   // ADR-0023 §6: booking deposits held without VAT until applied or forfeited. Pending the accountant.
   { key: 'GUEST_DEPOSITS', code: '2320', name: 'Guest deposits', type: 'LIABILITY' },
+  // ADR-0024 §5: laundry job orders' down payments, held without VAT until the claim or a forfeit. Pending the accountant.
+  { key: 'CUSTOMER_DOWN_PAYMENTS', code: '2330', name: 'Customer down payments', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },
   { key: 'SALES', code: '4000', name: 'Sales', type: 'REVENUE' },
   { key: 'SALES_RETURNS', code: '4010', name: 'Sales returns', type: 'REVENUE' },
   { key: 'STATUTORY_DISCOUNTS', code: '4020', name: 'SC/PWD discounts', type: 'REVENUE' },
   { key: 'ROOM_REVENUE', code: '4100', name: 'Room revenue', type: 'REVENUE' },
   { key: 'CANCELLATION_INCOME', code: '4110', name: 'Cancellation fees', type: 'REVENUE' },
+  { key: 'FORFEITED_DOWN_PAYMENTS', code: '4120', name: 'Forfeited down payments', type: 'REVENUE' },
   { key: 'COGS', code: '5000', name: 'Cost of goods sold', type: 'EXPENSE' },
   { key: 'PURCHASES_NON_STOCK', code: '5050', name: 'Purchases – non-stock items', type: 'EXPENSE' },
   { key: 'PURCHASE_PRICE_VARIANCE', code: '5060', name: 'Purchase price variance', type: 'EXPENSE' },
@@ -113,6 +116,8 @@ export interface SaleAmounts {
   packageSessions?: Amount;
   /** Charged to an in-house guest's folio (ADR-0023 §5.1): the guest ledger, not cash. */
   roomCharge?: Amount;
+  /** A laundry claim paid by the job's down payment (ADR-0024 §5): what was held is owed no more. */
+  downPayment?: Amount;
 }
 
 /** Sale: money in, revenue and output tax out, cost of goods moved from inventory. */
@@ -123,6 +128,7 @@ export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLi
     cr('TIPS_PAYABLE', a.tip?.amount ?? 0, branchId),
     dr('CUSTOMER_STORE_CREDIT', a.storeCredit ?? 0, branchId),
     dr('GUEST_LEDGER', a.roomCharge ?? 0, branchId),
+    dr('CUSTOMER_DOWN_PAYMENTS', a.downPayment ?? 0, branchId),
     dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('SALES', toDec(String(a.salesExVat)).minus(String(a.packagesSold ?? 0)), branchId),
     cr('PREPAID_SERVICES', a.packagesSold ?? 0, branchId),
@@ -144,6 +150,11 @@ export interface SaleReturnAmounts {
   /** Given back: in cash (ADR-0011), or as store credit when `refundTo` is STORE_CREDIT (ADR-0018). */
   refund: Amount;
   refundTo?: 'CASH' | 'STORE_CREDIT';
+  /**
+   * Part of a cash refund that goes back to store credit because the sale was paid with it
+   * (ADR-0018): store credit never turns into drawer cash. Ignored when `refundTo` is STORE_CREDIT.
+   */
+  storeCredit?: Amount;
   /** Value brought back into stock (Σ RETURN movement values; damaged goods bring none). */
   restocked: Amount;
   /** A void gives the sale's tip back in cash (session 25). */
@@ -162,6 +173,7 @@ export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null
   const tip = toDec(String(a.tipRefund ?? 0));
   const folio = toDec(String(a.folioRefund ?? 0));
   const paid = toDec(String(a.refund)).minus(folio);
+  const credit = toCredit ? paid : toDec(String(a.storeCredit ?? 0));
   return balanced([
     dr('SALES_RETURNS', toDec(String(a.salesExVat)).minus(String(a.packagesRefunded ?? 0)), branchId),
     dr('PREPAID_SERVICES', a.packagesRefunded ?? 0, branchId),
@@ -171,8 +183,8 @@ export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null
     dr('OUTPUT_VAT', a.vatAmount, branchId),
     cr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('GUEST_LEDGER', folio, branchId),
-    cr('CUSTOMER_STORE_CREDIT', toCredit ? paid : 0, branchId),
-    cr('CASH_ON_HAND', (toCredit ? new Dec(0) : paid).plus(tip), branchId),
+    cr('CUSTOMER_STORE_CREDIT', credit, branchId),
+    cr('CASH_ON_HAND', paid.minus(credit).plus(tip), branchId),
     dr('TIPS_PAYABLE', tip, branchId),
     dr('INVENTORY', a.restocked, branchId),
     cr('COGS', a.restocked, branchId),
@@ -399,6 +411,23 @@ export function depositRefundedPosting(amount: Amount, via: 'CASH' | 'BANK', bra
 /** A deposit kept on a cancellation or no-show: a cancellation fee ex VAT plus its output VAT. */
 export function depositForfeitedPosting(a: { amount: Amount; exVat: Amount; vatAmount: Amount }, branchId?: string | null): PostingLine[] {
   return balanced([dr('GUEST_DEPOSITS', a.amount, branchId), cr('CANCELLATION_INCOME', a.exVat, branchId), cr('OUTPUT_VAT', a.vatAmount, branchId)]);
+}
+
+// ------------------------------------------------------------------ laundry (ADR-0024)
+
+/** A job order's down payment received (§5): held, without VAT, until the claim or a forfeit. */
+export function downPaymentReceivedPosting(amount: Amount, via: Exclude<FrontDeskVia, 'STORE_CREDIT'>, branchId?: string | null): PostingLine[] {
+  return balanced([dr(VIA_ACCOUNT[via], amount, branchId), cr('CUSTOMER_DOWN_PAYMENTS', amount, branchId)]);
+}
+
+/** A down payment given back in cash from a drawer or by bank transfer. */
+export function downPaymentRefundedPosting(amount: Amount, via: 'CASH' | 'BANK', branchId?: string | null): PostingLine[] {
+  return balanced([dr('CUSTOMER_DOWN_PAYMENTS', amount, branchId), cr(VIA_ACCOUNT[via], amount, branchId)]);
+}
+
+/** A down payment kept (unclaimed laundry disposed of, a cancelled job): income ex VAT plus its output VAT. */
+export function downPaymentForfeitedPosting(a: { amount: Amount; exVat: Amount; vatAmount: Amount }, branchId?: string | null): PostingLine[] {
+  return balanced([dr('CUSTOMER_DOWN_PAYMENTS', a.amount, branchId), cr('FORFEITED_DOWN_PAYMENTS', a.exVat, branchId), cr('OUTPUT_VAT', a.vatAmount, branchId)]);
 }
 
 /** Mirror of an entry's lines (debits ↔ credits). */

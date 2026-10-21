@@ -11,8 +11,9 @@ import { getT } from '@/i18n/server';
 import { appointmentsAccess, StatusTag, staffColor } from '../chrome';
 import { bookableServices, branchStaff } from '../data';
 import { ChangeAppointment } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Appointment' };
+export const generateMetadata = pageTitle('appointments.item');
 
 /**
  * One appointment (ADR-0022 §4): who, what, with whom and when; change it, mark the client arrived

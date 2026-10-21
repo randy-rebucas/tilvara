@@ -9,8 +9,9 @@ import { formatDate, formatDateTime, peso, signOf } from '@/lib/format';
 import { branchLabel, docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { NoteForm, PaymentForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplier invoice' };
+export const generateMetadata = pageTitle('purchasing.invoices.item');
 
 /** One supplier invoice: amounts, the receipts it covers, its payments and entries; pay or cancel. */
 export default async function SupplierInvoicePage({ params }: { params: Promise<{ id: string }> }) {

@@ -30,6 +30,7 @@ import type {
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { assertAppointments } from '../billing/entitlements.js';
+import { effectiveNowSql } from '../common/clock.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -37,6 +38,8 @@ import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { unprocessable } from '../tax/tax.service.js';
 
 type StaffRow = typeof serviceStaff.$inferSelect;
+/** How many of a staff member's coming bookings a STAFF_HAS_APPOINTMENTS refusal lists. */
+const STAFF_APPOINTMENTS_LISTED = 5;
 const scopeOf = (s: { branchId: string }, legalEntityId: string) => ({ branchId: s.branchId, legalEntityId });
 const rate = (v: string | null) => (v === null ? null : toDec(v).toString());
 
@@ -70,6 +73,29 @@ export async function commissionRates(db: Database, pairs: { staffId: string; va
     out.set(`${p.staffId}:${p.variantId}`, special ?? base ?? '0');
   }
   return out;
+}
+
+/**
+ * A sale's service lines name staff who do those services (the booking's rule, `STAFF_DOES_NOT_DO_SERVICE`):
+ * a staff member with a list of services does only those; none listed = every service. Lines for
+ * other items (a package sold, a product) are not checked: staff lists hold services only.
+ */
+export async function assertStaffDoServices(db: Database, named: { staffId: string; variantId: string; i: number }[], staff: { id: string; displayName: string }[]) {
+  if (!named.length) return;
+  const staffIds = [...new Set(named.map((n) => n.staffId))];
+  const variantIds = [...new Set(named.map((n) => n.variantId))];
+  const [own, kinds] = await inSequence(
+    () => db.select({ staffId: serviceStaffServices.staffId, variantId: serviceStaffServices.variantId }).from(serviceStaffServices).where(inArray(serviceStaffServices.staffId, staffIds)),
+    () => db.select({ id: productVariants.id, type: products.productType }).from(productVariants).innerJoin(products, eq(products.id, productVariants.productId)).where(inArray(productVariants.id, variantIds)),
+  );
+  for (const n of named) {
+    if (kinds.find((k) => k.id === n.variantId)?.type !== 'SERVICE') continue;
+    const theirs = own.filter((o) => o.staffId === n.staffId);
+    if (theirs.length && !theirs.some((o) => o.variantId === n.variantId)) {
+      const name = staff.find((s) => s.id === n.staffId)?.displayName ?? 'This staff member';
+      throw unprocessable('STAFF_DOES_NOT_DO_SERVICE', `${name} does not do this service`, { line: n.i, staffId: n.staffId });
+    }
+  }
 }
 
 /**
@@ -149,7 +175,8 @@ export class StaffService extends TenantService {
       await assertAppointments(db);
       if (row.staff.archivedAt && input.archived !== false) throw archived('Staff member');
       if (input.membershipId) await this.member(db, input.membershipId);
-      const { archived: archive, ...fields } = input;
+      const { archived: archive, keepAppointments, ...fields } = input;
+      const kept = archive && !row.staff.archivedAt ? await this.openBookings(db, id, null, keepAppointments) : 0;
       const [after] = await db
         .update(serviceStaff)
         .set({ ...fields, ...(archive !== undefined && { archivedAt: archive ? sql`now()` : null }), updatedAt: sql`now()` })
@@ -157,7 +184,9 @@ export class StaffService extends TenantService {
         .returning();
       // Names and colours are not personal detail worth logging; the rate is (it is pay).
       await this.audit(db, auth, archive ? 'service_staff.archived' : 'service_staff.updated', 'service_staff', id, {
-        fields: Object.keys(input), ...(input.commissionRate !== undefined && { commissionRate: input.commissionRate, before: rate(row.staff.commissionRate) }),
+        fields: Object.keys(fields).concat(archive !== undefined ? ['archived'] : []),
+        ...(input.commissionRate !== undefined && { commissionRate: input.commissionRate, before: rate(row.staff.commissionRate) }),
+        ...(kept > 0 && { appointmentsKept: kept }),
       });
       return (await this.views(db, auth, [{ staff: after!, legalEntityId: row.legalEntityId }]))[0]!;
     });
@@ -216,11 +245,12 @@ export class StaffService extends TenantService {
       if (!this.can(auth, 'staff.manage', scope)) this.assertCan(auth, 'appointments.manage', scope);
       await assertAppointments(db);
       if (row.staff.archivedAt) throw archived('Staff member');
+      const kept = await this.openBookings(db, id, { startsAt: new Date(input.startsAt), endsAt: new Date(input.endsAt) }, input.keepAppointments);
       const [t] = await db
         .insert(serviceStaffTimeOff)
         .values({ tenantId: tenantOf(auth).tenantId, staffId: id, startsAt: new Date(input.startsAt), endsAt: new Date(input.endsAt), reason: input.reason ?? null, createdBy: auth.userId })
         .returning();
-      await this.audit(db, auth, 'service_staff.time_off_added', 'service_staff', id, { timeOffId: t!.id });
+      await this.audit(db, auth, 'service_staff.time_off_added', 'service_staff', id, { timeOffId: t!.id, ...(kept > 0 && { appointmentsKept: kept }) });
       return { id: t!.id, startsAt: t!.startsAt, endsAt: t!.endsAt, reason: t!.reason };
     });
   }
@@ -236,6 +266,32 @@ export class StaffService extends TenantService {
       await this.audit(db, auth, 'service_staff.time_off_removed', 'service_staff', id, { timeOffId });
       return { removed: true };
     });
+  }
+
+  /**
+   * Open bookings (BOOKED or ARRIVED, not ended) of this staff member, in the window or from now on
+   * (audit 2026-10-21). Refused with 409 STAFF_HAS_APPOINTMENTS listing the first few, unless the
+   * request says `keepAppointments` (the desk reassigns or cancels them later); answers how many were kept.
+   */
+  private async openBookings(db: Database, staffId: string, window: { startsAt: Date; endsAt: Date } | null, keep: boolean | undefined): Promise<number> {
+    const { rows } = await db.execute<{ appointment_id: string; starts_ms: string; total: number }>(sql`
+      SELECT s.appointment_id::text, (extract(epoch FROM min(s.starts_at)) * 1000)::bigint::text AS starts_ms, count(*) OVER ()::int AS total
+        FROM appointment_services s
+        JOIN appointments a ON a.id = s.appointment_id
+       WHERE s.staff_id = ${staffId} AND s.active AND a.status IN ('BOOKED', 'ARRIVED')
+         AND s.ends_at > ${effectiveNowSql}
+         ${window ? sql`AND s.starts_at < ${window.endsAt} AND s.ends_at > ${window.startsAt}` : sql``}
+       GROUP BY s.appointment_id
+       ORDER BY min(s.starts_at), s.appointment_id
+       LIMIT ${STAFF_APPOINTMENTS_LISTED}`);
+    const count = rows[0]?.total ?? 0;
+    if (count > 0 && !keep) {
+      throw new AppError('STAFF_HAS_APPOINTMENTS', `This staff member has ${count} booking${count === 1 ? '' : 's'} to come. Reassign or cancel them, or confirm to keep them for now.`, HttpStatus.CONFLICT, {
+        count,
+        appointments: rows.map((r) => ({ id: r.appointment_id, startsAt: new Date(Number(r.starts_ms)).toISOString() })),
+      });
+    }
+    return count;
   }
 
   private async member(db: Database, membershipId: string) {

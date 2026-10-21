@@ -352,3 +352,75 @@ describe('drills and database guards', () => {
     await expect(sql(r, `DELETE FROM restaurant_orders`)).rejects.toThrow();
   });
 });
+
+describe('audit 2026-10-21 fixes', () => {
+  it('a wasted void short of pieces opens a pack, as a sale would (ADR-0020)', async () => {
+    const r = await restaurant('ord-waste-pack');
+    const pc = ((await http().get('/v1/uoms').set(r.auth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
+    const vat = ((await http().get('/v1/tax-categories').set(r.auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
+    const block = (await http().post('/v1/products').set(r.auth).send({ name: 'Cheese block', uomId: pc, taxCategoryId: vat, trackInventory: true, variants: [{ sku: uniq('SKU'), price: '180.00' }] }).expect(201)).body.variants[0].id as string;
+    await http().post('/v1/pack-conversions').set(r.auth).send({ packVariantId: block, pieceVariantId: r.cheese, piecesPerPack: '10' }).expect(201);
+    // No slices left on the shelf, one block of ten.
+    await http().post('/v1/stock/adjustments').set(r.auth).set('Idempotency-Key', randomUUID()).send({ branchId: r.branchId, kind: 'WASTE', reason: 'Mould', items: [{ variantId: r.cheese, quantity: '-40' }] }).expect(201);
+    await http().post('/v1/stock/adjustments').set(r.auth).set('Idempotency-Key', randomUUID()).send({ branchId: r.branchId, reason: 'Delivery', items: [{ variantId: block, quantity: '1', unitCost: '30.00' }] }).expect(201);
+    const o = (await open(r, { orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body;
+    await add(r, o.id, [{ variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium, r.cheeseOpt] }]).expect(201);
+    await fire(r, o.id).expect(200);
+    const [burger] = (await order(r, o.id)).items;
+    const after = (await http().post(`/v1/order-items/${burger.id}/void`).set(r.manager).set('Idempotency-Key', randomUUID()).send({ reason: 'Dropped', wasted: true }).expect(200)).body;
+    expect(after.items[0].wasteAdjustmentId).toBeTruthy();
+    expect([Number(await balance(r, block)), Number(await balance(r, r.cheese))]).toEqual([0, 9]);
+    const openings = await sql<{ packs: string; pieces: string; sale_id: string | null; reason: string }>(r, `SELECT packs::text, pieces::text, sale_id, reason FROM pack_openings`);
+    expect(openings).toHaveLength(1);
+    expect([Number(openings[0]!.packs), Number(openings[0]!.pieces), openings[0]!.sale_id]).toEqual([1, 10, null]);
+    expect(openings[0]!.reason).toMatch(/Voided after firing/);
+    expect(await sql(r, `SELECT 1 FROM stock_balances WHERE quantity < 0`)).toEqual([]);
+    expect(await asOwnerInTenant(owner, r.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('a merge keeps the source order’s course notes; a course noted on both keeps both', async () => {
+    const r = await restaurant('ord-merge-notes');
+    const a = (await open(r, { orderType: 'DINE_IN', tableId: r.t1 }).expect(201)).body;
+    const b = (await open(r, { orderType: 'DINE_IN', tableId: r.t2 }).expect(201)).body;
+    await add(r, b.id, [{ variantId: r.burger, quantity: '1', course: 2, modifierOptionIds: [r.medium] }]).expect(201);
+    const note = (orderId: string, course: number, text: string) => http().put(`/v1/restaurant/orders/${orderId}/course-notes`).set(r.server).send({ course, note: text }).expect(200);
+    await note(a.id, 2, 'Birthday');
+    await note(b.id, 2, 'No rush');
+    await note(b.id, 3, 'Dessert to share');
+    const merged = (await http().post(`/v1/restaurant/orders/${b.id}/merge`).set(r.server).send({ intoOrderId: a.id }).expect(200)).body;
+    expect(merged.courseNotes).toEqual([{ course: 2, note: 'Birthday / No rush' }, { course: 3, note: 'Dessert to share' }]);
+    expect(await sql(r, `SELECT 1 FROM order_course_notes WHERE order_id = $1`, [b.id])).toEqual([]);
+    // The moved burger fires with the note of its course.
+    const fired = (await fire(r, a.id).expect(200)).body;
+    expect(fired.tickets.map((t: { course: number; courseNote: string | null }) => [t.course, t.courseNote])).toEqual([[2, 'Birthday / No rush']]);
+  });
+
+  it('opening an order on a table waits for its lock: a table archived meanwhile is refused', async () => {
+    const r = await restaurant('ord-table-lock');
+    let settled = false;
+    const res = await asOwnerInTenant(owner, r.tenantId, async (c) => {
+      await c.query(`SELECT 1 FROM restaurant_tables WHERE id = $1 FOR UPDATE`, [r.t3]);
+      const pending = open(r, { orderType: 'DINE_IN', tableId: r.t3 }).then((x) => {
+        settled = true;
+        return x;
+      });
+      await new Promise((ok) => setTimeout(ok, 500));
+      expect(settled).toBe(false);
+      await c.query(`UPDATE restaurant_tables SET archived_at = now() WHERE id = $1`, [r.t3]);
+      // Wrapped, so the transaction commits (releasing the row) before anyone waits for the request.
+      return { pending };
+    }).then(({ pending }) => pending);
+    // `pending` resolves only after the commit above released the row.
+    expect([res.status, code(res)]).toEqual([409, 'ARCHIVED']);
+    expect(await sql(r, `SELECT 1 FROM restaurant_orders WHERE table_id = $1`, [r.t3])).toEqual([]);
+  });
+
+  it('the order screen’s running subtotal can be priced without promotions, as the bill is (ADR-0021)', async () => {
+    const r = await restaurant('ord-quote-promo');
+    await http().post('/v1/promotions').set(r.auth).send({ name: 'Two teas for 80', kind: 'MULTI_BUY', quantity: 2, price: '80.00', variantIds: [r.tea], branchIds: [r.branchId] }).expect(201);
+    const quote = (body: Record<string, unknown>) => http().post('/v1/tax/quote').set(r.server).send({ branchId: r.branchId, lines: [{ id: 'tea', variantId: r.tea, quantity: '2' }], ...body }).expect(200);
+    expect((await quote({})).body.totals.amountDue).toBe('80.00');
+    expect((await quote({ promotions: false })).body.totals.amountDue).toBe('90.00');
+    await http().post('/v1/tax/quote').set(r.server).send({ branchId: r.branchId, lines: [{ variantId: r.tea, quantity: '1' }], promotions: 'no' }).expect(400);
+  });
+});

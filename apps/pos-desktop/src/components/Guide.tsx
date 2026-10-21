@@ -9,9 +9,9 @@ const scrollTo = (id: GuideTopic) => document.getElementById(`guide-${id}`)?.scr
  * The counter's user guide. It opens over the current screen (which stays mounted, so a cart or a
  * check survives a look) at the part the person is on; Esc or Back returns.
  */
-export function Guide({ topic, restaurant, salon = true, lodging = true, onBack }: { topic: GuideTopic; restaurant: boolean; salon?: boolean; lodging?: boolean; onBack: () => void }) {
+export function Guide({ topic, restaurant, salon = true, lodging = true, laundry = true, pharmacy = true, onBack }: { topic: GuideTopic; restaurant: boolean; salon?: boolean; lodging?: boolean; laundry?: boolean; pharmacy?: boolean; onBack: () => void }) {
   const { t } = useT();
-  const sections = guideSections(restaurant, salon, lodging);
+  const sections = guideSections(restaurant, salon, lodging, laundry, pharmacy);
 
   // A block body: newer browsers return a Promise from scrollIntoView, which React would call as the cleanup.
   useEffect(() => {

@@ -5,6 +5,7 @@ import { BusinessPicker, SignIn } from './components/Auth';
 import { CloseShift } from './components/CloseShift';
 import { History } from './components/History';
 import { KitchenBoard, KitchenPicker, type KitchenPlace } from './components/Kitchen';
+import { Laundry } from './components/Laundry';
 import { RegisterPicker, type Shift } from './components/Registers';
 import { Rooms } from './components/Rooms';
 import { Sell } from './components/Sell';
@@ -15,7 +16,7 @@ import { useT } from './i18n';
 import type { GuideTopic } from './lib/guide';
 import { useTill } from './lib/till';
 import { api, session, signOut, uuid } from './lib/api';
-import { restaurantOnPlan, servesAppointments, servesLodging, servesTables, type AppointmentRingUp, type Me } from './types';
+import { restaurantOnPlan, servesAppointments, servesLaundry, servesLodging, servesPharmacy, servesTables, type AppointmentRingUp, type Me } from './types';
 
 type Stage =
   | { name: 'signin' }
@@ -26,9 +27,9 @@ type Stage =
   | { name: 'kitchen'; me: Me; place: KitchenPlace }
   | { name: 'floor-pick'; me: Me }
   | { name: 'floor'; me: Me; branch: Shift['branch'] };
-type Tab = 'sell' | 'appointments' | 'rooms' | 'tables' | 'history' | 'close';
+type Tab = 'sell' | 'appointments' | 'rooms' | 'laundry' | 'tables' | 'history' | 'close';
 /** The part of the user guide each counter tab opens. */
-const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', appointments: 'appointments', rooms: 'rooms', tables: 'tables', history: 'shift', close: 'close' };
+const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', appointments: 'appointments', rooms: 'rooms', laundry: 'laundry', tables: 'tables', history: 'shift', close: 'close' };
 
 export function App() {
   const till = useTill();
@@ -85,7 +86,7 @@ function Counter() {
     const kitchen = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
     const floor = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
-      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me), salon: servesAppointments(stage.me), lodging: servesLodging(stage.me) }}>
+      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me), salon: servesAppointments(stage.me), lodging: servesLodging(stage.me), laundry: servesLaundry(stage.me), pharmacy: servesPharmacy(stage.me) }}>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.
@@ -164,10 +165,14 @@ function Counter() {
   // A hotel, resort or hybrid business (ADR-0023): the front desk's Rooms tab, and Charge to room at payment.
   const lodging = servesLodging(me);
   const rooms = lodging && permissions.includes('lodging.read');
+  // A laundry shop or hybrid business (ADR-0024): job orders, machines and deliveries; a rider sees the trips.
+  const laundryShop = servesLaundry(me);
+  const laundry = laundryShop && (permissions.includes('laundry.read') || permissions.includes('laundry.deliver'));
   const tabs: [Tab, string][] = [
     ['sell', t('nav.sell')],
     ...(appointments ? ([['appointments', t('nav.appointments')]] as [Tab, string][]) : []),
     ...(rooms ? ([['rooms', t('nav.rooms')]] as [Tab, string][]) : []),
+    ...(laundry ? ([['laundry', t('nav.laundry')]] as [Tab, string][]) : []),
     ...(tableService ? ([['tables', t('nav.tables')]] as [Tab, string][]) : []),
     ['history', t('nav.history')],
     ['close', t('nav.close')],
@@ -175,14 +180,14 @@ function Counter() {
   return (
     <Shell
       onSignOut={leave}
-      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me), salon, lodging }}
+      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me), salon, lodging, laundry: laundryShop, pharmacy: servesPharmacy(me) }}
       context={
         <span className="serial text-[0.8125rem]">
           {shift.branch.name} · <span className="text-white">{shift.register.code}</span> · {me.user.displayName}
         </span>
       }
       nav={
-        <nav className="flex gap-1" aria-label="Counter">
+        <nav className="flex gap-1" aria-label={t('a11y.counterNav')} data-testid="counter-nav">
           {tabs.map(([key, label]) => (
             <button
               key={key}
@@ -201,7 +206,7 @@ function Counter() {
       <div hidden={tab !== 'sell'}>
         <Sell
           shift={shift} cashierUserId={me.userId} active={tab === 'sell'} permissions={permissions} exchange={exchange} onExchangeEnd={() => setExchange(null)}
-          salon={salon} ringUp={ringUp} onRingUpTaken={() => setRingUp(null)} lodging={lodging}
+          salon={salon} ringUp={ringUp} onRingUpTaken={() => setRingUp(null)} lodging={lodging} laundry={laundryShop}
         />
       </div>
       {/* Kept mounted too: the booking form being filled survives a look at Sell. */}
@@ -214,6 +219,12 @@ function Counter() {
       {rooms && (
         <div hidden={tab !== 'rooms'}>
           <Rooms shift={shift} permissions={permissions} active={tab === 'rooms'} />
+        </div>
+      )}
+      {/* Kept mounted too: a claim whose card payment was taken survives a look at Sell. */}
+      {laundry && (
+        <div hidden={tab !== 'laundry'}>
+          <Laundry shift={shift} permissions={permissions} active={tab === 'laundry'} />
         </div>
       )}
       {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}

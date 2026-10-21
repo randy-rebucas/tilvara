@@ -8,8 +8,9 @@ import { formatDateTime, peso, qty, signOf, subtractQty } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { ReturnForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Goods receipt' };
+export const generateMetadata = pageTitle('purchasing.receipts.item');
 
 export default async function ReceiptPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

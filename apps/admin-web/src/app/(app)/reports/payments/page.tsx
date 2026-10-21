@@ -6,8 +6,9 @@ import { formatDateTime, peso } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Payments to check' };
+export const generateMetadata = pageTitle('reports.payments');
 
 /**
  * Card and QR payments of the branch that still need someone, on any shift: no answer from the

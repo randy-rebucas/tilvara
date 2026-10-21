@@ -1,5 +1,5 @@
 /** Shapes returned by the Tilvara API that the counter uses (see docs/api/openapi.json). */
-export type BusinessType = 'RETAIL' | 'RESTAURANT' | 'HYBRID' | 'GROCERY' | 'SALON' | 'LODGING';
+export type BusinessType = 'RETAIL' | 'RESTAURANT' | 'HYBRID' | 'GROCERY' | 'SALON' | 'LODGING' | 'LAUNDRY' | 'PHARMACY';
 
 export interface Me {
   userId: string;
@@ -17,7 +17,7 @@ export interface Me {
  */
 export const servesTables = (me: Me) => {
   const type = me.activeTenant?.businessType;
-  return type !== 'RETAIL' && type !== 'GROCERY' && type !== 'SALON';
+  return type !== 'RETAIL' && type !== 'GROCERY' && type !== 'SALON' && type !== 'LAUNDRY' && type !== 'PHARMACY';
 };
 
 /**
@@ -36,6 +36,24 @@ export const servesAppointments = (me: Me) => {
 export const servesLodging = (me: Me) => {
   const type = me.activeTenant?.businessType;
   return type === undefined || type === 'LODGING' || type === 'HYBRID';
+};
+
+/**
+ * Job orders, machines and deliveries (ADR-0024): a laundry shop or laundromat, or a hybrid business. A
+ * missing type counts as HYBRID; the Laundry tab also needs `laundry.read` (or `laundry.deliver`, a rider).
+ */
+export const servesLaundry = (me: Me) => {
+  const type = me.activeTenant?.businessType;
+  return type === undefined || type === 'LAUNDRY' || type === 'HYBRID';
+};
+
+/**
+ * Prescriptions, the pharmacist's approval and the medicines part of the guide (ADR-0025): a pharmacy or
+ * drugstore, or a hybrid business. Drug details (generic, class badge, equivalents) show for any business.
+ */
+export const servesPharmacy = (me: Me) => {
+  const type = me.activeTenant?.businessType;
+  return type === undefined || type === 'PHARMACY' || type === 'HYBRID';
 };
 
 /** Restaurant service on the plan as well: the kitchen display and server mode take new work. */
@@ -59,6 +77,62 @@ export interface LookupItem {
   quantity?: string;
   /** STANDARD, SERVICE or PACKAGE (ADR-0022), when the source gives it (the till's snapshot does). */
   productType?: ProductType;
+  /** A laundry service, add-on or self-service cycle (ADR-0024 §2, §7); null or absent otherwise. */
+  laundry?: LaundryInfo | null;
+  /** A medicine (ADR-0025 §3); null or absent for other items. */
+  drug?: DrugInfo | null;
+  /** An expiry item where expired or held stock may not be sold: what is sellable here now (online only). */
+  sellable?: { onHand: string; expiredOrHeld: string; sellable: string };
+}
+
+export type DrugClass = 'OTC' | 'RX' | 'ANTIBIOTIC' | 'DANGEROUS';
+export type DosageForm = 'TABLET' | 'CAPSULE' | 'SYRUP' | 'SUSPENSION' | 'DROPS' | 'CREAM' | 'OINTMENT' | 'INJECTION' | 'INHALER' | 'SACHET' | 'OTHER';
+
+/** A medicine's details as the lookup, the product list and the snapshot give them. */
+export interface DrugInfo {
+  drugClass: DrugClass;
+  genericName: string;
+  strength: string | null;
+  dosageForm: string;
+  genericKey: string;
+  /** Pieces in one unit of the item (a box of 10 strips of 10 is "100"; decimal string); absent = 1 (a piece, or an older server). */
+  piecesPerUnit?: string;
+}
+
+/** A prescription of the customer's with something left (GET /v1/customers/:id/prescriptions). */
+export interface PrescriptionSummary {
+  id: string;
+  branchId: string;
+  customerId: string | null;
+  patientName: string;
+  prescriberName: string;
+  issuedOn: string;
+  yellowFormNo: string | null;
+  status: 'OPEN' | 'PARTLY_FILLED' | 'FILLED' | 'VOIDED';
+  prescribed?: string;
+  dispensed?: string;
+}
+
+/** One prescription on record (GET /v1/prescriptions/:id), with what is left of each item. */
+export interface PrescriptionDetail extends PrescriptionSummary {
+  prescriberLicenseNo: string;
+  items: { id: string; lineNo: number; genericName: string; strength: string | null; dosageForm: string; drugClass: DrugClass; directions: string | null; quantity: string; dispensed: string; left: string }[];
+}
+
+/** Items of the same generic, strength and form (GET /v1/catalog/equivalents). */
+export interface Equivalents {
+  generic: string | null;
+  data: { variantId: string; sku: string; name: string; drugClass: DrugClass | null; unitPrice: string | null; sellable: string | null }[];
+}
+
+/** How a job line counts an item, and the machine a self-service cycle runs on (ADR-0024). */
+export interface LaundryInfo {
+  unit: 'KG' | 'LOAD' | 'PIECE' | null;
+  minQuantity: string | null;
+  kgPerLoad: string | null;
+  addon: boolean;
+  machineKind: MachineKind | null;
+  machineMinutes: number | null;
 }
 
 export type ProductType = 'STANDARD' | 'SERVICE' | 'PACKAGE';
@@ -248,7 +322,8 @@ export interface Bill extends Totals {
   requiresProfessionalReview: boolean;
   lines: BillLine[];
   charges: { id: string; kind: string; rate: string; amountDue: string }[];
-  checks: { id: string; saleNumber: number; amountDue: string; completedAt: string }[];
+  /** `voided`: a check voided since (audit 2026-10-21); its share is owed again and not in `amountPaid`. */
+  checks: { id: string; saleNumber: number; amountDue: string; completedAt: string; voided?: boolean }[];
   amountPaid: string;
   amountRemaining: string;
 }
@@ -284,13 +359,15 @@ export interface Receipt {
   transaction: { reference: string; dateTime: string; register: string; cashier: string };
   /** `promotion`: the promotion that gave the line's `discount` (ADR-0021). */
   /** `staff`: who did it (first name); `packageSession`: a prepaid package's session (ADR-0022). */
-  lines: { name: string; quantity: string; unitPrice: string; amount: string; discount?: string; promotion?: string; staff?: string; packageSession?: boolean; flag: string }[];
+  /** `generic` and `lots` (ADR-0025 §3, §5): a medicine's generic label and the batches its sale drew. */
+  lines: { name: string; quantity: string; unitPrice: string; amount: string; discount?: string; promotion?: string; staff?: string; packageSession?: boolean; flag: string; generic?: string; lots?: string[] }[];
   /** Non-item charges such as the service charge, each printed on its own line. */
   charges?: { kind: string; label: string; amount: string; flag: string }[];
   totals: Record<string, string>;
   /** `exchangeReturnNumber`: this cash is the refund of that return, put towards the sale (an exchange). */
   tenders: { method: string; amount: string; tendered?: string; change?: string; exchangeReturnNumber?: number }[];
-  statutory: { label: string; name: string; idNumber: string; discount: string; signatureLine: boolean }[];
+  /** `purchaseBooklet` (ADR-0025 §8): present when the discount covered a medicine. */
+  statutory: { label: string; name: string; idNumber: string; discount: string; signatureLine: boolean; purchaseBooklet?: boolean }[];
   legend: string | null;
   /** A return or void slip: why the goods came back. */
   reason?: string;
@@ -395,7 +472,10 @@ export interface BoardRoom {
   roomType: { id: string; code: string; name: string };
   status: HousekeepingStatus;
   lastChange: { at: string; byName: string | null; note: string | null } | null;
+  /** A guest in house holds the room (beside the housekeeping status). */
   occupied: boolean;
+  /** The guest in house should have left before today. */
+  overstay?: boolean;
   departingToday: boolean;
   arrivingToday: boolean;
 }
@@ -436,6 +516,8 @@ export interface Stay {
   folio: { id: string; status: 'OPEN' | 'SETTLED'; balance?: string; charged?: string } | null;
   depositsHeld?: string;
   nightsPosted?: number;
+  /** In house after the departure date: check-out moves the departure to today and charges the extra nights. */
+  overstay?: boolean;
 }
 
 export interface FolioEntry {
@@ -470,4 +552,139 @@ export interface FolioStatement {
   lines: { id: string; date: string; kind: FolioEntry['kind']; description: string; amount: string; vatAmount: string | null }[];
   totals: { roomNights: string; accommodationTax: string; charges: string; adjustments: string; deposits: string; payments: string; balance: string };
   signatureLine: string;
+}
+
+// ------------------------------------------------------------------ laundry (ADR-0024)
+
+export type MachineKind = 'WASHER' | 'DRYER';
+export type JobStatus = 'RECEIVED' | 'WASHING' | 'DRYING' | 'FOLDING' | 'READY' | 'OUT_FOR_DELIVERY' | 'CLAIMED' | 'CANCELLED' | 'DISPOSED';
+
+export interface JobLine {
+  id: string;
+  variantId: string;
+  name: string;
+  laundryUnit: 'KG' | 'LOAD' | 'PIECE' | null;
+  /** What was weighed or counted; `quantity` is what is billed (at least the service's minimum). */
+  measuredQuantity: string;
+  quantity: string;
+  unitPrice: string;
+  discount: string;
+  amountDue: string;
+  customerPackageId: string | null;
+  /** The express or delivery charge the server adds by itself. */
+  auto: boolean;
+}
+
+export interface JobTrip {
+  id: string;
+  kind: 'PICKUP' | 'DELIVERY';
+  status: 'SCHEDULED' | 'DONE' | 'FAILED' | 'CANCELLED';
+  address: string | null;
+  contactPhone: string | null;
+  contactName: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  riderName: string | null;
+  failReason: string | null;
+}
+
+/** A job order as the server shows it (lines frozen, money in decimal strings). */
+export interface JobOrder {
+  id: string;
+  branchId: string;
+  number: number;
+  reference: string;
+  claimCode: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerDisplayName: string | null;
+  serviceLevel: 'REGULAR' | 'EXPRESS';
+  promisedAt: string;
+  status: JobStatus;
+  weightKg: string | null;
+  bagCount: number;
+  specialInstructions: string | null;
+  conditionNotes: string | null;
+  pickupRequested: boolean;
+  deliveryRequested: boolean;
+  notify: boolean;
+  pricedAt: string | null;
+  amountDue: string;
+  depositHeld: string;
+  balance: string;
+  overdue: boolean;
+  unclaimed: boolean;
+  storageDays: number;
+  readyAt: string | null;
+  saleId: string | null;
+  createdAt: string;
+  lines: JobLine[];
+  items: { id: string; label: string; count: number; note: string | null }[];
+  trips: JobTrip[];
+}
+
+/** A row of the job list: the header and its money, without lines, items or trips. */
+export type JobSummary = Omit<JobOrder, 'lines' | 'items' | 'trips' | 'unclaimed' | 'storageDays'> & { unclaimed?: boolean };
+
+/** The customer's stub and the bag tag (ADR-0024 §4), as the server words them. */
+export interface JobTicket {
+  stub: {
+    business: string; legalName: string; branch: string; branchAddress: string | null; timezone: string;
+    reference: string; claimCode: string; receivedAt: string; promisedAt: string; serviceLevel: 'REGULAR' | 'EXPRESS';
+    customer: string | null; weightKg: string | null; bagCount: number;
+    lines: { name: string; measuredQuantity: string; quantity: string; unit: string | null; unitPrice: string; amountDue: string; packageSession: boolean }[];
+    amountDue: string; depositHeld: string; balance: string;
+    items: { label: string; count: number; note: string | null }[]; pieces: number;
+    specialInstructions: string | null; conditionNotes: string | null; claimPolicy: string | null; notice: string;
+  };
+  tag: { reference: string; customer: string | null; bagCount: number; serviceLevel: 'REGULAR' | 'EXPRESS'; promisedAt: string; specialInstructions: string | null; pieces: number };
+}
+
+export interface BoardMachine {
+  id: string;
+  kind: MachineKind;
+  label: string;
+  capacityKg: string | null;
+  cycleMinutes: number;
+  outOfOrderReason: string | null;
+  status: 'FREE' | 'RUNNING' | 'OUT_OF_ORDER';
+  current: { runId: string; source: 'SELF_SERVICE' | 'JOB'; jobOrderId: string | null; jobReference: string | null; saleId: string | null; saleNumber: number | null; startedAt: string; endsAt: string; secondsLeft: number } | null;
+  nextFreeAt: string | null;
+}
+
+export interface MachineBoard {
+  branchId: string;
+  asOf: string;
+  data: BoardMachine[];
+}
+
+export interface LaundryTrip {
+  id: string;
+  jobOrderId: string;
+  jobReference: string;
+  jobStatus: JobStatus;
+  kind: 'PICKUP' | 'DELIVERY';
+  status: 'SCHEDULED' | 'DONE' | 'FAILED' | 'CANCELLED';
+  customer: string | null;
+  address: string | null;
+  contactPhone: string | null;
+  contactName: string | null;
+  windowStart: string | null;
+  windowEnd: string | null;
+  riderName: string | null;
+  notes: string | null;
+  bagCount: number;
+  amountDue: string;
+  balance: string;
+}
+
+export interface LaundrySettings {
+  regularHours: number;
+  expressHours: number;
+  expressVariantId: string | null;
+  deliveryVariantId: string | null;
+  storageFeeVariantId: string | null;
+  storageFreeDays: number | null;
+  unclaimedDays: number;
 }

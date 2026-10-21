@@ -8,8 +8,9 @@ import { en, type MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { RowAction } from '../../../locations/forms';
 import { AccessForm } from '../../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Member' };
+export const generateMetadata = pageTitle('team.members.item');
 
 /** One member: their roles and where each applies, with "Change access" for those who may grant them. */
 export default async function MemberPage({ params }: { params: Promise<{ id: string }> }) {

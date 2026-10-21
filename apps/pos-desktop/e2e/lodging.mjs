@@ -46,13 +46,17 @@ const r103 = await room('103');
 const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
 const plusDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const booking = await call('POST', '/v1/stays', tk, { branchId: br.id, roomId: r103.id, guestName: 'Ana Reyes', arrivalDate: today, departureDate: plusDays(today, 2), adults: 2, source: 'PHONE' }, idem());
+// Audit 2026-10-21: an overstay. Checked in three days ago, should have left yesterday, still in room 104.
+const r104 = await room('104');
+const overstay = await call('POST', '/v1/stays', tk, { branchId: br.id, roomId: r104.id, arrivalDate: plusDays(today, -3), departureDate: plusDays(today, -1), adults: 1, source: 'WALK_IN', checkIn: true,
+  guests: [{ fullName: 'Liza Reyes', nationality: 'Filipino', idType: 'Passport', idNumber: 'P7654321', address: 'Quezon City' }] }, idem());
 
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9349 });
 const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll } = b;
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
 const ok = (expr, ms = 10000) => waitFor(expr, ms).then(() => true, () => false);
-const tab = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Counter] button')].filter((x) => x.getClientRects().length).find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+const tab = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].filter((x) => x.getClientRects().length).find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
 const setEl = (selector, value, index = 0) => evaluate(`(() => {
   const all = [...document.querySelectorAll(${JSON.stringify(selector)})];
   const el = all.filter((x) => x.getClientRects().length)[${index}] ?? all[${index}];
@@ -91,7 +95,7 @@ try {
   await waitFor(`document.getElementById('scan')`);
 
   // ---- the board ----
-  check('a lodging business has a Rooms tab', await ok(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent.trim() === 'Rooms')`));
+  check('a lodging business has a Rooms tab', await ok(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Rooms')`));
   await tab('Rooms');
   check('the board shows every room with its housekeeping status', await ok(`${card('101')}?.dataset.status === 'CLEAN' && ${card('102')} && ${card('103')}`));
   check('… and the booking arriving today on its room', await ok(`${card('103')}?.innerText.includes('Arrives today')`) && await ok(`document.querySelector('[data-testid=rooms-summary]')?.innerText.includes('Arrivals today')`));
@@ -206,6 +210,27 @@ try {
   if (session?.expectedCash !== undefined) check('the drawer expects the float, the cash sale, the deposit and the folio payment', session.expectedCash === '3600.00');
   await clickText('Done');
 
+  // ---- an overstay: flagged on the board and the room; check-out moves the departure to today ----
+  check('the overstaying guest is in house, flagged by the API', overstay.status === 'IN_HOUSE' && (await call('GET', `/v1/stays/${overstay.id}`, tk)).overstay === true);
+  check('the board flags room 104 “Overstay”', await ok(`${card('104')}?.innerText.includes('Overstay') && ${card('104')}.innerText.includes('Liza Reyes')`));
+  await openRoom('104');
+  check('the room says the guest should have left, and what check-out does', await ok(`document.querySelector('[data-testid=overstay]')?.innerText.includes('should have left on') && document.querySelector('[data-testid=overstay]').innerText.includes('charges the extra nights')`));
+  await shot('lodging-overstay.png', false);
+  await click('[data-testid=check-out]');
+  await click('[data-testid=prepare-check-out]');
+  // Three nights (arrival 3 days ago → today) at 2,000.00, none posted before (the night audit is off).
+  check('prepare charges the three nights up to today: ₱6,000.00 to pay', await ok(`document.querySelector('[data-testid=checkout]')?.innerText.includes('₱6,000.00') && document.querySelectorAll('[data-testid=folio] [data-kind=ROOM_NIGHT]').length === 3`));
+  const extended = await call('GET', `/v1/stays/${overstay.id}`, tk);
+  check('… the departure moved to today, no longer an overstay', extended.departureDate === today && extended.overstay === false && extended.nightsPosted === 3);
+  await setEl('#folioCash', '6000');
+  await click('[data-testid=folio-pay-cash]');
+  await waitFor(`document.querySelector('[data-testid=finish-check-out]')`);
+  // The room panel reloads the stay after the payment (not after prepare): the overstay note is gone then.
+  check('… and the overstay note is gone once paid', await ok(`!document.querySelector('[data-testid=overstay]')`));
+  await click('[data-testid=finish-check-out]');
+  check('the overstay is checked out', await ok(`(document.querySelector('[data-testid=statement]')?.innerText ?? '').toLowerCase().includes('guest signature')`, 15000) && (await call('GET', `/v1/stays/${overstay.id}`, tk)).status === 'CHECKED_OUT');
+  await clickText('Done');
+
   // ---- housekeeping ----
   check('the room is now to clean', await ok(`${card('101')}?.dataset.status === 'DIRTY' && ${card('101')}.innerText.includes('Vacant')`));
   await openRoom('101');
@@ -225,10 +250,10 @@ try {
   check('F1 on Rooms opens the guide at “Rooms, stays and folios”', await ok(`document.getElementById('guide-rooms')?.innerText.includes('Walk-in check-in') && document.getElementById('guide-rooms').innerText.includes('Name matches — charge to room')`));
   await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`);
   await sleep(300);
-  await evaluate(`[...document.querySelectorAll('[aria-label=Language] button')].find((x) => x.textContent.trim() === 'fil').click()`);
-  check('Filipino: the tab and the board', await ok(`[...document.querySelectorAll('nav[aria-label=Counter] button')].some((x) => x.textContent.trim() === 'Mga kuwarto')`) && await shown('Darating ngayon'));
+  await evaluate(`[...document.querySelectorAll('[data-testid=language] button')].find((x) => x.textContent.trim() === 'fil').click()`);
+  check('Filipino: the tab and the board', await ok(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Mga kuwarto')`) && await shown('Darating ngayon'));
   await shot('lodging-fil.png', false);
-  await evaluate(`[...document.querySelectorAll('[aria-label=Language] button')].find((x) => x.textContent.trim() === 'en').click()`);
+  await evaluate(`[...document.querySelectorAll('[data-testid=language] button')].find((x) => x.textContent.trim() === 'en').click()`);
   await viewport(390, 844);
   await sleep(400);
   check('phone width: the board fits, no sideways scroll', await noHorizontalScroll());

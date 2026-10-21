@@ -5,8 +5,9 @@ import type { IngredientUsage } from '@/lib/api';
 import { peso, qty, signed, signOf, sumDecimal } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Ingredient usage' };
+export const generateMetadata = pageTitle('reports.ingredient-usage');
 
 /**
  * Theoretical vs actual use per ingredient (ADR-0014 §10): expected = recipes + sold as itself;

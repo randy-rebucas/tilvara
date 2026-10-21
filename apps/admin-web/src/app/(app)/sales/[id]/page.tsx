@@ -7,8 +7,10 @@ import { apiOrNull, type Branch, type Member, type Register, type Sale, type Sal
 import { formatDateTime, peso, qty, signOf } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { DrugBadge } from '../../products/drug-fields';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Sale' };
+export const generateMetadata = pageTitle('sales.item');
 
 /** A sale as recorded: lines (with what came back), charges, tenders, and its returns and voids, each with its journal entry. */
 export default async function SalePage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +44,15 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
         {l.customerPackageId && t('doc.fromPackage')}
       </span>
     ) : null;
+  // A medicine (ADR-0025): the generic, strength and form under the brand, and its class at the sale.
+  const drugLine = (l: Sale['lines'][number]) =>
+    l.drugClass || l.drugLabel ? (
+      <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[0.8125rem] text-muted" data-testid="line-drug">
+        {l.drugLabel}
+        <DrugBadge drugClass={l.drugClass} />
+      </span>
+    ) : null;
+  const beneficiaries = sale.beneficiaries ?? [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -77,6 +88,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
               cell: (l) => (
                 <span className={l.parentLineId ? 'pl-4 text-muted' : ''}>
                   {l.name}
+                  {drugLine(l)}
                   {salonLine(l)}
                   {/* The promotion that priced it (ADR-0021 §1), with the discount it gave. */}
                   {l.promotionName && (
@@ -97,6 +109,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
             title: (l) => l.name,
             meta: (l) => (
               <>
+                {drugLine(l)}
                 {salonLine(l)}
                 <Serial>{qty(l.quantity)} × {peso(l.unitPrice)}{signOf(l.returnedQuantity) > 0 && ` · ${t('doc.returned')} ${qty(l.returnedQuantity)}`}</Serial>
                 {l.promotionName && <span className="block text-blue">{l.promotionName}{signOf(l.discount) > 0 && ` · ${peso(`-${l.discount}`)}`}</span>}
@@ -124,6 +137,22 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
           </dl>
         )}
       </Note>
+
+      {beneficiaries.length > 0 && (
+        <section aria-labelledby="sale-beneficiaries">
+          <h2 id="sale-beneficiaries" className="section-title mb-3">{t('doc.beneficiaries')}</h2>
+          <Note denom="none" className="px-5 py-4 pr-8">
+            <ul className="grid gap-2 text-[0.9375rem]">
+              {beneficiaries.map((b) => (
+                <li key={b.id} data-testid="beneficiary">
+                  <b>{b.name}</b> <Serial>{b.schemeCode} · {b.idNumber}{b.tin ? ` · TIN ${b.tin}` : ''}</Serial>
+                  {b.purchaseBooklet != null && <span className="block text-[0.8125rem]">{b.purchaseBooklet ? t('doc.bookletShown') : t('doc.bookletNotShown')}</span>}
+                </li>
+              ))}
+            </ul>
+          </Note>
+        </section>
+      )}
 
       <section>
         <h2 className="section-title mb-3">{t('doc.returns')}</h2>

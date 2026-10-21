@@ -9,8 +9,9 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity, sourceHref } from './chrome';
 import { ManualEntryForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Journal' };
+export const generateMetadata = pageTitle('books');
 
 /** The journal, null without access, or the API's own rule for a refused filter (e.g. "from" after "to"). */
 async function loadJournal(path: string): Promise<{ data: JournalRow[] } | { error: string } | null> {

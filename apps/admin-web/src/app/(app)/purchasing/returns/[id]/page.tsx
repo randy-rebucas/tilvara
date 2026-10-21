@@ -7,8 +7,9 @@ import { apiOrNull, variantNamesById, type Branch, type Supplier, type SupplierR
 import { formatDateTime, peso, qty } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Supplier return' };
+export const generateMetadata = pageTitle('purchasing.returns.item');
 
 /** A return to the supplier: what left stock, the credit due, and its journal entry. */
 export default async function SupplierReturnPage({ params }: { params: Promise<{ id: string }> }) {

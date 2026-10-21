@@ -5,8 +5,9 @@ import type { TipsReport } from '@/lib/api';
 import { formatDate, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Tips' };
+export const generateMetadata = pageTitle('reports.tips');
 
 /**
  * Tips (session 25): owed to staff, not sales. Taken with sales (cash or card/QR), given back by voids,

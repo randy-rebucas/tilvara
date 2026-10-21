@@ -1,4 +1,5 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { tillDrugs } from '../pharmacy/drugs.js';
 import type { ServerEnv } from '@1pos/config';
 import {
   and,
@@ -9,6 +10,7 @@ import {
   eq,
   isNull,
   kitchenStations,
+  soldOutItems,
   kitchenTickets,
   legalEntities,
   registers,
@@ -23,10 +25,19 @@ import {
   type Database,
 } from '@1pos/database';
 import {
-  canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER,
-  type CatalogVersion, type KitchenStationsResponse, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotCounter, type SnapshotItem, type SnapshotItemsPage, type SyncResult,
+  canonicalJson, laundryOf, offlineSaleSchema, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER,
+  type CatalogVersion, type ReceivedEnvelope, type KitchenStationsResponse, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotCounter, type SnapshotItem, type SnapshotItemsPage, type SyncResult,
 } from '@1pos/sync-protocol';
 import { claimTicketsToPrint } from '../restaurant/kitchen-print.js';
+
+/** An item's laundry fields (ADR-0024), only for items that have them: other items' snapshot rows do not change. */
+function laundryField(r: { laundry_unit: string | null; laundry_min_quantity: string | null; laundry_kg_per_load: string | null; laundry_addon: boolean; machine_kind: string | null; machine_minutes: number | null }) {
+  const laundry = laundryOf({
+    laundryUnit: r.laundry_unit, laundryMinQuantity: r.laundry_min_quantity, laundryKgPerLoad: r.laundry_kg_per_load, laundryAddon: r.laundry_addon,
+    machineKind: r.machine_kind, machineMinutes: r.machine_minutes,
+  });
+  return laundry ? { laundry } : {};
+}
 import { loadSettings } from '../restaurant/floor.service.js';
 import { MenusService } from '../restaurant/menus.service.js';
 import { hasFeature } from '../billing/entitlements.js';
@@ -34,10 +45,11 @@ import type { DismissOfflineInput, OfflineListQuery } from '@1pos/validation';
 import { createHash } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
 import { loadGrants } from '../auth/auth.guard.js';
-import { dbNow } from '../common/clock.js';
+import { dbNow, EFFECTIVE_SKEW } from '../common/clock.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
+import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { ApiMetrics } from '../infrastructure/metrics.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -75,6 +87,25 @@ function decodeCursor(cursor: string): { sku: string; variantId: string } | null
 const TILL_SILENCE_MINUTES = 30;
 
 type Delivery = typeof terminalTransactions.$inferSelect;
+type EnvelopeHead = Pick<OfflineSale, 'terminalTxnId' | 'deviceSeq'>;
+
+const envelopePipe = new ZodPipe(offlineSaleSchema);
+/** A stored or received envelope as an offline sale, or why it is not one (VALIDATION_FAILED with the zod issues). */
+function readEnvelope(payload: unknown): OfflineSale | AppError {
+  try {
+    return envelopePipe.transform(payload);
+  } catch (e) {
+    if (!(e instanceof AppError)) throw e;
+    return new AppError('VALIDATION_FAILED', 'The till sent a sale this server cannot read', HttpStatus.UNPROCESSABLE_ENTITY, e.details);
+  }
+}
+/** An instant clients can format, or null (an unreadable envelope's `occurredAt` may be any text). */
+const validInstant = (v: string | null) => (v !== null && Number.isFinite(Date.parse(v)) ? v : null);
+/** A stored payload's field, for display only: payloads quarantined as unreadable may lack any field. */
+const payloadField = (payload: unknown, key: string): string | null => {
+  const v = payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>)[key] : undefined;
+  return typeof v === 'string' ? v : null;
+};
 
 /**
  * Offline sync (ADR-0015): terminals fetch snapshots and deliver offline sales; managers review the
@@ -107,9 +138,22 @@ export class SyncService extends TenantService {
     if (!served.menu) return null;
     const stations = await db.select({ id: kitchenStations.id, code: kitchenStations.code, name: kitchenStations.name, isDefault: kitchenStations.isDefault })
       .from(kitchenStations).where(and(eq(kitchenStations.branchId, branchId), isNull(kitchenStations.archivedAt)));
+    const all = served.menu.sections.flatMap((s) => s.items);
+    // Sold out here now (an 86'd dish, a choice run out): the till refuses them offline. A sold-out mark
+    // bumps the catalog version (0108), so tills fetch a new snapshot.
+    const soldOut = new Map<string, string>();
+    for (const i of all) {
+      if (i.soldOut) soldOut.set(i.variantId, i.name);
+    }
+    const soldOutRows = await db.select({ variantId: soldOutItems.variantId }).from(soldOutItems).where(eq(soldOutItems.branchId, branchId));
+    const marked = new Set(soldOutRows.map((r) => r.variantId));
+    for (const g of all.flatMap((i) => i.modifierGroups)) {
+      for (const o of g.options) if (o.variantId && marked.has(o.variantId)) soldOut.set(o.variantId, o.name);
+    }
     return {
       menuVersionId: served.menu.menuVersionId,
-      items: served.menu.sections.flatMap((s) => s.items).filter((i) => i.available).map((i) => ({
+      soldOut: [...soldOut].map(([variantId, name]) => ({ variantId, name })),
+      items: all.filter((i) => i.available).map((i) => ({
         variantId: i.variantId,
         name: i.name,
         stationCode: i.stationCode,
@@ -231,8 +275,17 @@ export class SyncService extends TenantService {
    */
   settleKitchenPrint(t: TerminalPrincipal, ticketId: string, outcome: 'printed' | 'released') {
     return withTenant(this.database.pool, t.tenantId, async (db) => {
+      // A claimed ticket not printed yet was a TICKET; a printed one was claimed for its VOID slip, which
+      // settles at the claim time (an item voided while it printed asks for the next slip).
+      const ticketClaim = sql`${kitchenTickets.printedAt} IS NULL`;
       const done = outcome === 'printed'
-        ? { printedAt: sql`now()`, printCount: sql`${kitchenTickets.printCount} + 1`, printClaimedAt: null, printClaimedBy: null }
+        ? {
+            printedAt: sql`CASE WHEN ${ticketClaim} THEN now() ELSE ${kitchenTickets.printedAt} END`,
+            printCount: sql`${kitchenTickets.printCount} + CASE WHEN ${ticketClaim} THEN 1 ELSE 0 END`,
+            voidPrintedAt: sql`CASE WHEN ${ticketClaim} THEN ${kitchenTickets.voidPrintedAt} ELSE ${kitchenTickets.printClaimedAt} END`,
+            printClaimedAt: null,
+            printClaimedBy: null,
+          }
         : { printClaimedAt: null, printClaimedBy: null };
       const [row] = await db.update(kitchenTickets).set(done)
         .where(and(eq(kitchenTickets.id, ticketId), eq(kitchenTickets.printClaimedBy, t.terminalId)))
@@ -320,6 +373,7 @@ export class SyncService extends TenantService {
       variant_id: string; sku: string; name: string; barcodes: string[] | null; price_id: string; price_list_id: string; amount: string;
       currency: string; prices_include_tax: boolean; vat_treatment: SnapshotItem['vatTreatment']; tax_category_code: string; whole_units: boolean; track_inventory: boolean; quick_key_position: number | null;
       product_type: NonNullable<SnapshotItem['productType']>;
+      laundry_unit: string | null; laundry_min_quantity: string | null; laundry_kg_per_load: string | null; laundry_addon: boolean; machine_kind: string | null; machine_minutes: number | null;
     }>(sql`
       WITH list AS (
         SELECT coalesce(
@@ -332,7 +386,8 @@ export class SyncService extends TenantService {
              (SELECT array_agg(b.code ORDER BY b.code) FROM barcodes b WHERE b.variant_id = v.id AND b.archived_at IS NULL) AS barcodes,
              pr.id AS price_id, pl.id AS price_list_id, pr.amount::text AS amount, pl.currency, pl.prices_include_tax,
              tc.vat_treatment, tc.code AS tax_category_code,
-             (p.sold_by = 'UNIT' AND NOT u.allows_fraction) AS whole_units, p.track_inventory, v.quick_key_position, p.product_type
+             (p.sold_by = 'UNIT' AND NOT u.allows_fraction) AS whole_units, p.track_inventory, v.quick_key_position, p.product_type,
+             v.laundry_unit, v.laundry_min_quantity::text, v.laundry_kg_per_load::text, v.laundry_addon, v.machine_kind, v.machine_minutes
         FROM list
         JOIN price_lists pl ON pl.id = list.id
         JOIN product_variants v ON v.archived_at IS NULL
@@ -341,14 +396,19 @@ export class SyncService extends TenantService {
         JOIN units_of_measure u ON u.id = p.uom_id
         JOIN LATERAL (SELECT id, amount FROM product_prices pp
                        WHERE pp.price_list_id = list.id AND pp.variant_id = v.id AND pp.effective_from <= ${asOf.toISOString()}::timestamptz
+                         AND pp.created_at <= ${asOf.toISOString()}::timestamptz + ${sql.raw(EFFECTIVE_SKEW)}
                        ORDER BY pp.effective_from DESC LIMIT 1) pr ON true
        ${after ? sql`WHERE (v.sku, v.id) > (${after.sku}, ${after.variantId}::uuid)` : sql``}
        ORDER BY v.sku, v.id
        ${limit ? sql`LIMIT ${limit}` : sql``}`);
+    // Medicines by the same rule as the server's dispensing check (a box takes its pieces' class), with pieces per unit.
+    const drugs = await tillDrugs(db, rows.map((r) => r.variant_id));
     return rows.map((r) => ({
       variantId: r.variant_id, sku: r.sku, name: r.name, barcodes: r.barcodes ?? [], priceId: r.price_id, priceListId: r.price_list_id,
       unitPrice: r.amount, priceIncludesTax: r.prices_include_tax, vatTreatment: r.vat_treatment, taxCategoryCode: r.tax_category_code,
       wholeUnits: r.whole_units, trackInventory: r.track_inventory, quickKey: r.quick_key_position, productType: r.product_type, currency: r.currency,
+      ...laundryField(r),
+      ...(drugs.has(r.variant_id) && { drug: drugs.get(r.variant_id)! }),
     }));
   }
 
@@ -359,7 +419,7 @@ export class SyncService extends TenantService {
    * least one envelope is always delivered): the till gets its answer before its own timeout and sends
    * the rest again.
    */
-  async syncSales(t: TerminalPrincipal, envelopes: OfflineSale[], receivedAt = performance.now()): Promise<SyncResult[]> {
+  async syncSales(t: TerminalPrincipal, envelopes: ReceivedEnvelope[], receivedAt = performance.now()): Promise<SyncResult[]> {
     const results: SyncResult[] = [];
     const stopAt = receivedAt + this.env.SYNC_BATCH_BUDGET_MS;
     for (const env of [...envelopes].sort((a, b) => a.deviceSeq - b.deviceSeq)) {
@@ -371,24 +431,20 @@ export class SyncService extends TenantService {
     return results;
   }
 
-  private async deliver(t: TerminalPrincipal, env: OfflineSale): Promise<SyncResult> {
+  private async deliver(t: TerminalPrincipal, received: ReceivedEnvelope): Promise<SyncResult> {
+    const env = readEnvelope(received);
+    if (env instanceof AppError) {
+      // Not a sale this server can read (an older or faulty till): kept as received for a manager, so it
+      // never blocks the envelopes behind it. Sent again unchanged, it gets the same answer.
+      const rawHash = sha256(canonicalJson(received));
+      const known = await this.delivery(t, received.terminalTxnId);
+      return known ? this.replay(known, received, rawHash) : this.quarantine(t, received, rawHash, env);
+    }
     const payloadHash = sha256(canonicalJson(env));
     const known = await this.delivery(t, env.terminalTxnId);
     if (known) return this.replay(known, env, payloadHash);
 
-    const snapshot = await withTenant(this.database.pool, t.tenantId, async (db) => {
-      const [own] = await db.select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable }).from(terminalSnapshots)
-        .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminalSnapshots.terminalId, t.terminalId)));
-      if (own) return { asOf: own.asOf, writable: own.writable, recoveredFrom: null };
-      // Recovery (session 16): a till revoked and set up again on the same register still holds sales
-      // rung up under its old credential. Their snapshot is the revoked terminal's; nobody else's is accepted.
-      const [old] = await db
-        .select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable, terminalId: terminalSnapshots.terminalId })
-        .from(terminalSnapshots)
-        .innerJoin(terminals, eq(terminals.id, terminalSnapshots.terminalId))
-        .where(and(eq(terminalSnapshots.id, env.snapshotId), eq(terminals.registerId, t.registerId), eq(terminals.status, 'REVOKED')));
-      return old ? { asOf: old.asOf, writable: old.writable, recoveredFrom: old.terminalId } : undefined;
-    });
+    const snapshot = await withTenant(this.database.pool, t.tenantId, (db) => this.snapshotFor(db, t, env.snapshotId));
     if (snapshot?.recoveredFrom) {
       // Delivered by the old credential before it was revoked: answer what was recorded then.
       const earlier = await this.delivery({ ...t, terminalId: snapshot.recoveredFrom }, env.terminalTxnId);
@@ -411,6 +467,23 @@ export class SyncService extends TenantService {
       }
       return this.quarantine(t, env, payloadHash, e);
     }
+  }
+
+  /**
+   * The snapshot a sale was priced from, if the delivering terminal may use it: its own, or (recovery,
+   * session 16) one of a revoked terminal on the same register, since a till revoked and set up again
+   * still holds sales rung up under its old credential. Nobody else's is accepted.
+   */
+  private async snapshotFor(db: Database, t: Pick<TerminalPrincipal, 'terminalId' | 'registerId'>, snapshotId: string) {
+    const [own] = await db.select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable }).from(terminalSnapshots)
+      .where(and(eq(terminalSnapshots.id, snapshotId), eq(terminalSnapshots.terminalId, t.terminalId)));
+    if (own) return { asOf: own.asOf, writable: own.writable, recoveredFrom: null };
+    const [old] = await db
+      .select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable, terminalId: terminalSnapshots.terminalId })
+      .from(terminalSnapshots)
+      .innerJoin(terminals, eq(terminals.id, terminalSnapshots.terminalId))
+      .where(and(eq(terminalSnapshots.id, snapshotId), eq(terminals.registerId, t.registerId), eq(terminals.status, 'REVOKED')));
+    return old ? { asOf: old.asOf, writable: old.writable, recoveredFrom: old.terminalId } : undefined;
   }
 
   private offlineContext(t: TerminalPrincipal, snap: { asOf: Date; writable: boolean }, env: OfflineSale, payloadHash: string, quarantinedId?: string): OfflineContext {
@@ -438,7 +511,7 @@ export class SyncService extends TenantService {
       (await db.select().from(terminalTransactions).where(and(eq(terminalTransactions.terminalId, t.terminalId), eq(terminalTransactions.terminalTxnId, terminalTxnId))))[0]);
   }
 
-  private async replay(d: Delivery, env: OfflineSale, payloadHash: string): Promise<SyncResult> {
+  private async replay(d: Delivery, env: EnvelopeHead, payloadHash: string): Promise<SyncResult> {
     const base = { terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq };
     if (d.payloadHash !== payloadHash) {
       return { ...base, status: 'REJECTED', code: 'TXN_ID_REUSED', message: 'This transaction id was already delivered with different content', replayed: false };
@@ -457,13 +530,15 @@ export class SyncService extends TenantService {
   }
 
   /** Nothing was recorded: keep the envelope for a manager, outside any business write check. */
-  private async quarantine(t: TerminalPrincipal, env: OfflineSale, payloadHash: string, e: AppError): Promise<SyncResult> {
-    const sessionKnown = await withTenant(this.database.pool, t.tenantId, async (db) =>
-      (await db.select({ id: cashierSessions.id }).from(cashierSessions).where(eq(cashierSessions.id, env.cashierSessionId))).length > 0);
+  /** `env` may be unreadable (VALIDATION_FAILED): only its head is trusted; it is stored as received. */
+  private async quarantine(t: TerminalPrincipal, env: ReceivedEnvelope, payloadHash: string, e: AppError): Promise<SyncResult> {
+    const sessionId = payloadField(env, 'cashierSessionId');
+    const sessionKnown = sessionId !== null && UUID.test(sessionId) && await withTenant(this.database.pool, t.tenantId, async (db) =>
+      (await db.select({ id: cashierSessions.id }).from(cashierSessions).where(eq(cashierSessions.id, sessionId))).length > 0);
     await withTenant(this.database.pool, t.tenantId, (db) =>
       db.insert(terminalTransactions).values({
         tenantId: t.tenantId, terminalId: t.terminalId, terminalTxnId: env.terminalTxnId, deviceSeq: env.deviceSeq, payload: env, payloadHash,
-        cashierSessionId: sessionKnown ? env.cashierSessionId : null, status: 'QUARANTINED', errorCode: e.code,
+        cashierSessionId: sessionKnown ? sessionId : null, status: 'QUARANTINED', errorCode: e.code,
         errorDetail: { message: e.message, ...(e.details && { details: e.details }) },
       }).onConflictDoNothing());
     // A concurrent delivery may have got there first: answer whatever is stored now.
@@ -535,17 +610,22 @@ export class SyncService extends TenantService {
   /** Try a quarantined sale again (once its cause is fixed), recorded as its cashier. */
   async retry(auth: AuthContext, id: string) {
     const d = await this.reviewable(auth, id);
-    const env = d.payload as OfflineSale;
-    const t = { terminalId: d.terminalId, tenantId: d.tenantId, registerId: '', correlationId: auth.correlationId };
-    const result = await this.read(auth, async (db) => {
-      const [term] = await db.select({ registerId: terminals.registerId }).from(terminals).where(eq(terminals.id, d.terminalId));
-      const [snap] = await db.select({ asOf: terminalSnapshots.asOf, writable: terminalSnapshots.businessWritable }).from(terminalSnapshots).where(eq(terminalSnapshots.id, env.snapshotId));
-      return { registerId: term!.registerId, snap };
-    });
     try {
-      if (!result.snap) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
+      // Unreadable as delivered: no retry can change that (only dismissing resolves it).
+      const env = readEnvelope(d.payload);
+      if (env instanceof AppError) throw env;
+      // The same rule as a delivery: the terminal's own snapshot, or a revoked one's on its register.
+      const { t, snap } = await this.read(auth, async (db) => {
+        const [term] = await db.select({ registerId: terminals.registerId }).from(terminals).where(eq(terminals.id, d.terminalId));
+        const t = { terminalId: d.terminalId, tenantId: d.tenantId, registerId: term!.registerId, correlationId: auth.correlationId };
+        return { t, snap: await this.snapshotFor(db, t, env.snapshotId) };
+      });
+      if (!snap) throw new AppError('UNKNOWN_SNAPSHOT', 'This terminal was never given that snapshot', HttpStatus.UNPROCESSABLE_ENTITY);
       const cashier = await this.cashierAuth(t, env.cashierUserId);
-      const r = await this.sales.recordOffline(cashier, env, this.offlineContext({ ...t, registerId: result.registerId }, result.snap, env, d.payloadHash, d.id));
+      const r = await this.sales.recordOffline(cashier, env, {
+        ...this.offlineContext(t, snap, env, d.payloadHash, d.id),
+        ...(snap.recoveredFrom && { recoveredFrom: snap.recoveredFrom }),
+      });
       await this.tenantDb.run(auth, (db) => this.audit(db, auth, 'offline_sale.retried', 'terminal_transaction', id, { saleId: r.saleId }));
       return this.get(auth, id);
     } catch (e) {
@@ -602,31 +682,37 @@ export class SyncService extends TenantService {
       .select({
         d: terminalTransactions, registerId: terminals.registerId, terminalName: terminals.name, registerCode: registers.code,
         cashierName: users.displayName, saleNumber: sales.saleNumber, flags: sales.offlineFlags, recordedAt: sales.completedAt,
+        // Drew expired or held lots (ADR-0025 §4): read from the lot draws, the sale row does not change.
+        expiredStock: sql<boolean>`EXISTS (SELECT 1 FROM stock_movements m JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id AND lm.expired
+                                            WHERE m.sale_id = ${sales.id} AND m.type IN ('SALE', 'CONSUMPTION'))`,
       })
       .from(terminalTransactions)
       .innerJoin(terminals, eq(terminals.id, terminalTransactions.terminalId))
       .innerJoin(registers, eq(registers.id, terminals.registerId))
-      .leftJoin(users, sql`${users.id} = (${terminalTransactions.payload} ->> 'cashierUserId')::uuid`)
+      // A payload quarantined as unreadable may hold anything there: cast only what is a uuid.
+      .leftJoin(users, sql`${users.id} = CASE WHEN ${terminalTransactions.payload} ->> 'cashierUserId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                                              THEN (${terminalTransactions.payload} ->> 'cashierUserId')::uuid END`)
       .leftJoin(sales, eq(sales.id, terminalTransactions.saleId))
       .$dynamic();
   }
 
   /**
-   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED); [] otherwise.
+   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED, PRESCRIPTION_REVIEW, and
+   * EXPIRED_STOCK when it drew expired or held lots); [] otherwise.
    * `recordedAt`: when the sale counts as having happened (the device time, clamped into the shift); `occurredAt` is
    * what the till's clock said.
    */
   private view(r: {
-    d: Delivery; terminalName: string; registerCode: string; cashierName: string | null; saleNumber: number | null; flags: string[] | null; recordedAt: Date | null;
+    d: Delivery; terminalName: string; registerCode: string; cashierName: string | null; saleNumber: number | null; flags: string[] | null; recordedAt: Date | null; expiredStock?: boolean | null;
   }) {
     const { d } = r;
-    const env = d.payload as OfflineSale;
+    const field = (k: keyof OfflineSale) => payloadField(d.payload, k);
     return {
       id: d.id, terminalId: d.terminalId, terminalName: r.terminalName, registerCode: r.registerCode, cashierName: r.cashierName,
-      saleNumber: r.saleNumber, flags: r.flags ?? [], recordedAt: r.recordedAt, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
+      saleNumber: r.saleNumber, flags: [...(r.flags ?? []), ...(r.expiredStock ? ['EXPIRED_STOCK'] : [])], recordedAt: r.recordedAt, terminalTxnId: d.terminalTxnId, deviceSeq: d.deviceSeq, status: d.status,
       cashierSessionId: d.cashierSessionId, saleId: d.saleId, errorCode: d.errorCode, errorDetail: d.errorDetail, attempts: d.attempts,
       receivedAt: d.receivedAt, resolvedAt: d.resolvedAt, resolvedBy: d.resolvedBy, resolveReason: d.resolveReason,
-      localReference: env.localReference, occurredAt: env.occurredAt, amountDue: env.amountDue, cashierUserId: env.cashierUserId,
+      localReference: field('localReference'), occurredAt: validInstant(field('occurredAt')), amountDue: field('amountDue'), cashierUserId: field('cashierUserId'),
     };
   }
 }

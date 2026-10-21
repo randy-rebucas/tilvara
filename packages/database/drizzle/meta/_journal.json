@@ -722,6 +722,55 @@
       "when": 1792537042206,
       "tag": "0102_lodging_rooms_folios_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1792550453359,
+      "tag": "0103_laundry_job_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1792550463076,
+      "tag": "0104_laundry_job_orders_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1792556748911,
+      "tag": "0105_pharmacy_prescriptions_lots",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1792556822821,
+      "tag": "0106_pharmacy_prescriptions_lots_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1792569136198,
+      "tag": "0107_audit_2026_10_21",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1792572244589,
+      "tag": "0108_audit_2026_10_21_part2",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1792574022567,
+      "tag": "0109_audit_2026_10_21_part3",
+      "breakpoints": true
     }
   ]
 }

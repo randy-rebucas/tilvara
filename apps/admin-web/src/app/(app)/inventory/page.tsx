@@ -8,8 +8,9 @@ import { getT } from '@/i18n/server';
 import { ALL, InventoryChrome, inventoryBranch } from './chrome';
 import { LocationCell } from './locations';
 import { AdjustStockForm, RemoveReorderPoint, ReorderForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Inventory' };
+export const generateMetadata = pageTitle('inventory');
 
 export default async function StockPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t } = await getT();

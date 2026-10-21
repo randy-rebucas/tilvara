@@ -39,3 +39,14 @@ describe('lodging permissions (ADR-0023)', () => {
     expect(keys('RETAIL', ['lodging.read'])).toContain('lodging');
   });
 });
+
+describe('pharmacy permissions (ADR-0025)', () => {
+  it('shows the pharmacy area only to a pharmacy, unless the role holds its codes', async () => {
+    const { permissionGroupsFor } = await import('./permissions');
+    const keys = (t: Parameters<typeof permissionGroupsFor>[0], held: string[] = []) => permissionGroupsFor(t, held).map((g) => g.key);
+    expect(keys('PHARMACY')).toContain('pharmacy');
+    expect(keys('HYBRID')).toContain('pharmacy');
+    expect(keys('GROCERY')).not.toContain('pharmacy');
+    expect(keys('RETAIL', ['pharmacy.read'])).toContain('pharmacy');
+  });
+});

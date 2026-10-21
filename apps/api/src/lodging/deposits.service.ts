@@ -12,8 +12,9 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { expectedCash } from '../sales/cash.service.js';
 import { TaxService, unprocessable } from '../tax/tax.service.js';
-import { depositsHeld, ensureFolio, folioBalance, folioOfStay, folioSettled, insertEntry, loadStay, lockDeposits, lockFolio, type FolioRow, type StayRow } from './folio.js';
+import { depositsHeld, ensureFolio, folioBalance, folioOfStay, folioSettled, insertEntry, liabilityAtStayBranch, loadStay, lockDeposits, lockFolio, type FolioRow, type StayRow } from './folio.js';
 import { consumeFolioIntent, frontDeskSession } from './front-desk.js';
+import { branchLodgingSettings } from './setup.service.js';
 
 type DepositRow = typeof stayDeposits.$inferSelect;
 const money = (v: string | null) => (v === null ? null : toDec(v).toFixed(2));
@@ -62,15 +63,20 @@ export class DepositsService extends TenantService {
       let amount: string;
       let method: string;
       let sessionId: string | null = null;
+      // The drawer's branch for the money line (§5.2); a bank transfer has no drawer.
+      let moneyBranchId = stay.branchId;
       let intentId: string | null = null;
       let reference: string | null = null;
+      if (input.method === 'CASH' || input.method === 'INTENT') {
+        const { session } = await frontDeskSession(db, auth, input.cashierSessionId, stay.legalEntityId);
+        sessionId = session.id;
+        moneyBranchId = session.branchId;
+      }
       if (input.method === 'CASH') {
-        sessionId = (await frontDeskSession(db, auth, input.cashierSessionId, stay.legalEntityId)).session.id;
         amount = input.amount;
         method = 'CASH';
       } else if (input.method === 'INTENT') {
-        sessionId = (await frontDeskSession(db, auth, input.cashierSessionId, stay.legalEntityId)).session.id;
-        const p = await consumeFolioIntent(db, auth, { paymentIntentId: input.paymentIntentId, sessionId, folioId: folio.id, currency: folio.currency, consumer: { stayDeposit: true } });
+        const p = await consumeFolioIntent(db, auth, { paymentIntentId: input.paymentIntentId, sessionId: sessionId!, folioId: folio.id, currency: folio.currency, consumer: { stayDeposit: true } });
         amount = p.amount;
         method = p.method;
         intentId = p.id;
@@ -91,8 +97,8 @@ export class DepositsService extends TenantService {
         await db.insert(cashMovements).values({ tenantId, cashierSessionId: sessionId!, type: 'DEPOSIT', amount, stayDepositId: row!.id, reason: 'Booking deposit', createdBy: auth.userId });
       }
       await post(db, {
-        tenantId, legalEntityId: stay.legalEntityId, branchId: stay.branchId, sourceType: 'STAY_DEPOSIT', sourceId: row!.id, memo: 'Booking deposit received',
-        lines: depositReceivedPosting(amount, method === 'CASH' ? 'CASH' : method === 'BANK_TRANSFER' ? 'BANK' : 'ELECTRONIC', stay.branchId),
+        tenantId, legalEntityId: stay.legalEntityId, branchId: moneyBranchId, sourceType: 'STAY_DEPOSIT', sourceId: row!.id, memo: 'Booking deposit received',
+        lines: liabilityAtStayBranch(depositReceivedPosting(amount, method === 'CASH' ? 'CASH' : method === 'BANK_TRANSFER' ? 'BANK' : 'ELECTRONIC', moneyBranchId), 'GUEST_DEPOSITS', stay.branchId),
         createdBy: auth.userId,
       });
       await this.audit(db, auth, 'stay.deposit_received', 'stay', stay.id, { stayDepositId: row!.id, amount: toDec(amount).toFixed(2), method });
@@ -116,8 +122,14 @@ export class DepositsService extends TenantService {
   refund(auth: AuthContext, stayId: string, input: RefundDepositInput) {
     return this.mutate(auth, async (db) => {
       const stay = await loadStay(db, stayId, true);
-      this.assertCan(auth, 'lodging.manage', { branchId: stay.branchId, legalEntityId: stay.legalEntityId });
+      const scope = { branchId: stay.branchId, legalEntityId: stay.legalEntityId };
+      this.assertCan(auth, 'lodging.manage', scope);
       await assertLodging(db);
+      // Before the guest is in house (a booking, a cancelled one, a no-show), a branch that keeps deposits
+      // on cancel gives one back only with the say-so that cancelling with a refund needs (§6).
+      if (stay.status !== 'IN_HOUSE' && (await branchLodgingSettings(db, stay.branchId)).forfeitOnCancel) {
+        if (!this.can(auth, 'prices.manage', scope)) this.assertCan(auth, 'lodging.rates', scope);
+      }
       await lockDeposits(db, stay.id);
       const held = await depositsHeld(db, stay.id);
       const amount = input.amount ? toDec(input.amount) : held;
@@ -175,8 +187,11 @@ export class DepositsService extends TenantService {
     const tenantId = stay.tenantId;
     const folio = (await folioOfStay(db, stay.id))!;
     let sessionId: string | null = null;
+    let moneyBranchId = stay.branchId;
     if (a.refund.method === 'CASH') {
-      sessionId = (await frontDeskSession(db, auth, a.refund.cashierSessionId, stay.legalEntityId)).session.id;
+      const { session } = await frontDeskSession(db, auth, a.refund.cashierSessionId, stay.legalEntityId);
+      sessionId = session.id;
+      moneyBranchId = session.branchId;
       const drawer = toDec(await expectedCash(db, sessionId));
       if (drawer.lt(a.amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the refund', { available: drawer.toFixed(2) });
     } else this.assertCan(auth, 'lodging.rates', { branchId: stay.branchId, legalEntityId: stay.legalEntityId });
@@ -191,8 +206,8 @@ export class DepositsService extends TenantService {
       await db.insert(cashMovements).values({ tenantId, cashierSessionId: sessionId, type: 'DEPOSIT_REFUND', amount: a.amount.negated().toString(), stayDepositId: row!.id, reason: a.reason, createdBy: auth.userId });
     }
     await post(db, {
-      tenantId, legalEntityId: stay.legalEntityId, branchId: stay.branchId, sourceType: 'STAY_DEPOSIT', sourceId: row!.id, memo: `Deposit refunded: ${a.reason}`,
-      lines: depositRefundedPosting(a.amount, sessionId ? 'CASH' : 'BANK', stay.branchId), createdBy: auth.userId,
+      tenantId, legalEntityId: stay.legalEntityId, branchId: moneyBranchId, sourceType: 'STAY_DEPOSIT', sourceId: row!.id, memo: `Deposit refunded: ${a.reason}`,
+      lines: liabilityAtStayBranch(depositRefundedPosting(a.amount, sessionId ? 'CASH' : 'BANK', moneyBranchId), 'GUEST_DEPOSITS', stay.branchId), createdBy: auth.userId,
     });
     await this.audit(db, auth, 'stay.deposit_refunded', 'stay', stay.id, { stayDepositId: row!.id, amount: a.amount.toFixed(2), method: a.refund.method });
     return row!;

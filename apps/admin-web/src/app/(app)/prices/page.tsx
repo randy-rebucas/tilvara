@@ -6,8 +6,9 @@ import { getT } from '@/i18n/server';
 import { ActionButton } from '@/components/actions';
 import { AssignBranch, NewPriceList, RenamePriceList, SetPrice } from './set-price';
 import { PricesTabs } from './tabs';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Prices' };
+export const generateMetadata = pageTitle('prices');
 
 export default async function PricesPage({ searchParams }: { searchParams: Promise<{ list?: string }> }) {
   const { t, lang } = await getT();

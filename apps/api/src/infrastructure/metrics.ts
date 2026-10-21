@@ -23,6 +23,7 @@ export const BUSINESS_GAUGES = {
   worker_heartbeat_age_seconds: { help: 'Seconds since the freshest worker heartbeat (+Inf when none).' },
   backup_last_success_timestamp_seconds: { help: 'Unix time of the last successful encrypted backup (0 when none).' },
   restore_drill_last_success_timestamp_seconds: { help: 'Unix time of the last passed restore drill (0 when none).' },
+  lodging_stays_nights_overdue: { help: 'In-house stays with a room night that fell due more than a day ago and is not posted (night audit behind).' },
 } as const satisfies Record<string, { help: string; label?: string }>;
 
 export type BusinessGauge = keyof typeof BUSINESS_GAUGES;
@@ -102,6 +103,11 @@ export class ApiMetrics {
   readonly provisioning = this.registry.counter({
     name: 'onepos_provisioning_total',
     help: 'Business sign-ups by outcome: ok, refused (4xx), failed (5xx).',
+    labelNames: ['outcome'],
+  });
+  readonly nightAudit = this.registry.counter({
+    name: 'onepos_night_audit_total',
+    help: 'Scheduled night audit (ADR-0023 §7): room nights posted, stays (or whole passes) that failed to post, businesses skipped as read-only.',
     labelNames: ['outcome'],
   });
   readonly dbPoolErrors = this.registry.counter({

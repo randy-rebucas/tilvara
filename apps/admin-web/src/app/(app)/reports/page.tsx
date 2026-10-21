@@ -4,8 +4,9 @@ import type { ItemPerformance, ReportFigures } from '@/lib/api';
 import { peso, qty } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from './chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Item performance' };
+export const generateMetadata = pageTitle('reports');
 
 /** A free choice ("No onions") has a count but no money of its own. */
 type Money = { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };

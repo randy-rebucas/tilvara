@@ -7,8 +7,9 @@ import { formatDate, formatDateTime, formatTin, peso } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Registration card' };
+export const generateMetadata = pageTitle('lodging.stays.item.card');
 
 /** The guest registration card (ADR-0023 §8), to print and sign at check-in. */
 export default async function RegistrationCardPage({ params }: { params: Promise<{ id: string }> }) {

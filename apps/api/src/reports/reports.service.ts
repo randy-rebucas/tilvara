@@ -1,5 +1,7 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { branches, eq, sql, type Database } from '@1pos/database';
+import { movementAt, movementSaleJoin } from './movement-time.js';
+import { refundParts } from './refund-parts.js';
 import { Dec, toDec } from '@1pos/money';
 import type { AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -120,8 +122,8 @@ export class ReportsService extends TenantService {
         -- Ingredients consumed by a recipe item cost the item that was sold (ADR-0014 §4).
         cost AS (
           SELECT coalesce(l.variant_id, m.variant_id) AS variant_id, -sum(m.value) AS cogs
-            FROM stock_movements m LEFT JOIN sale_lines l ON m.type = 'CONSUMPTION' AND l.id = m.sale_line_id
-           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND m.created_at < ${w.end}
+            FROM stock_movements m LEFT JOIN sale_lines l ON m.type = 'CONSUMPTION' AND l.id = m.sale_line_id ${movementSaleJoin}
+           WHERE m.branch_id = ${w.branchId} AND m.type IN ('SALE', 'RETURN', 'CONSUMPTION') AND m.created_at >= ${w.start} AND ${movementAt} >= ${w.start} AND ${movementAt} < ${w.end}
            GROUP BY 1)
         SELECT v.id AS variant_id, v.sku, p.name,
                coalesce(sold.qty, 0)::text AS quantity_sold, coalesce(back.qty, 0)::text AS quantity_returned,
@@ -311,8 +313,9 @@ export class ReportsService extends TenantService {
       const { rows } = await db.execute<Row>(sql`
         WITH t AS (SELECT t.method, count(*) AS n, sum(t.amount) AS amount FROM sale_tenders t JOIN sales s ON s.id = t.sale_id
                     WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end} GROUP BY 1),
-             r AS (SELECT refund_method AS method, count(*) AS n, sum(amount_due) AS amount FROM sale_returns
-                    WHERE branch_id = ${w.branchId} AND created_at >= ${w.start} AND created_at < ${w.end} GROUP BY 1)
+             -- A return split between store credit, a folio and cash counts under each, for its part (refund-parts.ts).
+             r AS (SELECT method, count(DISTINCT sale_return_id) AS n, sum(amount) AS amount
+                     FROM (${refundParts(sql`r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}`)}) rp GROUP BY 1)
         SELECT coalesce(t.method, r.method) AS method, coalesce(t.n, 0)::int AS tenders, coalesce(t.amount, 0)::text AS collected,
                coalesce(r.n, 0)::int AS refunds_count, coalesce(r.amount, 0)::text AS refunded,
                (coalesce(t.amount, 0) - coalesce(r.amount, 0))::text AS net
@@ -347,13 +350,16 @@ export class ReportsService extends TenantService {
     });
   }
 
-  /** SC/PWD sales book (RR 5-2017 §5.9): one row per beneficiary per sale, returns as negative rows. */
+  /**
+   * SC/PWD sales book (RR 5-2017 §5.9): one row per beneficiary per sale, returns as negative rows.
+   * `purchase_booklet`: on a discount that covered a medicine, whether the booklet was presented (ADR-0025 §8).
+   */
   statutoryBook(auth: AuthContext, range: ReportRange & { scheme?: string }) {
     return this.run(auth, range, async (db, w) => {
       const scheme = range.scheme ? sql`AND b.scheme_code = ${range.scheme}` : sql``;
       const { rows } = await db.execute<Row>(sql`
         SELECT 'SALE' AS document, s.completed_at, (s.completed_at AT TIME ZONE ${w.tz})::date::text AS day, s.sale_number::int AS number, reg.code AS register,
-               b.scheme_code, b.name, b.id_number, b.tin,
+               b.scheme_code, b.name, b.id_number, b.tin, b.purchase_booklet,
                sum(l.vat_exempt_sales + l.zero_rated_sales + l.percentage_tax_sales)::text AS sales,
                sum(l.statutory_discount)::text AS discount, sum(l.amount_due)::text AS net
           FROM sale_beneficiaries b JOIN sales s ON s.id = b.sale_id JOIN sale_lines l ON l.beneficiary_id = b.id
@@ -362,7 +368,7 @@ export class ReportsService extends TenantService {
          GROUP BY s.id, s.completed_at, s.sale_number, reg.code, b.id
         UNION ALL
         SELECT 'RETURN', r.created_at, (r.created_at AT TIME ZONE ${w.tz})::date::text, r.return_number::int, reg.code,
-               b.scheme_code, b.name, b.id_number, b.tin,
+               b.scheme_code, b.name, b.id_number, b.tin, b.purchase_booklet,
                (-sum(rl.vat_exempt_sales + rl.zero_rated_sales + rl.percentage_tax_sales))::text, (-sum(rl.statutory_discount))::text, (-sum(rl.amount_due))::text
           FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id JOIN sale_lines l ON l.id = rl.sale_line_id
           JOIN sale_beneficiaries b ON b.id = l.beneficiary_id JOIN registers reg ON reg.id = r.register_id
@@ -371,7 +377,7 @@ export class ReportsService extends TenantService {
         UNION ALL
         -- SC/PWD room nights (ADR-0023 §7): each beneficiary's part of the night by their share of the discounted share.
         SELECT CASE e.kind WHEN 'ROOM_NIGHT' THEN 'ROOM_NIGHT' ELSE 'NIGHT_REVERSAL' END, e.created_at, e.night_date::text, NULL::int, NULL,
-               sb.scheme_code, sb.name, sb.id_number, NULL,
+               sb.scheme_code, sb.name, sb.id_number, NULL, NULL,
                ((e.vat_exempt_sales + e.zero_rated_sales + e.percentage_tax_sales) * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text,
                (e.statutory_discount * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text,
                (e.amount * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text
@@ -419,19 +425,20 @@ export class ReportsService extends TenantService {
   /** Per item: opening + movements by type in the range = closing, in quantity and value. */
   stockMovements(auth: AuthContext, range: ReportRange) {
     return this.run(auth, range, async (db, w) => {
+      // A sale's movements count when the sale happened, like its revenue (an offline sale arrives later).
       const { rows } = await db.execute<Row>(sql`
         SELECT m.variant_id, v.sku, p.name,
-               coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_qty,
-               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.start}), 0)::text AS opening_value,
-               coalesce(sum(m.quantity) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_qty,
-               coalesce(sum(m.value) FILTER (WHERE m.created_at < ${w.end}), 0)::text AS closing_value,
-               count(*) FILTER (WHERE m.below_zero AND m.created_at >= ${w.start})::int AS below_zero
-          FROM stock_movements m JOIN product_variants v ON v.id = m.variant_id JOIN products p ON p.id = v.product_id
-         WHERE m.branch_id = ${w.branchId} AND m.created_at < ${w.end}
+               coalesce(sum(m.quantity) FILTER (WHERE ${movementAt} < ${w.start}), 0)::text AS opening_qty,
+               coalesce(sum(m.value) FILTER (WHERE ${movementAt} < ${w.start}), 0)::text AS opening_value,
+               coalesce(sum(m.quantity), 0)::text AS closing_qty,
+               coalesce(sum(m.value), 0)::text AS closing_value,
+               count(*) FILTER (WHERE m.below_zero AND ${movementAt} >= ${w.start})::int AS below_zero
+          FROM stock_movements m ${movementSaleJoin} JOIN product_variants v ON v.id = m.variant_id JOIN products p ON p.id = v.product_id
+         WHERE m.branch_id = ${w.branchId} AND ${movementAt} < ${w.end}
          GROUP BY 1, 2, 3 ORDER BY v.sku`);
       const { rows: byType } = await db.execute<Row>(sql`
-        SELECT variant_id, type, sum(quantity)::text AS qty, sum(value)::text AS value FROM stock_movements
-         WHERE branch_id = ${w.branchId} AND created_at >= ${w.start} AND created_at < ${w.end} GROUP BY 1, 2`);
+        SELECT m.variant_id, m.type, sum(m.quantity)::text AS qty, sum(m.value)::text AS value FROM stock_movements m ${movementSaleJoin}
+         WHERE m.branch_id = ${w.branchId} AND m.created_at >= ${w.start} AND ${movementAt} >= ${w.start} AND ${movementAt} < ${w.end} GROUP BY 1, 2`);
       return {
         data: rows.map((r) => ({
           variantId: r.variant_id,
@@ -474,6 +481,12 @@ export class ReportsService extends TenantService {
          WHERE d.kind IN ('RECEIVED', 'REFUNDED') AND (d.cashier_session_id = ${sessionId}
             OR d.payment_intent_id IN (SELECT id FROM payment_intents WHERE cashier_session_id = ${sessionId}))
          GROUP BY 1, 2 ORDER BY 1, 2`);
+      // Job order down payments (ADR-0024 §5): taken and given back at this drawer, apart from sales.
+      const { rows: downPayments } = await db.execute<Row>(sql`
+        SELECT d.kind, d.method, count(*)::int AS count, sum(d.amount)::text AS amount FROM job_order_deposits d
+         WHERE d.kind IN ('RECEIVED', 'REFUNDED') AND (d.cashier_session_id = ${sessionId}
+            OR d.payment_intent_id IN (SELECT id FROM payment_intents WHERE cashier_session_id = ${sessionId}))
+         GROUP BY 1, 2 ORDER BY 1, 2`);
       return {
         session: { id: session.id, registerId: session.registerId, status: session.status, openedAt: session.openedAt, closedAt: session.closedAt, openingFloat: money(session.openingFloat) },
         sales: shape(sales!, ['amount_due', 'statutory_discount', 'vat_amount']),
@@ -483,6 +496,10 @@ export class ReportsService extends TenantService {
         frontDeskCollections: {
           data: frontDesk.map((f) => shape(f, ['amount'])),
           cash: money(frontDesk.filter((f) => f.method === 'CASH').reduce((a, f) => a.plus(f.amount as string), toDec('0')).toString()),
+        },
+        jobOrderDownPayments: {
+          data: downPayments.map((f) => shape(f, ['amount'])),
+          cash: money(downPayments.filter((f) => f.method === 'CASH').reduce((a, f) => a.plus(f.amount as string), toDec('0')).toString()),
         },
         expectedCash: money(await expectedCash(db, sessionId)),
         count: rec ? { countedCash: money(rec.counted_cash as string), variance: money(rec.variance as string), approved: rec.approved_at !== null } : null,

@@ -245,6 +245,40 @@ describe('sync', () => {
     expect(recorded.map((x: { saleNumber: number; flags: string[] }) => [x.saleNumber, x.flags]).sort()).toEqual([[1, ['PRICE_CHANGED']], [2, ['CLOCK_ADJUSTED']], [3, ['CLOCK_ADJUSTED', 'PRICE_CHANGED']]]);
   });
 
+  it('a price or promotion made after the snapshot, back-dated before it, was not on the till: recorded at the snapshot price, flagged PRICE_CHANGED (audit 2026-10-21)', async () => {
+    const s = await shop('off-backdated');
+    const snap = await snapshot(s);
+    // The snapshot cut 20 s ago (the shop's prices and tax profile made a day before it, so they were on it).
+    await sql(s, `
+      ALTER TABLE product_prices DISABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
+      UPDATE product_prices SET effective_from = effective_from - interval '1 day', created_at = created_at - interval '1 day';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '1 day';
+      UPDATE terminal_snapshots SET as_of = now() - interval '20 seconds' WHERE id = '${snap.snapshotId}';
+      ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
+      ALTER TABLE tax_profiles ENABLE TRIGGER tax_profiles_append_only;
+      ALTER TABLE terminal_snapshots ENABLE TRIGGER terminal_snapshots_append_only;`);
+    // Now: Cola to ₱25.00 and Chips two for ₱50.00, both back-dated 40 s (inside the minute allowed), so before the snapshot.
+    const back = (await sql<{ at: Date }>(s, `SELECT now() - interval '40 seconds' AS at`))[0]!.at;
+    const lists = (await http().get('/v1/price-lists').set(s.auth).expect(200)).body.data;
+    await http().post(`/v1/price-lists/${lists[0].id}/prices`).set(s.auth).send({ items: [{ variantId: s.cola, amount: '25.00', effectiveFrom: back.toISOString() }] }).expect(201);
+    await http().post('/v1/promotions').set(s.auth).send({ name: 'Two chips for 50', kind: 'MULTI_BUY', quantity: 2, price: '50.00', variantIds: [s.chips], startsAt: back.toISOString() }).expect(201);
+
+    // Rung on the till at its snapshot prices: Cola 2 × 22.40 + Chips 2 × 35.00, no promotion.
+    const r = (await sync(s.t1, [sale(s, snap, {
+      lines: [{ variantId: s.cola, quantity: '2' }, { variantId: s.chips, quantity: '2' }], tenders: [{ method: 'CASH', tendered: '200.00' }], amountDue: '114.80',
+    })]).expect(200)).body.results[0];
+    expect([r.status, r.flags]).toEqual(['RECORDED', ['PRICE_CHANGED']]);
+    const recorded = (await http().get(`/v1/sales/${r.saleId}`).set(s.cashier).expect(200)).body;
+    expect(recorded.amountDue).toBe('114.80');
+    expect(await sql(s, `SELECT promotion_id FROM sale_lines WHERE sale_id = $1 ORDER BY line_no`, [r.saleId])).toEqual([{ promotion_id: null }, { promotion_id: null }]);
+    // Online the new price and promotion apply at once (unchanged): 2 × 25.00 + 50.00.
+    const quote = (await http().post('/v1/tax/quote').set(s.cashier).send({ branchId: s.branchId, lines: [{ variantId: s.cola, quantity: '2' }, { variantId: s.chips, quantity: '2' }] }).expect(200)).body;
+    expect(quote.totals.amountDue).toBe('100.00');
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
   it('flags, never refuses, a sale priced from a snapshot older than the offline window (24 h)', async () => {
     const s = await shop('off-expired');
     const inside = await snapshot(s);
@@ -256,7 +290,7 @@ describe('sync', () => {
       ALTER TABLE product_prices DISABLE TRIGGER product_prices_append_only;
       ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
       ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
-      UPDATE product_prices SET effective_from = effective_from - interval '2 days';
+      UPDATE product_prices SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
       UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
       UPDATE terminal_snapshots SET as_of = now() - interval '23 hours' WHERE id = '${inside.snapshotId}';
       UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${outside.snapshotId}';
@@ -286,7 +320,7 @@ describe('a business that lapsed or was suspended while the till was offline (se
       ALTER TABLE product_prices DISABLE TRIGGER product_prices_append_only;
       ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
       ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
-      UPDATE product_prices SET effective_from = effective_from - interval '2 days';
+      UPDATE product_prices SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
       UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
       UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${old.snapshotId}';
       ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
@@ -527,5 +561,124 @@ describe('quarantine', () => {
     await expect(sql(s, `UPDATE terminal_transactions SET status = 'QUARANTINED', error_code = 'X' WHERE status = 'RECORDED'`)).rejects.toThrow(/cannot become/);
     await expect(sql(s, `UPDATE terminal_snapshots SET as_of = now()`)).rejects.toThrow();
     expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('one envelope the server cannot read is quarantined alone (VALIDATION_FAILED), never blocking the batch; only dismissing resolves it', async () => {
+    const s = await shop('off-unreadable');
+    const snap = await snapshot(s);
+    const a = sale(s, snap);
+    // An older or faulty till: money as a number, no lines; and one with nothing usable but its head.
+    const bad = { ...sale(s, snap), amountDue: 44.8, lines: undefined } as unknown as OfflineSale;
+    const junk = { terminalTxnId: randomUUID(), deviceSeq: (seq += 1), cashierUserId: 'nobody', cashierSessionId: 'not-a-session', occurredAt: 'yesterday' } as unknown as OfflineSale;
+    const c = sale(s, snap);
+    const res = (await sync(s.t1, [c, junk, bad, a]).expect(200)).body.results;
+    expect(res.map((r: { deviceSeq: number; status: string; code?: string }) => [r.deviceSeq, r.status, r.code])).toEqual([
+      [a.deviceSeq, 'RECORDED', undefined], [bad.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'], [junk.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'], [c.deviceSeq, 'RECORDED', undefined],
+    ]);
+    // Stored as received; linked to the shift only through a session id that is one (so it blocks the close).
+    const [stored] = await sql<{ payload: Record<string, unknown>; cashier_session_id: string | null; error_detail: { details: { issues: { path: string }[] } } }>(s,
+      `SELECT payload, cashier_session_id, error_detail FROM terminal_transactions WHERE terminal_txn_id = $1`, [bad.terminalTxnId]);
+    expect(stored).toMatchObject({ payload: { amountDue: 44.8, localReference: bad.localReference }, cashier_session_id: s.session.id });
+    expect(stored!.error_detail.details.issues.map((i) => i.path)).toEqual(expect.arrayContaining(['lines', 'amountDue']));
+    expect(await sql(s, `SELECT cashier_session_id FROM terminal_transactions WHERE terminal_txn_id = $1`, [junk.terminalTxnId])).toEqual([{ cashier_session_id: null }]);
+    // Sent again unchanged: the same answer; changed under the same id: rejected.
+    expect((await sync(s.t1, [bad]).expect(200)).body.results[0]).toMatchObject({ status: 'QUARANTINED', code: 'VALIDATION_FAILED', replayed: true });
+    expect((await sync(s.t1, [{ ...bad, amountDue: '44.80' } as OfflineSale]).expect(200)).body.results[0]).toMatchObject({ status: 'REJECTED', code: 'TXN_ID_REUSED' });
+    // Without even a head it is not a till's batch.
+    await http().post('/v1/sync/sales').set(s.t1.headers).send({ sales: [{ ...sale(s, snap), terminalTxnId: 'x' }] }).expect(400);
+    await http().post('/v1/sync/sales').set(s.t1.headers).send({ sales: ['x'] }).expect(400);
+
+    // The manager's list and detail read whatever the payload holds (no cast fails on a non-uuid cashier).
+    const list = (await http().get('/v1/sync/transactions?status=QUARANTINED').set(s.manager).expect(200)).body.data as {
+      id: string; terminalTxnId: string; localReference: string | null; occurredAt: string | null; amountDue: string | null; cashierName: string | null;
+    }[];
+    const byTxn = (id: string) => list.find((x) => x.terminalTxnId === id)!;
+    expect(byTxn(junk.terminalTxnId)).toMatchObject({ localReference: null, occurredAt: null, amountDue: null, cashierName: null });
+    expect(byTxn(bad.terminalTxnId)).toMatchObject({ localReference: bad.localReference, amountDue: null });
+    await http().get(`/v1/sync/transactions/${byTxn(junk.terminalTxnId).id}`).set(s.manager).expect(200);
+    // A retry cannot make it readable: refused and counted; dismissing resolves it and the shift can close.
+    const still = await http().post(`/v1/sync/transactions/${byTxn(bad.terminalTxnId).id}/retry`).set(s.manager).expect(409);
+    expect(still.body.error).toMatchObject({ code: 'STILL_QUARANTINED', details: { code: 'VALIDATION_FAILED' } });
+    expect((await http().get(`/v1/sync/transactions/${byTxn(bad.terminalTxnId).id}`).set(s.manager).expect(200)).body.attempts).toBe(2);
+    expect((await http().post(`/v1/cashier-sessions/${s.session.id}/close`).set(s.cashier).send({ countedCash: '1089.60' }).expect(409)).body.error.code).toBe('OFFLINE_SALES_UNRESOLVED');
+    for (const id of [bad.terminalTxnId, junk.terminalTxnId]) {
+      expect((await http().post(`/v1/sync/transactions/${byTxn(id).id}/dismiss`).set(s.manager).send({ reason: 'Till sent an unreadable sale' }).expect(200)).body.status).toBe('DISMISSED');
+    }
+    expect((await http().post(`/v1/cashier-sessions/${s.session.id}/close`).set(s.cashier).send({ countedCash: '1089.60' }).expect(200)).body.reconciliation).toMatchObject({ expectedCash: '1089.60' });
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('a retry follows the delivery rule for snapshots: a revoked till’s on the same register is recovered (audited), another active till’s never', async () => {
+    const s = await shop('off-retry-snap');
+    const snap = await snapshot(s);
+    const stranded = sale(s, snap);
+    await http().post(`/v1/terminals/${s.t1.id}/revoke`).set(s.auth).send({ reason: 'Replaced' }).expect(200);
+    const paired = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.r1, name: 'Till again' }).expect(201)).body;
+    const again = { id: paired.terminal.id as string, headers: { 'x-terminal-id': paired.terminal.id, Authorization: `Terminal ${paired.credential}` } };
+    // Quarantined for a reason that passes (the cashier was suspended meanwhile), then retried.
+    await http().post(`/v1/members/${s.cashierMembership}/suspend`).set(s.auth).expect(200);
+    expect((await sync(again, [stranded]).expect(200)).body.results[0]).toMatchObject({ status: 'QUARANTINED', code: 'CASHIER_NOT_AUTHORIZED' });
+    await http().post(`/v1/members/${s.cashierMembership}/reactivate`).set(s.auth).expect(200);
+    const [q] = await sql<{ id: string }>(s, `SELECT id FROM terminal_transactions WHERE terminal_txn_id = $1`, [stranded.terminalTxnId]);
+    const retried = (await http().post(`/v1/sync/transactions/${q!.id}/retry`).set(s.manager).expect(200)).body;
+    expect(retried.status).toBe('RECORDED');
+    expect(await sql(s, `SELECT resource_id, metadata->>'revokedTerminalId' AS revoked FROM audit_logs WHERE action = 'offline_sale.recovered'`))
+      .toEqual([{ resource_id: retried.saleId, revoked: s.t1.id }]);
+
+    // A second, active till on the register: its snapshot is not the new till's to use, at delivery or on retry.
+    const second = (await http().post('/v1/terminals').set(s.auth).send({ registerId: s.r1, name: 'Second till' }).expect(201)).body;
+    const secondSnap = (await http().get('/v1/terminal/snapshot').set({ 'x-terminal-id': second.terminal.id, Authorization: `Terminal ${second.credential}` }).expect(200)).body as Snapshot;
+    const borrowed = sale(s, secondSnap);
+    expect((await sync(again, [borrowed]).expect(200)).body.results[0]).toMatchObject({ status: 'QUARANTINED', code: 'UNKNOWN_SNAPSHOT' });
+    const [b] = await sql<{ id: string }>(s, `SELECT id FROM terminal_transactions WHERE terminal_txn_id = $1`, [borrowed.terminalTxnId]);
+    expect((await http().post(`/v1/sync/transactions/${b!.id}/retry`).set(s.manager).expect(409)).body.error).toMatchObject({ code: 'STILL_QUARANTINED', details: { code: 'UNKNOWN_SNAPSHOT' } });
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales WHERE client_transaction_id = $1`, [borrowed.terminalTxnId])).toEqual([{ n: 0 }]);
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
+  it('flags CLOCK_ADJUSTED a sale the till says it rang before it was given the snapshot it was priced from', async () => {
+    const s = await shop('off-before-snap');
+    const snap = await snapshot(s);
+    // The snapshot dated ten minutes after the device's time of sale (inside the shift, by the DB clock).
+    await sql(s, `
+      ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
+      UPDATE terminal_snapshots SET as_of = clock_timestamp() + interval '10 minutes' WHERE id = '${snap.snapshotId}';
+      ALTER TABLE terminal_snapshots ENABLE TRIGGER terminal_snapshots_append_only;`);
+    const at = (await sql<{ at: Date }>(s, `SELECT clock_timestamp() AS at`))[0]!.at;
+    const r = (await sync(s.t1, [sale(s, snap, { occurredAt: at.toISOString() })]).expect(200)).body.results[0];
+    expect([r.status, r.flags]).toEqual(['RECORDED', ['CLOCK_ADJUSTED']]);
+    // An ordinary sale on a fresh snapshot is not flagged.
+    const ok = (await sync(s.t1, [sale(s, await snapshot(s))]).expect(200)).body.results[0];
+    expect([ok.status, ok.flags]).toEqual(['RECORDED', []]);
+  });
+});
+
+describe('reports date an offline sale’s cost with its revenue', () => {
+  it('gross profit and the stock movements report count a late-delivered sale on the day it was rung, as the ledger does', async () => {
+    const s = await shop('off-report-day');
+    const snap = await snapshot(s);
+    const r = (await sync(s.t1, [sale(s, snap)]).expect(200)).body.results[0];
+    expect(r.status).toBe('RECORDED');
+    // Delivered two days later: its movements are written then (the sale keeps the day it happened).
+    await sql(s, `
+      ALTER TABLE stock_movements DISABLE TRIGGER stock_movements_append_only;
+      UPDATE stock_movements SET created_at = created_at + interval '2 days' WHERE sale_id = '${r.saleId}';
+      ALTER TABLE stock_movements ENABLE TRIGGER stock_movements_append_only;`);
+    const [{ day, later }] = await sql<{ day: string; later: string }>(s,
+      `SELECT (s.completed_at AT TIME ZONE b.timezone)::date::text AS day, ((s.completed_at + interval '2 days') AT TIME ZONE b.timezone)::date::text AS later
+         FROM sales s JOIN branches b ON b.id = s.branch_id WHERE s.id = $1`, [r.saleId]) as [{ day: string; later: string }];
+    const report = (name: string, on: string) => http().get(`/v1/reports/${name}`).query({ branchId: s.branchId, from: on, to: on }).set(s.auth).expect(200);
+
+    // Revenue 44.80 incl. VAT = 40.00; two colas at 15.00 cost 30.00, all on the day of the sale.
+    const products = (await report('by-product', day)).body.data as { variantId: string; revenueExVat: string; cogs: string; grossProfit: string }[];
+    expect(products.find((p) => p.variantId === s.cola)).toMatchObject({ revenueExVat: '40.00', cogs: '30.00', grossProfit: '10.00' });
+    expect(((await report('by-product', later)).body.data as unknown[])).toEqual([]);
+    const categories = (await report('by-category', day)).body.data as { cogs: string }[];
+    expect(categories.reduce((a, c) => a + Number(c.cogs), 0)).toBe(30);
+    // Stock: the sale's movement is in that day's movements (with the opening stock taken that day), and the closing counts it.
+    const moves = (await report('stock-movements', day)).body.data as { variantId: string; opening: { quantity: string }; movements: Record<string, { quantity: string; value: string }>; closing: { quantity: string } }[];
+    expect(moves.find((m) => m.variantId === s.cola)).toMatchObject({ opening: { quantity: '0' }, movements: { SALE: { quantity: '-2', value: '-30.00' } }, closing: { quantity: '18' } });
+    const after = (await report('stock-movements', later)).body.data as { variantId: string; opening: { quantity: string }; movements: Record<string, unknown> }[];
+    expect(after.find((m) => m.variantId === s.cola)).toMatchObject({ opening: { quantity: '18' }, movements: {} });
   });
 });

@@ -4,8 +4,9 @@ import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type CustomerSummary, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { AddCustomerForm } from './forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Customers' };
+export const generateMetadata = pageTitle('customers');
 
 /** Customers (SPEC §6.9, ADR-0018): search by name, phone, email or number; add one. */
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; archived?: string; cursor?: string }> }) {

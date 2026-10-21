@@ -7,8 +7,9 @@ import { formatDate } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { branchToday, LodgingChrome, lodgingAccess, lodgingBranch } from '../chrome';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Room calendar' };
+export const generateMetadata = pageTitle('lodging.calendar');
 
 const NIGHTS = 14;
 const SHOWN: StayRow['status'][] = ['BOOKED', 'IN_HOUSE', 'CHECKED_OUT'];

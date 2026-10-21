@@ -26,6 +26,39 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
 - ⬜ Weighing-scale and barcode-scanner adapters (§5.2; manual weight, scale labels and keyboard-wedge work today).
 
+## Audit 2026-10-21 (session 31)
+Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) and every work item (§3) was fixed in session 31, and decisions A1–A6 were taken as recommended (§4, the user asked to fix them all). Migrations 0107–0109.
+- ⬜ E2E suites not re-run after the audit fixes: `web:onboarding`, `web:account`, `pos:mfa`, `test:e2e:desktop` (the other 33 pass; audit §7). New category, units and trip-edit screens are covered by `backoffice.mjs` and `restaurant.mjs`. There are no E2E steps yet for VOID kitchen slips (printed by the desktop till), the check customer picker, overstays, or staff archive conflicts; integration tests cover them.
+- ⏳ DPO to confirm A1 (service notes refused to API keys and support sessions, appointment notes blanked for them) and the processing-register wording.
+- ⏳ A3 means branch managers of LAUNDRY and HYBRID businesses (HYBRID is the sign-up default) now need two-step sign-in after the grace period, because they hold `laundry.dispose`. Tell pilot businesses; or decide to take `laundry.dispose` out of the branch-manager template outside LAUNDRY.
+- ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm (add to their questions with store credit).
+- ⬜ Watch: `rate-limit.test.ts` "two replicas share one signup allowance" failed once in a full gate run (400 for 429) and passed alone; and `monitoring.test.ts` "business gauges equal independent counts" can race other suites' outbox events.
+- ⬜ The night audit still runs in the API process with a cross-tenant scan granted to `onepos_app` (A6, documented in ADR-0023). Move it into the worker if another scheduled posting needs the tax and ledger code there.
+
+## Session 30 — pharmacies and drugstores (ADR-0025)
+- ⏳ Pharmacist-in-charge and DPO: the prescription book and dangerous drugs register formats and retention, partial fills of yellow prescriptions, whether a pharmacy assistant may hand over Rx medicines under supervision (the till asks for the pharmacist's approval), retention of prescriptions (health data; privacy §15d, retention schedule). Compliance assumptions §10A, question 17.
+- ⏳ Tax adviser: the current SC/PWD purchase booklet rule for medicines (Tilvara requires it by default, `pharmacy_settings`), quantity limits if any, and the current VAT-exempt medicine lists (the business marks those items VAT-exempt by hand).
+- ⬜ Maximum drug retail prices (MDRP/EO 104): no price ceiling check. e-Prescriptions, FDA/DDB online reporting, compounding and repacking records: not built.
+- ⬜ Photos or scans of prescriptions (needs file storage, D1). Refill reminders to customers.
+- ⬜ Offline refills: the snapshot carries no patient data, so an offline till records only new prescriptions; a customer's earlier prescription is filled online only.
+- ⬜ Choosing the lot at the till; cost per lot. The expiry date is taken as entered (a month-only date is not read as its last day).
+- ⬜ A worker integration test for the `stock.expired_sold` mail (the mail builder `expiredSoldMail` is untested; the event itself is checked in `pharmacy.test.ts`). Offline pharmacy sales in a browser E2E (covered by pos-offline unit tests only).
+- ⬜ The till does not show a pack's chain ("1 box = 10 strips = 100 tablets"); the lookup does not return it. Thermal receipts put the generic and lots on one wrapped detail line, so a lot code can break across lines (`@1pos/escpos` has no separate small line).
+- ⬜ The dangerous drugs register counts stock brought in by a stock adjustment under "Adjusted", not "Received" (only goods receipts, transfers in and pack openings count as received).
+- ⬜ Online name search for medicines matches one word or the exact phrase (`/v1/products?q=` is a plain ILIKE); the offline engine matches several words in any order.
+- ⬜ Filipino copy for the pharmacy screens needs a native speaker's review.
+
+## Session 29 — laundromats and laundry shops (ADR-0024)
+- ⏳ **D7 — SMS provider and account** (e.g. Semaphore): only `DevSmsSender` exists; the worker refuses the dev SMS driver in production. Notices in Filipino by customer preference and two-way SMS wait on it.
+- ⏳ Accountant: down payments held on *2330 Customer down payments* without VAT until the claim sale; forfeits (cancel, disposal) on *4120 Forfeited down payments* with VAT. Add to the review request with store credit, tips, packages and lodging deposits.
+- ⏳ The business's adviser: the claim policy text and the rules on abandoned goods (disposal after `unclaimed_days`) are unverified; the default text is a starting point only.
+- ⏳ DPO: walk-in names and phones on job orders, trip addresses and phones, masked notice recipients (processing register §15c, retention schedule); no purge job yet, like the others.
+- ⬜ Partial claims (some bags now) and splitting a job; customer accounts receivable for business clients (monthly billing).
+- ⬜ Supplies used on cancelled or disposed jobs post no consumption (recipes run only with the claim sale); per-kilo packages (packages take whole LOAD/PIECE units only).
+- ⬜ Down payments do not take store credit (as lodging deposits). Machine utilisation is over 24-hour days (branches have no opening hours). The trial samples' detergent sachets are untracked and have no recipe (samples never touch stock).
+- ⬜ Driving coin/card machine controllers; a customer-facing status page.
+- ⬜ Filipino copy for the laundry screens needs a native speaker's review.
+
 ## Session 28 — hotels, resorts and transient houses (ADR-0023)
 - ⏳ Accountant: VAT timing of nightly room charges vs. the invoice issued at check-out; deposits held without VAT until applied; forfeited deposits as cancellation fees with VAT. Add to the review request with store credit, tips and packages.
 - ⏳ Tax adviser: the local accommodation tax (rate and base per LGU; base used = the night's amount due less VAT, after SC/PWD; adjustments carry none), off by default and marked unverified. SC/PWD on room nights follows the pending SC/PWD review; several schemes on one stay split the night into lines (centavo rounding).
@@ -68,7 +101,7 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ✅ A void gives a card tip back by cancelling its charge (`sale_tip_refunds`, after the void commits), cash when the provider refuses; pending ones are retried from the till (This shift → the sale → "Give the tip back") or `POST /v1/sale-returns/:id/tip-refund`. ⬜ The void slip does not print the card tip given back (the till's message and the admin's sale page show it). ⬜ Nothing retries a pending one on its own; the admin shows it but cannot retry (the till does).
 - ✅ Offline tills take cash tips (envelope `tip`). Card tips stay online only.
 - ✅ An offline counter sale keeps its till's call number (`restaurant_orders.till_call_number`) on the KDS, receipts, kitchen tickets and the admin.
-- ⬜ Sold-out at an offline till: the snapshot's menu lists what was available when it was fetched; an item 86'd since sells offline and the kitchen finds out from the printed ticket.
+- ⬜ Sold-out at an offline till: since the audit of 2026-10-21, marking an item sold out bumps the catalog version, so a till that is online refetches and refuses it (`SOLD_OUT`). A till that stays offline still sells what was available at its last snapshot, and the kitchen finds out from the printed ticket.
 - ⬜ Kitchen printing needs a desktop till that is online and set up for the station; browser-mode screens print nothing to the kitchen. A till that crashes after printing but before marking it printed prints the ticket again a minute later (at-least-once).
 - ✅ Held carts keep counter choices and kitchen notes (the server always stored them; the till now restores their names from the menu served at resume; a choice no longer offered is dropped).
 - ⬜ Exchanges at a counter-service branch accept choices like a sale, untested end to end.

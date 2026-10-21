@@ -6,8 +6,9 @@ import { branchLabel } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { RestaurantChrome } from '../chrome';
 import { MenuForm } from '../forms';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Menus' };
+export const generateMetadata = pageTitle('restaurant.menus');
 
 /** Menus and their versions (ADR-0014 §2): edit a draft, publish it, and branches serve the published one. */
 export default async function MenusPage() {

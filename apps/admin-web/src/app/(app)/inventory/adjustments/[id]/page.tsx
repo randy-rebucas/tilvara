@@ -7,8 +7,9 @@ import { apiOrNull, type Adjustment, type Branch } from '@/lib/api';
 import { formatDateTime, peso, signed } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
+import { pageTitle } from '@/i18n/page-title';
 
-export const metadata = { title: 'Stock adjustment' };
+export const generateMetadata = pageTitle('inventory.adjustments.item');
 
 export default async function AdjustmentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

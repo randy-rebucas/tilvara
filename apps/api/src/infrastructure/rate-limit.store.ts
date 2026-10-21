@@ -66,7 +66,7 @@ export class RateLimitStore implements RateLimitCounter, OnModuleInit, OnApplica
           enableOfflineQueue: false,
           maxRetriesPerRequest: 0,
           connectTimeout: 2_000,
-          commandTimeout: 300,
+          commandTimeout: env.RATE_LIMIT_REDIS_TIMEOUT_MS,
           retryStrategy: (attempt) => Math.min(attempt * 500, 5_000),
         })
       : null;

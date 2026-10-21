@@ -268,6 +268,42 @@ describe('service packages', () => {
     expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 
+  it('a return of two session lines of one service gives each line back its own value; the commission report follows each line (audit 2026-10-21)', async () => {
+    const s = await salon('salon-pkg-lines');
+    const bundle = await pkg(s);
+    await sell(s, { customerId: s.customer, lines: [{ variantId: bundle, quantity: '1' }] }).expect(201);
+    const [p] = (await http().get(`/v1/customers/${s.customer}/packages`).query({ open: 'true' }).set(s.desk).expect(200)).body.data;
+    // Two lines of cuts from the same package: 1 by Ben (₱357.14), 2 by Ana (2 × 357.14 = ₱714.28).
+    const used = (await sell(s, {
+      customerId: s.customer, tenders: [{ method: 'CASH', tendered: '0.00' }],
+      lines: [{ variantId: s.cut, quantity: '1', packageId: p.id, staffId: s.ben }, { variantId: s.cut, quantity: '2', packageId: p.id, staffId: s.ana }],
+    }).expect(201)).body;
+    expect(used.lines.map((l: { packageValue: string }) => Number(l.packageValue))).toEqual([357.14, 714.28]);
+    const back = (await http().post(`/v1/sales/${used.id}/returns`).set(idem(s.manager)).send({
+      cashierSessionId: s.session, kind: 'RETURN', reason: 'Redo',
+      lines: used.lines.map((l: { id: string }, n: number) => ({ saleLineId: l.id, quantity: ['1', '2'][n], disposition: 'RESTOCK' })),
+    }).expect(201)).body;
+    const restored = await sql<{ sale_line_id: string; sessions: number; value: string }>(s, `SELECT sale_line_id, sessions, value::text FROM customer_package_entries WHERE kind = 'RESTORED' AND sale_return_id = $1 ORDER BY sessions`, [back.id]);
+    expect(restored.map((r) => [r.sale_line_id, r.sessions, Number(r.value)])).toEqual([[used.lines[0].id, 1, 357.14], [used.lines[1].id, 2, 714.28]]);
+    // Every session and its value is owed again; nothing stays in sales.
+    expect(await gl(s, 'PREPAID_SERVICES')).toBe(-2500);
+    expect(await gl(s, 'SALES') + (await gl(s, 'SALES_RETURNS'))).toBeCloseTo(0, 2);
+    const com = (await http().get('/v1/reports/commissions').query({ branchId: s.b1, from: manilaDate(0), to: manilaDate(0) }).set(s.manager).expect(200)).body;
+    expect(com.staff.map((x: { name: string; sales: string; returns: string; netBase: string; commission: string }) => [x.name, x.sales, x.returns, x.netBase, x.commission]))
+      .toEqual([['Ana Cruz', '714.28', '714.28', '0.00', '0.00'], ['Ben Santos', '357.14', '357.14', '0.00', '0.00']]);
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+
+  it('what a package holds is business-wide catalog: a branch catalog.manage grant cannot change it', async () => {
+    const s = await salon('sal-pkg-scope');
+    const v = await pkg(s);
+    await http().post('/v1/roles').set(s.auth).send({ key: 'menu_editor', name: 'Menu editor', permissions: ['catalog.manage', 'catalog.read'] }).expect(201);
+    const editor = bearer(await loginToken(app, (await addMember(owner, s.tenantId, 'menu_editor', { type: 'BRANCH', id: s.b1 })).email));
+    const refused = (await http().put(`/v1/variants/${v}/package-items`).set(editor).send({ items: [{ serviceVariantId: s.cut, sessions: 10 }] }).expect(403)).body.error;
+    expect(refused.details.missing).toEqual(['catalog.manage']);
+    await http().get(`/v1/variants/${v}/package-items`).set(editor).expect(200);
+  });
+
   it('an unused package comes back whole; an expired one cannot be used', async () => {
     const s = await salon('salon-pkg-back');
     const bundle = await pkg(s);
@@ -288,6 +324,73 @@ describe('service packages', () => {
     });
     const expired = await sell(s, { customerId: s.customer, lines: [{ variantId: s.cut, quantity: '1', packageId: open[0].id }], tenders: [{ method: 'CASH', tendered: '0.00' }] }).expect(409);
     expect(expired.body.error.code).toBe('PACKAGE_EXPIRED');
+    expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
+  });
+});
+
+describe('audit 2026-10-21', () => {
+  it('archiving staff or giving them time off over open bookings is refused unless the bookings are kept on purpose', async () => {
+    const s = await salon('salon-staff-busy');
+    const a = (await book(s, { customerId: s.customer, services: [{ variantId: s.cut, staffId: s.ben, startsAt: at(s.day, '10:00') }] }).expect(201)).body;
+    const refused = (await http().patch(`/v1/service-staff/${s.ben}`).set(s.auth).send({ archived: true }).expect(409)).body.error;
+    expect(refused.code).toBe('STAFF_HAS_APPOINTMENTS');
+    expect(refused.details.count).toBe(1);
+    expect(refused.details.appointments).toEqual([{ id: a.id, startsAt: new Date(at(s.day, '10:00')).toISOString() }]);
+    // Time off over the booking is refused; time off elsewhere is not.
+    expect((await http().post(`/v1/service-staff/${s.ben}/time-off`).set(idem(s.desk)).send({ startsAt: at(s.day, '09:30'), endsAt: at(s.day, '11:00') }).expect(409)).body.error.code).toBe('STAFF_HAS_APPOINTMENTS');
+    await http().post(`/v1/service-staff/${s.ben}/time-off`).set(idem(s.desk)).send({ startsAt: at(s.day, '13:00'), endsAt: at(s.day, '14:00') }).expect(201);
+    await http().post(`/v1/service-staff/${s.ben}/time-off`).set(idem(s.desk)).send({ startsAt: at(s.day, '09:30'), endsAt: at(s.day, '11:00'), keepAppointments: true }).expect(201);
+    // Only the flag is not an update.
+    await http().patch(`/v1/service-staff/${s.ben}`).set(s.auth).send({ keepAppointments: true }).expect(400);
+    await http().patch(`/v1/service-staff/${s.ben}`).set(s.auth).send({ archived: true, keepAppointments: true }).expect(200);
+    const audit = await sql<{ metadata: { appointmentsKept?: number; fields: string[] } }>(s, `SELECT metadata FROM audit_logs WHERE action = 'service_staff.archived' AND resource_id = $1`, [s.ben]);
+    expect(audit.map((x) => [x.metadata.appointmentsKept, x.metadata.fields])).toEqual([[1, ['archived']]]);
+    // A cancelled booking does not hold anyone back.
+    const c = (await book(s, { customerId: s.customer, services: [{ variantId: s.cut, staffId: s.ana, startsAt: at(s.day, '15:00') }] }).expect(201)).body;
+    await http().post(`/v1/appointments/${c.id}/status`).set(s.desk).send({ status: 'CANCELLED', reason: 'Sick' }).expect(200);
+    await http().patch(`/v1/service-staff/${s.ana}`).set(s.auth).send({ archived: true }).expect(200);
+  });
+
+  it('a sale line names staff who do the service, as a booking would', async () => {
+    const s = await salon('salon-staff-svc');
+    // Ben only cuts; a colour by Ben is refused; shampoo (not a service) may name anyone.
+    const refused = (await sell(s, { lines: [{ variantId: s.colour, quantity: '1', staffId: s.ben }] }).expect(422)).body.error;
+    expect([refused.code, refused.details.line]).toEqual(['STAFF_DOES_NOT_DO_SERVICE', 0]);
+    await sell(s, { lines: [{ variantId: s.cut, quantity: '1', staffId: s.ben }, { variantId: s.colour, quantity: '1', staffId: s.ana }, { variantId: s.shampoo, quantity: '1', staffId: s.ben }] }).expect(201);
+  });
+
+  it('package sessions come back whole; a package line returned in part leaves nothing on Sales returns', async () => {
+    const s = await salon('salon-pkg-part');
+    // A service sold by the hour (a fractional unit): a fraction of a session is refused, not a DB error.
+    const hr = (await http().post('/v1/uoms').set(s.auth).send({ code: 'HR', name: 'Hour', allowsFraction: true }).expect(201)).body.id as string;
+    const massage = (await http().post('/v1/products').set(s.auth).send({ name: 'Massage', uomId: hr, taxCategoryId: s.vat, productType: 'SERVICE', variants: [{ sku: uniq('MSG'), price: '500.00', serviceMinutes: 60 }] }).expect(201)).body.variants[0].id as string;
+    // ₱100 a package (₱89.29 ex VAT); three of them: ₱267.86, split 89.29 / 89.29 / 89.28 over the units.
+    const bundle = (await http().post('/v1/products').set(s.auth).send({ name: 'Massage pass', uomId: s.pc, taxCategoryId: s.vat, productType: 'PACKAGE', variants: [{ sku: uniq('PKG'), price: '100.00' }] }).expect(201)).body.variants[0].id as string;
+    await http().put(`/v1/variants/${bundle}/package-items`).set(s.auth).send({ items: [{ serviceVariantId: massage, sessions: 2 }] }).expect(200);
+    const sold = (await sell(s, { customerId: s.customer, lines: [{ variantId: bundle, quantity: '3' }] }).expect(201)).body;
+    expect(await gl(s, 'PREPAID_SERVICES')).toBe(-267.86);
+    const units = await sql<{ unit_no: number; value: string }>(s, `SELECT unit_no, value::text FROM customer_packages WHERE sale_id = $1 ORDER BY unit_no`, [sold.id]);
+    expect(units.map((u) => Number(u.value))).toEqual([89.29, 89.29, 89.28]);
+
+    // One package back: the last sold (₱89.28), not a prorated ₱89.29.
+    const back = (await http().post(`/v1/sales/${sold.id}/returns`).set(idem(s.manager))
+      .send({ cashierSessionId: s.session, kind: 'RETURN', reason: 'One too many', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201)).body;
+    expect(back.vatableSales).toBe('89.28');
+    expect(await gl(s, 'SALES_RETURNS')).toBe(0);
+    expect(await gl(s, 'PREPAID_SERVICES')).toBe(-178.58);
+    // A fraction of a package is refused too.
+    expect((await http().post(`/v1/sales/${sold.id}/returns`).set(idem(s.manager))
+      .send({ cashierSessionId: s.session, kind: 'RETURN', reason: 'Half', lines: [{ saleLineId: sold.lines[0].id, quantity: '0.5', disposition: 'RESTOCK' }] }).expect(422)).body.error.code).toBe('QUANTITY_NOT_ALLOWED');
+
+    const open = (await http().get(`/v1/customers/${s.customer}/packages`).query({ open: 'true' }).set(s.desk).expect(200)).body.data as { id: string }[];
+    const used = (await sell(s, { customerId: s.customer, lines: [{ variantId: massage, quantity: '1', packageId: open[0]!.id }], tenders: [{ method: 'CASH', tendered: '0.00' }] }).expect(201)).body;
+    const half = (await http().post(`/v1/sales/${used.id}/returns`).set(idem(s.manager))
+      .send({ cashierSessionId: s.session, kind: 'RETURN', reason: 'Half done', lines: [{ saleLineId: used.lines[0].id, quantity: '0.5', disposition: 'RESTOCK' }] }).expect(422)).body.error;
+    expect(half.code).toBe('QUANTITY_NOT_ALLOWED');
+    // The rest of the line comes back in one go, and the books still balance to the ledger.
+    await http().post(`/v1/sales/${sold.id}/returns`).set(idem(s.manager))
+      .send({ cashierSessionId: s.session, kind: 'RETURN', reason: 'Unused', lines: [{ saleLineId: sold.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
+    expect(await gl(s, 'SALES_RETURNS')).toBe(0);
     expect(await asOwnerInTenant(owner, s.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
   });
 });
