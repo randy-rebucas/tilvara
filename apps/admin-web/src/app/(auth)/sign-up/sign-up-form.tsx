@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BusinessTypeField } from '@/components/business-type-field';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
@@ -16,16 +16,55 @@ const slugify = (s: string) =>
     .replace(/^-+|-+$/g, '')
     .slice(0, 63);
 
+/** The steps in order, with the fields each one holds (a server error jumps back to its step). */
+const STEPS = [
+  { title: 'auth.stepBusiness', fields: ['businessName', 'tenantSlug'] },
+  { title: 'auth.stepType', fields: ['businessType'] },
+  { title: 'auth.stepAccount', fields: ['displayName', 'email', 'password'] },
+] as const;
+
+/** Server refusals that belong to one field rather than the whole form. */
+const FIELD_CODES: Record<string, string> = { SLUG_UNAVAILABLE: 'tenantSlug', EMAIL_UNAVAILABLE: 'email' };
+
+/**
+ * Sign-up in three steps: the business, its type, then the owner's account. Every step stays
+ * mounted (hidden when not current) so one form submits all fields at the end.
+ */
 export function SignUpForm() {
   const { t } = useT();
   const router = useRouter();
   const { pending, error, submit, fieldError } = useSubmit();
+  const [step, setStep] = useState(0);
+  const [missing, setMissing] = useState<string[]>([]);
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
+  const stepRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const moved = useRef(false);
+
+  // Moving between steps puts the cursor on the step's first field (not on first render: autoFocus does that).
+  useEffect(() => {
+    if (!moved.current) return;
+    stepRefs.current[step]?.querySelector<HTMLInputElement>('input')?.focus();
+  }, [step]);
+
+  function goTo(next: number) {
+    moved.current = true;
+    setStep(next);
+  }
+
+  const errorFor = (name: string) =>
+    (missing.includes(name) ? t('validation.required') : undefined) ??
+    fieldError(name) ??
+    (error && FIELD_CODES[error.code] === name ? error.message : undefined);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    const empty = STEPS[step]!.fields.filter((name) => !String(f.get(name) ?? '').trim());
+    setMissing(empty);
+    if (empty.length) return;
+    if (step < STEPS.length - 1) return goTo(step + 1);
+
     const r = await submit(
       'POST',
       '/api/auth/signup',
@@ -39,28 +78,59 @@ export function SignUpForm() {
       },
       { refresh: false },
     );
-    if (r.ok) router.replace('/');
+    if (r.ok) return router.replace('/');
+    // Show the first refused field on its own step.
+    const issues = (r.error.details?.issues as { path: string }[] | undefined) ?? [];
+    const names = [FIELD_CODES[r.error.code], ...issues.map((i) => i.path)];
+    const owner = STEPS.findIndex((s) => names.some((n) => n && (s.fields as readonly string[]).includes(n)));
+    if (owner >= 0 && owner !== step) goTo(owner);
   }
 
-  const general = error && error.code !== 'VALIDATION_FAILED' ? error.message : null;
+  const general = error && error.code !== 'VALIDATION_FAILED' && !FIELD_CODES[error.code] ? error.message : null;
+  const last = step === STEPS.length - 1;
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <TextField label={t('auth.businessName')} name="businessName" required autoFocus error={fieldError('businessName')}
-        onChange={(e) => !slugTouched && setSlug(slugify(e.target.value))} />
-      <TextField label={t('auth.slug')} name="tenantSlug" required value={slug} hint={t('auth.slugHint')}
-        error={fieldError('tenantSlug') ?? (error?.code === 'SLUG_UNAVAILABLE' ? error.message : undefined)}
-        onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); }} />
-      <BusinessTypeField error={fieldError('businessType')} />
-      <TextField label={t('auth.displayName')} name="displayName" autoComplete="name" required error={fieldError('displayName')} />
-      <TextField label={t('auth.email')} name="email" type="email" autoComplete="email" required
-        error={fieldError('email') ?? (error?.code === 'EMAIL_UNAVAILABLE' ? error.message : undefined)} />
-      <TextField label={t('auth.password')} name="password" type="password" autoComplete="new-password" required minLength={12}
-        hint={t('auth.passwordHint')} error={fieldError('password')} />
-      <FormError message={general && !['SLUG_UNAVAILABLE', 'EMAIL_UNAVAILABLE'].includes(error!.code) ? general : null} />
-      <button className="btn btn-primary mt-1 h-10" disabled={pending}>
-        {pending ? t('auth.working') : t('auth.signUp')}
-      </button>
+      <div>
+        <ol className="flex gap-1.5" aria-hidden>
+          {STEPS.map((s, i) => (
+            <li key={s.title} className={`h-1 flex-1 rounded-full ${i <= step ? 'bg-blue' : 'bg-hair-soft'}`} />
+          ))}
+        </ol>
+        <p className="mt-3 text-[0.8125rem] text-muted">{t('auth.stepOf', { n: step + 1, total: STEPS.length })}</p>
+        <h2 className="section-title mt-0.5" aria-live="polite">{t(STEPS[step]!.title)}</h2>
+      </div>
+
+      <div ref={(el) => { stepRefs.current[0] = el; }} hidden={step !== 0} className="flex flex-col gap-4">
+        <TextField label={t('auth.businessName')} name="businessName" required autoFocus error={errorFor('businessName')}
+          onChange={(e) => !slugTouched && setSlug(slugify(e.target.value))} />
+        <TextField label={t('auth.slug')} name="tenantSlug" required value={slug} hint={t('auth.slugHint')}
+          error={errorFor('tenantSlug')}
+          onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); }} />
+      </div>
+
+      <div ref={(el) => { stepRefs.current[1] = el; }} hidden={step !== 1}>
+        <BusinessTypeField error={errorFor('businessType')} />
+      </div>
+
+      <div ref={(el) => { stepRefs.current[2] = el; }} hidden={step !== 2} className="flex flex-col gap-4">
+        <TextField label={t('auth.displayName')} name="displayName" autoComplete="name" required error={errorFor('displayName')} />
+        <TextField label={t('auth.email')} name="email" type="email" autoComplete="email" required error={errorFor('email')} />
+        <TextField label={t('auth.password')} name="password" type="password" autoComplete="new-password" required minLength={12}
+          hint={t('auth.passwordHint')} error={errorFor('password')} />
+      </div>
+
+      <FormError message={general} />
+      <div className="mt-1 flex gap-2">
+        {step > 0 && (
+          <button type="button" className="btn h-10" disabled={pending} onClick={() => { setMissing([]); goTo(step - 1); }}>
+            {t('auth.stepBack')}
+          </button>
+        )}
+        <button className="btn btn-primary h-10 flex-1" disabled={pending}>
+          {pending ? t('auth.working') : last ? t('auth.signUp') : t('auth.stepNext')}
+        </button>
+      </div>
     </form>
   );
 }

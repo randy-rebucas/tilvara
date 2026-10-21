@@ -20,6 +20,7 @@
     "@1pos/money": "workspace:*",
     "@1pos/observability": "workspace:*",
     "@1pos/sync-protocol": "workspace:*",
+    "@1pos/pricing": "workspace:*",
     "@1pos/tax": "workspace:*",
     "@1pos/validation": "workspace:*",
     "@nestjs/common": "^12.1.3",

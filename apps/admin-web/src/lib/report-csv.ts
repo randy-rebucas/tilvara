@@ -1,5 +1,5 @@
 import type { MessageKey } from '@/i18n/messages';
-import type { ByBranch, ByCategory, DiscountsReport, IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PaymentExceptions, PrepTimes, PurchasesBySupplier, RefundWatch, ServiceChargeReport } from './api';
+import type { AccommodationTaxReport, GuestLedgerReport, OccupancyReport, SalesSummaryRooms, ByAttribute, ByBranch, ByCategory, CommissionsReport, ServicePackagesReport, TipsByStaffReport, DiscountsReport, IngredientUsage, ItemPerformance, KitchenVoids, OpenOrders, PaymentExceptions, PrepTimes, PromotionsReport, PurchasesBySupplier, RefundWatch, ServiceChargeReport, TipsReport } from './api';
 
 /**
  * Reports as CSV for a spreadsheet or the accountant. Money and quantities stay the API's exact
@@ -7,11 +7,17 @@ import type { ByBranch, ByCategory, DiscountsReport, IngredientUsage, ItemPerfor
  */
 export type CsvReport =
   | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory'
-  | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge'
-  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments';
+  | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge' | 'tips'
+  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments'
+  | 'promotions' | 'attributes'
+  | 'commissions' | 'servicePackages' | 'staffTips'
+  | 'occupancy' | 'guestLedger' | 'accommodationTax';
 
-/** API path (under /v1) for each report, given the branch and range. */
-export function reportPath(report: CsvReport, q: { branchId: string; from: string; to: string; day: string }): string {
+/**
+ * API path (under /v1) for each report, given the branch and range (and, for sizes and colours, the
+ * attribute; for the guest ledger, the branch's legal entity).
+ */
+export function reportPath(report: CsvReport, q: { branchId: string; from: string; to: string; day: string; attribute?: string; legalEntityId?: string }): string {
   const range = `branchId=${q.branchId}&from=${q.from}&to=${q.to}`;
   const paths: Record<CsvReport, string> = {
     sales: `/reports/sales-summary?${range}`,
@@ -27,11 +33,20 @@ export function reportPath(report: CsvReport, q: { branchId: string; from: strin
     prep: `/reports/prep-times?${range}`,
     open: `/reports/open-orders?branchId=${q.branchId}&day=${q.day}`,
     charge: `/reports/service-charge?${range}`,
+    tips: `/reports/tips?${range}`,
     category: `/reports/by-category?${range}`,
     branches: `/reports/by-branch?from=${q.from}&to=${q.to}`,
     discounts: `/reports/discounts?${range}`,
     purchases: `/reports/purchases-by-supplier?${range}`,
     payments: `/reports/payment-exceptions?branchId=${q.branchId}`,
+    promotions: `/reports/promotions?${range}`,
+    commissions: `/reports/commissions?${range}`,
+    servicePackages: `/reports/service-packages?${range}`,
+    staffTips: `/reports/tips-by-staff?${range}`,
+    occupancy: `/reports/occupancy?${range}`,
+    guestLedger: `/reports/guest-ledger?legalEntityId=${q.legalEntityId ?? ''}`,
+    accommodationTax: `/reports/accommodation-tax?${range}`,
+    attributes: `/reports/by-attribute?${range}${q.attribute ? `&attribute=${encodeURIComponent(q.attribute)}` : ''}`,
   };
   return paths[report];
 }
@@ -60,7 +75,7 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
   const bucketHeads = BUCKETS.map((b) => t(`csv.${b}` as MessageKey));
   switch (report) {
     case 'sales': {
-      const r = data as { days: { day: string; salesCount: number; returnsCount: number; voidsCount: number; sales: Buckets; returns: Buckets; net: Buckets }[] };
+      const r = data as { days: { day: string; salesCount: number; returnsCount: number; voidsCount: number; sales: Buckets; returns: Buckets; net: Buckets }[]; rooms?: SalesSummaryRooms };
       return [
         [t('common.date'), t('csv.part'), t('csv.count'), ...bucketHeads],
         ...r.days.flatMap((d) => [
@@ -68,6 +83,8 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
           [d.day, t('csv.returns'), d.returnsCount + d.voidsCount, ...BUCKETS.map((b) => d.returns[b])],
           [d.day, t('csv.net'), '', ...BUCKETS.map((b) => d.net[b])],
         ]),
+        // ADR-0023: room nights are not sales; they follow as their own part, by night.
+        ...(r.rooms?.days ?? []).map((d) => [d.day, t('csv.rooms'), d.nights, ...BUCKETS.map((b) => d[b])]),
       ];
     }
     case 'products': {
@@ -108,10 +125,12 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
     case 'items': {
       const r = data as ItemPerformance;
       return [
-        ['SKU', t('common.item'), t('csv.choiceOf'), t('csv.netQty'), t('rep.netSales'), t('rep.revenueExVat'), t('rep.cogs'), t('rep.grossProfit'), t('rep.margin')],
+        ['SKU', t('common.item'), t('csv.choiceOf'), t('csv.netQty'), t('rep.netSales'), t('rep.revenueExVat'), t('rep.cogs'), t('rep.grossProfit'), t('rep.margin'), t('rep.ordersCol')],
         ...r.data.flatMap((i) => [
-          [i.sku, i.name, '', i.netQuantity, i.netSales, i.revenueExVat, i.cogs, i.grossProfit, i.marginPct ?? ''],
-          ...i.modifiers.map((m) => [m.sku, m.name, i.name, m.netQuantity, m.netSales, m.revenueExVat, m.cogs, m.grossProfit, m.marginPct ?? '']),
+          [i.sku, i.name, '', i.netQuantity, i.netSales, i.revenueExVat, i.cogs, i.grossProfit, i.marginPct ?? '', ''],
+          ...i.modifiers.map((m) => [m.sku, m.name, i.name, m.netQuantity, m.netSales, m.revenueExVat, m.cogs, m.grossProfit, m.marginPct ?? '', '']),
+          // Free choices (session 25): a count with no money of its own.
+          ...(i.freeChoices ?? []).map((c) => ['', c.name, i.name, c.quantity, '', '', '', '', '', c.orders]),
         ]),
       ];
     }
@@ -154,6 +173,19 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
         ...r.days.map((d) => [d.day, d.checks, d.returns, d.base, d.charged.exVat, d.charged.vat, d.returned.exVat, d.net.exVat, d.net.amountDue]),
       ];
     }
+    case 'tips': {
+      const r = data as TipsReport;
+      const figures = (x: TipsReport['totals']) => [x.tips, x.cash, x.electronic, x.taken, x.refunded, x.paidOut, x.owed];
+      return [
+        [t('common.date'), t('rep.tipsCount'), t('rep.tipsCash'), t('rep.tipsElectronic'), t('rep.tipsTaken'), t('rep.tipsRefunded'), t('rep.tipsPaidOut'), t('rep.tipsOwed')],
+        ...r.days.map((d) => [d.day, ...figures(d)]),
+        [t('common.total'), ...figures(r.totals)],
+        [t('rep.tipsLedger'), '', '', '', '', '', '', r.ledger],
+        [],
+        [t('csv.cashier'), t('rep.tipsCount'), t('rep.tipsTaken')],
+        ...r.byCashier.map((c) => [c.name ?? '', c.tips, c.amount]),
+      ];
+    }
     case 'category': {
       const r = data as ByCategory;
       return [
@@ -181,6 +213,90 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       return [
         [t('rep.supplier'), t('rep.receipts'), t('rep.received'), t('rep.returnedToSupplier'), t('rep.netReceived'), t('rep.invoices'), t('rep.invoiced')],
         ...r.data.map((x) => [`${x.code} ${x.name}`, x.receipts, x.received, x.returned, x.netReceived, x.invoices, x.invoiced]),
+      ];
+    }
+    case 'promotions': {
+      const r = data as PromotionsReport;
+      return [
+        [t('promo.name'), t('promo.kind'), t('csv.salesCount'), t('csv.netQty'), t('rep.promoDiscount'), t('rep.netSales')],
+        ...r.data.map((x) => [x.name, t(`promo.kind.${x.kind}` as MessageKey), x.salesCount, x.netQuantity, x.discount, x.netSales]),
+      ];
+    }
+    case 'attributes': {
+      const r = data as ByAttribute;
+      const attribute = r.attribute ?? '';
+      return [
+        [attribute || t('rep.attribute'), t('csv.qtySold'), t('csv.qtyReturned'), t('csv.netQty'), t('rep.netSales'), t('rep.revenueExVat')],
+        ...r.data.map((x) => [x.value ?? t('rep.attrNone', { attribute }), x.quantitySold, x.quantityReturned, x.netQuantity, x.netSales, x.revenueExVat]),
+      ];
+    }
+    case 'commissions': {
+      const r = data as CommissionsReport;
+      return [
+        [t('rep.staffMember'), t('rep.lines'), t('csv.sales'), t('csv.returns'), t('rep.commissionBase'), t('rep.commission')],
+        ...r.staff.map((x) => [x.name, x.lines, x.sales, x.returns, x.netBase, x.commission]),
+        [t('common.total'), r.totals.lines, r.totals.sales, r.totals.returns, r.totals.netBase, r.totals.commission],
+      ];
+    }
+    case 'servicePackages': {
+      const r = data as ServicePackagesReport;
+      return [
+        [t('rep.pkgFigure'), t('rep.amount')],
+        [t('rep.pkgSold'), r.sold],
+        [t('rep.pkgUsed'), r.used],
+        [t('rep.pkgRefunded'), r.refunded],
+        [t('rep.pkgRestored'), r.restored],
+        [t('rep.pkgOwed'), r.owed],
+        [t('rep.pkgLedger'), r.ledger],
+        [t('rep.pkgCount'), r.packagesSold],
+        [t('rep.pkgSessionsSold'), r.sessionsSold],
+        [t('rep.pkgSessionsUsed'), r.sessionsUsed],
+        [],
+        [t('rep.pkgName'), t('doc.customer'), t('rep.pkgExpires'), t('rep.pkgSessionsLeft'), t('rep.pkgValueLeft')],
+        ...r.open.map((o) => [o.name, o.customer, o.expiresOn ?? '', o.sessionsLeft, o.valueLeft]),
+      ];
+    }
+    case 'staffTips': {
+      const r = data as TipsByStaffReport;
+      return [
+        [t('rep.staffMember'), t('rep.tipsCount'), t('rep.tipsTaken'), t('rep.tipsVoided')],
+        ...r.staff.map((x) => [x.name ?? t('rep.unassigned'), x.tips, x.amount, x.voided]),
+        [t('common.total'), '', r.total, ''],
+      ];
+    }
+    case 'occupancy': {
+      const r = data as OccupancyReport;
+      const row = (x: OccupancyReport['totals']) => [x.roomsAvailable, x.roomsSold, x.occupancyPercent ?? '', x.roomRevenueExVat, x.adr ?? '', x.revpar ?? ''];
+      return [
+        [t('common.date'), t('rep.roomsAvailable'), t('rep.roomsSold'), t('rep.occupancyPct'), t('rep.roomRevenue'), t('rep.adr'), t('rep.revpar')],
+        ...r.days.map((d) => [d.day, ...row(d)]),
+        [t('common.total'), ...row(r.totals)],
+      ];
+    }
+    case 'guestLedger': {
+      const r = data as GuestLedgerReport;
+      return [
+        [t('rep.glFigure'), t('rep.amount')],
+        [t('rep.glOpenFolios'), r.totals.folios],
+        [t('rep.glLedgerBooks'), r.totals.guestLedgerGl],
+        [t('rep.glDifference'), r.totals.guestLedgerDifference],
+        [t('rep.glDeposits'), r.totals.deposits],
+        [t('rep.glDepositsBooks'), r.totals.guestDepositsGl],
+        [t('rep.glDifference'), r.totals.depositsDifference],
+        [],
+        [t('lod.room'), t('lod.guest'), t('lod.arrival'), t('lod.departure'), t('common.status'), t('lod.folioBalance')],
+        ...r.folios.map((f) => [f.roomNumber, f.guestName ?? '', f.arrivalDate, f.departureDate, f.stayStatus, f.balance]),
+        [],
+        [t('lod.room'), t('lod.arrival'), t('common.status'), t('lod.depositsHeld')],
+        ...r.deposits.map((d) => [d.roomNumber, d.arrivalDate, d.stayStatus, d.held]),
+      ];
+    }
+    case 'accommodationTax': {
+      const r = data as AccommodationTaxReport;
+      return [
+        [t('rep.month'), t('rep.nights'), t('rep.accTaxBase'), t('rep.accTax')],
+        ...r.data.map((x) => [x.month, x.nights, x.base, x.tax]),
+        [t('common.total'), '', r.totals.base, r.totals.tax],
       ];
     }
     case 'payments': {

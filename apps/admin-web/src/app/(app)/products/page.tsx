@@ -2,10 +2,11 @@ import { ChevronRight, Search } from 'lucide-react';
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type CurrentPrice, type Me, type PriceList, type Product, type TaxCategory, type Uom } from '@/lib/api';
-import { sellsByWeight } from '@/lib/business-type';
+import { sellsByWeight, servesAppointments } from '@/lib/business-type';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { AddProduct } from './add-product';
+import { ProductsTabs } from './tabs';
 
 export const metadata = { title: 'Products' };
 
@@ -35,6 +36,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('prod.title')} lede={t('prod.lede')} />
+      <ProductsTabs active="products" />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <form role="search" className="relative w-full max-w-[420px]" action="/products">
@@ -42,7 +44,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <label className="sr-only" htmlFor="q">{t('prod.search')}</label>
           <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
         </form>
-        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} byWeight={sellsByWeight(me.activeTenant?.businessType)} />}
+        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} byWeight={sellsByWeight(me.activeTenant?.businessType)} expiryFirst={me.activeTenant?.businessType === 'GROCERY'} salon={servesAppointments(me.activeTenant?.businessType)} />}
       </div>
 
       <Note denom="blue" className="overflow-x-auto pr-2">
@@ -74,6 +76,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
                     <td className="whitespace-nowrap">
                       {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}
+                      {(p.productType === 'SERVICE' || p.productType === 'PACKAGE') && <span className="tag ml-1.5">{t(`prod.kind.${p.productType}`)}</span>}
                       {p.isSample && <span className="tag ml-1.5 border-blue/40 text-blue!">{t('sample.tag')}</span>}
                     </td>
                   </tr>

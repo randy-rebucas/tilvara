@@ -1,4 +1,4 @@
-import { eq, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
+import { appointmentReminderMail, eq, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
@@ -43,6 +43,20 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
     },
     'stock.low': stockAlertHandler(mailer, 'low'),
     'stock.below_zero': stockAlertHandler(mailer, 'below_zero'),
+    // Lots that came within the branch's expiry window (ADR-0020 §3), flagged by the hourly pass.
+    'stock.expiring': async (event, _db, { client }) => {
+      const mail = await expiryAlertMail(client, event.payload);
+      if (!mail) return; // written off or sold since: nothing left to say
+      for (const k of await stockKeepers(client, String(event.payload.branchId ?? ''))) {
+        await mailer.send({ to: k.email, template: 'stock.expiring', ...mail });
+      }
+    },
+    // A day-before reminder to the customer (ADR-0022 §10), flagged by the hourly pass. Ids only in the event.
+    'appointment.reminder': async (event, _db, { client }) => {
+      const mail = await appointmentReminderMail(client, event.payload);
+      if (!mail) return; // cancelled, moved, turned off or no address since: nothing to send
+      await mailer.send({ ...mail, template: 'appointment.reminder' });
+    },
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
   });
 }

@@ -106,6 +106,18 @@ async function attach({ base, out, port, child, tries, isApp = () => true }) {
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
+  /** Submit a stepped form (sign-up): press the visible primary button through each "Next", then the last one. */
+  async function finishSteps(max = 5) {
+    for (let i = 0; i < max; i++) {
+      const label = await evaluate(`(() => {
+        const b = [...document.querySelectorAll('form button.btn-primary')].find((x) => x.getClientRects().length);
+        b.click();
+        return b.textContent.trim();
+      })()`);
+      if (label !== 'Next') return;
+      await sleep(200);
+    }
+  }
   const clickText = (text) => evaluate(`(() => {
     // Prefer a visible match: the POS keeps the Sell view mounted (hidden) behind other tabs.
     const all = [...document.querySelectorAll('button, a, summary')].filter((x) => x.textContent.trim().includes(${JSON.stringify(text)}));
@@ -137,7 +149,7 @@ async function attach({ base, out, port, child, tries, isApp = () => true }) {
   await send('Runtime.enable');
 
   return {
-    send, evaluate, viewport, waitFor, go, fill, clickText, shot, bff, noHorizontalScroll,
+    send, evaluate, viewport, waitFor, go, fill, finishSteps, clickText, shot, bff, noHorizontalScroll,
     child,
     close() { ws.close(); child.kill(); },
   };

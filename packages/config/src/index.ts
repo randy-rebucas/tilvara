@@ -101,6 +101,11 @@ export const serverEnvSchema = z.object({
    * timeout (which would make it resend the whole batch while the first copy is still recording).
    */
   SYNC_BATCH_BUDGET_MS: z.coerce.number().int().min(0).max(60_000).default(8_000),
+  /**
+   * How often the API's night audit (ADR-0023 §7) looks for room nights due, in ms; 0 = off (tests,
+   * or an instance that should not run it). One instance runs it at a time (advisory lock).
+   */
+  NIGHT_AUDIT_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(600_000),
   /** Key prefix of the rate-limit counters in Redis (tests use a unique one per run). */
   RATE_LIMIT_PREFIX: z.string().min(1).max(64).default('onepos:rl:'),
   /**

@@ -1,9 +1,14 @@
+import { randomInt } from 'node:crypto';
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { ean13CheckDigit } from '@1pos/sync-protocol';
 import {
   and,
   asc,
   barcodes,
+  branches,
   categories,
+  rooms,
+  roomTypes,
   eq,
   inArray,
   isNull,
@@ -29,7 +34,7 @@ import type {
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
-import { businessType } from '../billing/entitlements.js';
+import { assertAppointments, businessType } from '../billing/entitlements.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -68,7 +73,38 @@ const SHOP_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Ballpen (blue)', price: '12.00' },
   { name: 'AA batteries (2 pcs)', price: '70.00' },
 ];
-const sampleItems = (type: Awaited<ReturnType<typeof businessType>>) => (type === 'RETAIL' ? SHOP_ITEMS : CAFE_ITEMS);
+/** A sari-sari store's shelf (ADR-0020): sachets and pieces next to the packs they come from. */
+const GROCERY_ITEMS: readonly { name: string; price: string }[] = [
+  { name: '3-in-1 coffee sachet', price: '9.00' },
+  { name: '3-in-1 coffee (tie of 10)', price: '85.00' },
+  { name: 'Shampoo sachet', price: '8.00' },
+  { name: 'Instant noodles', price: '16.00' },
+  { name: 'Canned sardines 155g', price: '28.00' },
+  { name: 'Rice per kilo', price: '55.00' },
+  { name: 'Cooking oil (small bottle)', price: '25.00' },
+  { name: 'Softdrink 290ml', price: '20.00' },
+];
+/** A salon's list (ADR-0022): services with their durations, and two retail items. */
+const SALON_ITEMS: readonly { name: string; price: string; minutes?: number }[] = [
+  { name: 'Haircut', price: '250.00', minutes: 30 },
+  { name: 'Hair colour', price: '1200.00', minutes: 90 },
+  { name: 'Manicure', price: '200.00', minutes: 45 },
+  { name: 'Foot spa', price: '350.00', minutes: 60 },
+  { name: 'Full body massage', price: '600.00', minutes: 60 },
+  { name: 'Shampoo 250ml', price: '180.00' },
+  { name: 'Hair wax', price: '220.00' },
+];
+/** A hotel's or resort's list (ADR-0023 §1): two room nights (their room types come with them), a minibar item, laundry and breakfast. */
+type SampleItem = { name: string; price: string; minutes?: number; service?: true; roomType?: { code: string; base: number; max: number; rooms: string[] } };
+const LODGING_ITEMS: readonly SampleItem[] = [
+  { name: 'Standard room night', price: '2500.00', service: true, roomType: { code: 'STD', base: 2, max: 3, rooms: ['101', '102', '103'] } },
+  { name: 'Family room night', price: '4200.00', service: true, roomType: { code: 'FAM', base: 4, max: 6, rooms: ['201', '202'] } },
+  { name: 'Minibar soft drink', price: '80.00' },
+  { name: 'Laundry (per kilo)', price: '150.00', service: true },
+  { name: 'Breakfast buffet', price: '450.00', service: true },
+];
+const sampleItems = (type: Awaited<ReturnType<typeof businessType>>): readonly SampleItem[] =>
+  type === 'GROCERY' ? GROCERY_ITEMS : type === 'RETAIL' ? SHOP_ITEMS : type === 'SALON' ? SALON_ITEMS : type === 'LODGING' ? LODGING_ITEMS : CAFE_ITEMS;
 
 const SAMPLE_REFUSALS = {
   SAMPLE_DATA_LOADED: 'The sample items are already on your list',
@@ -81,6 +117,12 @@ export function inStoreEan13(n: number): string {
   const body = `200000${String(n).padStart(6, '0')}`;
   const sum = [...body].reduce((acc, d, i) => acc + Number(d) * (i % 2 === 0 ? 1 : 3), 0);
   return body + ((10 - (sum % 10)) % 10);
+}
+
+/** A store barcode (ADR-0021 §4): EAN-13 `29` + the 10-digit number + check digit. */
+export function storeEan13(n: number): string {
+  const body = `29${String(n).padStart(10, '0')}`;
+  return body + ean13CheckDigit(body);
 }
 
 @Injectable()
@@ -192,7 +234,13 @@ export class CatalogService extends TenantService {
       if (input.soldBy === 'WEIGHT' && !uom.allowsFraction) {
         throw new AppError('UOM_NOT_FRACTIONAL', 'Weighted products need a unit that allows fractions (e.g. KG)', HttpStatus.UNPROCESSABLE_ENTITY);
       }
+      // A restaurant sells dishes, not goods off a scale (the screens hide it; session 25 closes the API).
+      if (input.soldBy === 'WEIGHT' && (await businessType(db)) === 'RESTAURANT') {
+        throw new AppError('BUSINESS_TYPE_EXCLUDES_FEATURE', 'A restaurant does not sell by weight. Change the business type to Both (a shop and a restaurant) to sell by weight.', HttpStatus.UNPROCESSABLE_ENTITY, { feature: 'sold_by_weight', businessType: 'RESTAURANT' });
+      }
       if (input.categoryId) await this.activeCategory(db, input.categoryId);
+      // Prepaid packages are a salon's (ADR-0022 §6).
+      if (input.productType === 'PACKAGE') await assertAppointments(db);
 
       const [product] = await db
         .insert(products)
@@ -205,7 +253,8 @@ export class CatalogService extends TenantService {
           uomId: input.uomId,
           productType: input.productType,
           soldBy: input.soldBy,
-          trackInventory: input.trackInventory ?? input.productType !== 'SERVICE',
+          trackInventory: input.trackInventory ?? input.productType === 'STANDARD',
+          tracksExpiry: input.tracksExpiry,
         })
         .returning();
       for (const v of input.variants) await this.insertVariant(db, auth, product!.id, v);
@@ -231,6 +280,7 @@ export class CatalogService extends TenantService {
       const conds = [];
       if (!q.includeArchived) conds.push(isNull(products.archivedAt));
       if (q.categoryId) conds.push(eq(products.categoryId, q.categoryId));
+      if (q.productType) conds.push(eq(products.productType, q.productType));
       if (q.cursor) conds.push(sql`${products.id} > ${q.cursor}`);
       if (q.q) {
         const like = `%${escapeLike(q.q)}%`;
@@ -283,8 +333,12 @@ export class CatalogService extends TenantService {
       if (current.archivedAt) throw archived('Product');
       if (input.taxCategoryId) await this.activeTaxCategory(db, input.taxCategoryId);
       if (input.categoryId) await this.activeCategory(db, input.categoryId);
-      if (input.trackInventory && current.productType === 'SERVICE') {
-        throw new AppError('INVALID_STATE', 'Services cannot track inventory', HttpStatus.UNPROCESSABLE_ENTITY);
+      if (input.trackInventory && current.productType !== 'STANDARD') {
+        throw new AppError('INVALID_STATE', 'Services and packages cannot track inventory', HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      // Expiry dates are kept on counted stock only (ADR-0020 §3).
+      if ((input.tracksExpiry ?? current.tracksExpiry) && !(input.trackInventory ?? current.trackInventory)) {
+        throw new AppError('EXPIRY_NEEDS_STOCK', 'Expiry dates need stock that is counted', HttpStatus.UNPROCESSABLE_ENTITY);
       }
       await db.update(products).set(input).where(eq(products.id, id));
       await this.audit(db, auth, 'product.updated', 'product', id, { fields: Object.keys(input) });
@@ -326,6 +380,7 @@ export class CatalogService extends TenantService {
     return this.mutate(auth, async (db) => {
       const product = await this.productRow(db, productId);
       if (product.archivedAt) throw archived('Product');
+      await this.assertTypeFields(db, productId, input);
       const variantId = await this.insertVariant(db, auth, productId, input);
       await this.audit(db, auth, 'variant.created', 'variant', variantId, { productId, sku: input.sku });
       return this.productView(db, productId);
@@ -337,6 +392,15 @@ export class CatalogService extends TenantService {
     return this.mutate(auth, async (db) => {
       const v = await this.variantRow(db, id);
       if (v.archivedAt) throw archived('Variant');
+      await this.assertTypeFields(db, v.productId, input);
+      if (input.quickKeyPosition) {
+        // One item per quick key (ADR-0021 §3).
+        const [taken] = await db
+          .select({ id: productVariants.id })
+          .from(productVariants)
+          .where(and(eq(productVariants.quickKeyPosition, input.quickKeyPosition), isNull(productVariants.archivedAt), sql`${productVariants.id} <> ${id}`));
+        if (taken) throw new AppError('QUICK_KEY_TAKEN', 'Another item already has this quick key', HttpStatus.CONFLICT, { variantId: taken.id });
+      }
       await db.update(productVariants).set(input).where(eq(productVariants.id, id));
       await this.audit(db, auth, 'variant.updated', 'variant', id, { fields: Object.keys(input) });
       return this.productView(db, v.productId);
@@ -372,6 +436,28 @@ export class CatalogService extends TenantService {
       const [row] = await db.insert(barcodes).values({ tenantId: tenantOf(auth).tenantId, variantId, code }).returning();
       await this.audit(db, auth, 'barcode.added', 'barcode', row!.id, { variantId, code });
       return row!;
+    });
+  }
+
+  /**
+   * A store barcode for a variant (ADR-0021 §4): an in-store EAN-13, `29` + 10 random digits + check
+   * digit, for items that came without one. Exact barcodes are looked up before scale labels, so it
+   * never reads as a weight.
+   */
+  generateBarcode(auth: AuthContext, variantId: string) {
+    this.assertCan(auth, 'catalog.manage');
+    return this.mutate(auth, async (db) => {
+      const v = await this.variantRow(db, variantId);
+      if (v.archivedAt) throw archived('Variant');
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const code = storeEan13(randomInt(0, 10_000_000_000));
+        const [clash] = await db.select({ id: barcodes.id }).from(barcodes).where(eq(barcodes.code, code));
+        if (clash) continue;
+        const [row] = await db.insert(barcodes).values({ tenantId: tenantOf(auth).tenantId, variantId, code }).returning();
+        await this.audit(db, auth, 'barcode.added', 'barcode', row!.id, { variantId, code, generated: true });
+        return row!;
+      }
+      throw new AppError('BARCODE_TAKEN', 'Could not find a free store barcode; try again', HttpStatus.CONFLICT);
     });
   }
 
@@ -417,18 +503,33 @@ export class CatalogService extends TenantService {
       if (!vat || !pc) throw new AppError('SAMPLE_DATA_UNAVAILABLE', 'The default VAT category or the piece unit is missing', HttpStatus.UNPROCESSABLE_ENTITY);
       const [category] = await db.insert(categories).values({ tenantId, name: 'Sample items', isSample: true, sortOrder: 999 }).returning();
       const ids: string[] = [];
+      const [firstBranch] = await db.select({ id: branches.id }).from(branches).where(isNull(branches.archivedAt)).orderBy(asc(branches.createdAt)).limit(1);
       for (const [i, item] of sampleItems(await businessType(db)).entries()) {
         const [product] = await db
           .insert(products)
-          .values({ tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true })
+          .values({
+            tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true,
+            // A salon's samples are bookable services (ADR-0022 §3).
+            ...((item.minutes || item.service) && { productType: 'SERVICE' as const }),
+          })
           .returning({ id: products.id });
-        await this.insertVariant(db, auth, product!.id, {
+        const variantId = await this.insertVariant(db, auth, product!.id, {
           sku: `SAMPLE-${String(i + 1).padStart(2, '0')}`,
           price: item.price,
           barcodes: [inStoreEan13(i + 1)],
           attributes: {},
+          ...(item.minutes && { serviceMinutes: item.minutes }),
         } as VariantInput);
         ids.push(product!.id);
+        // A room night brings its room type, and a few rooms at the first branch (ADR-0023 §1).
+        if (item.roomType) {
+          const [type] = await db.insert(roomTypes).values({
+            tenantId, code: item.roomType.code, name: item.name.replace(/ room night$/, ''), baseOccupancy: item.roomType.base, maxOccupancy: item.roomType.max, nightVariantId: variantId, isSample: true,
+          }).onConflictDoNothing().returning({ id: roomTypes.id });
+          if (type && firstBranch) {
+            await db.insert(rooms).values(item.roomType.rooms.map((number) => ({ tenantId, branchId: firstBranch.id, roomTypeId: type.id, number, isSample: true }))).onConflictDoNothing();
+          }
+        }
       }
       await this.audit(db, auth, 'sample_data.loaded', 'category', category!.id, { products: ids.length });
       return { loaded: ids.length, categoryId: category!.id, productIds: ids };
@@ -453,6 +554,9 @@ export class CatalogService extends TenantService {
           await db.update(barcodes).set({ archivedAt: now }).where(and(inArray(barcodes.variantId, variants.map((v) => v.id)), isNull(barcodes.archivedAt)));
         }
       }
+      // Sample rooms and room types go with them (stays that used them keep their history).
+      await db.update(rooms).set({ archivedAt: now }).where(and(eq(rooms.isSample, true), isNull(rooms.archivedAt)));
+      await db.update(roomTypes).set({ archivedAt: now }).where(and(eq(roomTypes.isSample, true), isNull(roomTypes.archivedAt)));
       const cats = await db
         .update(categories)
         .set({ archivedAt: now })
@@ -473,6 +577,14 @@ export class CatalogService extends TenantService {
   }
 
   // ---------------------------------------------------------------- helpers
+  /** A duration belongs to a service, a validity to a package (ADR-0022 §3, §6). */
+  private async assertTypeFields(db: Database, productId: string, v: { serviceMinutes?: number | null | undefined; packageValidDays?: number | null | undefined }) {
+    if (v.serviceMinutes == null && v.packageValidDays == null) return;
+    const { productType } = await this.productRow(db, productId);
+    if (v.serviceMinutes != null && productType !== 'SERVICE') throw new AppError('INVALID_STATE', 'Only a service has a duration', HttpStatus.UNPROCESSABLE_ENTITY);
+    if (v.packageValidDays != null && productType !== 'PACKAGE') throw new AppError('INVALID_STATE', 'Only a package has a validity', HttpStatus.UNPROCESSABLE_ENTITY);
+  }
+
   private async insertVariant(db: Database, auth: AuthContext, productId: string, v: VariantInput): Promise<string> {
     const tenantId = tenantOf(auth).tenantId;
     const [variant] = await db
@@ -484,6 +596,8 @@ export class CatalogService extends TenantService {
         name: v.name ?? null,
         attributes: v.attributes,
         referenceCost: v.referenceCost ?? null,
+        serviceMinutes: v.serviceMinutes ?? null,
+        packageValidDays: v.packageValidDays ?? null,
       })
       .returning({ id: productVariants.id });
     if (v.barcodes.length) {

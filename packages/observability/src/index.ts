@@ -45,7 +45,9 @@ const SECRET_KEYS = ['password', 'passwordHash', 'token', 'accessToken', 'refres
  */
 export const PERSONAL_KEYS = [
   'email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary',
-  'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient',
+  'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient', 'guestName',
+  // The guest registry (ADR-0023 §8).
+  'nationality', 'idType', 'birthDate', 'contact',
 ];
 
 /**

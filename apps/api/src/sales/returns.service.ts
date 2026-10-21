@@ -14,6 +14,11 @@ import {
   saleReturnCharges,
   saleReturnLines,
   saleReturns,
+  saleTips,
+  saleTipRefunds,
+  saleTenders,
+  paymentIntents,
+  paymentEvents,
   sales,
   sql,
   stockMovements,
@@ -26,7 +31,7 @@ import {
 } from '@1pos/database';
 import { buildReturnReceipt } from './receipt.js';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
-import type { CreateSaleReturnInput, PreviewSaleReturnInput } from '@1pos/validation';
+import type { CreateSaleReturnInput, PreviewSaleReturnInput, TipRefundInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { nextNumber } from '../common/sequence.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -35,10 +40,14 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { expectedCash, loadSession } from './cash.service.js';
-import { saleReturnPosting } from '@1pos/accounting';
+import { saleReturnPosting, tipRefundPosting } from '@1pos/accounting';
+import { PaymentProvider } from '../payments/provider.js';
 import { activeCustomer } from '../customers/customers.service.js';
 import { post } from '../accounting/ledger.js';
 import { recordPreparedWaste } from '../restaurant/consumption.js';
+import { recallCounterOrder } from '../restaurant/counter.js';
+import { returnPackages } from '../salon/packages.js';
+import { folioRefundPlan, insertEntry } from '../lodging/folio.js';
 
 const BUCKETS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
@@ -63,12 +72,90 @@ const notNamed = (): never => {
 export class ReturnsService extends TenantService {
   protected readonly conflicts: ConflictMap = {};
 
-  constructor(@Inject(TenantDb) tenantDb: TenantDb) {
+  constructor(
+    @Inject(TenantDb) tenantDb: TenantDb,
+    @Inject(PaymentProvider) private readonly provider: PaymentProvider,
+  ) {
     super(tenantDb);
   }
 
-  create(auth: AuthContext, saleId: string, input: CreateSaleReturnInput) {
-    return this.mutate(auth, async (db) => this.view(db, await this.record(db, auth, saleId, input)));
+  /**
+   * A void or return. A voided sale's card tip is given back right after the void commits, by
+   * cancelling the tip's own charge (the provider is never called inside a transaction); if that
+   * cannot be done now, the void says so (`tipRefundPending`) and `refundTip` finishes it later.
+   */
+  async create(auth: AuthContext, saleId: string, input: CreateSaleReturnInput) {
+    const doc = await this.mutate(auth, async (db) => this.view(db, await this.record(db, auth, saleId, input)));
+    if (!doc.tipRefundPending) return doc;
+    const id = String((doc as { id?: unknown }).id);
+    try {
+      await this.refundTip(auth, id, {});
+    } catch {
+      // Left pending: the slip and the sale say so; "Give the tip back" retries.
+    }
+    return this.get(auth, id);
+  }
+
+  /**
+   * Give a voided sale's card tip back (session 25): cancel its charge with the provider; when the
+   * provider refuses, from the drawer in cash (the void's shift, or `cashierSessionId` if that one has
+   * closed). Once per void: a second call returns what was done. A provider that cancelled but whose
+   * answer was lost is asked again before any cash leaves the drawer.
+   */
+  async refundTip(auth: AuthContext, saleReturnId: string, input: TipRefundInput) {
+    const plan = await this.read(auth, async (db) => {
+      const [doc] = await db.select().from(saleReturns).where(eq(saleReturns.id, saleReturnId));
+      if (!doc) throw notFound('Return');
+      this.assertCan(auth, 'sales.void', { legalEntityId: doc.legalEntityId, branchId: doc.branchId, registerId: doc.registerId });
+      const [tip] = doc.kind === 'VOID' ? await db.select().from(saleTips).where(eq(saleTips.saleId, doc.saleId)) : [];
+      if (!tip || tip.method === 'CASH') throw unprocessable('NO_CARD_TIP', 'This void has no card tip to give back');
+      const [done] = await db.select().from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, saleReturnId));
+      return { doc, tip, done };
+    });
+    if (plan.done) return this.get(auth, saleReturnId);
+    const intentId = plan.tip.paymentIntentId!;
+    let cancelled = (await this.provider.cancel(intentId)).status === 'CANCELED';
+    // Cancelled on an earlier attempt whose answer was lost: the provider says so, never cash twice.
+    if (!cancelled) {
+      const found = await this.provider.retrieve(intentId);
+      cancelled = found.status === 'FAILED' && found.failureCode === 'canceled';
+    }
+    await this.tenantDb.run(auth, async (db) => {
+      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`tip-refund:${saleReturnId}`}, 0))`);
+      const [already] = await db.select().from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, saleReturnId));
+      if (already) return;
+      const { doc, tip } = plan;
+      const tenantId = tenantOf(auth).tenantId;
+      let sessionId: string | null = null;
+      if (!cancelled) {
+        sessionId = input.cashierSessionId ?? doc.cashierSessionId;
+        const { session } = await loadSession(db, sessionId, true);
+        if (session.status !== 'OPEN' || session.branchId !== doc.branchId) {
+          throw new AppError('TIP_REFUND_NEEDS_DRAWER', 'The card provider refused; give the tip back in cash from an open drawer at this branch', HttpStatus.CONFLICT);
+        }
+        const drawer = toDec(await expectedCash(db, session.id));
+        if (drawer.lt(tip.amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the tip', { available: drawer.toFixed(2) });
+      }
+      const [row] = await db.insert(saleTipRefunds).values({
+        tenantId, saleReturnId, saleTipId: tip.id, method: cancelled ? 'CARD' : 'CASH',
+        paymentIntentId: cancelled ? tip.paymentIntentId : null, amount: tip.amount, createdBy: auth.userId,
+      }).returning();
+      if (cancelled) {
+        await db.update(paymentIntents).set({ status: 'CANCELED' }).where(eq(paymentIntents.id, intentId));
+        await db.insert(paymentEvents).values({ tenantId, paymentIntentId: intentId, type: 'CANCELED', detail: { saleReturnId, tip: true }, createdBy: auth.userId });
+      } else {
+        await db.insert(cashMovements).values({
+          tenantId, cashierSessionId: sessionId!, type: 'TIP_REFUND', amount: toDec(tip.amount).negated().toString(), saleId: doc.saleId, saleReturnId,
+          reason: `Card tip of void #${doc.returnNumber} (card refused)`, createdBy: auth.userId,
+        });
+      }
+      await post(db, {
+        tenantId, legalEntityId: doc.legalEntityId, branchId: doc.branchId, sourceType: 'SALE_TIP_REFUND', sourceId: row!.id,
+        memo: `Tip given back, void #${doc.returnNumber}`, lines: tipRefundPosting(tip.amount, cancelled ? 'CARD' : 'CASH', doc.branchId), createdBy: auth.userId,
+      });
+      await this.audit(db, auth, 'sale.tip_refunded', 'sale', doc.saleId, { saleReturnId, method: cancelled ? 'CARD' : 'CASH', amount: toDec(tip.amount).toFixed(2) });
+    });
+    return this.get(auth, saleReturnId);
   }
 
   /**
@@ -102,9 +189,20 @@ export class ReturnsService extends TenantService {
     const toCredit = input.refundTo === 'STORE_CREDIT';
     if (toCredit && options.exchange) throw unprocessable('EXCHANGE_IN_CASH', 'An exchange puts the refund towards the new items');
     const creditCustomer = toCredit ? await activeCustomer(db, input.customerId ?? sale.customerId ?? notNamed()) : null;
-    if (!options.exchange && !toCredit) {
+    // A void gives the sale's tip back too (session 25): a cash tip here, from the drawer; a card tip
+    // by cancelling its charge once this commits (`refundTip`). A return keeps the tip.
+    const [tip] = input.kind === 'VOID' ? await db.select({ amount: saleTips.amount, method: saleTips.method }).from(saleTips).where(eq(saleTips.saleId, saleId)) : [];
+    const tipRefund = toDec(tip?.method === 'CASH' ? tip.amount : '0');
+    // A room-charged sale returned while the guest's folio is open goes back onto the folio (ADR-0023 §5.1),
+    // as far as it was charged there and the folio still owes; the rest is refunded as usual.
+    const [roomTender] = options.exchange ? [] : await db.select({ stayId: saleTenders.stayId }).from(saleTenders).where(and(eq(saleTenders.saleId, saleId), eq(saleTenders.method, 'ROOM_CHARGE')));
+    const toFolio = roomTender?.stayId ? await folioRefundPlan(db, { saleId, stayId: roomTender.stayId, refund }) : null;
+    const folioRefund = toFolio?.amount ?? new Dec(0);
+    const rest = refund.minus(folioRefund);
+    if (!options.exchange) {
+      const cashOut = (toCredit ? new Dec(0) : rest).plus(tipRefund);
       const drawer = toDec(await expectedCash(db, session.id));
-      if (drawer.lt(refund)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the refund', { available: drawer.toFixed(2) });
+      if (cashOut.gt(0) && drawer.lt(cashOut)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the refund', { available: drawer.toFixed(2) });
     }
 
     const returnNumber = await nextNumber(db, tenantId, session.registerId, 'RETURN');
@@ -123,13 +221,20 @@ export class ReturnsService extends TenantService {
         processedBy: auth.userId,
         currency: sale.currency,
         ...out(totals),
-        refundMethod: toCredit ? 'STORE_CREDIT' : 'CASH',
+        refundMethod: folioRefund.gt(0) && rest.isZero() ? 'ROOM_CHARGE' : toCredit ? 'STORE_CREDIT' : 'CASH',
+        tipRefund: tipRefund.toString(),
       })
       .returning();
     const inserted = await db
       .insert(saleReturnLines)
       .values(planned.map((p) => ({ tenantId, saleReturnId: doc!.id, saleLineId: p.line.id, quantity: p.quantity.toString(), disposition: p.req.disposition, ...out(p.amounts) })))
       .returning({ id: saleReturnLines.id, saleLineId: saleReturnLines.saleLineId });
+    // Packages (ADR-0022 §6): whole unused packages leave what is owed; sessions come back to their package.
+    const packages = await returnPackages(
+      db,
+      { tenantId, saleReturnId: doc!.id, userId: auth.userId },
+      planned.map((p) => ({ saleLineId: p.line.id, quantity: p.quantity, soldQuantity: toDec(p.line.quantity), customerPackageId: p.line.customerPackageId, packageValue: p.line.packageValue })),
+    );
     if (chargeParts.length) {
       await db.insert(saleReturnCharges).values(chargeParts.map((c) => ({ tenantId, saleReturnId: doc!.id, saleChargeId: c.chargeId, ...out(c.amounts) })));
     }
@@ -183,35 +288,56 @@ export class ReturnsService extends TenantService {
         statutoryDiscount: totals.statutoryDiscount,
         refund,
         refundTo: toCredit ? 'STORE_CREDIT' : 'CASH',
+        folioRefund,
         restocked: restockedValue,
+        tipRefund,
+        packagesRefunded: packages.prepaid,
+        packageSessionsRestored: packages.restored,
       }, sale.branchId),
       createdBy: auth.userId,
     });
-    if (refund.gt(0) && creditCustomer) {
+    if (toFolio) {
+      await insertEntry(db, {
+        tenantId, folioId: toFolio.folio.id, stayId: toFolio.folio.stayId, kind: 'CHARGE_RETURN', amount: folioRefund.negated().toString(), saleId, saleReturnId: doc!.id,
+        description: `${input.kind === 'VOID' ? 'Void' : 'Return'} #${returnNumber} of sale #${sale.saleNumber}`, createdBy: auth.userId,
+      }, auth.correlationId);
+    }
+    if (rest.gt(0) && creditCustomer) {
       await db.insert(customerCreditEntries).values({
         tenantId, legalEntityId: sale.legalEntityId, branchId: sale.branchId, customerId: creditCustomer.id, kind: 'RETURN',
-        amount: refund.toString(), saleReturnId: doc!.id, createdBy: auth.userId,
+        amount: rest.toString(), saleReturnId: doc!.id, createdBy: auth.userId,
       });
-    } else if (refund.gt(0)) {
+    } else if (rest.gt(0)) {
       await db.insert(cashMovements).values({
         tenantId,
         cashierSessionId: session.id,
         type: 'REFUND',
-        amount: refund.negated().toString(),
+        amount: rest.negated().toString(),
         saleId,
         saleReturnId: doc!.id,
         reason: `${input.kind === 'VOID' ? 'Void' : 'Return'} #${returnNumber}`,
         createdBy: auth.userId,
       });
     }
+    if (tipRefund.gt(0)) {
+      await db.insert(cashMovements).values({
+        tenantId, cashierSessionId: session.id, type: 'TIP_REFUND', amount: tipRefund.negated().toString(), saleId, saleReturnId: doc!.id,
+        reason: `Tip of void #${returnNumber}`, createdBy: auth.userId,
+      });
+    }
+    // Counter service: a voided sale's food the kitchen has not handed over yet comes off its screen.
+    const recalled = input.kind === 'VOID' ? await recallCounterOrder(db, saleId, auth.userId, `Sale #${sale.saleNumber} voided`) : 0;
     await this.audit(db, auth, input.kind === 'VOID' ? 'sale.voided' : 'sale.returned', 'sale', saleId, {
       saleReturnId: doc!.id,
       returnNumber,
       refund: refund.toFixed(2),
+      ...(tipRefund.gt(0) && { tipRefund: tipRefund.toFixed(2) }),
+      ...(recalled > 0 && { kitchenItemsRecalled: recalled }),
       reason: input.reason,
       ...(wasteAdjustmentId && { wasteAdjustmentId }),
       ...(options.exchange && { exchange: true }),
       ...(creditCustomer && { refundTo: 'STORE_CREDIT', customerId: creditCustomer.id }),
+      ...(toFolio && { folioRefund: folioRefund.toFixed(2), folioId: toFolio.folio.id }),
     });
     await emitEvent(db, {
       tenantId,
@@ -419,9 +545,21 @@ export class ReturnsService extends TenantService {
     const money = (v: string) => toDec(v).toFixed(2);
     const fmt = <T extends Record<string, unknown>>(r: T) => {
       const o: Record<string, unknown> = { ...r };
-      for (const k of [...BUCKETS, 'amountDue']) if (typeof o[k] === 'string') o[k] = money(o[k] as string);
+      for (const k of [...BUCKETS, 'amountDue', 'tipRefund']) if (typeof o[k] === 'string') o[k] = money(o[k] as string);
       return o;
     };
-    return { ...fmt(d), lines: lines.map((l) => ({ ...fmt(l), quantity: toDec(l.quantity).toString() })) };
+    // A voided sale's card tip (session 25): given back by card or cash afterwards, or still pending.
+    const [[cardTip], [given]] = d.kind === 'VOID'
+      ? await inSequence(
+          () => db.select({ amount: saleTips.amount }).from(saleTips).where(and(eq(saleTips.saleId, d.saleId), sql`${saleTips.method} <> 'CASH'`)),
+          () => db.select({ method: saleTipRefunds.method, amount: saleTipRefunds.amount }).from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, d.id)),
+        )
+      : [[], []];
+    return {
+      ...fmt(d),
+      lines: lines.map((l) => ({ ...fmt(l), quantity: toDec(l.quantity).toString() })),
+      cardTipRefund: given ? { method: given.method, amount: money(given.amount) } : null,
+      tipRefundPending: Boolean(cardTip && !given),
+    };
   }
 }

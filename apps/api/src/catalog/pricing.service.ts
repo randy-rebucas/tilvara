@@ -266,9 +266,40 @@ export class PricingService extends TenantService {
         uom: { code: item.uomCode, allowsFraction: item.allowsFraction },
         tax: { categoryCode: item.taxCategoryCode, vatTreatment: item.vatTreatment },
         trackInventory: item.product.trackInventory,
+        /** STANDARD, SERVICE or PACKAGE (ADR-0022): a package needs the customer on the sale. */
+        productType: item.product.productType,
         price,
         /** From a scale label: the weighed quantity (kg) to sell, as printed. */
         ...(label && { quantity: label.quantity }),
+      };
+    });
+  }
+
+  /**
+   * The till's quick keys (ADR-0021 §3): active items with a key, in key order, priced at the branch
+   * now. An item without a price there is listed with `price: null` (the till shows it disabled).
+   */
+  quickKeys(auth: AuthContext, branchId: string) {
+    return this.read(auth, async (db) => {
+      const [branch] = await db.select({ id: branches.id, legalEntityId: branches.legalEntityId }).from(branches).where(eq(branches.id, branchId));
+      if (!branch) throw notFound('Branch');
+      this.assertCan(auth, 'catalog.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
+      const rows = await db
+        .select({ variantId: productVariants.id, sku: productVariants.sku, variantName: productVariants.name, productName: products.name, position: productVariants.quickKeyPosition, productType: products.productType })
+        .from(productVariants)
+        .innerJoin(products, eq(products.id, productVariants.productId))
+        .where(and(sql`${productVariants.quickKeyPosition} IS NOT NULL`, isNull(productVariants.archivedAt), isNull(products.archivedAt)))
+        .orderBy(asc(productVariants.quickKeyPosition));
+      const prices = await this.effectivePrices(db, branchId, rows.map((r) => r.variantId));
+      return {
+        data: rows.map((r) => ({
+          position: r.position!,
+          variantId: r.variantId,
+          sku: r.sku,
+          name: r.variantName ? `${r.productName} — ${r.variantName}` : r.productName,
+          productType: r.productType,
+          price: prices.get(r.variantId)?.amount ?? null,
+        })),
       };
     });
   }

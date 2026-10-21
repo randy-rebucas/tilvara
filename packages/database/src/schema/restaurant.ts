@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { bigint, boolean, char, check, foreignKey, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { productPrices, productVariants } from './catalog.js';
 import { stockAdjustments } from './inventory.js';
-import { branches, legalEntities } from './organization.js';
+import { branches, legalEntities, terminals } from './organization.js';
 import { taxProfiles } from './tax.js';
 
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -276,6 +276,11 @@ export const restaurantSettings = pgTable(
     serviceChargeDineIn: boolean('service_charge_dine_in').notNull().default(true),
     serviceChargeTakeaway: boolean('service_charge_takeaway').notNull().default(false),
     serviceChargeVatTreatment: text('service_charge_vat_treatment').notNull().default('VATABLE'),
+    /**
+     * Counter service (ADR-0014 amendment, session 25): the counter's Sell screen takes the takeaway
+     * menu's choices, and paying a sale sends its menu items to the kitchen (pay first, then fire).
+     */
+    counterService: boolean('counter_service').notNull().default(false),
     updatedBy: uuid('updated_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -316,6 +321,8 @@ export const ORDER_ITEM_STATUSES = ['PENDING', 'FIRED', 'IN_PREP', 'READY', 'SER
  * A table's (or takeaway customer's) order. OPEN → BILLED → SETTLED, BILLED → OPEN (bill reopened),
  * OPEN → CANCELLED | MERGED (trigger-enforced). At most one live order per table. An order is not a
  * sale: settling it creates sales through checkout (slice 4).
+ * A COUNTER order (session 25) is the kitchen's copy of a sale paid first at the counter: created with
+ * its sale (`sale_id`, FK in 0092), fired at once and SETTLED (OPEN → SETTLED, counter orders only).
  */
 export const restaurantOrders = pgTable(
   'restaurant_orders',
@@ -331,6 +338,13 @@ export const restaurantOrders = pgTable(
     customerName: text('customer_name'),
     note: text('note'),
     status: text('status').notNull().default('OPEN'),
+    /** COUNTER orders: the sale that paid for it (one order per sale). */
+    saleId: uuid('sale_id'),
+    /**
+     * An offline counter sale (session 25): the call number its till printed (the sale's device number),
+     * shown instead of `order_number` everywhere so the customer's receipt matches the back office.
+     */
+    tillCallNumber: integer('till_call_number'),
     mergedIntoId: uuid('merged_into_id'),
     closeReason: text('close_reason'),
     openedBy: uuid('opened_by').notNull(),
@@ -348,7 +362,10 @@ export const restaurantOrders = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId, t.mergedIntoId], foreignColumns: [t.tenantId, t.branchId, t.id] }),
     uniqueIndex('restaurant_orders_table_live_unique').on(t.tenantId, t.tableId).where(sql`${t.status} IN ('OPEN','BILLED') AND ${t.tableId} IS NOT NULL`),
     index('restaurant_orders_branch_status_idx').on(t.tenantId, t.branchId, t.status),
-    check('restaurant_orders_type_check', sql`${t.orderType} IN ('DINE_IN','TAKEAWAY')`),
+    check('restaurant_orders_type_check', sql`${t.orderType} IN ('DINE_IN','TAKEAWAY','COUNTER')`),
+    check('restaurant_orders_counter_sale_check', sql`(${t.orderType} = 'COUNTER') = (${t.saleId} IS NOT NULL)`),
+    check('restaurant_orders_till_call_check', sql`${t.tillCallNumber} IS NULL OR (${t.orderType} = 'COUNTER' AND ${t.tillCallNumber} > 0)`),
+    uniqueIndex('restaurant_orders_sale_unique').on(t.tenantId, t.saleId).where(sql`${t.saleId} IS NOT NULL`),
     check('restaurant_orders_status_check', sql`${t.status} IN ('OPEN','BILLED','SETTLED','CANCELLED','MERGED')`),
     check('restaurant_orders_table_check', sql`(${t.orderType} = 'DINE_IN') = (${t.tableId} IS NOT NULL)`),
     check('restaurant_orders_merged_check', sql`(${t.status} = 'MERGED') = (${t.mergedIntoId} IS NOT NULL) AND ${t.mergedIntoId} IS DISTINCT FROM ${t.id}`),
@@ -377,6 +394,14 @@ export const kitchenTickets = pgTable(
     bumpedBy: uuid('bumped_by'),
     /** The order's note for this course when it was fired (frozen with the ticket). */
     courseNote: text('course_note'),
+    /**
+     * Kitchen printing (session 25): a desktop till that prints this station claims the ticket for a
+     * minute (`print_claimed_*`), prints it and marks it printed; a reprint clears `printed_at`.
+     */
+    printClaimedAt: timestamp('print_claimed_at', { withTimezone: true }),
+    printClaimedBy: uuid('print_claimed_by'),
+    printedAt: timestamp('printed_at', { withTimezone: true }),
+    printCount: integer('print_count').notNull().default(0),
   },
   (t) => [
     unique('kitchen_tickets_tenant_id_id_unique').on(t.tenantId, t.id),
@@ -384,6 +409,9 @@ export const kitchenTickets = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId, t.orderId], foreignColumns: [restaurantOrders.tenantId, restaurantOrders.branchId, restaurantOrders.id] }),
     foreignKey({ columns: [t.tenantId, t.branchId, t.stationId], foreignColumns: [kitchenStations.tenantId, kitchenStations.branchId, kitchenStations.id] }),
     index('kitchen_tickets_station_idx').on(t.tenantId, t.stationId, t.firedAt),
+    foreignKey({ columns: [t.tenantId, t.printClaimedBy], foreignColumns: [terminals.tenantId, terminals.id] }),
+    index('kitchen_tickets_unprinted_idx').on(t.tenantId, t.branchId, t.firedAt).where(sql`${t.printedAt} IS NULL`),
+    check('kitchen_tickets_print_claim_check', sql`(${t.printClaimedAt} IS NULL) = (${t.printClaimedBy} IS NULL)`),
     check('kitchen_tickets_course_check', sql`${t.course} BETWEEN 1 AND 9`),
   ],
 );

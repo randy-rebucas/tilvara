@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, check, foreignKey, index, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
 import { branches } from './organization.js';
 import { customers } from './customers.js';
@@ -187,6 +187,8 @@ export const inventorySettings = pgTable(
     branchId: uuid('branch_id').notNull(),
     negativeStockPolicy: text('negative_stock_policy').$type<NegativeStockPolicy>().notNull().default('ALLOW'),
     lowStockAlerts: boolean('low_stock_alerts').notNull().default(true),
+    /** Mail the stock keepers about lots expiring within this many days (0: no mail). ADR-0020 §3. */
+    expiryAlertDays: integer('expiry_alert_days').notNull().default(30),
     updatedBy: uuid('updated_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -194,6 +196,7 @@ export const inventorySettings = pgTable(
     primaryKey({ columns: [t.tenantId, t.branchId] }),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     check('inventory_settings_policy_check', sql`${t.negativeStockPolicy} IN ('ALLOW','ALLOW_WITH_FLAG','BLOCK')`),
+    check('inventory_settings_expiry_days_check', sql`${t.expiryAlertDays} BETWEEN 0 AND 365`),
   ],
 );
 
@@ -242,6 +245,27 @@ export const reorderPoints = pgTable(
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     check('reorder_points_check', sql`${t.reorderPoint} >= 0 AND (${t.reorderQuantity} IS NULL OR ${t.reorderQuantity} > 0)`),
+  ],
+);
+
+// ------------------------------------------------------------------ shelf locations (ADR-0021 §5)
+
+/** Where an item sits in a branch ("A3-2"): a label for counts and labels, not stock. */
+export const itemLocations = pgTable(
+  'item_locations',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    branchId: uuid('branch_id').notNull(),
+    variantId: uuid('variant_id').notNull(),
+    location: text('location').notNull(),
+    updatedBy: uuid('updated_by').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tenantId, t.branchId, t.variantId] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    check('item_locations_location_check', sql`length(btrim(${t.location})) BETWEEN 1 AND 32`),
   ],
 );
 

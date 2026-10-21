@@ -1,11 +1,13 @@
 'use client';
 
 import { X } from 'lucide-react';
+import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
 import { FormError, SelectField, TextField } from '@/components/fields';
-import { useSubmit } from '@/components/use-submit';
+import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { ProductDetail, TaxCategory } from '@/lib/api';
+import type { VariantOption } from '@/components/line-items';
 
 type Variant = ProductDetail['variants'][number];
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -34,7 +36,7 @@ function ProductFields({ close, product, taxes }: { close: () => void; product: 
       name: text(f, 'name'),
       description: description || null,
       taxCategoryId: f.get('taxCategoryId'),
-      ...(product.productType === 'SERVICE' ? {} : { trackInventory: f.get('trackInventory') === 'on' }),
+      ...(product.productType !== 'STANDARD' ? {} : { trackInventory: f.get('trackInventory') === 'on', tracksExpiry: f.get('tracksExpiry') === 'on' }),
     });
     if (r.ok) close();
   }
@@ -47,10 +49,16 @@ function ProductFields({ close, product, taxes }: { close: () => void; product: 
       <div className="sm:col-span-2">
         <TextField label={`${t('prod.description')} (${t('common.optional')})`} name="description" defaultValue={product.description ?? ''} error={fieldError('description')} />
       </div>
-      {product.productType !== 'SERVICE' && (
+      {product.productType === 'STANDARD' && (
         <label className="flex items-start gap-2 text-[0.9375rem] sm:col-span-2">
           <input type="checkbox" name="trackInventory" defaultChecked={product.trackInventory} className="mt-1 size-4 accent-[var(--color-blue)]" />
           <span>{t('prod.trackInventory')}<span className="block text-[0.8125rem] text-muted">{t('prod.trackInventoryHint')}</span></span>
+        </label>
+      )}
+      {product.productType === 'STANDARD' && (
+        <label className="flex items-start gap-2 text-[0.9375rem] sm:col-span-2">
+          <input type="checkbox" name="tracksExpiry" defaultChecked={product.tracksExpiry ?? false} className="mt-1 size-4 accent-[var(--color-blue)]" />
+          <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
         </label>
       )}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
@@ -99,28 +107,37 @@ export function AddVariant({ productId }: { productId: string }) {
   return <Disclosure label={t('prod.addVariant')}>{(close) => <AddVariantFields close={close} productId={productId} />}</Disclosure>;
 }
 
-function VariantFields({ close, variant }: { close: () => void; variant: Variant }) {
+function VariantFields({ close, variant, productType }: { close: () => void; variant: Variant; productType: string }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const cost = text(f, 'referenceCost');
-    const r = await submit('PATCH', `/api/v1/variants/${variant.id}`, { name: text(f, 'name') || null, referenceCost: cost || null });
+    const minutes = text(f, 'serviceMinutes');
+    const days = text(f, 'packageValidDays');
+    const r = await submit('PATCH', `/api/v1/variants/${variant.id}`, {
+      name: text(f, 'name') || null,
+      referenceCost: cost || null,
+      ...(productType === 'SERVICE' ? { serviceMinutes: minutes ? Number(minutes) : null } : {}),
+      ...(productType === 'PACKAGE' ? { packageValidDays: days ? Number(days) : null } : {}),
+    });
     if (r.ok) close();
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
       <TextField label={`${t('prod.variantName')} (${t('common.optional')})`} name="name" autoFocus defaultValue={variant.name ?? ''} error={fieldError('name')} />
       <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
+      {productType === 'SERVICE' && <TextField label={t('prod.serviceMinutes')} name="serviceMinutes" type="number" min={5} max={720} step={5} inputMode="numeric" defaultValue={variant.serviceMinutes ?? ''} hint={t('prod.serviceMinutesHint')} error={fieldError('serviceMinutes')} />}
+      {productType === 'PACKAGE' && <TextField label={`${t('prod.packageValidDays')} (${t('common.optional')})`} name="packageValidDays" type="number" min={1} max={3650} inputMode="numeric" defaultValue={variant.packageValidDays ?? ''} hint={t('prod.packageValidDaysHint')} error={fieldError('packageValidDays')} />}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );
 }
 
-export function EditVariant({ variant }: { variant: Variant }) {
+export function EditVariant({ variant, productType = 'STANDARD' }: { variant: Variant; productType?: string }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} />}</Disclosure>;
+  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} productType={productType} />}</Disclosure>;
 }
 
 /** Scan or type another barcode for this variant (e.g. a new pack design). */
@@ -162,5 +179,116 @@ export function RemoveBarcode({ barcode }: { barcode: { id: string; code: string
       </button>
       {error && <FormError message={error.message} />}
     </span>
+  );
+}
+
+// ---------------------------------------------------------------- packs and pieces (ADR-0020)
+function PackLinkFields({ close, variants, packVariantId }: { close: () => void; variants: VariantOption[]; packVariantId: string | undefined }) {
+  const { t } = useT();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('POST', '/api/v1/pack-conversions', {
+      packVariantId: f.get('packVariantId'),
+      pieceVariantId: f.get('pieceVariantId'),
+      piecesPerPack: text(f, 'piecesPerPack'),
+      autoOpen: f.get('autoOpen') === 'on',
+    });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+      <SelectField label={t('prod.packItem')} name="packVariantId" defaultValue={packVariantId}>
+        {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </SelectField>
+      <SelectField label={t('prod.pieceItem')} name="pieceVariantId" defaultValue="">
+        <option value="" disabled>—</option>
+        {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </SelectField>
+      <TextField label={t('prod.piecesPerPack')} name="piecesPerPack" inputMode="decimal" placeholder="20" required error={fieldError('piecesPerPack') ?? (error?.code === 'FRACTIONAL_PIECES' ? error.message : undefined)} />
+      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
+        <input type="checkbox" name="autoOpen" defaultChecked className="mt-1 size-4 accent-[var(--color-blue)]" />
+        <span>{t('prod.autoOpen')}</span>
+      </label>
+      <Actions pending={pending} label={t('common.add')} close={close} error={general(error, ['FRACTIONAL_PIECES']) ?? fieldError('pieceVariantId') ?? null} />
+    </form>
+  );
+}
+
+/** Link a pack to the piece sold from it; `variants` are the stock-counted items. */
+export function AddPackLink(props: { variants: VariantOption[]; packVariantId: string | undefined }) {
+  const { t } = useT();
+  return <Disclosure label={t('prod.addPack')}>{(close) => <PackLinkFields close={close} {...props} />}</Disclosure>;
+}
+
+// ---------------------------------------------------------------- store barcode (ADR-0021 §4)
+/** An in-store EAN-13 (starting 29) for a variant that has no barcode, ready to print on labels. */
+export function MakeBarcode({ variantId }: { variantId: string }) {
+  const { t } = useT();
+  const key = useFormKey();
+  const { pending, submit, error } = useSubmit();
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button type="button" className="btn" disabled={pending} onClick={() => void submit('POST', `/api/v1/variants/${variantId}/barcodes/generate`, {}, { idempotencyKey: key })}>
+        {t('prod.makeBarcode')}
+      </button>
+      <FormError message={error?.message} />
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------- package contents (ADR-0022 §6)
+type ContentRow = { key: number; serviceVariantId: string; sessions: string };
+
+/** What one package holds: services and how many sessions of each. Saving replaces the contents. */
+export function PackageContents({ variantId, services, items }: { variantId: string; services: { id: string; label: string }[]; items: { serviceVariantId: string; sessions: number }[] }) {
+  const { t } = useT();
+  const { pending, submit, error } = useSubmit();
+  const [rows, setRows] = useState<ContentRow[]>(() =>
+    items.length ? items.map((i, n) => ({ key: n, serviceVariantId: i.serviceVariantId, sessions: String(i.sessions) })) : [{ key: 0, serviceVariantId: '', sessions: '1' }],
+  );
+  const [next, setNext] = useState(rows.length);
+  const [saved, setSaved] = useState(false);
+  const update = (key: number, patch: Partial<ContentRow>) => {
+    setSaved(false);
+    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  };
+  async function save() {
+    const list = rows.filter((r) => r.serviceVariantId).map((r) => ({ serviceVariantId: r.serviceVariantId, sessions: Number(r.sessions) }));
+    const r = await submit('PUT', `/api/v1/variants/${variantId}/package-items`, { items: list });
+    if (r.ok) setSaved(true);
+  }
+  return (
+    <div className="grid gap-2" data-testid="package-contents">
+      {rows.map((r, i) => (
+        <div key={r.key} className="grid items-end gap-2 sm:grid-cols-[1fr_7rem_auto]">
+          <SelectField label={t('prod.pkgService')} name={`pkgService-${i}`} value={r.serviceVariantId} onChange={(e) => update(r.key, { serviceVariantId: e.target.value })}>
+            <option value="">—</option>
+            {services.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+          </SelectField>
+          <TextField label={t('prod.pkgSessions')} name={`pkgSessions-${i}`} type="number" min={1} max={1000} inputMode="numeric" value={r.sessions} onChange={(e) => update(r.key, { sessions: e.target.value })} />
+          <button type="button" className="btn btn-danger" aria-label={t('prod.pkgRemove')} disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
+            <X aria-hidden className="size-4" />
+          </button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          className="btn"
+          disabled={rows.length >= 20}
+          onClick={() => {
+            setRows((rs) => [...rs, { key: next, serviceVariantId: '', sessions: '1' }]);
+            setNext((n) => n + 1);
+          }}
+        >
+          {t('prod.pkgAdd')}
+        </button>
+        <button type="button" className="btn btn-primary" disabled={pending || !rows.some((r) => r.serviceVariantId)} onClick={() => void save()}>{t('prod.pkgSave')}</button>
+        {saved && <span role="status" className="text-[0.875rem] text-muted">{t('common.saved')}</span>}
+        <FormError message={error?.code === 'VALIDATION_FAILED' ? t('prod.pkgInvalid') : error?.message} />
+      </div>
+    </div>
   );
 }

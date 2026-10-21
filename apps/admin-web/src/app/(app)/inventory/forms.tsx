@@ -39,10 +39,11 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const kind = f.get('kind') === 'WASTE' ? 'WASTE' : 'ADJUSTMENT';
-    const items = readLines(f, ['variantId', 'quantity']).map((l) => ({
-      variantId: l.variantId,
-      quantity: kind === 'WASTE' && l.quantity && !l.quantity.startsWith('-') ? `-${l.quantity}` : l.quantity,
-    }));
+    const items = readLines(f, ['variantId', 'quantity', 'expiresOn']).map((l) => {
+      const quantity = kind === 'WASTE' && l.quantity && !l.quantity.startsWith('-') ? `-${l.quantity}` : l.quantity;
+      // A date only on stock coming in (ADR-0020): it makes an expiry lot.
+      return { variantId: l.variantId, quantity, ...(l.expiresOn && !quantity?.startsWith('-') ? { expiresOn: l.expiresOn } : {}) };
+    });
     const r = await submit<{ id: string }>('POST', '/api/v1/stock/adjustments', { branchId, kind, reason: text(f, 'reason'), items }, { idempotencyKey: key, refresh: false });
     if (r.ok) {
       close();
@@ -61,6 +62,7 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
           { name: 'quantity', label: t('inv.adjustQty'), kind: 'decimal', placeholder: '-1' },
+          { name: 'expiresOn', label: `${t('inv.adjustExpires')} (${t('common.optional')})`, kind: 'date' },
         ]}
         options={variants}
         fieldError={fieldError}
@@ -311,4 +313,62 @@ function ReserveFields({ close, branchId, variants }: { close: () => void; branc
 export function ReserveForm(props: { branchId: string; variants: VariantOption[] }) {
   const { t } = useT();
   return <Disclosure label={t('inv.reserve')}>{(close) => <ReserveFields close={close} {...props} />}</Disclosure>;
+}
+
+// ---------------------------------------------------------------- expiry and packs (ADR-0020)
+/** Write off what is left of one lot as waste: a WASTE adjustment that names the lot. */
+export function WriteOffLot({ branchId, lot, confirmText }: { branchId: string; lot: { lotId: string; variantId: string; quantity: string }; confirmText: string }) {
+  const { t } = useT();
+  const key = useFormKey();
+  const { pending, submit, error } = useSubmit();
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        className="btn"
+        disabled={pending}
+        onClick={() => {
+          if (!window.confirm(confirmText)) return;
+          void submit('POST', '/api/v1/stock/adjustments', {
+            branchId,
+            kind: 'WASTE',
+            reason: t('exp.reason'),
+            items: [{ variantId: lot.variantId, quantity: `-${lot.quantity}`, lotId: lot.lotId }],
+          }, { idempotencyKey: key });
+        }}
+      >
+        {t('exp.writeOff')}
+      </button>
+      <FormError message={error?.message} />
+    </span>
+  );
+}
+
+function OpenPackFields({ close, branchId, links }: { close: () => void; branchId: string; links: { id: string; label: string }[] }) {
+  const { t } = useT();
+  const key = useFormKey();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit('POST', '/api/v1/stock/pack-openings', { branchId, conversionId: f.get('conversionId'), packs: text(f, 'packs'), reason: text(f, 'reason') }, { idempotencyKey: key });
+    if (r.ok) close();
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+      <div className="sm:col-span-2">
+        <SelectField label={t('packs.link')} name="conversionId">
+          {links.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+        </SelectField>
+      </div>
+      <TextField label={t('packs.count')} name="packs" inputMode="numeric" defaultValue="1" required error={fieldError('packs')} />
+      <TextField label={t('common.reason')} name="reason" required error={fieldError('reason')} />
+      <Actions pending={pending} general={general(error)} submitLabel={t('packs.open')} close={close} />
+    </form>
+  );
+}
+
+export function OpenPackForm(props: { branchId: string; links: { id: string; label: string }[] }) {
+  const { t } = useT();
+  return <Disclosure label={t('packs.title')}>{(close) => <OpenPackFields close={close} {...props} />}</Disclosure>;
 }

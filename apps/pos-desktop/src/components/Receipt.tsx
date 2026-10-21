@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { ReceiptPrinter } from '../lib/devices';
 import { useTill } from '../lib/till';
-import { receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
+import { receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, tipLabel, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
 
@@ -42,6 +42,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
           {data.seller.tin && <p className="serial">{data.seller.tinLabel} {data.seller.tin}</p>}
           <p className="serial mt-2 font-semibold">{data.notice}</p>
         </header>
+        {data.callNumber !== undefined && <CallNumber n={data.callNumber} name={data.pickupName} />}
         <p className="serial mt-3 flex justify-between border-y border-dashed border-hair py-1">
           <span>{data.transaction.reference}</span>
           <span>{data.transaction.dateTime}</span>
@@ -55,7 +56,10 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
               </p>
               <p className="text-muted">
                 {l.quantity} × {l.unitPrice}
+                {l.packageSession && <> · {t('receipt.packageSession')}</>}
+                {l.staff && <> · {l.staff}</>}
               </p>
+              {l.promotion && l.discount && <p className="text-muted">{l.promotion} −{l.discount}</p>}
             </li>
           ))}
           {/* Not an item (RA 11360): the service charge prints on its own line (ADR-0014 §9). */}
@@ -87,7 +91,23 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
               <Money value={v} />
             </p>
           ))}
+          {data.tip && (
+            <p className="flex justify-between" data-testid="receipt-tip">
+              <span>{tipLabel(data.tip.method)}</span>
+              <Money value={data.tip.amount} />
+            </p>
+          )}
         </div>
+        {/* Charge to room (ADR-0023 §5.1): the guest signs for what went on their folio. */}
+        {data.roomCharge && (
+          <div className="mt-3 border-t border-dashed border-hair pt-2" data-testid="receipt-room-charge">
+            <p className="flex justify-between gap-3">
+              <span>{data.roomCharge.line}</span>
+              <Money value={data.roomCharge.amount} />
+            </p>
+            <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{data.roomCharge.signatureLine}</p>
+          </div>
+        )}
         {data.statutory.map((s, i) => (
           <div key={i} className="mt-3 border-t border-dashed border-hair pt-2">
             <p>{s.label}: {s.name}</p>
@@ -109,6 +129,18 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
       <button className="no-print btn mx-auto" onClick={() => void print()}>
         <Printer className="size-4" aria-hidden /> {printError ? t('receipt.reprint') : t('receipt.print')}
       </button>
+    </div>
+  );
+}
+
+/** Counter service: the number the kitchen calls, large enough to read across the counter. */
+export function CallNumber({ n, name }: { n: number; name?: string | undefined }) {
+  const { t } = useT();
+  return (
+    <div className="mt-3 border-y-2 border-ink py-2 text-center" data-testid="call-number">
+      <p className="text-[0.8125rem] uppercase tracking-wide">{t('counter.yourOrder')}</p>
+      <p className="money text-[2.5rem] font-bold leading-none">#{n}</p>
+      {name && <p className="mt-1 text-[1rem] font-semibold">{name}</p>}
     </div>
   );
 }

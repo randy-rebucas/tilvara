@@ -1,6 +1,6 @@
 import type { Denomination } from '@/components/note';
 import type { MessageKey } from '@/i18n/messages';
-import { hasRestaurant, sellsByWeight, type BusinessType } from './business-type';
+import { hasRestaurant, sellsByWeight, servesAppointments, servesLodging, type BusinessType } from './business-type';
 import { NAV_ITEMS, offered, permitted, type NavItem } from './nav';
 
 /**
@@ -12,9 +12,13 @@ export type GuideTopic =
   | 'start'
   | 'products'
   | 'prices'
+  | 'retail'
   | 'inventory'
+  | 'tingi'
   | 'purchasing'
   | 'restaurant'
+  | 'salon'
+  | 'lodging'
   | 'reports'
   | 'customers'
   | 'books'
@@ -77,10 +81,18 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('start', 'guide.start.title', 'none', 6, 3),
   section('products', 'nav.products', 'blue', 5, 2, { area: area('/products'), only: { t: { 1: 'weight' } } }),
   section('prices', 'nav.prices', 'blue', 4, 2, { area: area('/prices') }),
+  // ADR-0021: promotions, sizes and colours, quick keys, labels and shelf locations (a shop's or boutique's tools).
+  section('retail', 'guide.retail.title', 'blue', 6, 3, { area: area('/products'), href: '/prices/promotions' }),
   section('inventory', 'nav.inventory', 'gold', 5, 5, { area: area('/inventory'), only: { t: { 3: 'restaurant' } } }),
+  // ADR-0020: packs and pieces, expiry dates. For every type; the sari-sari store's part above all.
+  section('tingi', 'guide.tingi.title', 'gold', 4, 3, { area: area('/inventory'), href: '/inventory/packs' }),
   section('purchasing', 'nav.purchasing', 'gold', 7, 5, { area: area('/purchasing') }),
-  section('restaurant', 'nav.restaurant', 'none', 6, 2, { area: area('/restaurant') }),
-  section('reports', 'nav.reports', 'none', 5, 3, { area: area('/reports/sales'), only: { s: { 5: 'restaurant' } } }),
+  section('restaurant', 'nav.restaurant', 'none', 6, 4, { area: area('/restaurant') }),
+  // ADR-0022: staff, the appointment calendar, services and packages, client history, commissions.
+  section('salon', 'guide.salon.title', 'green', 6, 4, { area: area('/appointments') }),
+  // ADR-0023: rooms and their set-up, bookings, check-in with the registry, folios and the night audit, housekeeping.
+  section('lodging', 'guide.lodging.title', 'violet', 7, 5, { area: area('/lodging') }),
+  section('reports', 'nav.reports', 'none', 5, 4, { area: area('/reports/sales'), only: { s: { 5: 'restaurant' }, t: { 4: 'restaurant' } } }),
   // No band tab (the band is full): reached from the Overview and from each sale; who may open it is its own rule.
   section('customers', 'cust.title', 'green', 5, 2, { area: CUSTOMERS_AREA }),
   section('books', 'nav.books', 'ink', 5, 2, { area: area('/books') }),
@@ -115,9 +127,22 @@ export function guideFor(businessType: BusinessType, permissions: readonly strin
 const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
   ['/products', 'products'],
   ['/prices', 'prices'],
+  ['/prices/promotions', 'retail'],
+  ['/products/quick-keys', 'retail'],
+  ['/products/labels', 'retail'],
   ['/inventory', 'inventory'],
+  ['/inventory/packs', 'tingi'],
+  ['/inventory/expiry', 'tingi'],
   ['/purchasing', 'purchasing'],
   ['/restaurant', 'restaurant'],
+  ['/appointments', 'salon'],
+  ['/reports/commissions', 'salon'],
+  ['/reports/service-packages', 'salon'],
+  ['/reports/staff-tips', 'salon'],
+  ['/lodging', 'lodging'],
+  ['/reports/occupancy', 'lodging'],
+  ['/reports/guest-ledger', 'lodging'],
+  ['/reports/accommodation-tax', 'lodging'],
   ['/reports', 'reports'],
   ['/sales', 'reports'],
   ['/customers', 'customers'],
@@ -134,11 +159,13 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
 
 /**
  * The guide section for the page at `path` (the band's help button opens `/help#<topic>`). A
- * restaurant page in a retail shop shows a notice to change the type of business, so it opens the
+ * restaurant (or appointments, or lodging) page in a business that does not offer it shows a notice to change the type of business, so it opens the
  * Subscription part, which explains that (the guide has no restaurant part for a retail shop).
  */
 export function topicFor(path: string, businessType: BusinessType = 'HYBRID', features?: readonly string[]): GuideTopic {
   const hit = TOPIC_BY_PATH.filter(([p]) => path === p || path.startsWith(`${p}/`)).sort((a, b) => b[0].length - a[0].length)[0];
   const topic = hit?.[1] ?? 'start';
+  if (topic === 'salon' && !servesAppointments(businessType)) return 'subscription';
+  if (topic === 'lodging' && !servesLodging(businessType)) return 'subscription';
   return topic === 'restaurant' && !hasRestaurant(businessType, features) ? 'subscription' : topic;
 }

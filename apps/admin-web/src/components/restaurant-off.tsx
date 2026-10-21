@@ -2,7 +2,7 @@ import { Callout } from '@/components/note';
 import { getT } from '@/i18n/server';
 
 /**
- * In place of a restaurant screen when the business is set up as a retail shop (business type), or
+ * In place of a restaurant screen when the business is set up as a shop (RETAIL or GROCERY) or a salon (SALON), or
  * its plan does not include restaurant service.
  */
 export async function RestaurantOff({ reason = 'type' }: { reason?: 'type' | 'plan' }) {

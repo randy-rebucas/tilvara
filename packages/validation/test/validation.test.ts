@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema } from '../src/index.js';
+import { isPrivilegedSet, LODGING_CODES, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, servesAppointments, servesLodging, servesTables, signupSchema, tendersSchema, usesRecipes } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -51,13 +51,20 @@ describe('role templates', () => {
   it.each([
     ['0049_restaurant_role_templates.sql', ['restaurant_manager', 'kitchen_crew']],
     ['0081_role_templates_senior_cashier_purchasing.sql', ['senior_cashier', 'purchasing_officer']],
+    ['0099_salons_appointments_packages_rls.sql', ['front_desk', 'stylist']],
+    ['0102_lodging_rooms_folios_rls.sql', ['housekeeping']],
   ])('migration %s back-fills exactly these templates into existing businesses', (file, keys) => {
     const sql = readFileSync(fileURLToPath(new URL(`../../database/drizzle/${file}`, import.meta.url)), 'utf8');
     for (const key of keys) {
       const t = ROLE_TEMPLATES.find((x) => x.key === key)!;
       const m = new RegExp(`\\('${key}', '${t.name}', ARRAY\\[([^\\]]*)\\]`).exec(sql);
       expect(m, key).not.toBeNull();
-      expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).sort()).toEqual([...t.permissions].sort());
+      // Codes catalogued after the migration was written are granted to existing roles by their own migration (0099).
+      const later = [
+        ...(file < '0099' ? ['appointments.read', 'appointments.manage', 'staff.manage'] : []),
+        ...(file < '0102' ? LODGING_CODES : []),
+      ];
+      expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).sort()).toEqual(t.permissions.filter((p) => !later.includes(p)).sort());
     }
   });
 
@@ -75,8 +82,54 @@ describe('role templates', () => {
     expect(roleTemplatesFor('RETAIL').map((t) => t.key)).not.toEqual(expect.arrayContaining(['restaurant_manager']));
     expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'kitchen_crew')).toBe(false);
     expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'cashier')).toBe(true);
-    expect(roleTemplatesFor('RESTAURANT')).toEqual(ROLE_TEMPLATES);
+    expect(roleTemplatesFor('RESTAURANT')).toEqual(ROLE_TEMPLATES.filter((t) => !t.salon && !t.lodging));
     expect(roleTemplatesFor('HYBRID')).toEqual(ROLE_TEMPLATES);
+    // A sari-sari store or grocery (ADR-0020) is a shop: the retail set.
+    expect(roleTemplatesFor('GROCERY')).toEqual(roleTemplatesFor('RETAIL'));
+    expect(servesTables('GROCERY')).toBe(false);
+    expect(servesTables('HYBRID')).toBe(true);
+  });
+
+  it('a salon (ADR-0022) gets the shop roles plus front desk and stylist; nobody else but HYBRID gets those', () => {
+    const keys = (t: Parameters<typeof roleTemplatesFor>[0]) => roleTemplatesFor(t).map((x) => x.key);
+    expect(keys('SALON')).toEqual(expect.arrayContaining(['front_desk', 'stylist', 'cashier']));
+    expect(keys('SALON')).not.toContain('kitchen_crew');
+    for (const t of ['RETAIL', 'GROCERY', 'RESTAURANT'] as const) expect(keys(t)).not.toContain('front_desk');
+    expect(servesAppointments('SALON')).toBe(true);
+    expect(servesAppointments('HYBRID')).toBe(true);
+    expect(servesAppointments('RETAIL')).toBe(false);
+    expect(usesRecipes('SALON')).toBe(true);
+    expect(usesRecipes('GROCERY')).toBe(false);
+    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
+    expect(of('stylist')).not.toContain('sales.create');
+    expect(isPrivilegedSet(of('front_desk'))).toBe(false);
+  });
+
+  it('a hotel (ADR-0023) serves tables, gets housekeeping and a front desk without appointment codes; the salon front desk has no lodging codes', () => {
+    const keys = (t: Parameters<typeof roleTemplatesFor>[0]) => roleTemplatesFor(t).map((x) => x.key);
+    expect(keys('LODGING')).toEqual(expect.arrayContaining(['front_desk', 'housekeeping', 'restaurant_manager', 'kitchen_crew', 'cashier']));
+    expect(keys('LODGING')).not.toContain('stylist');
+    for (const t of ['RETAIL', 'GROCERY', 'RESTAURANT', 'SALON'] as const) expect(keys(t)).not.toContain('housekeeping');
+    expect(servesTables('LODGING')).toBe(true);
+    expect(servesLodging('LODGING')).toBe(true);
+    expect(servesLodging('HYBRID')).toBe(true);
+    expect(servesLodging('SALON')).toBe(false);
+    const desk = (t: Parameters<typeof roleTemplatesFor>[0]) => roleTemplatesFor(t).find((x) => x.key === 'front_desk')!.permissions;
+    expect(desk('LODGING')).toEqual(expect.arrayContaining(['lodging.read', 'lodging.manage', 'sales.create']));
+    expect(desk('LODGING')).not.toContain('appointments.manage');
+    expect(desk('SALON').some((p) => p.startsWith('lodging.'))).toBe(false);
+    expect([...desk('HYBRID')].sort()).toEqual([...ROLE_TEMPLATES.find((t) => t.key === 'front_desk')!.permissions].sort());
+    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
+    expect(of('housekeeping')).toEqual(['lodging.read', 'lodging.housekeeping']);
+    expect(of('branch_manager')).toEqual(expect.arrayContaining([...LODGING_CODES]));
+    for (const k of ['cashier', 'senior_cashier', 'accountant']) expect(of(k)).toContain('lodging.read');
+    expect(isPrivilegedSet(of('housekeeping'))).toBe(false);
+  });
+
+  it('charge to room: once per sale', () => {
+    const stayId = '0195f0a0-0000-7000-8000-000000000001';
+    expect(tendersSchema.safeParse([{ method: 'ROOM_CHARGE', stayId }]).success).toBe(true);
+    expect(tendersSchema.safeParse([{ method: 'ROOM_CHARGE', stayId }, { method: 'ROOM_CHARGE', stayId }]).success).toBe(false);
   });
 
   it('owner holds every permission; admin cannot manage the subscription', () => {

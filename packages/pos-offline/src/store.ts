@@ -26,11 +26,17 @@ export interface OfflineReceipt {
   branch: { name: string };
   seller: { name: string; registeredName: string; tin: string | null; vatStatus: 'VAT' | 'NON_VAT' };
   cashierName: string;
-  lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string }[];
+  /** `promotion`: the promotion that priced the line and its discount (ADR-0021). */
+  lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string; promotion?: { name: string; discount: string } }[];
   totals: { gross: string; vatableSales: string; vatAmount: string; vatExemptSales: string; zeroRatedSales: string; percentageTaxSales: string; amountDue: string };
   tendered: string;
   change: string;
   notice: string;
+  /** Counter service (session 25): the number the kitchen calls (the sale's device number), and the name. */
+  callNumber?: number;
+  pickupName?: string;
+  /** A cash tip on top of the sale (session 25), outside its total. */
+  tip?: string;
 }
 
 const SCHEMA_VERSION = 1;

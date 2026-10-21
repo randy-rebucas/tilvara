@@ -3,13 +3,17 @@
 import { useT } from '@/i18n/client';
 import { BUSINESS_TYPES, type BusinessType } from '@/lib/business-type';
 
-/** The three business types as radio choices, each with what it shows (sign-up and Business settings). */
+/**
+ * The business types as radio choices, each with what it shows (sign-up and Business settings).
+ * HYBRID ("Both") is no longer offered; a business that already has it still sees it as its choice.
+ */
 export function BusinessTypeField({ defaultValue, error }: { defaultValue?: BusinessType; error?: string | undefined }) {
   const { t } = useT();
+  const types = BUSINESS_TYPES.filter((type) => type !== 'HYBRID' || defaultValue === 'HYBRID');
   return (
     <fieldset className="flex flex-col gap-2.5" aria-describedby={error ? 'businessType-error' : undefined}>
       <legend className="mb-1 text-[0.8125rem] font-semibold">{t('biz.type')}</legend>
-      {BUSINESS_TYPES.map((type) => (
+      {types.map((type) => (
         <label key={type} className="flex items-start gap-2">
           <input type="radio" name="businessType" value={type} defaultChecked={defaultValue === type} required className="mt-1" />
           <span>

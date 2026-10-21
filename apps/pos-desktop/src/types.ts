@@ -1,10 +1,12 @@
 /** Shapes returned by the Tilvara API that the counter uses (see docs/api/openapi.json). */
+export type BusinessType = 'RETAIL' | 'RESTAURANT' | 'HYBRID' | 'GROCERY' | 'SALON' | 'LODGING';
+
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  /** businessType: RETAIL leaves out restaurant service (tables, floor, kitchen display). */
+  /** businessType: RETAIL, GROCERY and SALON leave out restaurant service (tables, floor, kitchen display). */
   /** features: what the plan includes (absent from an older API: treated as everything). */
-  activeTenant: { tenantId: string; businessType?: 'RETAIL' | 'RESTAURANT' | 'HYBRID'; features?: string[]; permissions: string[] } | null;
+  activeTenant: { tenantId: string; businessType?: BusinessType; features?: string[]; permissions: string[] } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
 
@@ -13,7 +15,28 @@ export interface Me {
  * cashier's Tables tab follows the type only: after a plan downgrade, bills already printed must
  * still be paid at the counter (the API allows it on purpose).
  */
-export const servesTables = (me: Me) => me.activeTenant?.businessType !== 'RETAIL';
+export const servesTables = (me: Me) => {
+  const type = me.activeTenant?.businessType;
+  return type !== 'RETAIL' && type !== 'GROCERY' && type !== 'SALON';
+};
+
+/**
+ * Appointments, service staff and packages (ADR-0022): a salon, spa or barber shop, or a hybrid
+ * business. A missing type counts as HYBRID (the old default), as for `servesTables`.
+ */
+export const servesAppointments = (me: Me) => {
+  const type = me.activeTenant?.businessType;
+  return type === undefined || type === 'SALON' || type === 'HYBRID';
+};
+
+/**
+ * Rooms, stays and folios (ADR-0023): a hotel, resort or transient house, or a hybrid business. A
+ * missing type counts as HYBRID, as for `servesAppointments`; the Rooms tab also needs `lodging.read`.
+ */
+export const servesLodging = (me: Me) => {
+  const type = me.activeTenant?.businessType;
+  return type === undefined || type === 'LODGING' || type === 'HYBRID';
+};
 
 /** Restaurant service on the plan as well: the kitchen display and server mode take new work. */
 export const restaurantOnPlan = (me: Me) => servesTables(me) && (me.activeTenant?.features?.includes('restaurant') ?? true);
@@ -34,7 +57,11 @@ export interface LookupItem {
   price: { amount: string } | null;
   /** A weighing-scale label carried this quantity (kg): the line takes it as weighed. */
   quantity?: string;
+  /** STANDARD, SERVICE or PACKAGE (ADR-0022), when the source gives it (the till's snapshot does). */
+  productType?: ProductType;
 }
+
+export type ProductType = 'STANDARD' | 'SERVICE' | 'PACKAGE';
 
 export interface QuoteLine {
   id: string;
@@ -52,6 +79,13 @@ export interface QuoteLine {
   /** An approved price change: the list price it replaced. */
   priceOverrideId?: string | null;
   listUnitPrice?: string;
+  /** The promotion that priced the line (ADR-0021); its discount is `discount`. */
+  promotionId?: string | null;
+  promotionName?: string;
+  /** ADR-0022: what kind of item it is; a package session (`packageId`) is priced at zero. */
+  productType?: ProductType;
+  packageId?: string | null;
+  staffId?: string | null;
 }
 
 export interface Totals {
@@ -82,6 +116,8 @@ export interface PaymentIntent {
   failureCode: string | null;
   clientTransactionId: string;
   createdAt: string;
+  /** TIP (session 25): the charge of a tip, never one of the sale's tenders. */
+  purpose?: 'SALE' | 'TIP';
 }
 
 export interface SaleSummary {
@@ -153,7 +189,7 @@ export interface OrderItem {
   status: ItemStatus;
   voidReason: string | null;
   wasteAdjustmentId: string | null;
-  modifiers: { id: string; name: string; variantId: string | null; quantity: string; status: ItemStatus }[];
+  modifiers: { id: string; name: string; variantId: string | null; modifierOptionId?: string | null; quantity: string; status: ItemStatus }[];
 }
 
 export interface Order extends Omit<OrderSummary, 'items'> {
@@ -225,10 +261,14 @@ export interface KitchenTicket {
   bumpedAt?: string | null;
   station: { id: string; code: string; name: string };
   /** Where the food goes now (the order may have moved tables since firing). */
-  order: { id: string; orderNumber: number; orderType: 'DINE_IN' | 'TAKEAWAY'; tableCode: string | null; customerName: string | null } | null;
+  /** COUNTER (session 25): paid at the counter; `orderNumber` is the call number on the customer's receipt. */
+  order: { id: string; orderNumber: number; orderType: 'DINE_IN' | 'TAKEAWAY' | 'COUNTER'; tableCode: string | null; customerName: string | null } | null;
   items: { id: string; name: string; quantity: string; seat: number | null; note: string | null; status: ItemStatus; modifiers: { id: string; name: string; status?: ItemStatus }[] }[];
   /** The order's note for this course when it was fired. */
   courseNote?: string | null;
+  /** Kitchen printing (session 25): when a till printed it, and how often. */
+  printedAt?: string | null;
+  printCount?: number;
 }
 
 export interface CheckPreview {
@@ -242,7 +282,9 @@ export interface Receipt {
   notice: string;
   seller: { name: string; registeredName: string; address: string | null; tinLabel: string; tin: string | null; branch: string };
   transaction: { reference: string; dateTime: string; register: string; cashier: string };
-  lines: { name: string; quantity: string; unitPrice: string; amount: string; discount?: string; flag: string }[];
+  /** `promotion`: the promotion that gave the line's `discount` (ADR-0021). */
+  /** `staff`: who did it (first name); `packageSession`: a prepaid package's session (ADR-0022). */
+  lines: { name: string; quantity: string; unitPrice: string; amount: string; discount?: string; promotion?: string; staff?: string; packageSession?: boolean; flag: string }[];
   /** Non-item charges such as the service charge, each printed on its own line. */
   charges?: { kind: string; label: string; amount: string; flag: string }[];
   totals: Record<string, string>;
@@ -254,4 +296,178 @@ export interface Receipt {
   reason?: string;
   /** The customer the sale was rung up for (ADR-0018), with their TIN when they gave one. */
   customer?: { name: string; tin?: string };
+  /** A tip given with the sale (session 25): printed after the payment, never in the totals. */
+  tip?: { method: string; amount: string };
+  /** Counter service (session 25): the number the kitchen calls, and the name given for pickup. */
+  callNumber?: number;
+  pickupName?: string;
+  /** Charge to room (ADR-0023 §5.1): "Charged to room 204 — Cruz", signed by the guest. */
+  roomCharge?: { roomNumber: string; guestSurname: string | null; amount: string; line: string; signatureLine: string };
+}
+
+// ------------------------------------------------------------------ salons (ADR-0022)
+
+/** A person who performs services at a branch (need not sign in). No services listed = every service. */
+export interface ServiceStaff {
+  id: string;
+  branchId: string;
+  displayName: string;
+  color: string | null;
+  archivedAt: string | null;
+  services: { variantId: string }[];
+  /** Weekly hours in the branch's calendar: weekday 0 = Sunday, times 'HH:MM'. */
+  hours: { weekday: number; startsAt: string; endsAt: string }[];
+}
+
+export type AppointmentStatus = 'BOOKED' | 'ARRIVED' | 'COMPLETED' | 'NO_SHOW' | 'CANCELLED';
+
+export interface Appointment {
+  id: string;
+  status: AppointmentStatus;
+  startsAt: string;
+  endsAt: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  hasEmail: boolean;
+  guestName: string | null;
+  notes: string | null;
+  remind: boolean;
+  saleId: string | null;
+  cancelReason: string | null;
+  services: { id: string; variantId: string; name: string; staffId: string; staffName: string; staffColor: string | null; startsAt: string; endsAt: string }[];
+}
+
+export interface Availability {
+  date: string;
+  minutes: number;
+  staff: { staffId: string; displayName: string; color: string | null; slots: string[] }[];
+}
+
+/** A customer's prepaid package with sessions left (GET /v1/customers/:id/packages?open=true). */
+export interface CustomerPackage {
+  id: string;
+  name: string;
+  expiresOn: string | null;
+  expired: boolean;
+  valueLeft: string;
+  services: { itemId: string; variantId: string; name: string; sessions: number; sessionsLeft: number }[];
+}
+
+export interface CustomerNote {
+  id: string;
+  body: string;
+  pinned: boolean;
+  updatedAt: string;
+}
+
+/** An appointment handed from the Appointments tab to Sell to be rung up. */
+export interface AppointmentRingUp {
+  appointment: Appointment;
+  /** Changes on every press, so the same appointment can be rung up again after a cleared cart. */
+  nonce: string;
+}
+
+// ------------------------------------------------------------------ lodging (ADR-0023)
+
+export type HousekeepingStatus = 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER';
+export type StayStatus = 'BOOKED' | 'IN_HOUSE' | 'CHECKED_OUT' | 'CANCELLED' | 'NO_SHOW';
+
+/** An in-house guest a sale can be charged to (GET /v1/stays/in-house). `available` null = no limit. */
+export interface InHouseGuest {
+  stayId: string;
+  branchId: string;
+  branchName: string;
+  roomNumber: string;
+  guestName: string | null;
+  departureDate: string;
+  allowCharges: boolean;
+  chargeLimit: string | null;
+  charged: string;
+  available: string | null;
+}
+
+/** One room on the housekeeping board (GET /v1/lodging/housekeeping). */
+export interface BoardRoom {
+  roomId: string;
+  number: string;
+  floor: string | null;
+  roomType: { id: string; code: string; name: string };
+  status: HousekeepingStatus;
+  lastChange: { at: string; byName: string | null; note: string | null } | null;
+  occupied: boolean;
+  departingToday: boolean;
+  arrivingToday: boolean;
+}
+
+export interface Housekeeping {
+  branchId: string;
+  /** The branch's calendar date today. */
+  day: string | null;
+  data: BoardRoom[];
+}
+
+export interface StayGuest {
+  id: string;
+  fullName: string;
+  isPrimary: boolean;
+}
+
+/** A stay as GET /v1/stays lists it; GET /v1/stays/:id adds the folio's balance and the deposits held. */
+export interface Stay {
+  id: string;
+  branchId: string;
+  roomId: string;
+  status: StayStatus;
+  arrivalDate: string;
+  departureDate: string;
+  adults: number;
+  children: number;
+  customerId: string | null;
+  guestName: string | null;
+  nightlyRate: string | null;
+  allowCharges: boolean;
+  chargeLimit: string | null;
+  source: string;
+  room: { id: string; number: string; floor: string | null } | null;
+  roomType: { id: string; code: string; name: string } | null;
+  guestDisplayName: string | null;
+  guests: StayGuest[];
+  folio: { id: string; status: 'OPEN' | 'SETTLED'; balance?: string; charged?: string } | null;
+  depositsHeld?: string;
+  nightsPosted?: number;
+}
+
+export interface FolioEntry {
+  id: string;
+  kind: 'ROOM_NIGHT' | 'ACCOMMODATION_TAX' | 'CHARGE' | 'CHARGE_RETURN' | 'DEPOSIT_APPLIED' | 'PAYMENT' | 'ADJUSTMENT' | 'NIGHT_REVERSAL';
+  amount: string;
+  description: string | null;
+  nightDate: string | null;
+  createdAt: string;
+  saleId?: string | null;
+}
+
+export interface Folio {
+  id: string;
+  status: 'OPEN' | 'SETTLED';
+  stayId: string;
+  stay: { id: string; status: StayStatus; roomNumber: string; arrivalDate: string; departureDate: string; guestName: string | null };
+  balance: string;
+  depositsHeld: string;
+  entries: FolioEntry[];
+  payments: { id: string; method: string; amount: string; tendered: string | null; change: string | null; createdAt: string }[];
+  deposits: { id: string; kind: string; method: string | null; amount: string; createdAt: string }[];
+}
+
+/** What the guest is shown and signs at check-out ("Guest folio — not an invoice" while invoicing is disabled). */
+export interface FolioStatement {
+  title: string;
+  seller: { registeredName: string; tradeName: string | null; tin: string | null; registeredAddress: string | null };
+  branch: { name: string; address: string | null };
+  folio: { id: string; status: 'OPEN' | 'SETTLED'; openedAt: string; settledAt: string | null; currency: string };
+  stay: { id: string; roomNumber: string; roomType: string; arrivalDate: string; departureDate: string; guestName: string | null };
+  lines: { id: string; date: string; kind: FolioEntry['kind']; description: string; amount: string; vatAmount: string | null }[];
+  totals: { roomNights: string; accommodationTax: string; charges: string; adjustments: string; deposits: string; payments: string; balance: string };
+  signatureLine: string;
 }

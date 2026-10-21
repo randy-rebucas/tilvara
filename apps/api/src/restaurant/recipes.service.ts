@@ -14,7 +14,7 @@ import {
 import { toDec } from '@1pos/money';
 import type { CreateRecipeVersionInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { assertFeature } from '../billing/entitlements.js';
+import { assertRecipes, businessType } from '../billing/entitlements.js';
 import { dbNow, effectiveNow } from '../common/clock.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -70,8 +70,9 @@ export class RecipesService extends TenantService {
     return this.mutate(auth, async (db) => {
       const tenantId = tenantOf(auth).tenantId;
       const item = await this.item(db, variantId);
-      this.assertCan(auth, 'restaurant.manage');
-      await assertFeature(db, 'restaurant');
+      // A salon's "supplies used" are part of its catalog (ADR-0022 §9); a kitchen's recipes are restaurant set-up.
+      this.assertCan(auth, (await businessType(db)) === 'SALON' ? 'catalog.manage' : 'restaurant.manage');
+      await assertRecipes(db);
       if (item.archivedAt) throw archived('Item');
       if (item.trackInventory) {
         throw unprocessable('RECIPE_ITEM_TRACKS_STOCK', 'This item tracks its own stock; a recipe is for items made from stocked ingredients');

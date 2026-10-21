@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
-import { clientRefSchema, saleBeneficiarySchema, tendersSchema } from './sales.js';
+import { clientRefSchema, saleBeneficiarySchema, tendersSchema, tipSchema } from './sales.js';
 import { quantitySchema, rateSchema } from './tax.js';
 
 const name = z.string().trim().min(1).max(100);
@@ -136,6 +136,8 @@ export const restaurantSettingsSchema = z.object({
   serviceChargeDineIn: z.boolean(),
   serviceChargeTakeaway: z.boolean(),
   serviceChargeVatTreatment: z.enum(['VATABLE', 'VAT_EXEMPT']),
+  /** Counter service (session 25): pay first at the counter, then the kitchen gets the order. Omitted = unchanged. */
+  counterService: z.boolean().optional(),
 });
 export type RestaurantSettingsInput = z.infer<typeof restaurantSettingsSchema>;
 
@@ -192,7 +194,11 @@ export const addOrderItemsSchema = z.object({
 export type AddOrderItemsInput = z.infer<typeof addOrderItemsSchema>;
 
 export const updateOrderItemSchema = z
-  .object({ quantity: quantitySchema, course, seat: seat.nullable(), note: z.string().trim().min(1).max(200).nullable() })
+  .object({
+    quantity: quantitySchema, course, seat: seat.nullable(), note: z.string().trim().min(1).max(200).nullable(),
+    /** The item's choices, replaced whole while it is not yet sent (session 25). */
+    modifierOptionIds: z.array(z.uuid()).max(30),
+  })
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
 export type UpdateOrderItemInput = z.infer<typeof updateOrderItemSchema>;
@@ -304,6 +310,7 @@ export const createCheckSchema = z.object({
   allocations: z.array(billAllocationSchema).min(1).max(200).optional(),
   tenders: tendersSchema,
   expectedAmountDue: amountSchema.optional(),
+  tip: tipSchema.optional(),
 });
 export type CreateCheckInput = z.infer<typeof createCheckSchema>;
 

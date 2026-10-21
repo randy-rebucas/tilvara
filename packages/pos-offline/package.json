@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@1pos/money": "workspace:*",
+    "@1pos/pricing": "workspace:*",
     "@1pos/sync-protocol": "workspace:*",
     "@1pos/tax": "workspace:*"
   }

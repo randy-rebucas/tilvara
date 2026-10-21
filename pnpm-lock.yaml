@@ -87,6 +87,9 @@ importers:
       '@1pos/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@1pos/pricing':
+        specifier: workspace:*
+        version: link:../../packages/pricing
       '@1pos/sync-protocol':
         specifier: workspace:*
         version: link:../../packages/sync-protocol
@@ -273,6 +276,9 @@ importers:
       '@1pos/money':
         specifier: workspace:*
         version: link:../money
+      '@1pos/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       '@1pos/sync-protocol':
         specifier: workspace:*
         version: link:../sync-protocol
@@ -280,8 +286,17 @@ importers:
         specifier: workspace:*
         version: link:../tax
 
+  packages/pricing:
+    dependencies:
+      '@1pos/money':
+        specifier: workspace:*
+        version: link:../money
+
   packages/sync-protocol:
     dependencies:
+      '@1pos/pricing':
+        specifier: workspace:*
+        version: link:../pricing
       '@1pos/validation':
         specifier: workspace:*
         version: link:../validation

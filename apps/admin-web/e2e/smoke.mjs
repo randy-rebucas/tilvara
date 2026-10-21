@@ -27,7 +27,7 @@ try {
   await fill('email', `${slug}@example.ph`);
   await fill('password', 'correct horse battery staple');
   await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
-  await evaluate(`document.querySelector('form button.btn-primary').click()`);
+  await b.finishSteps();
   await waitFor(`location.pathname === '/' || document.querySelector('[role=alert]')`);
   const signupError = await evaluate(`document.querySelector('[role=alert]')?.textContent ?? ''`);
   if (signupError) throw new Error(`sign-up failed: ${signupError}`);
@@ -40,16 +40,16 @@ try {
   const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[aria-label=Main] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
   check('retail shop: no Restaurant tab', !(await navHas('Restaurant')));
   await go('/restaurant');
-  check('retail shop: restaurant set-up says it is off', await evaluate(`document.body.innerText.includes('set up as a retail shop')`));
+  check('retail shop: restaurant set-up says it is off', await evaluate(`document.body.innerText.includes('set up as a shop (retail, or sari-sari store and grocery)')`));
   await go('/subscription/business');
   check('business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').checked`));
   await shot('business-type.png');
-  await evaluate(`document.querySelector('input[name=businessType][value=HYBRID]').click()`);
+  await evaluate(`document.querySelector('input[name=businessType][value=RESTAURANT]').click()`);
   // The type's own form (the page also has the business name form, session 22).
   await evaluate(`document.querySelector('input[name=businessType]').closest('form').querySelector('button.btn-primary').click()`);
   await waitFor(`[...document.querySelectorAll('[role=status]')].some((x) => x.textContent.startsWith('Saved'))`);
   await go('/');
-  check('after changing to Both: Restaurant tab shown', await navHas('Restaurant'));
+  check('after changing to Restaurant: Restaurant tab shown', await navHas('Restaurant'));
 
   // 3. CSRF: a mutation without the custom header is refused by the BFF
   const csrf = await evaluate(`fetch('/api/v1/categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' }).then((r) => r.status)`);

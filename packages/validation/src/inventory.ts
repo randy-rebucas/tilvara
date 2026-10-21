@@ -64,6 +64,25 @@ export type CreateStockCountInput = z.infer<typeof createStockCountSchema>;
 export const branchQuerySchema = z.object({ branchId: z.uuid() });
 export type BranchQuery = z.infer<typeof branchQuerySchema>;
 
+// ------------------------------------------------------------------ shelf locations (ADR-0021 §5)
+
+export const setItemLocationsSchema = z
+  .object({
+    branchId: z.uuid(),
+    /** `location: null` (or blank) removes the item's location. */
+    items: z
+      .array(
+        z.object({
+          variantId: z.uuid(),
+          location: z.string().trim().max(32).nullable().transform((v) => (v ? v.toUpperCase() : null)),
+        }),
+      )
+      .min(1)
+      .max(500),
+  })
+  .superRefine((v, ctx) => uniqueVariants(v.items, ctx, 'items'));
+export type SetItemLocationsInput = z.infer<typeof setItemLocationsSchema>;
+
 // ------------------------------------------------------------------ reorder points
 
 export const setReorderPointsSchema = z
@@ -84,6 +103,8 @@ export const NEGATIVE_STOCK_POLICY_VALUES = ['ALLOW', 'ALLOW_WITH_FLAG', 'BLOCK'
 export const inventorySettingsSchema = z.object({
   negativeStockPolicy: z.enum(NEGATIVE_STOCK_POLICY_VALUES),
   lowStockAlerts: z.boolean(),
+  /** Mail about lots expiring within this many days; 0 turns it off (ADR-0020 §3). Left out: as it is. */
+  expiryAlertDays: z.number().int().min(0).max(365).optional(),
 });
 export type InventorySettingsInput = z.infer<typeof inventorySettingsSchema>;
 
@@ -134,3 +155,54 @@ export type ReservationListQuery = z.infer<typeof reservationListQuerySchema>;
 /** Sold, collected, or no longer wanted. */
 export const releaseReservationSchema = z.object({ reason: z.string().trim().min(1).max(200) });
 export type ReleaseReservationInput = z.infer<typeof releaseReservationSchema>;
+
+// ------------------------------------------------------------------ packs and pieces (ADR-0020)
+
+/** A decimal string greater than 1, compared as text (no floating point). */
+const moreThanOne = (v: string) => {
+  const [whole = '', fraction = ''] = v.split('.');
+  const int = whole.replace(/^0+/, '');
+  return int.length > 1 || (int.length === 1 && (int > '1' || (int === '1' && /[1-9]/.test(fraction))));
+};
+
+export const createPackConversionSchema = z
+  .object({
+    packVariantId: z.uuid(),
+    pieceVariantId: z.uuid(),
+    /** How many pieces one pack holds: 20 sticks, 12 sachets, 25 (kg) in a sack. */
+    piecesPerPack: z
+      .string()
+      .trim()
+      .regex(/^\d{1,10}(\.\d{1,4})?$/, 'Use a plain decimal string such as "20" or "25.5"')
+      .refine(moreThanOne, 'A pack holds more than one piece'),
+    autoOpen: z.boolean().default(true),
+  })
+  .refine((v) => v.packVariantId !== v.pieceVariantId, { message: 'The pack and the piece are different items', path: ['pieceVariantId'] });
+export type CreatePackConversionInput = z.infer<typeof createPackConversionSchema>;
+
+export const updatePackConversionSchema = z.object({ autoOpen: z.boolean() });
+export type UpdatePackConversionInput = z.infer<typeof updatePackConversionSchema>;
+
+export const packConversionQuerySchema = z.object({ variantId: z.uuid().optional() });
+export type PackConversionQuery = z.infer<typeof packConversionQuerySchema>;
+
+export const packOpeningSchema = z.object({
+  branchId: z.uuid(),
+  conversionId: z.uuid(),
+  /** Whole packs only. */
+  packs: z.string().trim().regex(/^[1-9]\d{0,5}$/, 'Open whole packs: "1", "2", …'),
+  reason: z.string().trim().min(1).max(200),
+});
+export type PackOpeningInput = z.infer<typeof packOpeningSchema>;
+
+// ------------------------------------------------------------------ expiry lots (ADR-0020 §3)
+
+export const expiringQuerySchema = z.object({
+  branchId: z.uuid(),
+  /** Expired, and expiring within this many days (default: the branch's alert window, else 30). */
+  withinDays: z.coerce.number().int().min(0).max(365).optional(),
+});
+export type ExpiringQuery = z.infer<typeof expiringQuerySchema>;
+
+export const lotQuerySchema = z.object({ branchId: z.uuid(), variantId: z.uuid() });
+export type LotQuery = z.infer<typeof lotQuerySchema>;

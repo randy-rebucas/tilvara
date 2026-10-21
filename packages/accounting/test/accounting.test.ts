@@ -4,7 +4,14 @@ import {
   cashMovementPosting,
   cashVariancePosting,
   DEFAULT_CHART,
+  depositAppliedPosting,
+  depositForfeitedPosting,
+  depositReceivedPosting,
+  depositRefundedPosting,
+  folioPaymentPosting,
   goodsReceiptPosting,
+  roomChargePosting,
+  packOpeningPosting,
   reversalOf,
   salePosting,
   saleReturnPosting,
@@ -13,6 +20,8 @@ import {
   supplierNotePosting,
   supplierPaymentPosting,
   supplierReturnPosting,
+  tipPayoutPosting,
+  tipRefundPosting,
   transferDispatchPosting,
   transferReceiptPosting,
   UnbalancedEntryError,
@@ -58,6 +67,86 @@ describe('posting rules', () => {
     const spent = salePosting({ salesExVat: '56.00', vatAmount: '0', statutoryDiscount: '0', cash: '33.60', electronic: '0', storeCredit: '22.40', cogs: '40.00' });
     expect(net(spent)).toEqual({ CASH_ON_HAND: '33.60', CUSTOMER_STORE_CREDIT: '22.40', SALES: '-56.00', COGS: '40.00', INVENTORY: '-40.00' });
     expect(DEFAULT_CHART.find((a) => a.key === 'CUSTOMER_STORE_CREDIT')).toMatchObject({ code: '2300', type: 'LIABILITY' });
+  });
+
+  it('tips (session 25): owed to staff, never sales or VAT; a void gives them back; paying out clears them', () => {
+    // ₱100.00 cash sale (89.29 + 10.71 VAT) with a ₱20.00 cash tip.
+    const cash = salePosting({ salesExVat: '89.29', vatAmount: '10.71', statutoryDiscount: '0', cash: '100.00', electronic: '0', cogs: '0', tip: { amount: '20.00', electronic: false } });
+    expect(net(cash)).toEqual({ CASH_ON_HAND: '120.00', TIPS_PAYABLE: '-20.00', SALES: '-89.29', OUTPUT_VAT: '-10.71' });
+    // Paid by card, tip by card too.
+    const card = salePosting({ salesExVat: '89.29', vatAmount: '10.71', statutoryDiscount: '0', cash: '0', electronic: '100.00', cogs: '0', tip: { amount: '15.00', electronic: true } });
+    expect(net(card)).toEqual({ PAYMENT_CLEARING: '115.00', TIPS_PAYABLE: '-15.00', SALES: '-89.29', OUTPUT_VAT: '-10.71' });
+    const voided = saleReturnPosting({ salesExVat: '89.29', vatAmount: '10.71', statutoryDiscount: '0', refund: '100.00', restocked: '0', tipRefund: '20.00' });
+    expect(net(voided)).toEqual({ SALES_RETURNS: '89.29', OUTPUT_VAT: '10.71', CASH_ON_HAND: '-120.00', TIPS_PAYABLE: '20.00' });
+    // A void to store credit still hands the tip back in cash.
+    const credited = saleReturnPosting({ salesExVat: '89.29', vatAmount: '10.71', statutoryDiscount: '0', refund: '100.00', refundTo: 'STORE_CREDIT', restocked: '0', tipRefund: '20.00' });
+    expect(net(credited)).toEqual({ SALES_RETURNS: '89.29', OUTPUT_VAT: '10.71', CUSTOMER_STORE_CREDIT: '-100.00', CASH_ON_HAND: '-20.00', TIPS_PAYABLE: '20.00' });
+    expect(net(tipPayoutPosting('35.00'))).toEqual({ TIPS_PAYABLE: '35.00', CASH_ON_HAND: '-35.00' });
+    // A voided sale's card tip: the charge cancelled, or (provider refused) cash from the drawer.
+    expect(net(tipRefundPosting('15.00', 'CARD'))).toEqual({ TIPS_PAYABLE: '15.00', PAYMENT_CLEARING: '-15.00' });
+    expect(net(tipRefundPosting('15.00', 'CASH'))).toEqual({ TIPS_PAYABLE: '15.00', CASH_ON_HAND: '-15.00' });
+    expect(DEFAULT_CHART.find((a) => a.key === 'TIPS_PAYABLE')).toMatchObject({ code: '2210', type: 'LIABILITY' });
+  });
+
+  it('service packages (ADR-0022): owed until used; a session turns its value into sales; returns reverse each', () => {
+    // Several lines may hit one account: add them up.
+    const sum = (lines: PostingLine[]) => {
+      const o: Record<string, number> = {};
+      for (const l of lines) o[l.account] = (o[l.account] ?? 0) + Number(l.debit) - Number(l.credit);
+      return Object.fromEntries(Object.entries(o).filter(([, v]) => Math.abs(v) > 1e-9).map(([k, v]) => [k, v.toFixed(2)]));
+    };
+    // A ₱2,240.00 package (2,000.00 + 240.00 VAT) and a ₱560.00 retail item, in cash.
+    const sold = salePosting({ salesExVat: '2500.00', vatAmount: '300.00', statutoryDiscount: '0', cash: '2800.00', electronic: '0', cogs: '0', packagesSold: '2000.00' });
+    expect(sum(sold)).toEqual({ CASH_ON_HAND: '2800.00', SALES: '-500.00', PREPAID_SERVICES: '-2000.00', OUTPUT_VAT: '-300.00' });
+    // A session worth ₱200.00 used on a sale that charges nothing else: no money, no VAT, sales up.
+    const used = salePosting({ salesExVat: '0', vatAmount: '0', statutoryDiscount: '0', cash: '0', electronic: '0', cogs: '0', packageSessions: '200.00' });
+    expect(sum(used)).toEqual({ PREPAID_SERVICES: '200.00', SALES: '-200.00' });
+    // The unused package returned: the liability goes, not sales.
+    const back = saleReturnPosting({ salesExVat: '2000.00', vatAmount: '240.00', statutoryDiscount: '0', refund: '2240.00', restocked: '0', packagesRefunded: '2000.00' });
+    expect(sum(back)).toEqual({ PREPAID_SERVICES: '2000.00', OUTPUT_VAT: '240.00', CASH_ON_HAND: '-2240.00' });
+    // The session given back: its value is owed again.
+    const restored = saleReturnPosting({ salesExVat: '0', vatAmount: '0', statutoryDiscount: '0', refund: '0', restocked: '0', packageSessionsRestored: '200.00' });
+    expect(sum(restored)).toEqual({ SALES_RETURNS: '200.00', PREPAID_SERVICES: '-200.00' });
+    expect(DEFAULT_CHART.find((a) => a.key === 'PREPAID_SERVICES')).toMatchObject({ code: '2310', type: 'LIABILITY' });
+  });
+
+  it('lodging (ADR-0023): nights owed on the guest ledger, outlets charge to the room, deposits held until applied or forfeited', () => {
+    const sum = (lines: PostingLine[]) => {
+      const o: Record<string, number> = {};
+      for (const l of lines) o[l.account] = (o[l.account] ?? 0) + Number(l.debit) - Number(l.credit);
+      return Object.fromEntries(Object.entries(o).filter(([, v]) => Math.abs(v) > 1e-9).map(([k, v]) => [k, v.toFixed(2)]));
+    };
+    // A ₱2,800.00 night (2,500.00 + 300.00 VAT) with a 1 % accommodation tax on the net.
+    expect(sum(roomChargePosting({ exVat: '2500.00', vatAmount: '300.00', statutoryDiscount: '0', accommodationTax: '25.00' })))
+      .toEqual({ GUEST_LEDGER: '2825.00', ROOM_REVENUE: '-2500.00', OUTPUT_VAT: '-300.00', ACCOMMODATION_TAX_PAYABLE: '-25.00' });
+    // A senior alone in the room: VAT-exempt, 20 % off the net.
+    expect(sum(roomChargePosting({ exVat: '2500.00', vatAmount: '0', statutoryDiscount: '500.00' })))
+      .toEqual({ GUEST_LEDGER: '2000.00', STATUTORY_DISCOUNTS: '500.00', ROOM_REVENUE: '-2500.00' });
+    // A night reversal (or a goodwill credit) mirrors it.
+    expect(sum(roomChargePosting({ exVat: '-2500.00', vatAmount: '-300.00', statutoryDiscount: '0', accommodationTax: '-25.00' })))
+      .toEqual({ GUEST_LEDGER: '-2825.00', ROOM_REVENUE: '2500.00', OUTPUT_VAT: '300.00', ACCOMMODATION_TAX_PAYABLE: '25.00' });
+    // Dinner charged to the room: the guest ledger instead of cash; returned while the folio is open: back onto it.
+    expect(sum(salePosting({ salesExVat: '500.00', vatAmount: '60.00', statutoryDiscount: '0', cash: '0', electronic: '0', cogs: '0', roomCharge: '560.00' })))
+      .toEqual({ GUEST_LEDGER: '560.00', SALES: '-500.00', OUTPUT_VAT: '-60.00' });
+    expect(sum(saleReturnPosting({ salesExVat: '500.00', vatAmount: '60.00', statutoryDiscount: '0', refund: '560.00', restocked: '0', folioRefund: '560.00' })))
+      .toEqual({ SALES_RETURNS: '500.00', OUTPUT_VAT: '60.00', GUEST_LEDGER: '-560.00' });
+    // Partly back onto the folio, the rest in cash.
+    expect(sum(saleReturnPosting({ salesExVat: '500.00', vatAmount: '60.00', statutoryDiscount: '0', refund: '560.00', restocked: '0', folioRefund: '400.00' })))
+      .toEqual({ SALES_RETURNS: '500.00', OUTPUT_VAT: '60.00', GUEST_LEDGER: '-400.00', CASH_ON_HAND: '-160.00' });
+    // Settling at the front desk.
+    expect(sum(folioPaymentPosting('2825.00', 'CASH'))).toEqual({ CASH_ON_HAND: '2825.00', GUEST_LEDGER: '-2825.00' });
+    expect(sum(folioPaymentPosting('100.00', 'ELECTRONIC'))).toEqual({ PAYMENT_CLEARING: '100.00', GUEST_LEDGER: '-100.00' });
+    expect(sum(folioPaymentPosting('100.00', 'STORE_CREDIT'))).toEqual({ CUSTOMER_STORE_CREDIT: '100.00', GUEST_LEDGER: '-100.00' });
+    expect(sum(folioPaymentPosting('100.00', 'BANK'))).toEqual({ CASH_IN_BANK: '100.00', GUEST_LEDGER: '-100.00' });
+    // Deposits: held without VAT; applied to the folio, refunded, or kept as a cancellation fee with its VAT.
+    expect(sum(depositReceivedPosting('1000.00', 'BANK'))).toEqual({ CASH_IN_BANK: '1000.00', GUEST_DEPOSITS: '-1000.00' });
+    expect(sum(depositAppliedPosting('1000.00'))).toEqual({ GUEST_DEPOSITS: '1000.00', GUEST_LEDGER: '-1000.00' });
+    expect(sum(depositRefundedPosting('1000.00', 'CASH'))).toEqual({ GUEST_DEPOSITS: '1000.00', CASH_ON_HAND: '-1000.00' });
+    expect(sum(depositForfeitedPosting({ amount: '1120.00', exVat: '1000.00', vatAmount: '120.00' })))
+      .toEqual({ GUEST_DEPOSITS: '1120.00', CANCELLATION_INCOME: '-1000.00', OUTPUT_VAT: '-120.00' });
+    for (const [key, code, type] of [['GUEST_LEDGER', '1150', 'ASSET'], ['ACCOMMODATION_TAX_PAYABLE', '2120', 'LIABILITY'], ['GUEST_DEPOSITS', '2320', 'LIABILITY'], ['ROOM_REVENUE', '4100', 'REVENUE'], ['CANCELLATION_INCOME', '4110', 'REVENUE']]) {
+      expect(DEFAULT_CHART.find((a) => a.key === key)).toMatchObject({ code, type });
+    }
   });
 
   it('goods receipt: owed at cost; a revaluation of units sold short goes to COGS', () => {
@@ -110,6 +199,17 @@ describe('posting rules', () => {
     expect(net(recv)).toEqual({ INVENTORY: '36.00', TRANSIT_LOSS: '12.00', INVENTORY_IN_TRANSIT: '-48.00' });
     expect(recv.find((l) => l.account === 'INVENTORY')!.branchId).toBe('b2');
     expect(recv.find((l) => l.account === 'INVENTORY_IN_TRANSIT')!.branchId).toBe('b1');
+  });
+
+  it('opening packs moves no value unless the pieces were sold short (ADR-0020)', () => {
+    expect(packOpeningPosting({ packsValue: '240.00', piecesValue: '240.00' })).toEqual([]);
+    // Pieces at −4 restart from the pack's cost: 4 pieces sold earlier are revalued into COGS.
+    expect(net(packOpeningPosting({ packsValue: '240.00', piecesValue: '192.00' }, 'b1'))).toEqual({ INVENTORY: '-48.00', COGS: '48.00' });
+    // Rounding of a revaluation is kept to the ten-thousandth, never lost.
+    expect(packOpeningPosting({ packsValue: '100.00', piecesValue: '100.0002' }).map((l) => [l.account, l.debit, l.credit])).toEqual([
+      ['INVENTORY', '0.0002', '0'],
+      ['COGS', '0', '0.0002'],
+    ]);
   });
 
   it('cash: pay-ins/outs against cash fund transfers, a short drawer to cash over/short', () => {

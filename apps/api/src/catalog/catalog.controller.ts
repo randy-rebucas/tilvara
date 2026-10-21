@@ -8,6 +8,14 @@ import {
   createProductSchema,
   createTaxCategorySchema,
   createUomSchema,
+  createPromotionSchema,
+  promotionListQuerySchema,
+  updatePromotionSchema,
+  branchQuerySchema,
+  type BranchQuery,
+  type CreatePromotionInput,
+  type PromotionListQuery,
+  type UpdatePromotionInput,
   idParamSchema,
   lookupQuerySchema,
   productListQuerySchema,
@@ -38,6 +46,7 @@ import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { CatalogService } from './catalog.service.js';
 import { PricingService } from './pricing.service.js';
+import { PromotionsService } from './promotions.service.js';
 
 const id = new ZodPipe(idParamSchema);
 
@@ -47,6 +56,7 @@ export class CatalogController {
   constructor(
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PricingService) private readonly pricing: PricingService,
+    @Inject(PromotionsService) private readonly promotions: PromotionsService,
   ) {}
 
   // sample items for a trial (ADR-0016 slice 6)
@@ -167,6 +177,13 @@ export class CatalogController {
     return this.catalog.addBarcode(auth, variantId, body.code);
   }
 
+  /** A store barcode (in-store EAN-13) for a variant (ADR-0021 §4). */
+  @Idempotent()
+  @Post('variants/:id/barcodes/generate')
+  generateBarcode(@Auth() auth: AuthContext, @Param('id', id) variantId: string) {
+    return this.catalog.generateBarcode(auth, variantId);
+  }
+
   @HttpCode(200)
   @Post('barcodes/:id/archive')
   archiveBarcode(@Auth() auth: AuthContext, @Param('id', id) barcodeId: string) {
@@ -182,6 +199,34 @@ export class CatalogController {
   @Get('catalog/lookup')
   lookup(@Auth() auth: AuthContext, @Query(new ZodPipe(lookupQuerySchema)) query: LookupQuery) {
     return this.pricing.lookup(auth, query.code, query.branchId);
+  }
+
+  /** The till's quick keys at a branch, with their prices there (ADR-0021 §3). */
+  @Get('catalog/quick-keys')
+  quickKeys(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) query: BranchQuery) {
+    return this.pricing.quickKeys(auth, query.branchId);
+  }
+
+  // promotions (ADR-0021 §1)
+  @Get('promotions')
+  listPromotions(@Auth() auth: AuthContext, @Query(new ZodPipe(promotionListQuerySchema)) query: PromotionListQuery) {
+    return this.promotions.list(auth, query);
+  }
+
+  @Idempotent()
+  @Post('promotions')
+  createPromotion(@Auth() auth: AuthContext, @Body(new ZodPipe(createPromotionSchema)) body: CreatePromotionInput) {
+    return this.promotions.create(auth, body);
+  }
+
+  @Get('promotions/:id')
+  getPromotion(@Auth() auth: AuthContext, @Param('id', id) promotionId: string) {
+    return this.promotions.get(auth, promotionId);
+  }
+
+  @Patch('promotions/:id')
+  updatePromotion(@Auth() auth: AuthContext, @Param('id', id) promotionId: string, @Body(new ZodPipe(updatePromotionSchema)) body: UpdatePromotionInput) {
+    return this.promotions.update(auth, promotionId, body);
   }
 
   // price lists

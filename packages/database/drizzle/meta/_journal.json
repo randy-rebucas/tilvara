@@ -596,6 +596,132 @@
       "when": 1792487067632,
       "tag": "0084_price_override_quantity",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1792490215086,
+      "tag": "0085_business_type_grocery",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1792490378494,
+      "tag": "0086_pack_conversions",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1792490412402,
+      "tag": "0087_pack_conversions_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1792491959168,
+      "tag": "0088_expiry_lots",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1792491983174,
+      "tag": "0089_expiry_lots_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1792494437079,
+      "tag": "0090_product_tracks_expiry_grant",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1792496124180,
+      "tag": "0091_counter_service_tips",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1792496155848,
+      "tag": "0092_counter_service_tips_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1792502969454,
+      "tag": "0093_tip_refunds_till_call",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1792503030476,
+      "tag": "0094_tip_refunds_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1792503173587,
+      "tag": "0095_journal_source_tip_refund",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792507434178,
+      "tag": "0096_retail_promotions_shelves",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1792507453112,
+      "tag": "0097_retail_promotions_shelves_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1792514980373,
+      "tag": "0098_salons_appointments_packages",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1792515005286,
+      "tag": "0099_salons_appointments_packages_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1792516289611,
+      "tag": "0100_salon_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1792537005151,
+      "tag": "0101_lodging_rooms_folios",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1792537042206,
+      "tag": "0102_lodging_rooms_folios_rls",
+      "breakpoints": true
     }
   ]
 }

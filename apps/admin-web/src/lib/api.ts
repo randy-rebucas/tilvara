@@ -223,19 +223,84 @@ export interface Product {
   productType: string;
   soldBy: string;
   trackInventory: boolean;
+  /** Stock comes in with expiry dates (ADR-0020). */
+  tracksExpiry?: boolean;
   categoryId: string | null;
   uomId?: string;
   /** One of the trial's sample items (ADR-0016 slice 6). */
   isSample?: boolean;
   archivedAt: string | null;
-  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null }[];
+  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null }[];
 }
 /** One product as GET /products/:id returns it (the editor's view). */
 export interface ProductDetail extends Omit<Product, 'variants'> {
   description: string | null;
   taxCategoryId: string;
   uomId: string;
-  variants: { id: string; sku: string; name: string | null; referenceCost: string | null; barcodes: string[]; barcodeIds: { id: string; code: string }[]; archivedAt: string | null }[];
+  variants: {
+    id: string;
+    sku: string;
+    name: string | null;
+    referenceCost: string | null;
+    barcodes: string[];
+    barcodeIds: { id: string; code: string }[];
+    archivedAt: string | null;
+    /** Sizes and colours (ADR-0021 §2), e.g. {"Size": "M", "Colour": "Black"}. */
+    attributes?: Record<string, string> | null;
+    /** Its button on the till's quick keys, 1–48 (ADR-0021 §3). */
+    quickKeyPosition?: number | null;
+    /** A service's duration in minutes (ADR-0022 §3). */
+    serviceMinutes?: number | null;
+    /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
+    packageValidDays?: number | null;
+  }[];
+}
+/** A promotion (ADR-0021 §1): terms never change once made; only the name, or ending it. */
+export type PromotionKind = 'MULTI_BUY' | 'BUY_X_GET_Y' | 'QUANTITY_BREAK';
+export interface Promotion {
+  id: string;
+  name: string;
+  kind: PromotionKind;
+  quantity: number | null;
+  price: string | null;
+  buyQuantity: number | null;
+  getQuantity: number | null;
+  getRate: string | null;
+  tiers: { minQuantity: string; rate: string }[] | null;
+  allBranches: boolean;
+  branchIds: string[];
+  startsAt: string;
+  endsAt: string | null;
+  state: 'RUNNING' | 'SCHEDULED' | 'ENDED';
+  items: { variantId: string; sku: string; name: string }[];
+  createdAt: string;
+}
+export interface QuickKey {
+  position: number;
+  variantId: string;
+  sku: string;
+  name: string;
+  price: string | null;
+}
+/** Where an item sits in a branch (ADR-0021 §5): a label, not stock. */
+export interface ItemLocation {
+  variantId: string;
+  sku: string;
+  name: string;
+  location: string;
+  updatedAt: string;
+}
+export interface StockByBranch {
+  branches: { id: string; code: string; name: string }[];
+  data: { variantId: string; sku: string; name: string; total: string; branches: Record<string, { quantity: string; available: string }> }[];
+}
+export interface PromotionsReport {
+  data: { promotionId: string; name: string; kind: PromotionKind; salesCount: number; netQuantity: string; discount: string; netSales: string }[];
+}
+export interface ByAttribute {
+  attribute: string | null;
+  attributes: string[];
+  data: { value: string | null; quantitySold: string; quantityReturned: string; netQuantity: string; netSales: string; revenueExVat: string }[];
 }
 export interface PriceList {
   id: string;
@@ -462,11 +527,34 @@ export interface Sale extends Buckets {
   amountTendered: string;
   changeDue: string;
   completedAt: string;
-  lines: (Buckets & { id: string; lineNo: number; variantId: string; name: string; quantity: string; unitPrice: string; amountDue: string; returnedQuantity: string; parentLineId: string | null })[];
+  lines: (Buckets & {
+    id: string;
+    lineNo: number;
+    variantId: string;
+    name: string;
+    quantity: string;
+    unitPrice: string;
+    amountDue: string;
+    returnedQuantity: string;
+    parentLineId: string | null;
+    /** The promotion that priced the line (ADR-0021 §1); its discount is the line's `discount`. */
+    promotionId?: string | null;
+    promotionName?: string | null;
+    /** Salon (ADR-0022): who did it, their rate at the sale, and a package session's package and value. */
+    serviceStaffId?: string | null;
+    commissionRate?: string | null;
+    customerPackageId?: string | null;
+    packageValue?: string | null;
+  })[];
   charges: { id: string; kind: string; rate: string; amountDue: string }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
   /** The customer it was rung up for (ADR-0018). */
   customerId?: string | null;
+  /** A tip taken with the sale (session 25): owed to staff, outside the total. */
+  tip?: { method: string; amount: string } | null;
+  /** Counter service: the kitchen order the sale sent, with its call number. */
+  /** `callNumber`: what the customer's receipt says (an offline till's own number, else `orderNumber`). */
+  counterOrder?: { id: string; orderNumber: number; callNumber?: number; pickupName: string | null; tickets: { id: string; ticketNumber: number; stationId: string }[] } | null;
 }
 export interface SaleReturnDoc extends Buckets {
   id: string;
@@ -478,6 +566,11 @@ export interface SaleReturnDoc extends Buckets {
   processedBy: string;
   amountDue: string;
   refundMethod: string | null;
+  /** The tip a void gave back (session 25), "0.00" when none. */
+  tipRefund?: string;
+  /** A voided sale's card tip (session 25): given back on the card, or in cash when the card refused; or still pending. */
+  cardTipRefund?: { method: 'CARD' | 'CASH'; amount: string } | null;
+  tipRefundPending?: boolean;
   createdAt: string;
   lines: { id: string; saleLineId: string; quantity: string; disposition: string; amountDue: string }[];
 }
@@ -493,7 +586,7 @@ export interface CashierSession {
   closedAt: string | null;
   expectedCash: string;
   movements: { type: string; total: string; count: number }[];
-  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
+  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'TIP_PAYOUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
   sales: { count: number; total: string };
   /** Names travel with the shift (a branch manager may not read /members). */
   openedByName: string | null;
@@ -671,6 +764,8 @@ export interface CountSheet {
     expectedQuantity?: string;
     varianceQuantity?: string | null;
     movedSinceFreeze?: string;
+    /** Shelf location at the branch (ADR-0021 §5); lines come ordered by it. */
+    location?: string | null;
   }[];
 }
 export type NegativeStockPolicy = 'ALLOW' | 'ALLOW_WITH_FLAG' | 'BLOCK';
@@ -678,7 +773,51 @@ export interface InventorySettings {
   branchId: string;
   negativeStockPolicy: NegativeStockPolicy;
   lowStockAlerts: boolean;
+  /** Mail about lots expiring within this many days; 0 = off (ADR-0020). */
+  expiryAlertDays?: number;
   updatedAt: string | null;
+}
+
+// ---- packs and pieces, expiry lots (ADR-0020) ----
+export interface PackLink {
+  id: string;
+  pack: { variantId: string; sku: string; name: string };
+  piece: { variantId: string; sku: string; name: string };
+  piecesPerPack: string;
+  autoOpen: boolean;
+  archivedAt: string | null;
+  createdAt: string;
+}
+export interface PackOpening {
+  id: string;
+  branchId: string;
+  conversionId: string;
+  pack: PackLink['pack'];
+  piece: PackLink['piece'];
+  packs: string;
+  pieces: string;
+  saleId: string | null;
+  saleNumber: string | null;
+  reason: string | null;
+  packsValue: string;
+  piecesValue: string;
+  createdAt: string;
+}
+export interface StockLot {
+  lotId: string;
+  variantId: string;
+  sku: string;
+  name: string;
+  expiresOn: string;
+  lotCode: string | null;
+  quantity: string;
+  value: string;
+  daysLeft: number;
+}
+export interface Expiring {
+  withinDays: number;
+  data: StockLot[];
+  expired: { lots: number; value: string };
 }
 export interface Adjustment {
   id: string;
@@ -795,6 +934,8 @@ export interface RestaurantSettings {
   serviceChargeDineIn: boolean;
   serviceChargeTakeaway: boolean;
   serviceChargeVatTreatment: 'VATABLE' | 'VAT_EXEMPT';
+  /** Counter service (session 25): pay first, then the kitchen gets the order. Needs a takeaway menu. */
+  counterService: boolean;
   updatedAt: string | null;
 }
 export interface SoldOutRow {
@@ -817,6 +958,8 @@ export interface RecipeVersion {
 // ---- retail reports (Phase 2 slice 5) ----
 export type SaleBuckets = Record<'gross' | 'discount' | 'statutoryDiscount' | 'vatExemptionAmount' | 'vatableSales' | 'vatAmount' | 'vatExemptSales' | 'zeroRatedSales' | 'percentageTaxSales' | 'amountDue', string>;
 export interface SalesSummary {
+  /** ADR-0023: room nights, by night (absent from an older API). */
+  rooms?: SalesSummaryRooms;
   days: { day: string; salesCount: number; returnsCount: number; voidsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets }[];
   totals: { salesCount: number; returnsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets };
 }
@@ -860,7 +1003,8 @@ export interface TaxSummary {
   data: (Omit<SaleBuckets, 'gross' | 'discount'> & { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string })[];
 }
 export interface StatutoryBook {
-  data: { document: 'SALE' | 'RETURN'; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[];
+  /** Room nights (ADR-0023) have no register or number. */
+  data: { document: 'SALE' | 'RETURN' | 'ROOM_NIGHT' | 'NIGHT_REVERSAL'; day: string; number: number | null; register: string | null; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[];
 }
 
 export interface ReportFigures {
@@ -880,6 +1024,8 @@ export interface ItemPerformance {
     name: string;
     checks: number;
     modifiers: (ReportFigures & { variantId: string; sku: string; name: string; checks: number })[];
+    /** Free choices ("No onions"), counted once their order is fully paid (session 25). */
+    freeChoices: { modifierOptionId: string; name: string; quantity: string; orders: number }[];
     withModifiers: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
   })[];
   totals: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
@@ -997,6 +1143,14 @@ export interface OpenOrders {
   totals: { orders: number; unbilled: number; billed: number; unpaid: string };
 }
 type ChargeParts = { exVat: string; vat: string; amountDue: string };
+type TipFigures = { tips: number; cash: string; electronic: string; taken: string; refunded: string; paidOut: string; owed: string };
+/** Tips (session 25): owed to staff, not sales. Owed = taken − given back on voids − paid out; ledger = TIPS_PAYABLE movement. */
+export interface TipsReport {
+  days: (TipFigures & { day: string })[];
+  byCashier: { userId: string; name: string | null; tips: number; amount: string }[];
+  totals: TipFigures;
+  ledger: string;
+}
 export interface ServiceChargeReport {
   days: { day: string; checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts }[];
   totals: { checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts };
@@ -1083,4 +1237,316 @@ export interface TillHealth {
   quarantined: number;
   shiftOpenedAt: string | null;
   silent: boolean;
+}
+
+// ---- salons, spas and barber shops (ADR-0022) ----
+/** A person who performs services (whether or not they sign in). Rates only for those who may manage staff. */
+export interface ServiceStaff {
+  id: string;
+  branchId: string;
+  displayName: string;
+  membershipId: string | null;
+  memberName: string | null;
+  color: string | null;
+  archivedAt: string | null;
+  /** Default commission as a fraction ("0.15"); absent when the caller may not manage staff. */
+  commissionRate?: string;
+  /** No rows = does every service. */
+  services: { variantId: string; commissionRate?: string | null }[];
+  /** Weekday 0 = Sunday; times in the branch's calendar. */
+  hours: { weekday: number; startsAt: string; endsAt: string }[];
+  canManage: boolean;
+}
+export interface ServiceStaffDetail extends ServiceStaff {
+  timeOff: { id: string; startsAt: string; endsAt: string; reason: string | null }[];
+}
+export type AppointmentStatus = 'BOOKED' | 'ARRIVED' | 'COMPLETED' | 'NO_SHOW' | 'CANCELLED';
+export interface Appointment {
+  id: string;
+  branchId: string;
+  status: AppointmentStatus;
+  startsAt: string;
+  endsAt: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  hasEmail: boolean;
+  guestName: string | null;
+  notes: string | null;
+  remind: boolean;
+  remindedAt: string | null;
+  saleId: string | null;
+  cancelReason: string | null;
+  createdAt: string;
+  services: { id: string; variantId: string; name: string; staffId: string; staffName: string; staffColor: string | null; startsAt: string; endsAt: string }[];
+}
+export interface Availability {
+  date: string;
+  minutes: number;
+  staff: { staffId: string; displayName: string; color: string | null; slots: string[] }[];
+}
+export interface PackageItems {
+  variantId: string;
+  validDays: number | null;
+  items: { serviceVariantId: string; sku: string; name: string; sessions: number }[];
+}
+export interface CustomerPackage {
+  id: string;
+  name: string;
+  legalEntityId: string;
+  branchId: string;
+  saleId: string;
+  boughtAt: string;
+  expiresOn: string | null;
+  expired: boolean;
+  value: string;
+  valueLeft: string;
+  services: { itemId: string; variantId: string; name: string; sessions: number; sessionsLeft: number }[];
+}
+export interface CustomerVisits {
+  appointments: { id: string; branchId: string; branchName: string; status: AppointmentStatus; startsAt: string; endsAt: string; saleId: string | null; notes: string | null; services: { name: string; staffName: string; startsAt: string }[] }[];
+  services: { saleId: string; saleNumber: number; completedAt: string; name: string; kind: string; quantity: string; amountDue: string; staffName: string | null; fromPackage: boolean }[];
+}
+export interface CustomerNote {
+  id: string;
+  body: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+  updatedByName: string | null;
+}
+export interface CommissionsReport {
+  staff: { staffId: string; name: string; lines: number; sales: string; returns: string; netBase: string; commission: string }[];
+  totals: { lines: number; sales: string; returns: string; netBase: string; commission: string };
+}
+export interface ServicePackagesReport {
+  sold: string;
+  used: string;
+  refunded: string;
+  restored: string;
+  packagesSold: number;
+  sessionsSold: number;
+  sessionsUsed: number;
+  owed: string;
+  ledger: string;
+  open: { id: string; name: string; customerId: string; customer: string; expiresOn: string | null; sessionsLeft: number; valueLeft: string }[];
+}
+export interface TipsByStaffReport {
+  /** `staffId`/`name` null: tips on sales without staff (unassigned). */
+  staff: { staffId: string | null; name: string | null; tips: number; amount: string; voided: string }[];
+  total: string;
+}
+
+// ---- hotels, resorts and transient houses (ADR-0023) ----
+export type HousekeepingStatus = 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER';
+export type StayStatus = 'BOOKED' | 'IN_HOUSE' | 'CHECKED_OUT' | 'CANCELLED' | 'NO_SHOW';
+export type StaySource = 'WALK_IN' | 'PHONE' | 'ONLINE' | 'OTA' | 'OTHER';
+export interface RoomType {
+  id: string;
+  code: string;
+  name: string;
+  baseOccupancy: number;
+  maxOccupancy: number;
+  /** The room-night SERVICE item: its branch price is the rack rate per night. */
+  nightVariantId: string;
+  nightItem: { id: string; sku: string; name: string } | null;
+  isSample: boolean;
+  archivedAt: string | null;
+  /** Active rooms of this type. */
+  rooms: number;
+}
+export interface Room {
+  id: string;
+  branchId: string;
+  roomTypeId: string;
+  number: string;
+  floor: string | null;
+  notes: string | null;
+  housekeepingStatus: HousekeepingStatus;
+  isSample: boolean;
+  archivedAt: string | null;
+  roomType: { id: string; code: string; name: string } | null;
+}
+export interface RoomBlock {
+  id: string;
+  branchId: string;
+  roomId: string;
+  roomNumber: string;
+  startsOn: string;
+  endsOn: string;
+  reason: string;
+  createdAt: string;
+}
+export interface RoomStatusChange {
+  id: string;
+  fromStatus: HousekeepingStatus;
+  toStatus: HousekeepingStatus;
+  note: string | null;
+  stayId: string | null;
+  changedAt: string;
+  changedByName: string | null;
+}
+export interface HousekeepingBoard {
+  branchId: string;
+  /** Today in the branch's calendar. */
+  day: string | null;
+  data: {
+    roomId: string;
+    number: string;
+    floor: string | null;
+    roomType: { id: string; code: string; name: string };
+    status: HousekeepingStatus;
+    lastChange: { at: string; byName: string | null; note: string | null } | null;
+    occupied: boolean;
+    departingToday: boolean;
+    arrivingToday: boolean;
+  }[];
+}
+export interface LodgingSettings {
+  branchId: string;
+  nightAuditTime: string;
+  /** A fraction ("0.05"), or null when the branch charges none. */
+  accommodationTaxRate: string | null;
+  forfeitOnCancel: boolean;
+  updatedAt: string | null;
+}
+export interface StayRow {
+  id: string;
+  branchId: string;
+  legalEntityId: string;
+  roomId: string;
+  roomTypeId: string;
+  customerId: string | null;
+  guestName: string | null;
+  arrivalDate: string;
+  departureDate: string;
+  adults: number;
+  children: number;
+  status: StayStatus;
+  nightlyRate: string | null;
+  allowCharges: boolean;
+  chargeLimit: string | null;
+  source: StaySource;
+  externalReference: string | null;
+  notes: string | null;
+  createdAt: string;
+  checkedInAt: string | null;
+  checkedOutAt: string | null;
+  cancelReason: string | null;
+  cancelledAt: string | null;
+  room: { id: string; number: string; floor: string | null } | null;
+  roomType: { id: string; code: string; name: string } | null;
+  customer: { id: string; displayName: string } | null;
+  guestDisplayName: string | null;
+  guests: { id: string; fullName: string; isPrimary: boolean }[];
+  folio: { id: string; status: 'OPEN' | 'SETTLED' } | null;
+}
+export interface Stay extends Omit<StayRow, 'folio'> {
+  folio: { id: string; status: 'OPEN' | 'SETTLED'; balance: string; charged: string } | null;
+  depositsHeld: string;
+  beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; share: string | null; removedAt: string | null }[];
+  nightsPosted: number;
+}
+export interface StayGuest {
+  id: string;
+  stayId: string;
+  isPrimary: boolean;
+  fullName: string;
+  nationality: string | null;
+  idType: string | null;
+  idNumber: string | null;
+  address: string | null;
+  birthDate: string | null;
+  contact: string | null;
+}
+export interface LodgingAvailability {
+  branchId: string;
+  from: string;
+  to: string;
+  nights: { date: string; roomTypes: { roomTypeId: string; code: string | null; name: string | null; total: number; available: number; freeRoomIds: string[] }[] }[];
+  rooms: { roomId: string; number: string; roomTypeId: string; housekeepingStatus: HousekeepingStatus; availableAllNights: boolean; freeNights: string[] }[];
+}
+export type FolioEntryKind = 'ROOM_NIGHT' | 'ACCOMMODATION_TAX' | 'CHARGE' | 'CHARGE_RETURN' | 'DEPOSIT_APPLIED' | 'PAYMENT' | 'ADJUSTMENT' | 'NIGHT_REVERSAL';
+export interface FolioEntry {
+  id: string;
+  kind: FolioEntryKind;
+  amount: string;
+  nightDate: string | null;
+  description: string | null;
+  reason: string | null;
+  vatAmount: string | null;
+  saleId: string | null;
+  saleReturnId: string | null;
+  relatedEntryId: string | null;
+  journalDate: string | null;
+  createdAt: string;
+}
+export interface StayDeposit {
+  id: string;
+  kind: 'RECEIVED' | 'APPLIED' | 'REFUNDED' | 'FORFEITED';
+  amount: string;
+  method: string | null;
+  reference: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+export interface Folio {
+  id: string;
+  stayId: string;
+  branchId: string;
+  legalEntityId: string;
+  currency: string;
+  status: 'OPEN' | 'SETTLED';
+  openedAt: string;
+  settledAt: string | null;
+  stay: { id: string; status: StayStatus; roomNumber: string; arrivalDate: string; departureDate: string; guestName: string | null };
+  balance: string;
+  depositsHeld: string;
+  entries: FolioEntry[];
+  payments: { id: string; method: string; amount: string; tendered: string; change: string; reference: string | null; createdAt: string }[];
+  deposits: StayDeposit[];
+}
+export interface FolioStatement {
+  title: string;
+  invoicingMode: string;
+  seller: { registeredName: string; tradeName: string | null; tin: string; registeredAddress: string | null };
+  branch: { name: string; address: string | null };
+  folio: { id: string; status: string; openedAt: string; settledAt: string | null; currency: string };
+  stay: { id: string; roomNumber: string; roomType: string; arrivalDate: string; departureDate: string; guestName: string | null };
+  lines: { id: string; date: string; kind: FolioEntryKind; description: string; amount: string; vatAmount: string | null }[];
+  totals: { roomNights: string; accommodationTax: string; charges: string; adjustments: string; deposits: string; payments: string; balance: string };
+  signatureLine: string;
+}
+export interface RegistrationCard {
+  title: string;
+  business: { registeredName: string; tradeName: string | null; tin: string; registeredAddress: string | null };
+  branch: { name: string; address: string | null };
+  stay: { id: string; roomNumber: string; roomType: string; arrivalDate: string; departureDate: string; adults: number; children: number; nightlyRate: string | null; source: StaySource; externalReference: string | null; checkedInAt: string | null };
+  guests: StayGuest[];
+  declaration: string;
+  signatureLine: string;
+}
+export interface OccupancyReport {
+  days: { day: string; roomsAvailable: number; roomsSold: number; occupancyPercent: string | null; roomRevenueExVat: string; adr: string | null; revpar: string | null }[];
+  totals: { roomsAvailable: number; roomsSold: number; occupancyPercent: string | null; roomRevenueExVat: string; adr: string | null; revpar: string | null };
+}
+export interface GuestLedgerReport {
+  legalEntityId: string;
+  folios: { folioId: string; stayId: string; stayStatus: StayStatus; branchId: string; roomNumber: string; guestName: string | null; arrivalDate: string; departureDate: string; balance: string }[];
+  deposits: { stayId: string; stayStatus: StayStatus; roomNumber: string; arrivalDate: string; held: string }[];
+  totals: { folios: string; guestLedgerGl: string; guestLedgerDifference: string; deposits: string; guestDepositsGl: string; depositsDifference: string };
+}
+export interface AccommodationTaxReport {
+  rate: string | null;
+  data: { month: string; nights: number; base: string; tax: string }[];
+  totals: { base: string; tax: string };
+}
+/** The "Rooms" part of the sales summary (room nights are not sales). */
+export interface SalesSummaryRooms {
+  days: ({ day: string; nights: number } & SaleBuckets)[];
+  totals: { nights: number } & SaleBuckets;
+}
+/** The session report's front desk collections: folio payments and deposits at the drawer. */
+export interface SessionReport {
+  frontDeskCollections: { data: { kind: string; method: string | null; count: number; amount: string }[]; cash: string };
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
-import { oneDiscountRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
+import { oneDiscountRefinement, packageSessionRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
@@ -15,11 +15,17 @@ export const tendersSchema = z
       z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
       /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
       z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
+      /**
+       * Charge to room (ADR-0023 §5.1): an in-house guest of the same legal entity; applied after store
+       * credit, before cash; `amount` omitted = all that is left to pay. Never gives change; online only.
+       */
+      z.object({ method: z.literal('ROOM_CHARGE'), stayId: z.uuid(), amount: positiveAmount.optional() }),
     ]),
   )
   .min(1)
   .max(10)
-  .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale');
+  .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale')
+  .refine((ts) => ts.filter((t) => t.method === 'ROOM_CHARGE').length <= 1, 'One room charge per sale');
 export type TendersInput = z.infer<typeof tendersSchema>;
 
 // ------------------------------------------------------------------ cashier sessions
@@ -31,7 +37,8 @@ export const openCashierSessionSchema = z.object({
 export type OpenCashierSessionInput = z.infer<typeof openCashierSessionSchema>;
 
 export const cashMovementSchema = z.object({
-  type: z.enum(['PAY_IN', 'PAY_OUT']),
+  /** TIP_PAYOUT (session 25): tips handed to staff from the drawer; posts against TIPS_PAYABLE. */
+  type: z.enum(['PAY_IN', 'PAY_OUT', 'TIP_PAYOUT']),
   /** Always positive; the type gives the direction. */
   amount: positiveAmount,
   reason: z.string().trim().min(1).max(200),
@@ -59,8 +66,37 @@ export type CashierSessionListQuery = z.infer<typeof cashierSessionListQuerySche
 
 // ------------------------------------------------------------------ sales
 
+/**
+ * Counter service (session 25): a menu item's choices (modifier option ids of the branch's takeaway
+ * menu). Priced choices become their own lines under the item, at the item's quantity; free ones go
+ * to the kitchen only. Lines with choices, or on the menu, go to the kitchen when the sale is paid.
+ */
+export const counterChoicesSchema = z.array(z.uuid()).max(30);
+export const kitchenNoteSchema = z.string().trim().min(1).max(200);
+
+/** A tip with the sale (session 25): in cash, or by its own card/QR payment of this checkout. Not part of the amount due. */
+export const tipSchema = z
+  .object({
+    amount: positiveAmount,
+    paymentIntentId: z.uuid().optional(),
+    /** How the tip is split among staff (ADR-0022 §7); adds up to the tip. Omitted: equally among the staff on the lines. */
+    shares: z.array(z.object({ staffId: z.uuid(), amount: positiveAmount })).min(1).max(20).optional(),
+  })
+  .refine((t) => !t.shares || new Set(t.shares.map((s) => s.staffId)).size === t.shares.length, { message: 'Each staff member once', path: ['shares'] });
+export type TipInput = z.infer<typeof tipSchema>;
+
+/**
+ * Give a voided sale's card tip back again (session 25), when the first attempt after the void could
+ * not reach the card provider. `cashierSessionId`: the open drawer to pay it from if the provider
+ * refuses and the void's own shift has closed since.
+ */
+export const tipRefundSchema = z.object({ cashierSessionId: z.uuid().optional() });
+export type TipRefundInput = z.infer<typeof tipRefundSchema>;
+
 export const saleLineSchema = taxQuoteLineObject
   .extend({
+    choices: counterChoicesSchema.optional(),
+    kitchenNote: kitchenNoteSchema.optional(),
     statutory: z
       .object({
         scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
@@ -70,7 +106,8 @@ export const saleLineSchema = taxQuoteLineObject
       })
       .optional(),
   })
-  .refine(...oneDiscountRefinement);
+  .refine(...oneDiscountRefinement)
+  .refine(...packageSessionRefinement);
 
 export const saleBeneficiarySchema = z.object({
   ref,
@@ -120,6 +157,11 @@ export const createSaleSchema = z
     expectedAmountDue: amountSchema.optional(),
     /** The customer it is rung up for (ADR-0018); required to pay with their store credit. */
     customerId: z.uuid().optional(),
+    /** Counter service: the name the kitchen calls out with the order number. */
+    pickupName: z.string().trim().min(1).max(60).optional(),
+    tip: tipSchema.optional(),
+    /** The appointment this sale rings up (ADR-0022 §4); it becomes COMPLETED with the sale. */
+    appointmentId: z.uuid().optional(),
   })
   .superRefine(checkSaleRefs)
   .refine((v) => v.customerId !== undefined || !v.tenders.some((t) => t.method === 'STORE_CREDIT'), { message: 'Store credit needs the customer on the sale', path: ['customerId'] });
@@ -131,6 +173,11 @@ export const createPaymentIntentSchema = z.object({
   clientTransactionId: ref,
   method: z.enum(['CARD', 'QR', 'EWALLET']),
   amount: positiveAmount,
+  /**
+   * TIP (session 25): the charge of a tip given with the sale (`tip.paymentIntentId`), never one of its
+   * tenders. FOLIO (ADR-0023 §5.2): a guest settling a folio or paying a booking deposit at the front desk.
+   */
+  purpose: z.enum(['SALE', 'TIP', 'FOLIO']).default('SALE'),
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
@@ -324,12 +371,23 @@ export const stockAdjustmentSchema = z
           quantity: signedQuantity,
           /** Cost of stock coming in (ADR-0012); ignored for removals, which leave at the average. Default: the last average, else the reference cost. */
           unitCost: amountSchema.optional(),
+          /** Stock coming in: its expiry date and lot (ADR-0020 §3). */
+          expiresOn: z.iso.date().optional(),
+          lotCode: z.string().trim().min(1).max(40).optional(),
+          /** A removal: the lot it takes first (e.g. writing off expired stock). */
+          lotId: z.uuid().optional(),
         }),
       )
       .min(1)
       .max(500),
   })
   .superRefine((v, ctx) => {
+    v.items.forEach((i, n) => {
+      const out = i.quantity.startsWith('-');
+      if (out && i.expiresOn) ctx.addIssue({ code: 'custom', path: ['items', n, 'expiresOn'], message: 'Only stock coming in takes an expiry date' });
+      if (!out && i.lotId) ctx.addIssue({ code: 'custom', path: ['items', n, 'lotId'], message: 'Only a removal names a lot' });
+      if (i.lotCode && !i.expiresOn) ctx.addIssue({ code: 'custom', path: ['items', n, 'expiresOn'], message: 'A lot needs its expiry date' });
+    });
     if (v.kind !== 'WASTE') return;
     v.items.forEach((i, n) => {
       if (!i.quantity.startsWith('-')) ctx.addIssue({ code: 'custom', path: ['items', n, 'quantity'], message: 'Waste removes stock: use a negative quantity' });

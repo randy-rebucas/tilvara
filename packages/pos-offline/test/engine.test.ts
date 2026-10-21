@@ -267,3 +267,73 @@ describe('scale labels offline (session 16)', () => {
     expect(await engine.lookup(`${first12}${(ean13CheckDigit(first12) + 1) % 10}`)).toBeNull();
   });
 });
+
+describe('counter service offline (session 25)', () => {
+  const BURGER = '0199f0a0-0000-7000-8000-00000000b001';
+  const CHEESE = '0199f0a0-0000-7000-8000-00000000c4ee';
+  const [MEDIUM, WELL, CHEESE_OPT, NO_ONIONS] = ['0199f0a0-0000-7000-8000-0000000000a1', '0199f0a0-0000-7000-8000-0000000000a2', '0199f0a0-0000-7000-8000-0000000000a3', '0199f0a0-0000-7000-8000-0000000000a4'];
+  const cafe: Snapshot = {
+    ...snapshot,
+    items: [
+      ...snapshot.items,
+      { variantId: BURGER, sku: 'BURGER', name: 'Burger', barcodes: [], priceId: 'p3', priceListId: 'l1', unitPrice: '150.0000', priceIncludesTax: true, vatTreatment: 'VATABLE', taxCategoryCode: 'VAT', wholeUnits: true, trackInventory: false },
+      { variantId: CHEESE, sku: 'CHEESE', name: 'Cheese slice', barcodes: [], priceId: 'p4', priceListId: 'l1', unitPrice: '20.0000', priceIncludesTax: true, vatTreatment: 'VATABLE', taxCategoryCode: 'VAT', wholeUnits: true, trackInventory: true },
+    ],
+    counter: {
+      menuVersionId: '0199f0a0-0000-7000-8000-00000000me01',
+      items: [{
+        variantId: BURGER, name: 'Burger', stationCode: 'GRILL',
+        modifierGroups: [
+          { id: 'g1', name: 'Doneness', minSelect: 1, maxSelect: 1, options: [{ id: MEDIUM, name: 'Medium', variantId: null }, { id: WELL, name: 'Well done', variantId: null }] },
+          { id: 'g2', name: 'Extras', minSelect: 0, maxSelect: 2, options: [{ id: CHEESE_OPT, name: 'Cheese', variantId: CHEESE }, { id: NO_ONIONS, name: 'No onions', variantId: null }] },
+        ],
+      }],
+      stations: [{ id: 's1', code: 'GRILL', name: 'Grill', isDefault: true }],
+    },
+  };
+  const cafeServer = () => {
+    const s = fakeServer();
+    s.transport.snapshot = async () => cafe;
+    return s;
+  };
+
+  it('prices priced choices as lines after their item, sends the choices with the menu version, and gives the kitchen ticket to print', async () => {
+    const server = cafeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    expect((await engine.counterMenu())?.menuVersionId).toBe(cafe.counter!.menuVersionId);
+    const line = { variantId: BURGER, quantity: '2', choices: [MEDIUM, CHEESE_OPT, NO_ONIONS], kitchenNote: 'Cut in half' };
+    const q = await engine.quote([line, { variantId: COLA, quantity: '1' }]);
+    expect(q.items.map((i) => i.name)).toEqual(['Burger', 'Cheese slice', 'Cola']);
+    expect(q.parentIndex).toEqual([null, 0, null]);
+    expect(q.totals.amountDue).toBe('362.40'); // 2 × (150 + 20) + 22.40
+    await expect(engine.quote([{ variantId: BURGER, quantity: '1', choices: [CHEESE_OPT] }])).rejects.toMatchObject({ code: 'UNKNOWN_ITEM', message: 'Choose 1 for Doneness' });
+    await expect(engine.quote([{ variantId: COLA, quantity: '1', choices: [MEDIUM] }])).rejects.toBeInstanceOf(OfflineSaleError);
+
+    const { sale, receipt, kitchen } = await engine.ringUp({ cashierUserId: CASHIER, lines: [line], tendered: '400', pickupName: ' Ana ' });
+    expect(sale.envelope).toMatchObject({
+      lines: [{ variantId: BURGER, quantity: '2', choices: [MEDIUM, CHEESE_OPT, NO_ONIONS], kitchenNote: 'Cut in half' }],
+      menuVersionId: cafe.counter!.menuVersionId, pickupName: 'Ana', amountDue: '340.00',
+    });
+    expect(receipt).toMatchObject({ callNumber: 1, pickupName: 'Ana' });
+    expect(receipt.lines.map((l) => [l.name, l.quantity, l.amount])).toEqual([['Burger', '2', '300.00'], ['+ Cheese slice', '2', '40.00']]);
+    expect(kitchen).toEqual([{ station: { id: 's1', code: 'GRILL', name: 'Grill' }, items: [{ name: 'Burger', quantity: '2', note: 'Cut in half', choices: ['Medium', 'Cheese', 'No onions'] }] }]);
+    // A shop line on a counter-service till is an ordinary offline sale.
+    const plain = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    expect(plain.sale.envelope.menuVersionId).toBeUndefined();
+    expect(plain.receipt.callNumber).toBeUndefined();
+    expect(plain.kitchen).toEqual([]);
+  });
+});
+
+describe('a cash tip offline (session 25)', () => {
+  it('the cash covers the sale and the tip; the envelope and receipt carry it, outside the total', async () => {
+    const server = fakeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    await expect(engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '25', tip: '5' })).rejects.toMatchObject({ code: 'INSUFFICIENT_TENDER' });
+    const { sale, receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50', tip: '5' });
+    expect(sale.envelope).toMatchObject({ amountDue: '22.40', tip: { amount: '5.00' }, tenders: [{ method: 'CASH', tendered: '50.00' }] });
+    expect(receipt).toMatchObject({ tip: '5.00', change: '22.60', totals: { amountDue: '22.40' } });
+  });
+});

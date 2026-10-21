@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { reservedAt } from '../inventory/reservations.service.js';
-import { and, branches, eq, inArray, productVariants, sql, stockAdjustments, stockBalances, stockMovements, type Database } from '@1pos/database';
+import { and, branches, eq, inArray, productVariants, sql, stockAdjustments, stockBalances, stockLots, stockMovements, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { stockChangePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
@@ -33,6 +33,13 @@ export class StockService extends TenantService {
       const missing = ids.filter((id) => !found.some((f) => f.id === id));
       if (missing.length) throw new AppError('NOT_FOUND', 'Variant not found', HttpStatus.NOT_FOUND, { variantIds: missing });
       const tenantId = tenantOf(auth).tenantId;
+      // A lot named for a removal must be one this business can see (the trigger checks item and branch).
+      const lotIds = [...new Set(input.items.flatMap((i) => (i.lotId ? [i.lotId] : [])))];
+      if (lotIds.length) {
+        const seen = await db.select({ id: stockLots.id }).from(stockLots).where(inArray(stockLots.id, lotIds));
+        const unknown = lotIds.filter((id) => !seen.some((l) => l.id === id));
+        if (unknown.length) throw new AppError('NOT_FOUND', 'Lot not found', HttpStatus.NOT_FOUND, { lotIds: unknown });
+      }
       const balances = await db
         .select({ variantId: stockBalances.variantId, avgCost: stockBalances.avgCost })
         .from(stockBalances)
@@ -60,6 +67,9 @@ export class StockService extends TenantService {
               variantId: i.variantId,
               quantity: i.quantity,
               ...(toDec(i.quantity).gt(0) && { unitCost: inboundCost(i.variantId, i.unitCost) }),
+              // Expiry lots (ADR-0020 §3): a date coming in; the lot taken first going out (the trigger checks it).
+              ...(i.expiresOn && { expiresOn: i.expiresOn, lotCode: i.lotCode ?? null }),
+              ...(i.lotId && { lotId: i.lotId }),
               type: input.kind,
               reason: input.reason,
               stockAdjustmentId: doc!.id,
@@ -135,9 +145,10 @@ export class StockService extends TenantService {
   }
 
   private async balanceRows(db: Database, branchId: string, variantIds?: string[]) {
-    const { rows } = await db.execute<{ variant_id: string; sku: string; quantity: string; value: string; avg_cost: string; updated_at: string }>(sql`
-      SELECT b.variant_id, v.sku, b.quantity::text AS quantity, b.value::text AS value, b.avg_cost::text AS avg_cost, b.updated_at
+    const { rows } = await db.execute<{ variant_id: string; sku: string; quantity: string; value: string; avg_cost: string; updated_at: string; location: string | null }>(sql`
+      SELECT b.variant_id, v.sku, b.quantity::text AS quantity, b.value::text AS value, b.avg_cost::text AS avg_cost, b.updated_at, il.location
         FROM stock_balances b JOIN product_variants v ON v.tenant_id = b.tenant_id AND v.id = b.variant_id
+        LEFT JOIN item_locations il ON il.branch_id = b.branch_id AND il.variant_id = b.variant_id
        WHERE b.branch_id = ${branchId}
          ${variantIds ? sql`AND b.variant_id IN (${sql.join(variantIds.map((id) => sql`${id}::uuid`), sql`, `)})` : sql``}
        ORDER BY v.sku`);
@@ -152,6 +163,8 @@ export class StockService extends TenantService {
       avgCost: toDec(r.avg_cost).toFixed(4),
       value: toDec(r.value).toFixed(2),
       updatedAt: new Date(r.updated_at).toISOString(),
+      // Its shelf in the branch (ADR-0021 §5).
+      location: r.location,
     }));
   }
 

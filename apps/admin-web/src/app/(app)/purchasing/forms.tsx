@@ -244,7 +244,12 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
         purchaseOrderLineId: l.id,
         variantId: l.variantId,
         quantity: text(f, `lines.${i}.quantity`) || '0',
-        ...compact({ rejectedQuantity: text(f, `lines.${i}.rejectedQuantity`), rejectionReason: text(f, `lines.${i}.rejectionReason`) }),
+        ...compact({
+          rejectedQuantity: text(f, `lines.${i}.rejectedQuantity`),
+          rejectionReason: text(f, `lines.${i}.rejectionReason`),
+          expiresOn: text(f, `lines.${i}.expiresOn`),
+          lotCode: text(f, `lines.${i}.lotCode`),
+        }),
       },
     }));
     const kept = rows.filter((r) => !(isZero(r.line.quantity) && isZero(r.line.rejectedQuantity)));
@@ -270,7 +275,7 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
       </div>
       <ul className="flex flex-col gap-3">
         {open.map((l, i) => (
-          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))] sm:items-end">
+          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))] lg:items-end">
             <div className="min-w-0">
               <div className="font-semibold">{l.name}</div>
               <div className="serial text-[0.8125rem] text-muted">{l.sku} · {t('pur.remaining')} {qty(l.remainingQuantity)}</div>
@@ -278,6 +283,9 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
             <TextField label={t('pur.accept')} name={`lines.${i}.quantity`} inputMode="decimal" defaultValue={qty(l.remainingQuantity).replaceAll(',', '')} error={lineError(i, 'quantity')} />
             <TextField label={t('pur.reject')} name={`lines.${i}.rejectedQuantity`} inputMode="decimal" placeholder="0" error={lineError(i, 'rejectedQuantity')} />
             <TextField label={t('pur.rejectReason')} name={`lines.${i}.rejectionReason`} error={lineError(i, 'rejectionReason')} />
+            {/* ADR-0020: required for an item that keeps expiry dates (the API says which line). */}
+            <TextField label={t('pur.expiresOn')} name={`lines.${i}.expiresOn`} type="date" error={lineError(i, 'expiresOn')} />
+            <TextField label={`${t('pur.lotCode')} (${t('common.optional')})`} name={`lines.${i}.lotCode`} maxLength={40} error={lineError(i, 'lotCode')} />
           </li>
         ))}
       </ul>

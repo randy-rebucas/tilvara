@@ -72,7 +72,7 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
   const open = sheet.status === 'OPEN';
   const changed = sheet.lines.filter((l) => (values[l.variantId] ?? '').trim() !== (l.countedQuantity ?? ''));
   const showExpected = sheet.expectedShown && (reveal || !open);
-  const shown = sheet.lines.filter((l) => !filter || `${l.sku} ${l.name}`.toLowerCase().includes(filter.toLowerCase()));
+  const shown = sheet.lines.filter((l) => !filter || `${l.sku} ${l.name} ${l.location ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   const counted = sheet.lines.filter((l) => l.countedQuantity !== null).length;
 
   async function onSave(e: React.FormEvent) {
@@ -109,7 +109,11 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
             return (
               <li key={l.id} className="grid gap-2 border-b border-hair-soft py-3 last:border-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <div className="min-w-0">
-                  <div className="font-semibold">{l.name}</div>
+                  <div className="font-semibold">
+                    {/* Shelf location (ADR-0021 §5): the sheet runs in shelf order. */}
+                    {l.location && <span className="tag serial mr-2 align-middle text-ink!" title={t('shelf.location')}>{l.location}</span>}
+                    {l.name}
+                  </div>
                   <div className="serial text-[0.8125rem] text-muted">
                     {l.sku}
                     {showExpected && l.expectedQuantity !== undefined && <> · {t('sheet.frozen')} {qty(l.expectedQuantity)}</>}
@@ -199,7 +203,7 @@ const POLICIES: NegativeStockPolicy[] = ['ALLOW', 'ALLOW_WITH_FLAG', 'BLOCK'];
 
 export function InventorySettingsForm({ settings, canEdit }: { settings: InventorySettings; canEdit: boolean }) {
   const { t } = useT();
-  const { pending, submit, error } = useSubmit();
+  const { pending, submit, error, fieldError } = useSubmit();
   const [done, setDone] = useState(false);
   return (
     <form
@@ -212,6 +216,7 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
         const r = await submit('PUT', `/api/v1/branches/${settings.branchId}/inventory-settings`, {
           negativeStockPolicy: f.get('negativeStockPolicy'),
           lowStockAlerts: f.get('lowStockAlerts') === 'on',
+          ...(String(f.get('expiryAlertDays') ?? '').trim() !== '' ? { expiryAlertDays: Number(f.get('expiryAlertDays')) } : {}),
         });
         if (r.ok) setDone(true);
       }}
@@ -236,6 +241,9 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
             <span className="block text-[0.8125rem] text-muted">{t('invset.alertsHint')}</span>
           </span>
         </label>
+      </fieldset>
+      <fieldset disabled={!canEdit} className="max-w-[320px]">
+        <TextField label={t('invset.expiryDays')} name="expiryAlertDays" type="number" min={0} max={365} inputMode="numeric" defaultValue={String(settings.expiryAlertDays ?? 30)} hint={t('invset.expiryDaysHint')} error={fieldError('expiryAlertDays')} />
       </fieldset>
       {canEdit ? (
         <div className="flex flex-wrap items-center gap-3">

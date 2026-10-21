@@ -208,4 +208,11 @@ export class OrdersController {
   unbump(@Auth() auth: AuthContext, @Param('id', id) ticketId: string) {
     return this.kitchen.unbump(auth, ticketId);
   }
+
+  /** Print a ticket again on its station's printer (session 25): the printing till picks it up. */
+  @HttpCode(200)
+  @Post('kitchen/tickets/:id/reprint')
+  reprint(@Auth() auth: AuthContext, @Param('id', id) ticketId: string) {
+    return this.kitchen.reprint(auth, ticketId);
+  }
 }

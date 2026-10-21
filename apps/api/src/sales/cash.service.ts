@@ -19,7 +19,7 @@ import {
   mapInSequence,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
-import { cashMovementPosting, cashVariancePosting } from '@1pos/accounting';
+import { cashMovementPosting, cashVariancePosting, tipPayoutPosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
 import type { ApproveVarianceInput, CashierSessionListQuery, CashMovementInput, CloseCashierSessionInput, OpenCashierSessionInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -27,6 +27,7 @@ import type { ResourceScope } from '../auth/authorization.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
+import { unprocessable } from '../tax/tax.service.js';
 
 export type SessionRow = typeof cashierSessions.$inferSelect;
 
@@ -213,7 +214,12 @@ export class CashService extends TenantService {
       const { session, scope } = await loadSession(db, id, true);
       this.assertCanOperate(auth, session, scope);
       if (session.status !== 'OPEN') throw notOpen();
-      const amount = input.type === 'PAY_OUT' ? toDec(input.amount).negated().toString() : input.amount;
+      const out = input.type !== 'PAY_IN';
+      const amount = out ? toDec(input.amount).negated().toString() : input.amount;
+      // Tips handed to staff (session 25) leave the drawer like a pay-out, against what is owed to them.
+      if (input.type === 'TIP_PAYOUT' && toDec(await expectedCash(db, id)).lt(input.amount)) {
+        throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for that', { available: toDec(await expectedCash(db, id)).toFixed(2) });
+      }
       const [row] = await db
         .insert(cashMovements)
         .values({ tenantId: tenantOf(auth).tenantId, cashierSessionId: id, type: input.type, amount, reason: input.reason, createdBy: auth.userId })
@@ -224,8 +230,8 @@ export class CashService extends TenantService {
         branchId: session.branchId,
         sourceType: 'CASH_MOVEMENT',
         sourceId: row!.id,
-        memo: `${input.type === 'PAY_OUT' ? 'Pay-out' : 'Pay-in'}: ${input.reason}`,
-        lines: cashMovementPosting(amount, session.branchId),
+        memo: `${input.type === 'TIP_PAYOUT' ? 'Tips paid out' : out ? 'Pay-out' : 'Pay-in'}: ${input.reason}`,
+        lines: input.type === 'TIP_PAYOUT' ? tipPayoutPosting(input.amount, session.branchId) : cashMovementPosting(amount, session.branchId),
         createdBy: auth.userId,
       });
       await this.audit(db, auth, `cash.${input.type.toLowerCase()}`, 'cashier_session', id, { amount: input.amount, reason: input.reason });
@@ -247,7 +253,8 @@ export class CashService extends TenantService {
         .where(
           and(
             eq(paymentIntents.cashierSessionId, id),
-            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId))),
+            // A FOLIO payment (ADR-0023) is settled by the folio payment or deposit that consumed it.
+            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), isNull(paymentIntents.folioId))),
           ),
         );
       if (outstanding.length) {
@@ -360,7 +367,7 @@ export class CashService extends TenantService {
     const payInOut = await db
       .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
       .from(cashMovements)
-      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT'])))
+      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT', 'TIP_PAYOUT'])))
       .orderBy(cashMovements.createdAt, cashMovements.id);
     return {
       ...base,

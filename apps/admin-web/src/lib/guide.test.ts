@@ -47,6 +47,10 @@ describe('user guide', () => {
     expect(topicFor('/restaurant/menus', 'RETAIL')).toBe('subscription');
     expect(topicFor('/restaurant/menus', 'RESTAURANT')).toBe('restaurant');
     expect(topicFor('/products', 'RETAIL')).toBe('products');
+    // ADR-0020: packs and expiry have their own part; the rest of Inventory stays with inventory.
+    expect([topicFor('/inventory/packs', 'GROCERY'), topicFor('/inventory/expiry'), topicFor('/inventory/movements', 'GROCERY')]).toEqual(['tingi', 'tingi', 'inventory']);
+    // ADR-0021: promotions, quick keys and labels have their own part; the rest of Prices and Products stay put.
+    expect([topicFor('/prices/promotions/abc'), topicFor('/products/labels'), topicFor('/products/quick-keys'), topicFor('/prices'), topicFor('/products/abc')]).toEqual(['retail', 'retail', 'retail', 'prices', 'products']);
   });
 
   it('leaves restaurant service out for a retail shop, and selling by weight out for a restaurant', () => {
@@ -76,5 +80,32 @@ describe('user guide', () => {
     const cashier = guideFor('HYBRID', ['catalog.read', 'sales.create', 'cash.session', 'restaurant.orders']);
     const by = Object.fromEntries(cashier.map((s) => [s.id, s.permitted]));
     expect(by).toMatchObject({ start: true, products: true, prices: true, books: false, team: false, restaurant: false, account: true, till: true });
+  });
+
+  it('a salon gets the appointments part and no restaurant; a shop gets neither (ADR-0022)', () => {
+    const salon = guideFor('SALON', [...ALL, 'appointments.read']);
+    expect(salon.map((s) => s.id)).toContain('salon');
+    expect(salon.map((s) => s.id)).not.toContain('restaurant');
+    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('salon');
+    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('salon');
+    expect(topicFor('/appointments/staff/abc', 'SALON')).toBe('salon');
+    expect(topicFor('/reports/commissions', 'SALON')).toBe('salon');
+    expect(topicFor('/appointments', 'RETAIL')).toBe('subscription');
+    expect(topicFor('/restaurant/menus', 'SALON')).toBe('subscription');
+  });
+});
+
+describe('lodging guide (ADR-0023)', () => {
+  it('a hotel gets the rooms part and its restaurant; a shop and a salon get no rooms part', () => {
+    const hotel = guideFor('LODGING', [...ALL, 'lodging.read']).map((s) => s.id);
+    expect(hotel).toContain('lodging');
+    expect(hotel).toContain('restaurant');
+    expect(hotel).not.toContain('salon');
+    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('lodging');
+    expect(guideFor('SALON', ALL).map((s) => s.id)).not.toContain('lodging');
+    expect(topicFor('/lodging/stays/abc', 'LODGING')).toBe('lodging');
+    expect(topicFor('/reports/occupancy', 'LODGING')).toBe('lodging');
+    expect(topicFor('/reports/guest-ledger', 'HYBRID')).toBe('lodging');
+    expect(topicFor('/lodging', 'RETAIL')).toBe('subscription');
   });
 });

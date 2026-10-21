@@ -65,6 +65,18 @@ export class ReceivingService extends TenantService {
       await activeSupplier(db, input.supplierId);
       await assertVariants(db, input.lines.map((l) => l.variantId));
       const tenantId = tenantOf(auth).tenantId;
+      // An item that keeps expiry dates comes in with one (ADR-0020 §3).
+      const dated = await db
+        .select({ id: productVariants.id })
+        .from(productVariants)
+        .innerJoin(products, eq(products.id, productVariants.productId))
+        .where(and(inArray(productVariants.id, [...new Set(input.lines.map((l) => l.variantId))]), eq(products.tracksExpiry, true)));
+      input.lines.forEach((l, i) => {
+        if (!l.expiresOn && toDec(l.quantity).gt(0) && dated.some((d) => d.id === l.variantId)) {
+          const message = 'This item keeps expiry dates: enter the date on the pack';
+          throw unprocessable('EXPIRY_DATE_REQUIRED', message, { line: i, issues: [{ path: `lines.${i}.expiresOn`, message }] });
+        }
+      });
 
       // Against an order: lock it, then check every line against what is still outstanding.
       const costs = new Map<number, string>();
@@ -123,6 +135,8 @@ export class ReceivingService extends TenantService {
             rejectedQuantity: l.rejectedQuantity ?? '0',
             rejectionReason: l.rejectionReason ?? null,
             unitCost: costs.get(i) ?? l.unitCost!,
+            expiresOn: l.expiresOn ?? null,
+            lotCode: l.lotCode ?? null,
           })),
         )
         .returning();
@@ -130,7 +144,7 @@ export class ReceivingService extends TenantService {
       const track = await tracking(db, inserted.map((l) => l.variantId));
       const moves = inserted
         .filter((l) => toDec(l.quantity).gt(0) && track.get(l.variantId))
-        .map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost, type: 'RECEIPT', goodsReceiptLineId: l.id, createdBy: auth.userId }))
+        .map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost, type: 'RECEIPT', goodsReceiptLineId: l.id, expiresOn: l.expiresOn, lotCode: l.lotCode, createdBy: auth.userId }))
         .sort(byVariant);
       const moved = moves.length ? await db.insert(stockMovements).values(moves).returning({ value: stockMovements.value }) : [];
 

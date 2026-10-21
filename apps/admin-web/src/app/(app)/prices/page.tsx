@@ -5,6 +5,7 @@ import { formatDateTime, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { ActionButton } from '@/components/actions';
 import { AssignBranch, NewPriceList, RenamePriceList, SetPrice } from './set-price';
+import { PricesTabs } from './tabs';
 
 export const metadata = { title: 'Prices' };
 
@@ -33,6 +34,7 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('price.title')} lede={t('price.lede')} />
+      <PricesTabs active="lists" />
 
       <div>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">

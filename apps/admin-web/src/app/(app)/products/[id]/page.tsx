@@ -2,11 +2,13 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Note, Serial } from '@/components/note';
-import { api, apiOrNull, type CurrentPrice, type Me, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
+import { allProducts, api, apiOrNull, type CurrentPrice, type Me, type PackageItems, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
+import { servesAppointments } from '@/lib/business-type';
 import { peso } from '@/lib/format';
-import { isUuid } from '@/lib/options';
+import { isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
-import { AddBarcode, AddVariant, EditProduct, EditVariant, RemoveBarcode } from './forms';
+import { AddCombinations } from '../variant-grid';
+import { AddBarcode, AddPackLink, AddVariant, EditProduct, EditVariant, MakeBarcode, PackageContents, RemoveBarcode } from './forms';
 
 export const metadata = { title: 'Product' };
 
@@ -15,12 +17,13 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t } = await getT();
-  const [me, product, taxes, uoms, lists] = await Promise.all([
+  const [me, product, taxes, uoms, lists, links] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<ProductDetail>(`/products/${id}`),
     apiOrNull<{ data: TaxCategory[] }>('/tax-categories'),
     apiOrNull<{ data: Uom[] }>('/uoms'),
     apiOrNull<{ data: PriceList[] }>('/price-lists'),
+    apiOrNull<{ data: PackLink[] }>('/pack-conversions'),
   ]);
   if (!product) notFound();
   const defaultList = lists?.data.find((l) => l.isDefault);
@@ -30,6 +33,20 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const tax = taxes?.data.find((x) => x.id === product.taxCategoryId);
   const uom = uoms?.data.find((u) => u.id === product.uomId);
   const live = product.variants.filter((v) => !v.archivedAt);
+  // Packs and pieces (ADR-0020): links where one of this product's items is the pack or the piece.
+  const mine = new Set(product.variants.map((v) => v.id));
+  const packLinks = (links?.data ?? []).filter((l) => mine.has(l.pack.variantId) || mine.has(l.piece.variantId));
+  const stocked = product.trackInventory && canManage ? variantOptions((await allProducts())?.data, { stocked: true }) : [];
+  // Salons (ADR-0022): a service's duration and supplies used; a package's validity and contents.
+  const salon = servesAppointments(me.activeTenant?.businessType);
+  const isPackage = product.productType === 'PACKAGE';
+  const contents = isPackage ? await Promise.all(live.map((v) => apiOrNull<PackageItems>(`/variants/${v.id}/package-items`))) : [];
+  const serviceOptions = isPackage && canManage
+    ? ((await allProducts())?.data ?? [])
+        .filter((p) => p.productType === 'SERVICE' && !p.archivedAt)
+        .flatMap((p) => p.variants.filter((v) => !v.archivedAt).map((v) => ({ id: v.id, label: `${v.sku} · ${p.name}${v.name ? ` — ${v.name}` : ''}` })))
+    : [];
+  const kindLabel = product.productType === 'SERVICE' ? t('prod.service') : isPackage ? t('prod.package') : product.trackInventory ? t('prod.tracked') : t('prod.untracked');
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,7 +54,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <Link href="/products" className="text-[0.875rem] text-muted underline">{t('prod.title')}</Link>
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{product.name}</h1>
         <Serial className="mt-1 block">
-          {uom?.code ?? '—'} · {product.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')} · {tax?.name ?? '—'} · {product.productType === 'SERVICE' ? t('prod.service') : product.trackInventory ? t('prod.tracked') : t('prod.untracked')}
+          {uom?.code ?? '—'} · {product.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')} · {tax?.name ?? '—'} · {kindLabel}
+          {product.tracksExpiry && <> · {t('prod.expiryTag')}</>}
         </Serial>
         {product.description && <p className="mt-2 max-w-[68ch] text-muted">{product.description}</p>}
       </div>
@@ -48,6 +66,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         <div className="flex flex-wrap items-start gap-2">
           <EditProduct product={product} taxes={taxes.data} />
           <AddVariant productId={product.id} />
+          <AddCombinations product={product} />
           <ActionButton url={`/api/v1/products/${product.id}/archive`} label={t('prod.archive')} confirmText={t('prod.archiveConfirm', { name: product.name })} />
         </div>
       )}
@@ -61,6 +80,14 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="min-w-0">
                   <p className="font-semibold">{v.name ?? product.name}{v.archivedAt && <span className="tag ml-2">{t('prod.archived')}</span>}</p>
                   <Serial className="text-ink">{v.sku}</Serial>
+                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage) && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {product.productType === 'SERVICE' && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
+                      {isPackage && <span className="tag">{v.packageValidDays ? t('prod.validTag', { n: v.packageValidDays }) : t('prod.noExpiry')}</span>}
+                      {Object.entries(v.attributes ?? {}).map(([k, val]) => <span key={k} className="tag">{k}: {val}</span>)}
+                      {v.quickKeyPosition && <span className="tag border-blue/40 text-blue!">{t('qk.keyN', { n: v.quickKeyPosition })}</span>}
+                    </div>
+                  )}
                 </div>
                 <dl className="flex gap-6 text-right">
                   <div>
@@ -81,9 +108,27 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
               {canManage && !v.archivedAt && (
                 <div className="flex flex-wrap items-end gap-3">
                   <AddBarcode variantId={v.id} />
-                  <EditVariant variant={v} />
+                  {v.barcodeIds.length === 0 && <MakeBarcode variantId={v.id} />}
+                  <EditVariant variant={v} productType={product.productType} />
+                  {product.productType === 'SERVICE' && salon && (
+                    <Link href={`/products/${product.id}/supplies/${v.id}`} className="btn">{t('prod.suppliesUsed')}</Link>
+                  )}
                   {live.length > 1 && (
                     <ActionButton url={`/api/v1/variants/${v.id}/archive`} label={t('prod.archiveVariant')} confirmText={t('prod.archiveVariantConfirm', { sku: v.sku })} />
+                  )}
+                </div>
+              )}
+              {isPackage && !v.archivedAt && (
+                <div className="border-t border-hair-soft pt-3">
+                  <p className="mb-2 text-[0.875rem] font-semibold">{t('prod.pkgContents')}</p>
+                  {canManage ? (
+                    <PackageContents variantId={v.id} services={serviceOptions} items={contents[live.indexOf(v)]?.items ?? []} />
+                  ) : (contents[live.indexOf(v)]?.items.length ?? 0) > 0 ? (
+                    <ul className="grid gap-0.5 text-[0.9375rem]">
+                      {contents[live.indexOf(v)]!.items.map((i) => <li key={i.serviceVariantId}>{t('prod.pkgLine', { n: i.sessions, name: i.name })}</li>)}
+                    </ul>
+                  ) : (
+                    <p className="text-[0.875rem] text-muted">{t('prod.pkgEmpty')}</p>
                   )}
                 </div>
               )}
@@ -92,6 +137,42 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         </div>
         {canManage && <p className="mt-2 text-[0.8125rem] text-muted">{t('prod.priceHint')} <Link href="/prices" className="underline">{t('price.title')}</Link></p>}
       </section>
+
+      {product.trackInventory && (
+        <section aria-labelledby="packs-title">
+          <h2 id="packs-title" className="section-title mb-1">{t('prod.packsTitle')}</h2>
+          <p className="mb-3 max-w-[68ch] text-[0.875rem] text-muted">{t('prod.packsLede')}</p>
+          {packLinks.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {packLinks.map((l) => (
+                <li key={l.id}>
+                  <Note denom="blue" className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 pr-6">
+                    <div className="min-w-0">
+                      <p className="font-semibold">{t('prod.packLine', { pack: l.pack.name, n: l.piecesPerPack, piece: l.piece.name })}</p>
+                      <Serial>
+                        {l.pack.sku} → {l.piece.sku} · {l.autoOpen ? t('prod.autoOpenOn') : t('prod.autoOpenOff')}
+                      </Serial>
+                    </div>
+                    {canManage && (
+                      <div className="flex flex-wrap gap-2">
+                        <ActionButton method="PATCH" url={`/api/v1/pack-conversions/${l.id}`} body={{ autoOpen: !l.autoOpen }} label={l.autoOpen ? t('prod.autoOpenTurnOff') : t('prod.autoOpenTurnOn')} />
+                        <ActionButton url={`/api/v1/pack-conversions/${l.id}/archive`} label={t('prod.packArchive')} confirmText={t('prod.packArchiveConfirm', { pack: l.pack.name, piece: l.piece.name })} />
+                      </div>
+                    )}
+                  </Note>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[0.875rem] text-muted">{t('prod.noPacks')}</p>
+          )}
+          {canManage && stocked.length > 1 && (
+            <div className="mt-3">
+              <AddPackLink variants={stocked} packVariantId={live[0]?.id} />
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

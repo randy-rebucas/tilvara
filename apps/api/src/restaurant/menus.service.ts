@@ -340,7 +340,8 @@ export class MenusService extends TenantService {
     return this.read(auth, async (db) => {
       const { scope } = await branchScope(db, branchId);
       // The kitchen reads it too: the KDS marks the menu's items sold out (kitchen.operate may set that).
-      if (!['restaurant.orders', 'restaurant.manage', 'kitchen.operate'].some((p) => this.can(auth, p as PermissionCode, scope))) this.assertCan(auth, 'restaurant.orders', scope);
+      // So does a cashier at a counter-service branch (session 25): the Sell screen offers its choices.
+      if (!['restaurant.orders', 'restaurant.manage', 'kitchen.operate', 'sales.create'].some((p) => this.can(auth, p as PermissionCode, scope))) this.assertCan(auth, 'restaurant.orders', scope);
       await assertFeature(db, 'restaurant');
       return this.served(db, branchId, q.orderType);
     });
@@ -350,7 +351,9 @@ export class MenusService extends TenantService {
   async served(db: Database, branchId: string, orderType: 'DINE_IN' | 'TAKEAWAY') {
     const settings = await loadSettings(db, branchId);
     const menuId = orderType === 'TAKEAWAY' ? settings?.takeawayMenuId : settings?.dineInMenuId;
-    const empty = { branchId, orderType, menu: null };
+    /** Counter service (session 25): the counter sells this branch's takeaway menu with its choices. */
+    const counterService = settings?.counterService ?? false;
+    const empty = { branchId, orderType, counterService, menu: null };
     if (!menuId) return empty;
     const [menu] = await db.select().from(menus).where(eq(menus.id, menuId));
     const [version] = await db.select().from(menuVersions).where(and(eq(menuVersions.menuId, menuId), eq(menuVersions.status, 'PUBLISHED')));
@@ -377,6 +380,7 @@ export class MenusService extends TenantService {
     return {
       branchId,
       orderType,
+      counterService,
       menu: {
         id: menu.id,
         name: menu.name,

@@ -36,6 +36,7 @@ import { archived, notFound, TenantService, type ConflictMap } from '../common/t
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
+import { unprocessable } from '../tax/tax.service.js';
 
 /** Who may read a branch's restaurant set-up: managers, floor staff and the kitchen. */
 const FLOOR_READ: PermissionCode[] = ['restaurant.manage', 'restaurant.orders', 'kitchen.operate'];
@@ -47,6 +48,7 @@ export const DEFAULT_SETTINGS = {
   serviceChargeDineIn: true,
   serviceChargeTakeaway: false,
   serviceChargeVatTreatment: 'VATABLE' as const,
+  counterService: false,
 };
 
 /**
@@ -276,7 +278,11 @@ export class FloorService extends TenantService {
         if (!m) throw new AppError('NOT_FOUND', 'Menu not found', HttpStatus.NOT_FOUND, { menuId });
         if (m.archivedAt) throw archived('Menu');
       }
-      const values = { ...input, updatedBy: auth.userId, updatedAt: sql`now()` };
+      const { counterService, ...rest } = input;
+      const counter = counterService ?? (await loadSettings(db, branchId))?.counterService ?? false;
+      // Counter service sells from the takeaway menu: without one, the counter would have nothing to offer.
+      if (counter && !input.takeawayMenuId) throw unprocessable('COUNTER_NEEDS_MENU', 'Counter service sells from the takeaway menu: choose one first', { path: ['takeawayMenuId'] });
+      const values = { ...rest, counterService: counter, updatedBy: auth.userId, updatedAt: sql`now()` };
       await db.insert(restaurantSettings)
         .values({ tenantId: tenantOf(auth).tenantId, branchId, ...values })
         .onConflictDoUpdate({ target: [restaurantSettings.tenantId, restaurantSettings.branchId], set: values });
@@ -339,6 +345,7 @@ function settingsView(branchId: string, row: typeof restaurantSettings.$inferSel
     serviceChargeDineIn: row.serviceChargeDineIn,
     serviceChargeTakeaway: row.serviceChargeTakeaway,
     serviceChargeVatTreatment: row.serviceChargeVatTreatment,
+    counterService: row.counterService,
     updatedAt: row.updatedAt,
   };
 }

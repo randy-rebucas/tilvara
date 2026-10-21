@@ -65,4 +65,55 @@ describe('report CSV', () => {
     }, t);
     expect(branches.at(-1)).toEqual(['All branches', 2, '10.00', 0, '0.00', '10.00', '1.07', '8.93', '0.00', '0.00']);
   });
+
+  it('session 25: tips per day with the books line and each cashier; free choices under their item', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+    expect(reportPath('tips', q)).toBe('/reports/tips?branchId=b&from=2026-10-01&to=2026-10-20');
+    const day = { tips: 2, cash: '20.00', electronic: '15.00', taken: '35.00', refunded: '0.00', paidOut: '5.00', owed: '30.00' };
+    const tips = reportRows('tips', { days: [{ day: '2026-10-20', ...day }], byCashier: [{ userId: 'u', name: 'Ana', tips: 2, amount: '35.00' }], totals: day, ledger: '30.00' }, t);
+    expect(tips[1]).toEqual(['2026-10-20', 2, '20.00', '15.00', '35.00', '0.00', '5.00', '30.00']);
+    expect(tips[2]![0]).toBe('Total');
+    expect(tips[3]).toEqual(['Tips payable in the books', '', '', '', '', '', '', '30.00']);
+    expect(tips.at(-1)).toEqual(['Ana', 2, '35.00']);
+    const f = { netQuantity: '2', netSales: '300.00', revenueExVat: '267.86', cogs: '6.00', grossProfit: '261.86', marginPct: '97.8' };
+    const items = reportRows('items', {
+      data: [{ variantId: 'v', sku: 'BRG', name: 'Burger', checks: 1, ...f, modifiers: [], withModifiers: f, freeChoices: [{ modifierOptionId: 'o', name: 'No onions', quantity: '2', orders: 1 }] }],
+      totals: f,
+    }, t);
+    expect(items[2]).toEqual(['', 'No onions', 'Burger', '2', '', '', '', '', '', 1]);
+  });
+
+  it('session 26: promotions with their kind in words; sizes and colours by the chosen attribute', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+    expect(reportPath('promotions', q)).toBe('/reports/promotions?branchId=b&from=2026-10-01&to=2026-10-20');
+    expect(reportPath('attributes', { ...q, attribute: 'Size & fit' })).toBe('/reports/by-attribute?branchId=b&from=2026-10-01&to=2026-10-20&attribute=Size%20%26%20fit');
+    expect(reportPath('attributes', q)).toBe('/reports/by-attribute?branchId=b&from=2026-10-01&to=2026-10-20');
+    const promos = reportRows('promotions', { data: [{ promotionId: 'p', name: '3 for 800', kind: 'MULTI_BUY', salesCount: 2, netQuantity: '6', discount: '298.00', netSales: '1600.00' }] }, t);
+    expect(promos[1]).toEqual(['3 for 800', 'Multi-buy', 2, '6', '298.00', '1600.00']);
+    const sizes = reportRows('attributes', {
+      attribute: 'Size',
+      attributes: ['Colour', 'Size'],
+      data: [
+        { value: 'M', quantitySold: '3', quantityReturned: '1', netQuantity: '2', netSales: '700.00', revenueExVat: '625.00' },
+        { value: null, quantitySold: '1', quantityReturned: '0', netQuantity: '1', netSales: '50.00', revenueExVat: '44.64' },
+      ],
+    }, t);
+    expect(sizes[0]![0]).toBe('Size');
+    expect(sizes[1]).toEqual(['M', '3', '1', '2', '700.00', '625.00']);
+    expect(sizes[2]![0]).toBe('No Size');
+  });
+
+  it('salon reports (ADR-0022): commissions with a total row, tips with unassigned named', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21' };
+    expect(reportPath('commissions', q)).toBe('/reports/commissions?branchId=b&from=2026-10-01&to=2026-10-21');
+    expect(reportPath('staffTips', q)).toBe('/reports/tips-by-staff?branchId=b&from=2026-10-01&to=2026-10-21');
+    const rows = reportRows('commissions', {
+      staff: [{ staffId: 's', name: 'Joy', lines: 2, sales: '1000.00', returns: '0.00', netBase: '1000.00', commission: '150.00' }],
+      totals: { lines: 2, sales: '1000.00', returns: '0.00', netBase: '1000.00', commission: '150.00' },
+    }, t);
+    expect(rows[1]).toEqual(['Joy', 2, '1000.00', '0.00', '1000.00', '150.00']);
+    expect(rows[2]![0]).toBe('Total');
+    const tips = reportRows('staffTips', { staff: [{ staffId: null, name: null, tips: 1, amount: '20.00', voided: '0.00' }], total: '20.00' }, t);
+    expect(tips[1]).toEqual(['Unassigned', 1, '20.00', '0.00']);
+  });
 });

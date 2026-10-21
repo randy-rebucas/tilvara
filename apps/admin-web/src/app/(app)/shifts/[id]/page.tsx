@@ -4,7 +4,8 @@ import { ReasonAction } from '@/components/actions';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, type Branch, type CashierSession, type Me, type Member, type Register, type Sale } from '@/lib/api';
+import { api, apiOrNull, type Branch, type CashierSession, type Me, type Member, type Register, type Sale, type SessionReport } from '@/lib/api';
+import { servesLodging } from '@/lib/business-type';
 import { formatDateTime, peso, signed, signOf } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -12,7 +13,10 @@ import { getT } from '@/i18n/server';
 
 export const metadata = { title: 'Shift' };
 
-/** A cashier shift: the drawer from float to count, its pay-ins and pay-outs, the variance and its approval, and its sales. */
+/** Cash movement types as the API names them (tips since session 25, the front desk since session 28). */
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT', 'FOLIO_PAYMENT', 'DEPOSIT', 'DEPOSIT_REFUND'] as const;
+
+/** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
@@ -31,6 +35,8 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const person = (userId: string | null) => (userId ? members?.data.find((m) => m.user.id === userId)?.user.displayName ?? '—' : '—');
   const journal = (sourceId: string) => (branch ? `/books?entity=${branch.legalEntityId}&source=${sourceId}` : null);
   const rec = shift.reconciliation;
+  // A front desk drawer (ADR-0023 §5.2): folio payments and deposits taken here, apart from sales.
+  const frontDesk = servesLodging(me.activeTenant?.businessType) ? (await apiOrNull<SessionReport>(`/reports/cashier-sessions/${id}`))?.frontDeskCollections : undefined;
   // Counted short or over and not yet approved: a manager other than the counter approves (the API checks both).
   const awaiting = shift.status === 'CLOSED' && rec !== null && (me.activeTenant?.permissions.includes('cash.reconcile') ?? false);
 
@@ -52,6 +58,40 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
         <Figure label={t('doc.salesTotal', { n: shift.sales.count })}>{peso(shift.sales.total)}</Figure>
         <Figure label={t('doc.expectedCash')}>{peso(rec?.expectedCash ?? shift.expectedCash)}</Figure>
       </Note>
+
+      {/* Every kind of cash in or out of the drawer, so tips taken, given back and paid out show beside sales. */}
+      {shift.movements.length > 0 && (
+        <section>
+          <h2 className="section-title mb-3">{t('doc.drawerMovements')}</h2>
+          <Note denom="none">
+            <dl className="grid gap-1 px-4 py-3 text-[0.9375rem]">
+              {[...shift.movements].sort((a, b) => CASH_TYPES.indexOf(a.type as never) - CASH_TYPES.indexOf(b.type as never)).map((mv) => (
+                <div key={mv.type} className="flex justify-between gap-3">
+                  <dt>{(CASH_TYPES as readonly string[]).includes(mv.type) ? t(`cashmv.${mv.type}` as MessageKey) : mv.type} <span className="text-muted">· {mv.count}</span></dt>
+                  <dd className="money">{signed(mv.total, peso)}</dd>
+                </div>
+              ))}
+            </dl>
+          </Note>
+        </section>
+      )}
+
+      {frontDesk && frontDesk.data.length > 0 && (
+        <section>
+          <h2 className="section-title mb-3">{t('lod.frontDeskCollections')}</h2>
+          <Note denom="none">
+            <dl className="grid gap-1 px-4 py-3 text-[0.9375rem]" data-testid="front-desk-collections">
+              {frontDesk.data.map((f) => (
+                <div key={`${f.kind}:${f.method}`} className="flex justify-between gap-3">
+                  <dt>{t(`lod.fd.${f.kind}` as MessageKey)} <span className="text-muted">· {f.method ? t(`lod.method.${f.method}` as MessageKey) : '—'} · {f.count}</span></dt>
+                  <dd className="money">{peso(f.amount)}</dd>
+                </div>
+              ))}
+            </dl>
+          </Note>
+          <p className="mt-2 text-[0.8125rem] text-muted">{t('lod.frontDeskHint', { cash: peso(frontDesk.cash) })}</p>
+        </section>
+      )}
 
       {rec && (
         <section>
@@ -94,7 +134,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
               {shift.payInOut.map((m) => (
                 <li key={m.id} id={`movement-${m.id}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-hair-soft px-4 py-3 last:border-b-0">
                   <div className="min-w-0">
-                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : 'doc.payOut')}: {m.reason ?? ''}</p>
+                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : m.type === 'TIP_PAYOUT' ? 'doc.tipPayout' : 'doc.payOut')}: {m.reason ?? ''}</p>
                     <Serial>{person(m.createdBy)} · {formatDateTime(m.createdAt, lang)}</Serial>
                   </div>
                   <div className="flex items-center gap-3">

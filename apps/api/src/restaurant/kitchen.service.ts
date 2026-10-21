@@ -61,7 +61,7 @@ export class KitchenService extends TenantService {
         .limit(200);
       if (!tickets.length) return { data: [] };
       const items = await db
-        .select({ item: orderItems, orderNumber: restaurantOrders.orderNumber, orderType: restaurantOrders.orderType, customerName: restaurantOrders.customerName, tableCode: restaurantTables.code })
+        .select({ item: orderItems, orderNumber: sql<number>`coalesce(${restaurantOrders.tillCallNumber}, ${restaurantOrders.orderNumber})`.mapWith(Number), orderType: restaurantOrders.orderType, customerName: restaurantOrders.customerName, tableCode: restaurantTables.code })
         .from(orderItems)
         .innerJoin(restaurantOrders, eq(restaurantOrders.id, orderItems.orderId))
         .leftJoin(restaurantTables, eq(restaurantTables.id, restaurantOrders.tableId))
@@ -155,6 +155,22 @@ export class KitchenService extends TenantService {
       const [row] = await db.update(kitchenTickets).set({ bumpedAt: null, bumpedBy: null }).where(eq(kitchenTickets.id, ticketId)).returning();
       await this.audit(db, auth, 'kitchen_ticket.unbumped', 'kitchen_ticket', ticketId, { ticketNumber: ticket.ticketNumber, items: moved.length });
       return { ...row!, inPrepItems: moved.length };
+    });
+  }
+
+  /**
+   * Ask for a ticket to be printed again (session 25): it goes back to unprinted, so the till that
+   * prints its station prints it on its next round, marked REPRINT. The kitchen or the floor may ask.
+   */
+  reprint(auth: AuthContext, ticketId: string) {
+    return this.mutate(auth, async (db) => {
+      const [ticket] = await db.select().from(kitchenTickets).where(eq(kitchenTickets.id, ticketId)).for('update');
+      if (!ticket) throw notFound('Kitchen ticket');
+      this.assertAny(auth, ['kitchen.operate', 'restaurant.orders'], (await branchScope(db, ticket.branchId)).scope);
+      await assertFeature(db, 'restaurant');
+      const [row] = await db.update(kitchenTickets).set({ printedAt: null, printClaimedAt: null, printClaimedBy: null, printCount: sql`greatest(${kitchenTickets.printCount}, 1)` }).where(eq(kitchenTickets.id, ticketId)).returning();
+      await this.audit(db, auth, 'kitchen_ticket.reprint_requested', 'kitchen_ticket', ticketId, { ticketNumber: ticket.ticketNumber, printCount: ticket.printCount });
+      return row!;
     });
   }
 

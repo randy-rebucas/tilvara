@@ -43,7 +43,7 @@ try {
   await fill('email', `${slug}@example.ph`);
   await fill('password', 'correct horse battery staple');
   await evaluate(`document.querySelector('input[name=businessType][value=RESTAURANT]').click()`);
-  await evaluate(`document.querySelector('form button.btn-primary').click()`);
+  await b.finishSteps();
   await waitFor(`document.body.innerText.includes('Overview')`);
 
   // Catalog through the BFF: dishes (no stock of their own) and stocked ingredients.
@@ -54,7 +54,7 @@ try {
   const vat = (await evaluate(`fetch('/api/v1/tax-categories').then((r) => r.json())`)).data.find((x) => x.code === 'VAT').id;
   const uom = (c) => uoms.find((u) => u.code === c).id;
   const product = async (name, sku, price, trackInventory, unit = 'PC') =>
-    (await bff('POST', '/api/v1/products', { name, uomId: uom(unit), taxCategoryId: vat, trackInventory, ...(unit === 'KG' && { soldBy: 'WEIGHT' }), variants: [{ sku, price }] }, true)).body.variants[0].id;
+    (await bff('POST', '/api/v1/products', { name, uomId: uom(unit), taxCategoryId: vat, trackInventory, variants: [{ sku, price }] }, true)).body.variants[0].id;
   const burger = await product('Burger', 'BRG-1', '150.00', false);
   await product('Iced tea', 'TEA-1', '45.00', false);
   await product('Bun', 'BUN-1', '10.00', true);
@@ -151,6 +151,23 @@ try {
   check('server: service charge rate 0.1 on dine-in, menu served', settings.serviceChargeRate === '0.1' && settings.serviceChargeDineIn === true && settings.dineInMenuId === menus[0].id);
   await open(`/restaurant/settings?branch=${branchId}`);
   check('rate shows back as 10 (%)', await evaluate(`document.querySelector('[name="rate"]').value === '10'`));
+
+  // Counter service (session 25): explained beside its switch, refused without a takeaway menu, then on.
+  check('counter service switch is off and explained', await evaluate(`document.querySelector('[name="counterService"]').checked === false`) && await shown('Counter service (pay first)') && await shown('For cafés and food trucks'));
+  await fill('takeawayMenuId', '');
+  await evaluate(`document.querySelector('[name="counterService"]').click()`);
+  await submitOpen();
+  check('counter service without a takeaway menu: the message sits on the takeaway menu field', await shown('Counter service sells from the takeaway menu: choose one first.'));
+  check('server: nothing changed by the refused save', (await bff('GET', `/api/v1/branches/${branchId}/restaurant-settings`)).body.counterService === false);
+  await fill('takeawayMenuId', menus[0].id);
+  await submitOpen();
+  check('counter service saved with the takeaway menu', await shown('Saved.'));
+  check('server: counter service on', (await bff('GET', `/api/v1/branches/${branchId}/restaurant-settings`)).body.counterService === true);
+  await open(`/restaurant/settings?branch=${branchId}`);
+  check('counter service shows back as on', await evaluate(`document.querySelector('[name="counterService"]').checked === true`));
+  await evaluate(`document.querySelector('[name="counterService"]').click()`);
+  await submitOpen();
+  check('counter service off again', await shown('Saved.') && (await bff('GET', `/api/v1/branches/${branchId}/restaurant-settings`)).body.counterService === false);
 
   // 86: the burger runs out, then comes back
   await panel('Mark sold out', 'note');

@@ -12,7 +12,7 @@ export interface LineField {
   name: string;
   label: string;
   /** `select` picks from `options` (items, accounts). */
-  kind: 'select' | 'decimal' | 'text';
+  kind: 'select' | 'decimal' | 'text' | 'date';
   placeholder?: string;
 }
 
@@ -61,7 +61,7 @@ export function LineItems({
                     {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                   </select>
                 ) : (
-                  <input id={id} name={name} className="input" defaultValue={value} inputMode={f.kind === 'decimal' ? 'decimal' : undefined} placeholder={f.placeholder} aria-invalid={error ? true : undefined} />
+                  <input id={id} name={name} className="input" defaultValue={value} type={f.kind === 'date' ? 'date' : undefined} inputMode={f.kind === 'decimal' ? 'decimal' : undefined} placeholder={f.placeholder} aria-invalid={error ? true : undefined} />
                 )}
                 {error && <p className="hint text-red!">{error}</p>}
               </div>

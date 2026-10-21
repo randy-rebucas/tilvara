@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { ExchangeStart } from './components/CounterTools';
+import { Appointments } from './components/Appointments';
 import { BusinessPicker, SignIn } from './components/Auth';
 import { CloseShift } from './components/CloseShift';
 import { History } from './components/History';
 import { KitchenBoard, KitchenPicker, type KitchenPlace } from './components/Kitchen';
 import { RegisterPicker, type Shift } from './components/Registers';
+import { Rooms } from './components/Rooms';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
 import { FloorPicker, Tables } from './components/Tables';
@@ -12,8 +14,8 @@ import { TillSetup } from './components/Till';
 import { useT } from './i18n';
 import type { GuideTopic } from './lib/guide';
 import { useTill } from './lib/till';
-import { api, session, signOut } from './lib/api';
-import { restaurantOnPlan, servesTables, type Me } from './types';
+import { api, session, signOut, uuid } from './lib/api';
+import { restaurantOnPlan, servesAppointments, servesLodging, servesTables, type AppointmentRingUp, type Me } from './types';
 
 type Stage =
   | { name: 'signin' }
@@ -24,9 +26,9 @@ type Stage =
   | { name: 'kitchen'; me: Me; place: KitchenPlace }
   | { name: 'floor-pick'; me: Me }
   | { name: 'floor'; me: Me; branch: Shift['branch'] };
-type Tab = 'sell' | 'tables' | 'history' | 'close';
+type Tab = 'sell' | 'appointments' | 'rooms' | 'tables' | 'history' | 'close';
 /** The part of the user guide each counter tab opens. */
-const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', tables: 'tables', history: 'shift', close: 'close' };
+const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', appointments: 'appointments', rooms: 'rooms', tables: 'tables', history: 'shift', close: 'close' };
 
 export function App() {
   const till = useTill();
@@ -48,6 +50,8 @@ function Counter() {
   const [tab, setTab] = useState<Tab>('sell');
   /** An exchange started from This shift, finished on Sell (session 20). */
   const [exchange, setExchange] = useState<ExchangeStart | null>(null);
+  /** An appointment rung up from the Appointments tab, finished on Sell (ADR-0022). */
+  const [ringUp, setRingUp] = useState<AppointmentRingUp | null>(null);
 
   useEffect(() => session.onSignedOut(() => setStage({ name: 'signin' })), []);
 
@@ -81,7 +85,7 @@ function Counter() {
     const kitchen = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
     const floor = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
-      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me) }}>
+      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me), salon: servesAppointments(stage.me), lodging: servesLodging(stage.me) }}>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.
@@ -155,8 +159,15 @@ function Counter() {
   const { me, shift } = stage;
   const permissions = me.activeTenant?.permissions ?? [];
   const tableService = servesTables(me) && permissions.includes('restaurant.orders');
+  const salon = servesAppointments(me);
+  const appointments = salon && permissions.includes('appointments.read');
+  // A hotel, resort or hybrid business (ADR-0023): the front desk's Rooms tab, and Charge to room at payment.
+  const lodging = servesLodging(me);
+  const rooms = lodging && permissions.includes('lodging.read');
   const tabs: [Tab, string][] = [
     ['sell', t('nav.sell')],
+    ...(appointments ? ([['appointments', t('nav.appointments')]] as [Tab, string][]) : []),
+    ...(rooms ? ([['rooms', t('nav.rooms')]] as [Tab, string][]) : []),
     ...(tableService ? ([['tables', t('nav.tables')]] as [Tab, string][]) : []),
     ['history', t('nav.history')],
     ['close', t('nav.close')],
@@ -164,7 +175,7 @@ function Counter() {
   return (
     <Shell
       onSignOut={leave}
-      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me) }}
+      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me), salon, lodging }}
       context={
         <span className="serial text-[0.8125rem]">
           {shift.branch.name} · <span className="text-white">{shift.register.code}</span> · {me.user.displayName}
@@ -188,12 +199,27 @@ function Counter() {
     >
       {/* Kept mounted: a cart and its authorized card/QR payments survive a look at the shift history. */}
       <div hidden={tab !== 'sell'}>
-        <Sell shift={shift} cashierUserId={me.userId} active={tab === 'sell'} permissions={permissions} exchange={exchange} onExchangeEnd={() => setExchange(null)} />
+        <Sell
+          shift={shift} cashierUserId={me.userId} active={tab === 'sell'} permissions={permissions} exchange={exchange} onExchangeEnd={() => setExchange(null)}
+          salon={salon} ringUp={ringUp} onRingUpTaken={() => setRingUp(null)} lodging={lodging}
+        />
       </div>
+      {/* Kept mounted too: the booking form being filled survives a look at Sell. */}
+      {appointments && (
+        <div hidden={tab !== 'appointments'}>
+          <Appointments shift={shift} permissions={permissions} active={tab === 'appointments'} onRingUp={(appointment) => { setRingUp({ appointment, nonce: uuid() }); setTab('sell'); }} />
+        </div>
+      )}
+      {/* Kept mounted as well: a check-out whose card payment was taken survives a look at Sell. */}
+      {rooms && (
+        <div hidden={tab !== 'rooms'}>
+          <Rooms shift={shift} permissions={permissions} active={tab === 'rooms'} />
+        </div>
+      )}
       {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
       {tableService && (
         <div hidden={tab !== 'tables'}>
-          <Tables place={{ branch: shift.branch, shift }} permissions={permissions} active={tab === 'tables'} />
+          <Tables place={{ branch: shift.branch, shift }} permissions={permissions} active={tab === 'tables'} lodging={lodging} />
         </div>
       )}
       {tab === 'history' && <History shift={shift} permissions={permissions} onExchange={(x) => { setExchange(x); setTab('sell'); }} />}

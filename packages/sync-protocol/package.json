@@ -17,6 +17,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@1pos/pricing": "workspace:*",
     "@1pos/validation": "workspace:*",
     "zod": "^4.6.7"
   }

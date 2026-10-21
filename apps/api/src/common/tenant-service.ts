@@ -76,7 +76,9 @@ export abstract class TenantService {
       });
     } catch (e) {
       const pg = pgError(e);
-      const conflict = pg.code === '23505' && pg.constraint ? this.conflicts[pg.constraint] : undefined;
+      // Unique and exclusion violations, and the named check constraints a service lists (e.g. a balance
+      // trigger), are conflicts with what is already there: 409 with the service's own code.
+      const conflict = (pg.code === '23505' || pg.code === '23P01' || pg.code === '23514') && pg.constraint ? this.conflicts[pg.constraint] : undefined;
       if (conflict) throw new AppError(conflict[0], conflict[1], HttpStatus.CONFLICT);
       // A posting that waited on a month being closed (ADR-0013): same answer as the up-front check.
       if (pg.constraint === 'journal_entries_period_closed') throw new AppError('PERIOD_CLOSED', 'The accounting period is closed', HttpStatus.CONFLICT);

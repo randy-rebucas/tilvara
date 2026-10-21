@@ -7,9 +7,13 @@ import {
   cashierSessions,
   desc,
   eq,
+  isNull,
+  kitchenStations,
+  kitchenTickets,
   legalEntities,
   registers,
   sales,
+  serviceStaff,
   sql,
   terminals,
   terminalSnapshots,
@@ -18,7 +22,14 @@ import {
   withTenant,
   type Database,
 } from '@1pos/database';
-import { canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER, type OfflineFlag, type CatalogVersion, type OfflineSale, type Snapshot, type SnapshotItem, type SnapshotItemsPage, type SyncResult } from '@1pos/sync-protocol';
+import {
+  canonicalJson, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER,
+  type CatalogVersion, type KitchenStationsResponse, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotCounter, type SnapshotItem, type SnapshotItemsPage, type SyncResult,
+} from '@1pos/sync-protocol';
+import { claimTicketsToPrint } from '../restaurant/kitchen-print.js';
+import { loadSettings } from '../restaurant/floor.service.js';
+import { MenusService } from '../restaurant/menus.service.js';
+import { hasFeature } from '../billing/entitlements.js';
 import type { DismissOfflineInput, OfflineListQuery } from '@1pos/validation';
 import { createHash } from 'node:crypto';
 import type { AuthContext } from '../auth/auth-context.js';
@@ -34,6 +45,7 @@ import { registerScope } from '../sales/cash.service.js';
 import { formatTin } from '../sales/receipt.js';
 import { SalesService, type OfflineContext } from '../sales/sales.service.js';
 import { profilesInForce } from '../tax/tax-profiles.js';
+import { nextPromotionChange, promotionsInForce } from '../catalog/promotions.service.js';
 
 /** A terminal that proved its credential (ADR-0015 §2). The tenant comes from the credential, never the request. */
 export interface TerminalPrincipal {
@@ -79,8 +91,35 @@ export class SyncService extends TenantService {
     @Inject(SalesService) private readonly sales: SalesService,
     @Inject(ENV) private readonly env: ServerEnv,
     @Inject(ApiMetrics) private readonly metrics: ApiMetrics,
+    @Inject(MenusService) private readonly menus: MenusService,
   ) {
     super(tenantDb);
+  }
+
+  /**
+   * Counter service for the snapshot (session 25): the takeaway menu as served now (available items and
+   * options only), its version id, and the branch's stations. Null when off or not on the plan.
+   */
+  private async counterSnapshot(db: Database, branchId: string): Promise<SnapshotCounter | null> {
+    const settings = await loadSettings(db, branchId);
+    if (!settings?.counterService || !(await hasFeature(db, 'restaurant'))) return null;
+    const served = await this.menus.served(db, branchId, 'TAKEAWAY');
+    if (!served.menu) return null;
+    const stations = await db.select({ id: kitchenStations.id, code: kitchenStations.code, name: kitchenStations.name, isDefault: kitchenStations.isDefault })
+      .from(kitchenStations).where(and(eq(kitchenStations.branchId, branchId), isNull(kitchenStations.archivedAt)));
+    return {
+      menuVersionId: served.menu.menuVersionId,
+      items: served.menu.sections.flatMap((s) => s.items).filter((i) => i.available).map((i) => ({
+        variantId: i.variantId,
+        name: i.name,
+        stationCode: i.stationCode,
+        modifierGroups: i.modifierGroups.map((g) => ({
+          id: g.id, name: g.name, minSelect: g.minSelect, maxSelect: g.maxSelect,
+          options: g.options.filter((o) => o.available).map((o) => ({ id: o.id, name: o.name, variantId: o.variantId })),
+        })),
+      })),
+      stations,
+    };
   }
 
   // ---------------------------------------------------------------- terminal side
@@ -152,7 +191,58 @@ export class SyncService extends TenantService {
         lastDeviceSeq: Number(
           (await db.execute<{ n: string }>(sql`SELECT coalesce(max(device_seq), 0)::text AS n FROM terminal_transactions WHERE terminal_id = ${t.terminalId}`)).rows[0]!.n,
         ),
+        counter: await this.counterSnapshot(db, row.branch.id),
+        promotions: await promotionsInForce(db, row.branch.id, asOf),
+        staff: await db
+          .select({ id: serviceStaff.id, displayName: serviceStaff.displayName, color: serviceStaff.color })
+          .from(serviceStaff)
+          .where(and(eq(serviceStaff.branchId, row.branch.id), isNull(serviceStaff.archivedAt)))
+          .orderBy(asc(serviceStaff.displayName)),
       };
+    });
+  }
+
+  // ---------------------------------------------------------------- kitchen printing (session 25)
+  /** The terminal's branch (its register's). */
+  private async terminalBranch(db: Database, t: TerminalPrincipal) {
+    const [row] = await db.select({ branchId: registers.branchId }).from(registers).where(eq(registers.id, t.registerId));
+    if (!row) throw unauthenticated();
+    return row.branchId;
+  }
+
+  /** Active kitchen stations at the till's branch, for its printer set-up. */
+  kitchenStations(t: TerminalPrincipal): Promise<KitchenStationsResponse> {
+    return withTenant(this.database.pool, t.tenantId, async (db) => {
+      const branchId = await this.terminalBranch(db, t);
+      const rows = await db.select({ id: kitchenStations.id, code: kitchenStations.code, name: kitchenStations.name, isDefault: kitchenStations.isDefault })
+        .from(kitchenStations).where(and(eq(kitchenStations.branchId, branchId), isNull(kitchenStations.archivedAt))).orderBy(asc(kitchenStations.name));
+      return { data: rows };
+    });
+  }
+
+  /** Claim the next tickets of these stations to print (a minute each; see `claimTicketsToPrint`). */
+  claimKitchenTickets(t: TerminalPrincipal, stationIds: string[]) {
+    return withTenant(this.database.pool, t.tenantId, async (db) => ({ data: await claimTicketsToPrint(db, t.terminalId, await this.terminalBranch(db, t), stationIds) }));
+  }
+
+  /**
+   * The till printed a ticket it claimed (`printed`), or could not (`released`: another till, or this one
+   * on its next round, prints it). A claim another till took over after it lapsed is not this till's: 409.
+   */
+  settleKitchenPrint(t: TerminalPrincipal, ticketId: string, outcome: 'printed' | 'released') {
+    return withTenant(this.database.pool, t.tenantId, async (db) => {
+      const done = outcome === 'printed'
+        ? { printedAt: sql`now()`, printCount: sql`${kitchenTickets.printCount} + 1`, printClaimedAt: null, printClaimedBy: null }
+        : { printClaimedAt: null, printClaimedBy: null };
+      const [row] = await db.update(kitchenTickets).set(done)
+        .where(and(eq(kitchenTickets.id, ticketId), eq(kitchenTickets.printClaimedBy, t.terminalId)))
+        .returning({ id: kitchenTickets.id, printedAt: kitchenTickets.printedAt, printCount: kitchenTickets.printCount });
+      if (!row) {
+        const [exists] = await db.select({ id: kitchenTickets.id }).from(kitchenTickets).where(eq(kitchenTickets.id, ticketId));
+        if (!exists) throw notFound('Kitchen ticket');
+        throw new AppError('NOT_CLAIMED', 'This till does not hold this ticket (claim lapsed or never taken)', HttpStatus.CONFLICT);
+      }
+      return row;
     });
   }
 
@@ -189,8 +279,10 @@ export class SyncService extends TenantService {
                (SELECT min(pp.effective_from) FROM product_prices pp WHERE pp.price_list_id = (SELECT id FROM list) AND pp.effective_from > ${at}::timestamptz),
                (SELECT min(tp.effective_from) FROM tax_profiles tp WHERE tp.legal_entity_id = ${entityId} AND tp.effective_from > ${at}::timestamptz)
              ) AS next`);
-    const next = rows[0]?.next;
-    return next ? new Date(next).toISOString() : null;
+    // A promotion starting or ending at this branch changes prices too (ADR-0021 §1).
+    const promo = await nextPromotionChange(db, branchId, after);
+    const next = [rows[0]?.next ? new Date(rows[0].next) : null, promo].filter((d): d is Date => d !== null).sort((a, b) => a.getTime() - b.getTime())[0];
+    return next ? next.toISOString() : null;
   }
 
   /**
@@ -226,7 +318,8 @@ export class SyncService extends TenantService {
   private async items(db: Database, branchId: string, asOf: Date, limit?: number, after?: { sku: string; variantId: string }): Promise<(SnapshotItem & { currency: string })[]> {
     const { rows } = await db.execute<{
       variant_id: string; sku: string; name: string; barcodes: string[] | null; price_id: string; price_list_id: string; amount: string;
-      currency: string; prices_include_tax: boolean; vat_treatment: SnapshotItem['vatTreatment']; tax_category_code: string; whole_units: boolean; track_inventory: boolean;
+      currency: string; prices_include_tax: boolean; vat_treatment: SnapshotItem['vatTreatment']; tax_category_code: string; whole_units: boolean; track_inventory: boolean; quick_key_position: number | null;
+      product_type: NonNullable<SnapshotItem['productType']>;
     }>(sql`
       WITH list AS (
         SELECT coalesce(
@@ -239,7 +332,7 @@ export class SyncService extends TenantService {
              (SELECT array_agg(b.code ORDER BY b.code) FROM barcodes b WHERE b.variant_id = v.id AND b.archived_at IS NULL) AS barcodes,
              pr.id AS price_id, pl.id AS price_list_id, pr.amount::text AS amount, pl.currency, pl.prices_include_tax,
              tc.vat_treatment, tc.code AS tax_category_code,
-             (p.sold_by = 'UNIT' AND NOT u.allows_fraction) AS whole_units, p.track_inventory
+             (p.sold_by = 'UNIT' AND NOT u.allows_fraction) AS whole_units, p.track_inventory, v.quick_key_position, p.product_type
         FROM list
         JOIN price_lists pl ON pl.id = list.id
         JOIN product_variants v ON v.archived_at IS NULL
@@ -255,7 +348,7 @@ export class SyncService extends TenantService {
     return rows.map((r) => ({
       variantId: r.variant_id, sku: r.sku, name: r.name, barcodes: r.barcodes ?? [], priceId: r.price_id, priceListId: r.price_list_id,
       unitPrice: r.amount, priceIncludesTax: r.prices_include_tax, vatTreatment: r.vat_treatment, taxCategoryCode: r.tax_category_code,
-      wholeUnits: r.whole_units, trackInventory: r.track_inventory, currency: r.currency,
+      wholeUnits: r.whole_units, trackInventory: r.track_inventory, quickKey: r.quick_key_position, productType: r.product_type, currency: r.currency,
     }));
   }
 

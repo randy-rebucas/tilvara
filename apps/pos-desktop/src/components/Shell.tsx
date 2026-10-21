@@ -25,10 +25,15 @@ export function LangToggle() {
   );
 }
 
-/** Which part of the user guide the ? button (and F1) opens; `restaurant` false leaves out tables and the kitchen. */
+/**
+ * Which part of the user guide the ? button (and F1) opens; `restaurant` false leaves out tables and the
+ * kitchen, `salon` false the appointments part, `lodging` false the rooms part.
+ */
 export interface HelpContext {
   topic: GuideTopic;
   restaurant?: boolean;
+  salon?: boolean;
+  lodging?: boolean;
 }
 
 /** The blue band: wordmark, where you are (branch · register · shift), till status, help, language, sign-out. */
@@ -87,7 +92,7 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}
       {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
-      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} onBack={() => setOverlay(null)} />}
+      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} salon={help.salon ?? true} lodging={help.lodging ?? true} onBack={() => setOverlay(null)} />}
       <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
     </div>
   );

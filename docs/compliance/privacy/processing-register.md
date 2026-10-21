@@ -62,8 +62,8 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 ### 4. Restaurant orders — PIP
 | | |
 |---|---|
-| Purpose | Call out takeaway orders; run tables and the kitchen |
-| People | Customers who give a name for a takeaway; staff who open, fire, void and close orders |
+| Purpose | Call out takeaway and counter-service orders (session 25: the pickup name of a counter sale, printed on the receipt and kitchen ticket); run tables and the kitchen |
+| People | Customers who give a name for a takeaway or a counter order; staff who open, fire, void and close orders |
 | Data | `customer_name` (free text, optional), order notes; staff ids on orders, tickets and voids |
 | Source | Cashier or waiter |
 | Basis | For the business: contract with the customer (Sec. 12(b)) |
@@ -170,6 +170,34 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Rights | Access: "Download their data" (JSON of profile, consent history, purchases, credit; audited). Correction: "Correct details" (audited by field name, not value). Erasure: "Remove personal details" blanks every personal field for good (refused while store credit is owed); sales stay for the fiscal period without the name |
 | Retention | *Proposed:* anonymise a customer 2 years after their last purchase, unless store credit is owed (DPO to confirm). Today: kept until the business anonymises them |
 | Notes | Notes must never hold health, beliefs or ID numbers (the form says so). The audit log names changed fields, never their values |
+
+### 15a. Salons: appointments, service notes, packages and service staff — PIP (session 27, ADR-0022)
+| | |
+|---|---|
+| Purpose | Book clients with a staff member, remind them the day before, keep what a stylist or therapist needs to serve them safely (colour formulas, preferences, allergies), keep the sessions of prepaid packages, and credit staff with their services, commissions and tips |
+| People | The business's clients (customers, or walk-ins booked by name); the business's service staff (who may or may not sign in) |
+| Data | Appointments: the client (customer, or a guest name), branch, time, services, staff, status, notes, cancellation reason, whether to remind and when a reminder was sent. **Service notes** (free text, may contain health information such as allergies: sensitive personal information, DPA Sec. 3(l)). Packages bought and the sessions used. Service staff: name, optional link to a member, branch, calendar colour, commission rate, working hours, time off (with an optional reason); the staff member named on each sale line, their commission rate at the sale, their share of each tip |
+| Source | The client, through the front desk; the business's managers (staff records) |
+| Basis | Clients: contract (Sec. 12(b)) for the booking, the package and the service; service notes on health: **consent** or the need to provide the service safely (Sec. 13(f) medical treatment does not apply; the business should ask the client before writing an allergy down — the form says to keep only what the service needs). Reminders are service messages about the client's own booking, not marketing; they stop when the front desk unticks "remind". Staff: the employment or service contract (Sec. 12(b)) and the business's legitimate interest in paying commissions (Sec. 12(f)) |
+| Recipients | The business's staff with `appointments.read` (calendar), `customers.read` (notes, visits, packages); commission rates only to `staff.manage`; the email provider for reminders (ids only in the event; the mail carries the branch, time, services and staff first names) |
+| Tables | `appointments`, `appointment_services`, `customer_notes`, `customer_packages`, `customer_package_items`, `customer_package_entries` (append-only), `service_staff`, `service_staff_services`, `service_staff_hours`, `service_staff_time_off`, `sale_lines.service_staff_id`, `sale_tip_shares` (append-only) |
+| Rights | Access: the customer export includes appointments, service notes and packages. Correction: notes are edited in place (audited by id, never the text). Erasure: "Remove personal details" deletes the service notes and clears appointment notes; it is refused while package sessions are owed. A guest name on an appointment is erased with the appointment's retention (below) |
+| Retention | *Proposed:* appointments (with guest names and notes) 2 years after the appointment; service notes with the customer (anonymised 2 years after the last purchase); staff records while the person works there plus the fiscal period of the last sale naming them (DPO to confirm) |
+| Notes | The note form tells staff to keep only what the service needs. Audit rows never carry note text or guest names; `guestName` is redacted from logs |
+
+### 15b. Hotels and resorts: stays, the guest registry, SC/PWD guests and folios — PIP (session 28, ADR-0023)
+| | |
+|---|---|
+| Purpose | Book rooms, check guests in and out, keep the guest registry and registration card the front desk records at check-in, apply the SC/PWD discount to the beneficiaries' share of each room night, and keep each stay's folio (room nights, charges from outlets, deposits, payments) |
+| People | The business's guests (customers, or guests booked by name) and everyone recorded in a stay's registry; SC/PWD guests |
+| Data | Stays: guest (customer or a guest name), room, dates, adults, children, agreed rate, charge limit, source and external booking reference, notes, cancellation reason. **Guest registry**: full name, nationality, ID type and number, address, optional birth date and contact. SC/PWD guests: scheme, name, ID number, share of the room. Folios: entries, payments (method, bank reference), deposits |
+| Source | The guest, at booking and at check-in through the front desk; an external PMS or channel only by the front desk keying it in |
+| Basis | Contract (Sec. 12(b)) for the stay; the registry and registration card as the establishment's legal obligation where the LGU or tourism rules require one (Sec. 12(c); **DPO to confirm per place**); SC/PWD details by legal obligation (RA 9994, RA 10754, Sec. 12(c)) |
+| Recipients | Staff with `lodging.manage` (registry, registration card); `lodging.read` sees stays and guest names only (housekeeping, cashiers finding an in-house guest for Charge to room); an API key with the `lodging` scope reads stays, folios and rooms but never the registry; webhooks carry ids only |
+| Tables | `stays`, `stay_guests`, `stay_beneficiaries`, `folios`, `folio_entries` (append-only), `folio_payments` (append-only), `stay_deposits` (append-only), `room_status_changes` (append-only, staff ids) |
+| Rights | Access: the data export includes every table. Correction: registry rows are edited in place (audited by field name, never the value). Erasure: "Remove personal details" on the customer deletes the registry of their stays; SC/PWD names stay with the books (as `sale_beneficiaries`) |
+| Retention | *Proposed:* registry 1 year after check-out (or as the LGU rule requires, DPO to confirm), then deleted; stays and folios for the fiscal period (they post to the books); SC/PWD guests the fiscal period |
+| Notes | Audit rows name changed fields only; `fullName`, `idNumber`, `nationality`, `idType`, `birthDate`, `address`, `contact`, `guestName` are redacted from logs (`PERSONAL_KEYS`) |
 
 ### 16. Integrations: API keys and webhooks — PIP (session 20, ADR-0019)
 | | |

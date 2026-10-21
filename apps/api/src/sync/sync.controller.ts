@@ -1,5 +1,7 @@
 import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import {
+  claimKitchenTicketsSchema,
+  type ClaimKitchenTicketsInput,
   snapshotItemsQuerySchema,
   snapshotPageQuerySchema,
   syncSalesRequestSchema,
@@ -59,6 +61,40 @@ export class SyncController {
   async syncSales(@Req() req: AuthedRequest, @Body(new ZodPipe(syncSalesRequestSchema)) body: SyncSalesRequest) {
     const terminal = await this.sync.authenticate((h) => req.header(h), req.correlationId);
     return { results: await this.sync.syncSales(terminal, body.sales, req.receivedAt) };
+  }
+
+  /** Kitchen printing (session 25): the stations a till can print for. */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @Get('terminal/kitchen-stations')
+  async kitchenStations(@Req() req: AuthedRequest) {
+    return this.sync.kitchenStations(await this.sync.authenticate((h) => req.header(h), req.correlationId));
+  }
+
+  /** The next unprinted tickets of these stations, claimed for this till for a minute. */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @HttpCode(200)
+  @Post('terminal/kitchen-tickets/claim')
+  async claimKitchenTickets(@Req() req: AuthedRequest, @Body(new ZodPipe(claimKitchenTicketsSchema)) body: ClaimKitchenTicketsInput) {
+    return this.sync.claimKitchenTickets(await this.sync.authenticate((h) => req.header(h), req.correlationId), body.stationIds);
+  }
+
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @HttpCode(200)
+  @Post('terminal/kitchen-tickets/:id/printed')
+  async kitchenTicketPrinted(@Req() req: AuthedRequest, @Param('id', id) ticketId: string) {
+    return this.sync.settleKitchenPrint(await this.sync.authenticate((h) => req.header(h), req.correlationId), ticketId, 'printed');
+  }
+
+  /** The printer did not take it: give the ticket back for the next round. */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @HttpCode(200)
+  @Post('terminal/kitchen-tickets/:id/release')
+  async kitchenTicketRelease(@Req() req: AuthedRequest, @Param('id', id) ticketId: string) {
+    return this.sync.settleKitchenPrint(await this.sync.authenticate((h) => req.header(h), req.correlationId), ticketId, 'released');
   }
 
   @RequireTenant()

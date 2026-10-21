@@ -232,7 +232,7 @@ export function ExchangeBanner({ exchange, total, onCancel }: { exchange: Exchan
  * Put a customer on the sale (ADR-0018): search by name, phone or number, or add one when the person
  * may (customers.manage). Offers are their own yes/no, asked apart from the sale.
  */
-export function CustomerPanel({ canAdd, onPick, onCancel }: { canAdd: boolean; onPick: (c: CounterCustomer) => void; onCancel: () => void }) {
+export function CustomerPanel({ canAdd, onPick, onCancel, title }: { canAdd: boolean; onPick: (c: CounterCustomer) => void; onCancel: () => void; title?: string }) {
   const { t } = useT();
   const [hits, setHits] = useState<{ id: string; displayName: string; phone: string | null; code: string | null }[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -271,9 +271,9 @@ export function CustomerPanel({ canAdd, onPick, onCancel }: { canAdd: boolean; o
     }
   }
   return (
-    <Note className="grid gap-3 p-4" aria-label={t('custc.title')}>
+    <Note className="grid gap-3 p-4" aria-label={title ?? t('custc.title')}>
       <div className="flex items-baseline justify-between gap-2">
-        <h2 className="section-title">{t('custc.title')}</h2>
+        <h2 className="section-title">{title ?? t('custc.title')}</h2>
         <button type="button" className="btn btn-sm" onClick={onCancel}>{t('common.cancel')}</button>
       </div>
       <form className="flex items-end gap-2" onSubmit={search}>
@@ -312,5 +312,27 @@ export function CustomerPanel({ canAdd, onPick, onCancel }: { canAdd: boolean; o
       )}
       {error && <Callout kind="error">{error}</Callout>}
     </Note>
+  );
+}
+
+/**
+ * A discount on the whole cart (ADR-0021 §3): the same percentage on every line that has no promotion,
+ * approved price, SC/PWD or discount of its own. Each becomes an ordinary line discount (ADR-0017).
+ */
+export function CartDiscountPanel({ eligible, onApply, onCancel }: { eligible: number; onApply: (percent: string) => void; onCancel: () => void }) {
+  const { t } = useT();
+  const [error, setError] = useState<string | undefined>();
+  function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const raw = String(new FormData(e.currentTarget).get('cartPercent') ?? '').trim();
+    if (!/^\d{1,3}(\.\d{1,4})?$/.test(raw) || toDec(raw).lte(0) || toDec(raw).gt(100)) return setError(t('disc.percentInvalid'));
+    onApply(toDec(raw).toString());
+  }
+  return (
+    <form className="no-print grid gap-3 rounded-[5px] border border-hair bg-white p-4 sm:grid-cols-[1fr_auto_auto] sm:items-end" onSubmit={submit} data-testid="cart-discount">
+      <Field id="cartPercent" name="cartPercent" inputMode="decimal" required autoFocus label={t('disc.cartLabel')} hint={t('disc.cartHint', { n: String(eligible) })} error={error} />
+      <button className="btn btn-primary sm:mb-[2px]" disabled={eligible === 0}>{t('sell.apply')}</button>
+      <button type="button" className="btn sm:mb-[2px]" onClick={onCancel}>{t('common.cancel')}</button>
+    </form>
   );
 }

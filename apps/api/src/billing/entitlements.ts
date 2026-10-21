@@ -1,6 +1,7 @@
 import { HttpStatus } from '@nestjs/common';
 import { sql, type BusinessType, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
 import { AppError } from '../infrastructure/http-error.filter.js';
+import { servesAppointments, servesLodging, servesTables } from '@1pos/validation';
 
 export const TRIAL_PLAN = 'growth';
 export const TRIAL_DAYS = 14;
@@ -84,16 +85,59 @@ export async function businessType(db: Database): Promise<BusinessType> {
 }
 
 /**
+ * Appointments, service staff and packages (ADR-0022): only for a salon, spa or barber shop (or HYBRID).
+ * Writes are refused for other types; reads stay open, so records made before a change of type remain visible.
+ */
+export async function assertAppointments(db: Database): Promise<void> {
+  const type = await businessType(db);
+  if (!servesAppointments(type)) {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is not set up as a salon, spa or barber shop. Change its type to take appointments and sell packages.',
+      HttpStatus.FORBIDDEN,
+      { feature: 'appointments', businessType: type },
+    );
+  }
+}
+
+/**
+ * Rooms, stays, folios and housekeeping (ADR-0023): only for a hotel, resort or transient house (or HYBRID).
+ * Writes are refused for other types; reads stay open, so records made before a change of type remain visible.
+ */
+export async function assertLodging(db: Database): Promise<void> {
+  const type = await businessType(db);
+  if (!servesLodging(type)) {
+    throw new AppError(
+      'BUSINESS_TYPE_EXCLUDES_FEATURE',
+      'This business is not set up as a hotel, resort or transient house. Change its type to take room bookings.',
+      HttpStatus.FORBIDDEN,
+      { feature: 'lodging', businessType: type },
+    );
+  }
+}
+
+/** Recipes ("supplies used"): a salon's services need no restaurant plan (ADR-0022 §9); otherwise restaurant service. */
+export async function assertRecipes(db: Database): Promise<void> {
+  if ((await businessType(db)) === 'SALON') return;
+  await assertFeature(db, 'restaurant');
+}
+
+/**
  * Refuse a feature the plan does not include, or (restaurant service) one the business type leaves
  * out. Reads stay open, as after a plan change, so the records made before remain visible.
  */
 export async function assertFeature(db: Database, feature: PlanFeature): Promise<void> {
-  if (feature === 'restaurant' && (await businessType(db)) === 'RETAIL') {
+  const type = feature === 'restaurant' ? await businessType(db) : null;
+  if (type && !servesTables(type)) {
     throw new AppError(
       'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      'This business is set up as a retail shop. Change its type to use restaurant service.',
+      type === 'GROCERY'
+        ? 'This business is set up as a sari-sari store or grocery. Change its type to use restaurant service.'
+        : type === 'SALON'
+          ? 'This business is set up as a salon, spa or barber shop. Change its type to use restaurant service.'
+          : 'This business is set up as a retail shop. Change its type to use restaurant service.',
       HttpStatus.FORBIDDEN,
-      { feature, businessType: 'RETAIL' },
+      { feature, businessType: type },
     );
   }
   const plan = await currentPlan(db);
@@ -102,6 +146,17 @@ export async function assertFeature(db: Database, feature: PlanFeature): Promise
       feature,
       plan: plan.planCode,
     });
+  }
+}
+
+/** Whether `assertFeature` would pass: for paths that switch a feature's extras off rather than refuse. */
+export async function hasFeature(db: Database, feature: PlanFeature): Promise<boolean> {
+  try {
+    await assertFeature(db, feature);
+    return true;
+  } catch (e) {
+    if (e instanceof AppError && (e.code === 'BUSINESS_TYPE_EXCLUDES_FEATURE' || e.code === 'ENTITLEMENT_REQUIRED')) return false;
+    throw e;
   }
 }
 

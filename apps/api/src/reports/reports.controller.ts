@@ -1,8 +1,12 @@
 import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
 import {
+  attributeQuerySchema,
+  type AttributeQuery,
   branchQuerySchema,
   consolidatedRangeSchema,
   type ConsolidatedRangeQuery,
+  guestLedgerQuerySchema,
+  type GuestLedgerQuery,
   idParamSchema,
   prepTimesBySchema,
   reportDaySchema,
@@ -17,6 +21,8 @@ import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { ReportsService } from './reports.service.js';
 import { AnalysisReportsService } from './analysis-reports.service.js';
 import { RestaurantReportsService } from './restaurant-reports.service.js';
+import { SalonReportsService } from './salon-reports.service.js';
+import { LodgingReportsService } from './lodging-reports.service.js';
 
 const range = new ZodPipe(reportRangeSchema);
 const id = new ZodPipe(idParamSchema);
@@ -29,6 +35,8 @@ export class ReportsController {
     @Inject(ReportsService) private readonly reports: ReportsService,
     @Inject(RestaurantReportsService) private readonly restaurant: RestaurantReportsService,
     @Inject(AnalysisReportsService) private readonly analysis: AnalysisReportsService,
+    @Inject(SalonReportsService) private readonly salon: SalonReportsService,
+    @Inject(LodgingReportsService) private readonly lodging: LodgingReportsService,
   ) {}
 
   // Session 20 (SPEC §6.10)
@@ -67,6 +75,17 @@ export class ReportsController {
   @Get('by-product')
   byProduct(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
     return this.reports.byProduct(auth, q);
+  }
+
+  /** Sales by size and colour (ADR-0021 §2). */
+  @Get('by-attribute')
+  byAttribute(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery, @Query(new ZodPipe(attributeQuerySchema)) a: AttributeQuery) {
+    return this.reports.byAttribute(auth, q, a.attribute);
+  }
+
+  @Get('promotions')
+  promotions(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.reports.promotions(auth, q);
   }
 
   @Get('by-cashier')
@@ -134,6 +153,52 @@ export class ReportsController {
   @Get('service-charge')
   serviceCharge(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
     return this.restaurant.serviceCharge(auth, q);
+  }
+
+  /** Tips taken, given back on voids and paid out to staff, per local day and per cashier (session 25). */
+  @Get('tips')
+  tips(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.restaurant.tips(auth, q);
+  }
+
+  // Session 27 (ADR-0022): salons, spas and barber shops.
+
+  /** Commission per staff member: rate × ex-VAT sales or package session value, less returns. */
+  @Get('commissions')
+  commissions(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.salon.commissions(auth, q);
+  }
+
+  /** Service packages sold, used and given back; what is still owed beside the ledger; open packages. */
+  @Get('service-packages')
+  servicePackages(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.salon.packages(auth, q);
+  }
+
+  /** Tips per staff member (their shares), less those given back by voids. */
+  @Get('tips-by-staff')
+  tipsByStaff(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.salon.tipsByStaff(auth, q);
+  }
+
+  // Session 28 (ADR-0023): hotels, resorts and transient houses.
+
+  /** Rooms available and sold, occupancy, room revenue ex VAT, ADR and RevPAR per night. */
+  @Get('occupancy')
+  occupancy(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.lodging.occupancy(auth, q);
+  }
+
+  /** Open folios and deposits held per legal entity, beside GL 1150 and GL 2320. */
+  @Get('guest-ledger')
+  guestLedger(@Auth() auth: AuthContext, @Query(new ZodPipe(guestLedgerQuerySchema)) q: GuestLedgerQuery) {
+    return this.lodging.guestLedger(auth, q);
+  }
+
+  /** The local accommodation tax per month. */
+  @Get('accommodation-tax')
+  accommodationTax(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
+    return this.lodging.accommodationTax(auth, q);
   }
 
   @Get('cashier-sessions/:id')

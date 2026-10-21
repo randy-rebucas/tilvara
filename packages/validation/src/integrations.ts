@@ -3,11 +3,16 @@ import { z } from 'zod';
 // ------------------------------------------------------------------ integrations (session 20, SPEC §6.11, ADR-0019)
 
 /** What an API key may read: always GET, always the whole business. */
-export const API_KEY_SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read'] as const;
+/** `lodging.read` (ADR-0023 §13): stays, folios and rooms, for a hotel whose own PMS pulls them. */
+export const API_KEY_SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read', 'lodging.read'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 /** Events a webhook may listen for (same list as `WEBHOOK_TOPICS` in @1pos/database; a unit test keeps them equal). */
-export const WEBHOOK_TOPIC_NAMES = ['sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero'] as const;
+export const WEBHOOK_TOPIC_NAMES = [
+  'sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero',
+  // ADR-0023 §13: a hotel's own PMS follows check-ins, check-outs and every folio entry.
+  'stay.checked_in', 'stay.checked_out', 'folio.entry_posted',
+] as const;
 
 export const createApiKeySchema = z.object({
   name: z.string().trim().min(1).max(100),

@@ -164,10 +164,14 @@ export const goodsReceiptLines = pgTable(
     rejectedQuantity: qty('rejected_quantity').notNull().default('0'),
     rejectionReason: text('rejection_reason'),
     unitCost: money('unit_cost').notNull(),
+    /** Expiry date and lot of what came in (ADR-0020 §3); required for an item that tracks expiry. */
+    expiresOn: date('expires_on'),
+    lotCode: text('lot_code'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('goods_receipt_lines_tenant_id_id_unique').on(t.tenantId, t.id),
+    check('goods_receipt_lines_lot_needs_date', sql`${t.lotCode} IS NULL OR ${t.expiresOn} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.goodsReceiptId], foreignColumns: [goodsReceipts.tenantId, goodsReceipts.id] }),
     foreignKey({ columns: [t.tenantId, t.purchaseOrderLineId], foreignColumns: [purchaseOrderLines.tenantId, purchaseOrderLines.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),

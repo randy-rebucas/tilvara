@@ -17,9 +17,20 @@ export const tenantSlugSchema = z
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use 2–63 lowercase letters, digits or hyphens');
 
 /** What the business does; it decides which features its people see (`tenants.business_type`). */
-export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID'] as const;
+export const BUSINESS_TYPES = ['RETAIL', 'RESTAURANT', 'HYBRID', 'GROCERY', 'SALON', 'LODGING'] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 export const businessTypeSchema = z.enum(BUSINESS_TYPES);
+/**
+ * Restaurant service (tables, menus, kitchen) is for these types; RETAIL, GROCERY and SALON leave it out
+ * (ADR-0020). A hotel or resort serves tables too: its restaurant, bar and room service (ADR-0023 §1).
+ */
+export const servesTables = (t: BusinessType): boolean => t === 'RESTAURANT' || t === 'HYBRID' || t === 'LODGING';
+/** Appointments, service staff and packages (ADR-0022) are for salons, spas and barber shops, and HYBRID. */
+export const servesAppointments = (t: BusinessType): boolean => t === 'SALON' || t === 'HYBRID';
+/** Rooms, stays, folios and housekeeping (ADR-0023) are for hotels, resorts and transient houses, and HYBRID. */
+export const servesLodging = (t: BusinessType): boolean => t === 'LODGING' || t === 'HYBRID';
+/** Recipes ("supplies used"): restaurant service, or a salon's services (ADR-0022 §9). */
+export const usesRecipes = (t: BusinessType): boolean => servesTables(t) || t === 'SALON';
 
 export const signupSchema = z.object({
   email: emailSchema,

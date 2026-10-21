@@ -16,3 +16,26 @@ describe('role editor permissions', () => {
     }
   });
 });
+
+describe('salon permissions (ADR-0022)', () => {
+  it('shows appointments and staff only to a business that takes appointments, unless the role holds them', async () => {
+    const { permissionGroupsFor } = await import('./permissions');
+    const keys = (t: Parameters<typeof permissionGroupsFor>[0], held: string[] = []) => permissionGroupsFor(t, held).map((g) => g.key);
+    expect(keys('SALON')).toContain('salon');
+    expect(keys('HYBRID')).toContain('salon');
+    expect(keys('RETAIL')).not.toContain('salon');
+    expect(keys('RETAIL', ['appointments.read'])).toContain('salon');
+  });
+});
+
+describe('lodging permissions (ADR-0023)', () => {
+  it('shows rooms, stays and housekeeping only to a business with rooms, unless the role holds them', async () => {
+    const { permissionGroupsFor } = await import('./permissions');
+    const keys = (t: Parameters<typeof permissionGroupsFor>[0], held: string[] = []) => permissionGroupsFor(t, held).map((g) => g.key);
+    expect(keys('LODGING')).toContain('lodging');
+    expect(keys('LODGING')).not.toContain('salon');
+    expect(keys('HYBRID')).toContain('lodging');
+    expect(keys('SALON')).not.toContain('lodging');
+    expect(keys('RETAIL', ['lodging.read'])).toContain('lodging');
+  });
+});

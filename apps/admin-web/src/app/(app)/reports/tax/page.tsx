@@ -1,6 +1,7 @@
 import { Empty, Note } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import type { TaxSummary } from '@/lib/api';
+import { api, type Me, type TaxSummary } from '@/lib/api';
+import { servesLodging } from '@/lib/business-type';
 import { peso, percentFromRate } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
@@ -13,10 +14,11 @@ export default async function TaxSummaryPage({ searchParams }: { searchParams: P
   const scope = await reportScope(await searchParams);
   const r = scope.branch ? await loadReport<TaxSummary>(`/reports/tax-summary?branchId=${scope.branch.id}&from=${scope.from}&to=${scope.to}`) : null;
   const rows = r?.data?.data ?? [];
+  const lodging = servesLodging((await api<Me>('/me')).activeTenant?.businessType);
 
   return (
     <ReportsChrome tab="tax" scope={scope} error={r?.error}>
-      <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('rep.taxNote')}</p>
+      <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('rep.taxNote')}{lodging && <> {t('rep.taxIncludesNights')}</>}</p>
       <Note denom="ink" className="pr-2">
         {rows.length > 0 ? (
           <RecordTable

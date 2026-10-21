@@ -83,7 +83,7 @@ const BillSlip = forwardRef<HTMLDivElement, { bill: Bill; branch: string; where:
  * A frozen bill (ADR-0014 §8) paid in one or more checks: the rest, an even split, or by item. The
  * server prices each check (preview) and records it as a sale; the till never prorates money itself.
  */
-export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlace; billId: string; onBack: () => void; onDone: () => void }) {
+export function BillScreen({ place, billId, onBack, onDone, lodging = false }: { place: FloorPlace; billId: string; onBack: () => void; onDone: () => void; lodging?: boolean }) {
   // Without a drawer (server mode) the bill is shown and printed, but money is taken at a till.
   const shift = place.shift ?? ({ sessionId: '', branch: place.branch } as Shift);
   const { t } = useT();
@@ -98,7 +98,8 @@ export function BillScreen({ place, billId, onBack, onDone }: { place: FloorPlac
   const [printError, setPrintError] = useState<string | null>(null);
   const slip = useRef<HTMLDivElement>(null);
   const till = useTill();
-  const pay = usePayment({ shift, due: preview?.amountDue ?? '0.00', setNotice });
+  // A resort's restaurant charges checks to a guest's room too (ADR-0023 §5.1).
+  const pay = usePayment({ shift, due: preview?.amountDue ?? '0.00', setNotice, allowTip: true, allowRoomCharge: lodging });
 
   const load = useCallback(async () => {
     try {

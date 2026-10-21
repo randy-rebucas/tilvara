@@ -38,7 +38,7 @@ export function useSubmit() {
   const [error, setError] = useState<ApiFailure | null>(null);
 
   async function submit<T>(
-    method: 'POST' | 'PATCH' | 'PUT',
+    method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
     url: string,
     body?: unknown,
     /** `refreshOnError`: the server records something even when it refuses (e.g. a counted attempt). */

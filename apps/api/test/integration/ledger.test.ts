@@ -57,7 +57,7 @@ describe('chart of accounts', () => {
     const s = await shop('gl-chart');
     const accounts = (await http().get('/v1/accounts').query({ legalEntityId: s.le }).set(s.accountant).expect(200)).body.data as { systemKey: string; code: string; name: string; type: string }[];
     expect(accounts.map((a) => [a.systemKey, a.code, a.name, a.type]).sort()).toEqual(DEFAULT_CHART.map((a) => [a.key, a.code, a.name, a.type]).sort());
-    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql', '0069_supplier_invoices_rls.sql', '0075_customers_rls.sql']
+    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql', '0069_supplier_invoices_rls.sql', '0075_customers_rls.sql', '0092_counter_service_tips_rls.sql', '0099_salons_appointments_packages_rls.sql', '0102_lodging_rooms_folios_rls.sql']
       .map((f) => readFileSync(new URL(`../../../../packages/database/drizzle/${f}`, import.meta.url), 'utf8'))
       .join('\n');
     const seeded = [...sql.matchAll(/\('([A-Z_]+)', '(\d{4})', '([^']+)', '([A-Z]+)'\)/g)].map((m) => [m[1], m[2], m[3], m[4]]);
@@ -127,9 +127,16 @@ describe('a day in the books', () => {
     expect(cents(await gl(s, 'CASH_ON_HAND'))).toBe(
       cents(await ev(`SELECT sum(amount) FILTER (WHERE type <> 'OPENING_FLOAT') + (SELECT sum(variance) FROM cash_reconciliations) AS v FROM cash_movements`)),
     );
-    expect(cents(await gl(s, 'PAYMENT_CLEARING'))).toBe(cents(await ev(`SELECT coalesce(sum(amount), 0) AS v FROM sale_tenders WHERE method IN ('CARD', 'QR', 'EWALLET')`)));
+    expect(cents(await gl(s, 'PAYMENT_CLEARING'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(amount), 0) FROM sale_tenders WHERE method IN ('CARD', 'QR', 'EWALLET'))
+      + (SELECT coalesce(sum(amount), 0) FROM sale_tips WHERE method <> 'CASH') - (SELECT coalesce(sum(amount), 0) FROM sale_tip_refunds WHERE method = 'CARD') AS v`)));
+    // Tips (session 25) are owed to staff: taken − given back on voids − paid out from drawers.
+    expect(0 - cents(await gl(s, 'TIPS_PAYABLE'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(amount), 0) FROM sale_tips) - (SELECT coalesce(sum(tip_refund), 0) FROM sale_returns)
+      - (SELECT coalesce(sum(amount), 0) FROM sale_tip_refunds)
+      + (SELECT coalesce(sum(amount), 0) FROM cash_movements WHERE type = 'TIP_PAYOUT') AS v`)));
     // Store credit (ADR-0018) is owed to customers: the liability is what the credit ledger says they hold.
     expect(cents(await gl(s, 'CUSTOMER_STORE_CREDIT')) + cents(await ev(`SELECT coalesce(sum(amount), 0) AS v FROM customer_credit_entries`))).toBe(0);
+    // Service packages (ADR-0022) are owed until used: the liability is what the package ledger says is left.
+    expect(cents(await gl(s, 'PREPAID_SERVICES')) + cents(await ev(`SELECT coalesce(sum(value), 0) AS v FROM customer_package_entries`))).toBe(0);
     expect(-cents(await gl(s, 'OUTPUT_VAT'))).toBe(cents(await ev(`SELECT (SELECT sum(vat_amount) FROM sales) - (SELECT coalesce(sum(vat_amount), 0) FROM sale_returns) AS v`)));
     const revenue = -(cents(await gl(s, 'SALES')) + cents(await gl(s, 'SALES_RETURNS')) + cents(await gl(s, 'STATUTORY_DISCOUNTS')));
     const byProduct = (await http().get('/v1/reports/by-product').query({ branchId: s.b1, from: localToday, to: localToday }).set(s.auth).expect(200)).body.data as { revenueExVat: string; cogs: string }[];
@@ -160,6 +167,50 @@ describe('a day in the books', () => {
     expect(lines.every((l) => /^\d{4}$/.test(l.accountCode))).toBe(true);
     await http().get('/v1/journal-lines').query({ legalEntityId: s.le, from: '2025-01-01', to: '2026-06-30' }).set(s.accountant).expect(400); // over 366 days
     await http().get('/v1/journal-lines').query({ legalEntityId: s.le, from: localToday, to: localToday }).set(s.manager).expect(403); // no accounting.read
+  });
+});
+
+describe('a night at the hotel (ADR-0023)', () => {
+  it('the guest ledger equals the open folios and the deposits account equals the deposits held', async () => {
+    const s = await shop('gl-hotel');
+    await http().patch('/v1/business').set(s.auth).send({ businessType: 'LODGING' }).expect(200);
+    const type = (await idem(s, '/v1/room-types', { code: 'STD', name: 'Standard', rackRate: '2800.00' }).expect(201)).body;
+    const room = (await idem(s, '/v1/rooms', { branchId: s.b1, roomTypeId: type.id, number: '101' }).expect(201)).body.id;
+    const room2 = (await idem(s, '/v1/rooms', { branchId: s.b1, roomTypeId: type.id, number: '102' }).expect(201)).body.id;
+    const reg = (await http().post('/v1/registers').set(s.auth).send({ branchId: s.b1, code: 'FD', name: 'Front desk' }).expect(201)).body.id;
+    const session = (await http().post('/v1/cashier-sessions').set(s.auth).send({ registerId: reg, openingFloat: '1000.00' }).expect(201)).body.id;
+    const guests = [{ fullName: 'Juan Dela Cruz' }];
+    const stay = (await idem(s, '/v1/stays', { branchId: s.b1, roomId: room, arrivalDate: localToday, departureDate: new Date(Date.parse(localToday) + 2 * 86_400_000).toISOString().slice(0, 10), guests }).expect(201)).body;
+    await idem(s, `/v1/stays/${stay.id}/deposits`, { method: 'CASH', cashierSessionId: session, amount: '1000.00' }).expect(201);
+    await http().post(`/v1/stays/${stay.id}/check-in`).set(s.auth).send({}).expect(200);
+    const dinner = await s.product('Dinner', '560.00', { productType: 'SERVICE', trackInventory: false });
+    await idem(s, '/v1/sales', { cashierSessionId: session, clientTransactionId: randomUUID(), lines: [{ variantId: dinner, quantity: '1' }], tenders: [{ method: 'ROOM_CHARGE', stayId: stay.id }] }).expect(201);
+    await http().post(`/v1/stays/${stay.id}/prepare-check-out`).set(s.auth).send({}).expect(200);
+    const folioId = (await http().get(`/v1/stays/${stay.id}/folio`).set(s.auth).expect(200)).body.id;
+    await idem(s, `/v1/folios/${folioId}/payments`, { method: 'CASH', cashierSessionId: session, tendered: '2000.00' }).expect(201);
+    // A second booking holds its deposit.
+    const later = (await idem(s, '/v1/stays', { branchId: s.b1, roomId: room2, arrivalDate: '2031-01-10', departureDate: '2031-01-12', guestName: 'Later' }).expect(201)).body;
+    await idem(s, `/v1/stays/${later.id}/deposits`, { method: 'CASH', cashierSessionId: session, amount: '700.00' }).expect(201);
+
+    const ev = (q: string) => one(s, q);
+    expect(cents(await gl(s, 'GUEST_LEDGER'))).toBe(cents(await ev(`SELECT coalesce(sum(amount), 0) AS v FROM folio_entries`)));
+    expect(cents(await gl(s, 'GUEST_LEDGER'))).toBe(560 * 100 + 2 * 280000 - 100000 - 200000);
+    expect(-cents(await gl(s, 'GUEST_DEPOSITS'))).toBe(cents(await ev(`SELECT coalesce(sum(amount), 0) AS v FROM stay_deposits`)));
+    expect(-cents(await gl(s, 'ROOM_REVENUE'))).toBe(cents(await ev(`SELECT sum(vatable_sales + vat_exempt_sales + zero_rated_sales + percentage_tax_sales) AS v FROM folio_entries WHERE kind = 'ROOM_NIGHT'`)));
+    expect(cents(await gl(s, 'CASH_ON_HAND'))).toBe(
+      cents(await ev(`SELECT sum(amount) FILTER (WHERE type <> 'OPENING_FLOAT') + coalesce((SELECT sum(variance) FROM cash_reconciliations), 0) AS v FROM cash_movements`)),
+    );
+    expect(-cents(await gl(s, 'OUTPUT_VAT'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(vat_amount), 0) FROM sales) + (SELECT coalesce(sum(vat_amount), 0) FROM folio_entries WHERE vat_amount IS NOT NULL) AS v`)));
+    const perType = await asOwnerInTenant(owner, s.tenantId, async (c) =>
+      Object.fromEntries((await c.query(`SELECT source_type, count(*)::int AS n FROM journal_entries GROUP BY 1`)).rows.map((r) => [r.source_type, r.n])),
+    );
+    // Two nights, two deposits received and one applied, one payment, one sale charged to the room.
+    expect(perType).toMatchObject({ FOLIO_ENTRY: 2, STAY_DEPOSIT: 3, FOLIO_PAYMENT: 1, SALE: 1 });
+    const tb = (await http().get('/v1/reports/trial-balance').query({ legalEntityId: s.le, from: localToday, to: localToday }).set(s.accountant).expect(200)).body;
+    expect(tb.totals.debit).toBe(tb.totals.credit);
+    // Folio entries are corrected on the folio, never by reversing their journal entry.
+    const [entry] = (await http().get('/v1/journal-entries').query({ legalEntityId: s.le, sourceType: 'FOLIO_ENTRY' }).set(s.accountant).expect(200)).body.data;
+    expect((await idem(s, `/v1/journal-entries/${entry.id}/reverse`, { memo: "x" }, s.accountant).expect(422)).body.error.code).toBe("CANCEL_THE_DOCUMENT");
   });
 });
 

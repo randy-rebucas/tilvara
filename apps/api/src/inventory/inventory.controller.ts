@@ -1,5 +1,17 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import {
+  createPackConversionSchema,
+  expiringQuerySchema,
+  lotQuerySchema,
+  type ExpiringQuery,
+  type LotQuery,
+  packConversionQuerySchema,
+  packOpeningSchema,
+  updatePackConversionSchema,
+  type CreatePackConversionInput,
+  type PackConversionQuery,
+  type PackOpeningInput,
+  type UpdatePackConversionInput,
   createReservationSchema,
   releaseReservationSchema,
   reservationListQuerySchema,
@@ -22,18 +34,22 @@ import {
   idParamSchema,
   receiveStockTransferSchema,
   setReorderPointsSchema,
+  setItemLocationsSchema,
   stockTransferListQuerySchema,
   type BranchQuery,
   type CreateStockCountInput,
   type CreateStockTransferInput,
   type ReceiveStockTransferInput,
   type SetReorderPointsInput,
+  type SetItemLocationsInput,
   type StockTransferListQuery,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { InventoryService } from './inventory.service.js';
+import { LotsService } from './lots.service.js';
+import { PacksService } from './packs.service.js';
 import { ReservationsService } from './reservations.service.js';
 
 const id = new ZodPipe(idParamSchema);
@@ -45,7 +61,59 @@ export class InventoryController {
   constructor(
     @Inject(InventoryService) private readonly inventory: InventoryService,
     @Inject(ReservationsService) private readonly reservations: ReservationsService,
+    @Inject(PacksService) private readonly packs: PacksService,
+    @Inject(LotsService) private readonly lots: LotsService,
   ) {}
+
+  // expiry lots (ADR-0020 §3)
+  @Get('stock/expiring')
+  expiring(@Auth() auth: AuthContext, @Query(new ZodPipe(expiringQuerySchema)) q: ExpiringQuery) {
+    return this.lots.expiring(auth, q);
+  }
+
+  @Get('stock/lots')
+  stockLots(@Auth() auth: AuthContext, @Query(new ZodPipe(lotQuerySchema)) q: LotQuery) {
+    return this.lots.forItem(auth, q);
+  }
+
+  // packs and pieces (ADR-0020)
+  @Get('pack-conversions')
+  listPackConversions(@Auth() auth: AuthContext, @Query(new ZodPipe(packConversionQuerySchema)) q: PackConversionQuery) {
+    return this.packs.listConversions(auth, q);
+  }
+
+  @Idempotent()
+  @Post('pack-conversions')
+  createPackConversion(@Auth() auth: AuthContext, @Body(new ZodPipe(createPackConversionSchema)) body: CreatePackConversionInput) {
+    return this.packs.createConversion(auth, body);
+  }
+
+  @Patch('pack-conversions/:id')
+  updatePackConversion(@Auth() auth: AuthContext, @Param('id', id) linkId: string, @Body(new ZodPipe(updatePackConversionSchema)) body: UpdatePackConversionInput) {
+    return this.packs.updateConversion(auth, linkId, body);
+  }
+
+  @HttpCode(200)
+  @Post('pack-conversions/:id/archive')
+  archivePackConversion(@Auth() auth: AuthContext, @Param('id', id) linkId: string) {
+    return this.packs.archiveConversion(auth, linkId);
+  }
+
+  @Idempotent({ required: true })
+  @Post('stock/pack-openings')
+  openPacks(@Auth() auth: AuthContext, @Body(new ZodPipe(packOpeningSchema)) body: PackOpeningInput) {
+    return this.packs.open(auth, body);
+  }
+
+  @Get('stock/pack-openings')
+  listPackOpenings(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) q: BranchQuery) {
+    return this.packs.listOpenings(auth, q.branchId);
+  }
+
+  @Get('stock/pack-openings/:id')
+  getPackOpening(@Auth() auth: AuthContext, @Param('id', id) openingId: string) {
+    return this.packs.getOpening(auth, openingId);
+  }
 
   // reservations (session 20)
   @Idempotent()
@@ -148,6 +216,22 @@ export class InventoryController {
   @Put('branches/:id/inventory-settings')
   setSettings(@Auth() auth: AuthContext, @Param('id', id) branchId: string, @Body(new ZodPipe(inventorySettingsSchema)) body: InventorySettingsInput) {
     return this.inventory.setSettings(auth, branchId, body);
+  }
+
+  // Shelf locations and stock across branches (ADR-0021 §5)
+  @Get('stock/locations')
+  listItemLocations(@Auth() auth: AuthContext, @Query(new ZodPipe(branchQuerySchema)) q: BranchQuery) {
+    return this.inventory.listItemLocations(auth, q);
+  }
+
+  @Put('stock/locations')
+  setItemLocations(@Auth() auth: AuthContext, @Body(new ZodPipe(setItemLocationsSchema)) body: SetItemLocationsInput) {
+    return this.inventory.setItemLocations(auth, body);
+  }
+
+  @Get('stock/balances/by-branch')
+  stockByBranch(@Auth() auth: AuthContext) {
+    return this.inventory.stockByBranch(auth);
   }
 
   @Get('stock/reorder-points')

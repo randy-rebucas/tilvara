@@ -16,3 +16,5 @@ export * from './sync.js';
 export * from './support.js';
 export * from './readings.js';
 export * from './integrations.js';
+export * from './salon.js';
+export * from './lodging.js';

@@ -46,7 +46,21 @@ export interface ReceiptInput {
     vatableSales: string;
     vatExemptSales: string;
     beneficiaryId: string | null;
+    /** A priced choice of the line above it (ADR-0014 §3): printed indented with a "+". */
+    isChoice?: boolean;
+    /** The promotion that priced the line (ADR-0021): printed with its discount. */
+    promotion?: string | null;
+    /** Who did it (ADR-0022): the staff member's first name. */
+    staff?: string | null;
+    /** A session of a prepaid package (ADR-0022 §6): printed as such at ₱0.00. */
+    packageSession?: boolean;
   }[];
+  /** A tip given with the sale (session 25): printed below the payment, never in the totals. */
+  tip?: { method: string; amount: string } | null;
+  /** Counter service (session 25): the number (and name) the kitchen calls when the order is ready. */
+  counterOrder?: { orderNumber: number; pickupName: string | null } | null;
+  /** Charge to room (ADR-0023 §5.1): "Charged to room 204 — Reyes", with a line for the guest to sign. */
+  roomCharge?: { roomNumber: string; guestSurname: string | null; amount: string } | null;
   /** `exchangeReturnNumber`: this cash is the refund of that return, put towards this sale (an exchange). */
   tenders: { method: string; amount: string; tendered: string; change: string; exchangeReturnNumber?: number | null }[];
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
@@ -222,11 +236,14 @@ export function buildReceipt(r: ReceiptInput) {
       cashier: r.cashierName,
     },
     lines: r.lines.map((l) => ({
-      name: l.name,
+      name: l.isChoice ? `+ ${l.name}` : l.name,
       quantity: l.quantity,
       unitPrice: m(l.unitPrice),
       amount: toDec(l.gross).minus(l.discount).toFixed(2),
       ...(positive(l.discount) && { discount: m(l.discount) }),
+      ...(l.promotion && positive(l.discount) && { promotion: l.promotion }),
+      ...(l.staff && { staff: l.staff }),
+      ...(l.packageSession && { packageSession: true }),
       flag: flag(l),
     })),
     // Shown separately, never inside item prices (RA 11360); with its VAT, like the item lines above it.
@@ -259,6 +276,15 @@ export function buildReceipt(r: ReceiptInput) {
     tenders: r.tenders.map((t) => ({ method: t.method, amount: t.amount, ...(t.method === 'CASH' && { tendered: t.tendered, change: t.change }), ...(t.exchangeReturnNumber && { exchangeReturnNumber: t.exchangeReturnNumber }) })),
     statutory,
     ...(r.customer && { customer: { name: r.customer.name, ...(r.customer.tin && { tin: r.customer.tin }) } }),
+    ...(r.tip && { tip: { method: r.tip.method, amount: m(r.tip.amount) } }),
+    ...(r.counterOrder && { callNumber: r.counterOrder.orderNumber, ...(r.counterOrder.pickupName && { pickupName: r.counterOrder.pickupName }) }),
+    ...(r.roomCharge && {
+      roomCharge: {
+        roomNumber: r.roomCharge.roomNumber, guestSurname: r.roomCharge.guestSurname, amount: m(r.roomCharge.amount),
+        line: `Charged to room ${r.roomCharge.roomNumber}${r.roomCharge.guestSurname ? ` — ${r.roomCharge.guestSurname}` : ''}`,
+        signatureLine: 'Guest signature',
+      },
+    }),
     legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
   };
 }

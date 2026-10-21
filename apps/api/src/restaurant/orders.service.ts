@@ -5,8 +5,6 @@ import {
   desc,
   eq,
   inArray,
-  isNull,
-  kitchenStations,
   kitchenTickets,
   modifierGroups,
   modifierOptions,
@@ -46,7 +44,9 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { unprocessable } from '../tax/tax.service.js';
+import { assertItemAvailable, chooseModifiers, type Chosen } from './choices.js';
 import { recordPreparedWaste } from './consumption.js';
+import { fireItems } from './counter.js';
 import { MenusService } from './menus.service.js';
 
 type Order = typeof restaurantOrders.$inferSelect;
@@ -152,27 +152,8 @@ export class OrdersService extends TenantService {
         const path = ['items', idx];
         const item = menuItems.find((m) => m.variantId === req.variantId);
         if (!item) throw unprocessable('NOT_ON_MENU', 'This item is not on the menu served here', { path: [...path, 'variantId'] });
-        if (!item.available) {
-          throw unprocessable(item.soldOut ? 'SOLD_OUT' : 'NOT_AVAILABLE', item.soldOut ? `${item.name} is sold out` : `${item.name} cannot be sold here (no price)`, { path: [...path, 'variantId'] });
-        }
-        if (new Set(req.modifierOptionIds).size !== req.modifierOptionIds.length) throw unprocessable('DUPLICATE_MODIFIER', 'Each choice once per item', { path: [...path, 'modifierOptionIds'] });
-        const chosen = req.modifierOptionIds.map((oid) => {
-          for (const g of item.modifierGroups) {
-            const o = g.options.find((x) => x.id === oid);
-            if (o) return { group: g, option: o };
-          }
-          throw unprocessable('MODIFIER_NOT_ALLOWED', 'This choice does not belong to this item', { path: [...path, 'modifierOptionIds'], modifierOptionId: oid });
-        });
-        for (const g of item.modifierGroups) {
-          const n = chosen.filter((c) => c.group.id === g.id).length;
-          if (n < g.minSelect || n > g.maxSelect) {
-            throw unprocessable('MODIFIER_COUNT', g.minSelect === g.maxSelect ? `Choose ${g.minSelect} for ${g.name}` : `Choose ${g.minSelect} to ${g.maxSelect} for ${g.name}`, {
-              path: [...path, 'modifierOptionIds'], modifierGroupId: g.id, minSelect: g.minSelect, maxSelect: g.maxSelect,
-            });
-          }
-        }
-        const gone = chosen.find((c) => !c.option.available);
-        if (gone) throw unprocessable('NOT_AVAILABLE', `${gone.option.name} is not available`, { path: [...path, 'modifierOptionIds'], modifierOptionId: gone.option.id });
+        assertItemAvailable(item, [...path, 'variantId']);
+        const chosen = chooseModifiers(item, req.modifierOptionIds, [...path, 'modifierOptionIds']);
 
         const common = { tenantId, orderId, menuVersionId: served.menu.menuVersionId, quantity: req.quantity, course: req.course, stationCode: item.stationCode, addedBy: auth.userId };
         const [parent] = await db
@@ -191,17 +172,41 @@ export class OrdersService extends TenantService {
     });
   }
 
-  /** Edit an item the kitchen has not seen yet; its modifiers follow quantity and course. */
+  /**
+   * Edit an item the kitchen has not seen yet; its modifiers follow quantity, course and seat. New
+   * `modifierOptionIds` replace its choices whole (session 25), checked against the item's groups on
+   * the menu served now, as when it was added.
+   */
   updateItem(auth: AuthContext, itemId: string, input: UpdateOrderItemInput) {
     return this.mutate(auth, async (db) => {
       const { order, item } = await this.lockedItem(db, auth, itemId, 'restaurant.orders');
       if (order.status !== 'OPEN') throw notOpen(order);
       if (item.status !== 'PENDING') throw conflict('ITEM_FIRED', 'This item was already sent to the kitchen; void it instead');
       if (input.quantity) await this.assertWholeUnits(db, [{ variantId: item.variantId!, quantity: input.quantity }]);
-      await db.update(orderItems).set(input).where(eq(orderItems.id, itemId));
-      const follow = { ...(input.quantity && { quantity: input.quantity }), ...(input.course && { course: input.course }), ...(input.seat !== undefined && { seat: input.seat }) };
+      const { modifierOptionIds, ...fields } = input;
+      let chosen: Chosen[] | null = null;
+      let menuVersionId: string | null = null;
+      if (modifierOptionIds) {
+        const served = await this.menus.served(db, order.branchId, order.orderType as 'DINE_IN' | 'TAKEAWAY');
+        const menuItem = served.menu?.sections.flatMap((s) => s.items).find((m) => m.variantId === item.variantId);
+        if (!served.menu || !menuItem) throw unprocessable('NOT_ON_MENU', 'This item is no longer on the menu served here; remove it and add it again', { path: ['modifierOptionIds'] });
+        chosen = chooseModifiers(menuItem, modifierOptionIds, ['modifierOptionIds']);
+        menuVersionId = served.menu.menuVersionId;
+      }
+      if (Object.keys(fields).length) await db.update(orderItems).set(fields).where(eq(orderItems.id, itemId));
+      const follow = { ...(fields.quantity && { quantity: fields.quantity }), ...(fields.course && { course: fields.course }), ...(fields.seat !== undefined && { seat: fields.seat }) };
       if (Object.keys(follow).length) await db.update(orderItems).set(follow).where(eq(orderItems.parentItemId, itemId));
-      await this.audit(db, auth, 'order.item_updated', 'restaurant_order', order.id, { itemId, ...input });
+      if (chosen) {
+        const [now] = await db.select().from(orderItems).where(eq(orderItems.id, itemId));
+        await db.delete(orderItems).where(eq(orderItems.parentItemId, itemId));
+        if (chosen.length) {
+          await db.insert(orderItems).values(chosen.map((c) => ({
+            tenantId: now!.tenantId, orderId: order.id, menuVersionId: menuVersionId!, quantity: now!.quantity, course: now!.course, seat: now!.seat, stationCode: now!.stationCode,
+            addedBy: auth.userId, kind: 'MODIFIER', parentItemId: itemId, variantId: c.option.variantId, modifierOptionId: c.option.id, name: c.option.name,
+          })));
+        }
+      }
+      await this.audit(db, auth, 'order.item_updated', 'restaurant_order', order.id, { itemId, ...fields, ...(chosen && { choices: chosen.map((c) => c.option.id) }) });
       return this.view(db, order);
     });
   }
@@ -315,33 +320,8 @@ export class OrdersService extends TenantService {
         .where(and(eq(orderItems.orderId, orderId), eq(orderItems.kind, 'ITEM'), eq(orderItems.status, 'PENDING'), input.courses ? inArray(orderItems.course, input.courses) : undefined))
         .orderBy(asc(orderItems.createdAt), asc(orderItems.id));
       if (!pending.length) return { ...(await this.view(db, order)), fired: [] };
-      const stations = await db.select().from(kitchenStations).where(and(eq(kitchenStations.branchId, order.branchId), isNull(kitchenStations.archivedAt)));
-      const fallback = stations.find((s) => s.isDefault);
-      const groups = new Map<string, { stationId: string; course: number; items: Item[] }>();
-      for (const it of pending) {
-        const station = stations.find((s) => s.code === it.stationCode) ?? fallback;
-        if (!station) throw unprocessable('NO_KITCHEN_STATION', `No kitchen station for ${it.stationCode ?? 'this item'} and no default station at this branch`, { stationCode: it.stationCode });
-        const key = `${station.id}:${it.course}`;
-        const g = groups.get(key) ?? { stationId: station.id, course: it.course, items: [] };
-        g.items.push(it);
-        groups.set(key, g);
-      }
-      const fired: { ticketId: string; ticketNumber: number; stationId: string; course: number; items: number }[] = [];
       const notes = await db.select().from(orderCourseNotes).where(eq(orderCourseNotes.orderId, orderId));
-      for (const g of [...groups.values()].sort((a, b) => a.course - b.course)) {
-        const ticketNumber = await nextNumber(db, order.tenantId, order.branchId, 'KITCHEN_TICKET');
-        const courseNote = notes.find((n) => n.course === g.course)?.note ?? null;
-        const [ticket] = await db
-          .insert(kitchenTickets)
-          .values({ tenantId: order.tenantId, branchId: order.branchId, orderId, stationId: g.stationId, ticketNumber, course: g.course, firedBy: auth.userId, courseNote })
-          .returning();
-        const ids = g.items.map((i) => i.id);
-        await db
-          .update(orderItems)
-          .set({ status: 'FIRED', firedAt: sql`now()`, kitchenTicketId: ticket!.id })
-          .where(and(or(inArray(orderItems.id, ids), inArray(orderItems.parentItemId, ids)), eq(orderItems.status, 'PENDING')));
-        fired.push({ ticketId: ticket!.id, ticketNumber, stationId: g.stationId, course: g.course, items: ids.length });
-      }
+      const fired = await fireItems(db, order, pending, auth.userId, { courseNotes: notes });
       await this.audit(db, auth, 'order.fired', 'restaurant_order', orderId, { tickets: fired.map((f) => f.ticketNumber), courses: input.courses ?? null });
       return { ...(await this.view(db, order)), fired };
     });

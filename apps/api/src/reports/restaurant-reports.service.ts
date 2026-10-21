@@ -82,8 +82,25 @@ export class RestaurantReportsService extends ReportsService {
         return { netSales: netSales.toFixed(2), revenueExVat: revenue.toFixed(2), cogs: cogs.toFixed(2), grossProfit: revenue.minus(cogs).toFixed(2), marginPct: pct(revenue.minus(cogs), revenue) };
       };
 
+      // Free choices ("no onions", session 25) have no sale line: they count once their order is fully
+      // paid (SETTLED, counter orders included), in the local day it settled, unless they or their item
+      // were voided. Quantity follows the item's.
+      const { rows: free } = await db.execute<Row>(sql`
+        SELECT p.variant_id AS item_id, iv.sku AS item_sku, ip.name AS item_name, m.modifier_option_id AS option_id,
+               (array_agg(m.name ORDER BY m.created_at DESC))[1] AS name, sum(m.quantity)::text AS quantity, count(DISTINCT o.id)::int AS orders
+          FROM order_items m
+          JOIN order_items p ON p.id = m.parent_item_id
+          JOIN restaurant_orders o ON o.id = m.order_id
+          JOIN product_variants iv ON iv.id = p.variant_id JOIN products ip ON ip.id = iv.product_id
+         WHERE m.kind = 'MODIFIER' AND m.variant_id IS NULL AND m.status <> 'VOIDED' AND p.status <> 'VOIDED'
+           AND o.status = 'SETTLED' AND o.branch_id = ${w.branchId} AND o.closed_at >= ${w.start} AND o.closed_at < ${w.end}
+         GROUP BY 1, 2, 3, 4
+         ORDER BY sum(m.quantity) DESC, 5`);
+
       const byItem = new Map<string, Row[]>();
       for (const r of rows) byItem.set(r.item_id as string, [...(byItem.get(r.item_id as string) ?? []), r]);
+      // An item whose choices count in this period but whose sale fell in another still gets its row (no money).
+      for (const f of free) if (!byItem.has(f.item_id as string)) byItem.set(f.item_id as string, [{ item_id: f.item_id ?? null, item_sku: f.item_sku ?? null, item_name: f.item_name ?? null, modifier_id: null, checks: 0 }]);
       const data = [...byItem.values()].map((group) => {
         const own = group.find((r) => r.modifier_id === null);
         const mods = group.filter((r) => r.modifier_id !== null);
@@ -96,6 +113,9 @@ export class RestaurantReportsService extends ReportsService {
           checks: own?.checks ?? 0,
           ...self,
           modifiers,
+          freeChoices: free
+            .filter((f) => f.item_id === group[0]!.item_id)
+            .map((f) => ({ modifierOptionId: f.option_id, name: f.name, quantity: qty(f.quantity as string), orders: f.orders })),
           withModifiers: sum([self, ...modifiers]),
         };
       });
@@ -453,6 +473,73 @@ export class RestaurantReportsService extends ReportsService {
           net: totalNet,
         },
         distributable: totalNet.exVat,
+        ledger: money(ledger!.net as string),
+      };
+    });
+  }
+
+  /**
+   * Tips (session 25): taken with sales (cash or card/QR), given back by voids, and paid out to staff
+   * from the drawers, per local day, with each cashier's share of what was taken. Owed = taken − given
+   * back − paid out; `ledger` is TIPS_PAYABLE's movement from the same documents (sales, voids, payouts).
+   */
+  tips(auth: AuthContext, range: ReportRange) {
+    return this.run(auth, range, async (db, w) => {
+      const { rows } = await db.execute<Row>(sql`
+        WITH docs AS (
+          SELECT (s.completed_at AT TIME ZONE ${w.tz})::date AS day, s.cashier_user_id AS user_id,
+                 CASE WHEN t.method = 'CASH' THEN t.amount ELSE 0 END AS cash, CASE WHEN t.method = 'CASH' THEN 0 ELSE t.amount END AS electronic,
+                 0::numeric AS refunded, 0::numeric AS paid_out, 1 AS tips
+            FROM sale_tips t JOIN sales s ON s.id = t.sale_id
+           WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end}
+          UNION ALL
+          SELECT (r.created_at AT TIME ZONE ${w.tz})::date, NULL, 0, 0, r.tip_refund, 0, 0
+            FROM sale_returns r WHERE r.tip_refund > 0 AND r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
+          UNION ALL
+          SELECT (f.created_at AT TIME ZONE ${w.tz})::date, NULL, 0, 0, f.amount, 0, 0
+            FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id
+           WHERE r.branch_id = ${w.branchId} AND f.created_at >= ${w.start} AND f.created_at < ${w.end}
+          UNION ALL
+          SELECT (m.created_at AT TIME ZONE ${w.tz})::date, NULL, 0, 0, 0, -m.amount, 0
+            FROM cash_movements m JOIN cashier_sessions cs ON cs.id = m.cashier_session_id
+           WHERE m.type = 'TIP_PAYOUT' AND cs.branch_id = ${w.branchId} AND m.created_at >= ${w.start} AND m.created_at < ${w.end})
+        SELECT day::text, sum(tips)::int AS tips, sum(cash)::text AS cash, sum(electronic)::text AS electronic, sum(refunded)::text AS refunded, sum(paid_out)::text AS paid_out
+          FROM docs GROUP BY 1 ORDER BY 1`);
+      const { rows: byCashier } = await db.execute<Row>(sql`
+        SELECT s.cashier_user_id AS user_id, u.display_name AS name, count(*)::int AS tips, sum(t.amount)::text AS amount
+          FROM sale_tips t JOIN sales s ON s.id = t.sale_id JOIN users u ON u.id = s.cashier_user_id
+         WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end}
+         GROUP BY 1, 2 ORDER BY sum(t.amount) DESC, 2`);
+      const { rows: [ledger] } = await db.execute<Row>(sql`
+        SELECT coalesce(sum(l.credit - l.debit), 0)::text AS net
+          FROM journal_lines l JOIN accounts a ON a.id = l.account_id JOIN journal_entries e ON e.id = l.journal_entry_id
+         WHERE a.system_key = 'TIPS_PAYABLE' AND e.source_id IN (
+           SELECT id FROM sales WHERE branch_id = ${w.branchId} AND completed_at >= ${w.start} AND completed_at < ${w.end}
+           UNION ALL
+           SELECT id FROM sale_returns WHERE branch_id = ${w.branchId} AND created_at >= ${w.start} AND created_at < ${w.end}
+           UNION ALL
+           SELECT f.id FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id WHERE r.branch_id = ${w.branchId} AND f.created_at >= ${w.start} AND f.created_at < ${w.end}
+           UNION ALL
+           SELECT m.id FROM cash_movements m JOIN cashier_sessions cs ON cs.id = m.cashier_session_id
+            WHERE m.type = 'TIP_PAYOUT' AND cs.branch_id = ${w.branchId} AND m.created_at >= ${w.start} AND m.created_at < ${w.end})`);
+      const day = (r: Row) => {
+        const taken = dec(r.cash).plus(dec(r.electronic));
+        return {
+          tips: r.tips as number,
+          cash: money(r.cash as string),
+          electronic: money(r.electronic as string),
+          taken: taken.toFixed(2),
+          refunded: money(r.refunded as string),
+          paidOut: money(r.paid_out as string),
+          owed: taken.minus(dec(r.refunded)).minus(dec(r.paid_out)).toFixed(2),
+        };
+      };
+      const cols = ['cash', 'electronic', 'refunded', 'paid_out'];
+      const total: Row = { tips: rows.reduce((a, r) => a + (r.tips as number), 0), ...Object.fromEntries(cols.map((c) => [c, rows.reduce((a, r) => a.plus(dec(r[c])), ZERO).toString()])) };
+      return {
+        days: rows.map((r) => ({ day: r.day, ...day(r) })),
+        byCashier: byCashier.map((c) => ({ userId: c.user_id, name: c.name, tips: c.tips, amount: money(c.amount as string) })),
+        totals: day(total),
         ledger: money(ledger!.net as string),
       };
     });

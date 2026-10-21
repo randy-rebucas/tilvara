@@ -23,7 +23,8 @@ const DOCS = `
              WHEN 'SALE' THEN 'SALE' WHEN 'CONSUMPTION' THEN 'SALE' WHEN 'RETURN' THEN 'SALE_RETURN' WHEN 'RECEIPT' THEN 'GOODS_RECEIPT'
              WHEN 'SUPPLIER_RETURN' THEN 'SUPPLIER_RETURN' WHEN 'TRANSFER_OUT' THEN 'TRANSFER_DISPATCH'
              WHEN 'TRANSFER_IN' THEN 'TRANSFER_RECEIPT' WHEN 'COUNT' THEN 'STOCK_COUNT'
-             WHEN 'ADJUSTMENT' THEN 'STOCK_ADJUSTMENT' WHEN 'WASTE' THEN 'STOCK_ADJUSTMENT' END AS doc_type,
+             WHEN 'ADJUSTMENT' THEN 'STOCK_ADJUSTMENT' WHEN 'WASTE' THEN 'STOCK_ADJUSTMENT'
+             WHEN 'UNPACK_OUT' THEN 'PACK_OPENING' WHEN 'UNPACK_IN' THEN 'PACK_OPENING' END AS doc_type,
            CASE m.type
              WHEN 'SALE' THEN m.sale_id
              WHEN 'CONSUMPTION' THEN m.sale_id
@@ -33,6 +34,7 @@ const DOCS = `
              WHEN 'TRANSFER_OUT' THEN (SELECT stock_transfer_id FROM stock_transfer_lines WHERE id = m.stock_transfer_line_id)
              WHEN 'TRANSFER_IN' THEN (SELECT stock_transfer_id FROM stock_transfer_lines WHERE id = m.stock_transfer_line_id)
              WHEN 'COUNT' THEN (SELECT stock_count_id FROM stock_count_lines WHERE id = m.stock_count_line_id)
+             WHEN 'UNPACK_OUT' THEN m.pack_opening_id WHEN 'UNPACK_IN' THEN m.pack_opening_id
              ELSE m.stock_adjustment_id END AS doc_id
       FROM stock_movements m),
   docs AS (
@@ -42,13 +44,20 @@ const DOCS = `
     UNION ALL SELECT 'SUPPLIER_RETURN', r.id, r.branch_id, (SELECT coalesce(sum(quantity * credit_unit_cost), 0) FROM supplier_return_lines WHERE supplier_return_id = r.id) FROM supplier_returns r
     UNION ALL SELECT 'STOCK_ADJUSTMENT', id, branch_id, 0 FROM stock_adjustments
     UNION ALL SELECT 'STOCK_COUNT', id, branch_id, 0 FROM stock_counts
+    UNION ALL SELECT 'PACK_OPENING', id, branch_id, 0 FROM pack_openings
     UNION ALL SELECT 'TRANSFER_DISPATCH', id, from_branch_id, 0 FROM stock_transfers
     UNION ALL SELECT 'TRANSFER_RECEIPT', id, to_branch_id, 0 FROM stock_transfers WHERE status = 'RECEIVED'
-    UNION ALL SELECT 'CASH_MOVEMENT', m.id, s.branch_id, m.amount FROM cash_movements m JOIN cashier_sessions s ON s.id = m.cashier_session_id WHERE m.type IN ('PAY_IN', 'PAY_OUT')
+    UNION ALL SELECT 'CASH_MOVEMENT', m.id, s.branch_id, m.amount FROM cash_movements m JOIN cashier_sessions s ON s.id = m.cashier_session_id WHERE m.type IN ('PAY_IN', 'PAY_OUT', 'TIP_PAYOUT')
     UNION ALL SELECT 'CASH_VARIANCE', r.cashier_session_id, s.branch_id, r.variance FROM cash_reconciliations r JOIN cashier_sessions s ON s.id = r.cashier_session_id
     UNION ALL SELECT 'SUPPLIER_INVOICE', id, branch_id, total_amount FROM supplier_invoices
     UNION ALL SELECT 'SUPPLIER_PAYMENT', id, branch_id, amount FROM supplier_payments
-    UNION ALL SELECT 'SUPPLIER_NOTE', id, branch_id, total_amount FROM supplier_notes),
+    UNION ALL SELECT 'SUPPLIER_NOTE', id, branch_id, total_amount FROM supplier_notes
+    UNION ALL SELECT 'SALE_TIP_REFUND', f.id, r.branch_id, f.amount FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id
+    -- Lodging (ADR-0023): a night, an adjustment or a night's reversal posts its own entry; payments and deposits too.
+    UNION ALL SELECT 'FOLIO_ENTRY', e.id, f.branch_id, e.amount FROM folio_entries e JOIN folios f ON f.id = e.folio_id
+     WHERE e.kind IN ('ROOM_NIGHT', 'ADJUSTMENT') OR (e.kind = 'NIGHT_REVERSAL' AND e.vatable_sales IS NOT NULL)
+    UNION ALL SELECT 'FOLIO_PAYMENT', p.id, p.branch_id, p.amount FROM folio_payments p
+    UNION ALL SELECT 'STAY_DEPOSIT', d.id, d.branch_id, d.amount FROM stay_deposits d),
   inv AS (
     SELECT e.source_type AS doc_type, e.source_id AS doc_id, l.branch_id, sum(l.debit - l.credit) AS amount
       FROM journal_entries e JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
@@ -130,8 +139,38 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
   'order and bill states disagree': `
     SELECT o.id, o.status, b.status AS bill FROM restaurant_orders o
       LEFT JOIN order_bills b ON b.order_id = o.id AND b.status <> 'VOIDED'
-     WHERE (o.status = 'SETTLED') <> coalesce(b.status = 'SETTLED', false) OR (o.status = 'BILLED' AND b.status IS DISTINCT FROM 'ACTIVE')
-        OR (o.status IN ('OPEN', 'CANCELLED', 'MERGED') AND b.id IS NOT NULL)`,
+     WHERE o.order_type <> 'COUNTER' AND ((o.status = 'SETTLED') <> coalesce(b.status = 'SETTLED', false) OR (o.status = 'BILLED' AND b.status IS DISTINCT FROM 'ACTIVE')
+        OR (o.status IN ('OPEN', 'CANCELLED', 'MERGED') AND b.id IS NOT NULL))`,
+  // Counter service (session 25): a counter order is its sale's kitchen copy, settled with it, never billed.
+  'counter order without its sale, unsettled or billed': `
+    SELECT o.id, o.status FROM restaurant_orders o LEFT JOIN sales s ON s.id = o.sale_id
+     WHERE o.order_type = 'COUNTER' AND (s.id IS NULL OR s.branch_id <> o.branch_id OR o.status <> 'SETTLED'
+        OR EXISTS (SELECT 1 FROM order_bills b WHERE b.order_id = o.id))`,
+  // Lodging (ADR-0023 §5): a settled folio is at zero; a checked-out stay's folio is settled; a room charge
+  // is on the folio of the stay its tender names, for the same amount.
+  'folio or room charge that disagrees with its stay or sale': `
+    SELECT f.id, 'settled folio not at zero' AS problem FROM folios f
+     WHERE f.status = 'SETTLED' AND (SELECT coalesce(sum(e.amount), 0) FROM folio_entries e WHERE e.folio_id = f.id) <> 0
+    UNION ALL SELECT s.id, 'checked out with an open folio' FROM stays s JOIN folios f ON f.stay_id = s.id WHERE s.status = 'CHECKED_OUT' AND f.status <> 'SETTLED'
+    UNION ALL SELECT t.id, 'room charge not on the folio' FROM sale_tenders t
+     WHERE t.method = 'ROOM_CHARGE' AND NOT EXISTS (SELECT 1 FROM folio_entries e WHERE e.sale_id = t.sale_id AND e.kind = 'CHARGE' AND e.stay_id = t.stay_id AND e.amount = t.amount)`,
+  // Tips (session 25): each one's money moved exactly as recorded, and a void gave back exactly the tip.
+  'tip whose money did not move as recorded': `
+    SELECT t.id, t.method FROM sale_tips t
+     WHERE (t.method = 'CASH' AND t.amount <> coalesce((SELECT sum(m.amount) FROM cash_movements m WHERE m.sale_id = t.sale_id AND m.type = 'TIP'), 0))
+        OR (t.method <> 'CASH' AND NOT EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = t.payment_intent_id AND p.sale_id = t.sale_id AND p.amount = t.amount AND p.purpose = 'TIP'
+              AND (p.status = 'SUCCEEDED' OR (p.status = 'CANCELED' AND EXISTS (SELECT 1 FROM sale_tip_refunds f WHERE f.payment_intent_id = p.id AND f.method = 'CARD')))))
+    UNION ALL
+    -- A void gives back a cash tip itself (tip_refund) and a card tip afterwards (sale_tip_refunds): cash
+    -- out of drawers for tips of this void = the cash tip + a card tip the provider refused.
+    SELECT r.id, 'void' FROM sale_returns r
+     WHERE r.tip_refund <> coalesce((SELECT t.amount FROM sale_tips t WHERE t.sale_id = r.sale_id AND r.kind = 'VOID' AND t.method = 'CASH'), 0)
+        OR r.tip_refund + coalesce((SELECT f.amount FROM sale_tip_refunds f WHERE f.sale_return_id = r.id AND f.method = 'CASH'), 0)
+           <> coalesce((SELECT -sum(m.amount) FROM cash_movements m WHERE m.sale_return_id = r.id AND m.type = 'TIP_REFUND'), 0)
+    UNION ALL
+    SELECT f.id, 'card tip refund' FROM sale_tip_refunds f JOIN sale_tips t ON t.id = f.sale_tip_id JOIN sale_returns r ON r.id = f.sale_return_id
+     WHERE r.kind <> 'VOID' OR r.sale_id <> t.sale_id OR f.amount <> t.amount OR t.method = 'CASH'
+        OR (f.method = 'CARD' AND NOT EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = f.payment_intent_id AND p.id = t.payment_intent_id AND p.status = 'CANCELED'))`,
 };
 
 /** Rows for the transit check are filtered in JS (its expected value depends on the status). */

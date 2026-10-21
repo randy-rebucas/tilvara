@@ -27,6 +27,8 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   const [registers, setRegisters] = useState<Workstation['register'][]>([shift.register]);
   const [findRegister, setFindRegister] = useState(shift.register.id);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+  // A voided sale's card tip that could not be given back yet (session 25): retried from here.
+  const [pendingTip, setPendingTip] = useState<string | null>(null);
   const [key, setKey] = useState(uuid);
   const canVoid = permissions.includes('sales.void');
   const canReturn = permissions.includes('sales.refund');
@@ -53,6 +55,13 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
     setMode(null);
     setPreview(null);
     setMessage(null);
+    // A void whose card tip is still to be given back (session 25): offer it again here.
+    const tip = (detail as { tip?: { method: string } | null }).tip;
+    setPendingTip(null);
+    if (tip && tip.method !== 'CASH') {
+      const backs = await api<{ data: { id: string; tipRefundPending?: boolean }[] }>('GET', `/v1/sales/${id}/returns`).catch(() => ({ data: [] }));
+      setPendingTip(backs.data.find((b) => b.tipRefundPending)?.id ?? null);
+    }
   }
 
   async function find(e: FormEvent<HTMLFormElement>) {
@@ -91,7 +100,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       return;
     }
     try {
-      const r = await api<{ id: string; amountDue: string; returnNumber: number }>(
+      const r = await api<{ id: string; amountDue: string; returnNumber: number; cardTipRefund?: { method: string; amount: string } | null; tipRefundPending?: boolean }>(
         'POST',
         `/v1/sales/${selected.detail.id}/returns`,
         {
@@ -104,7 +113,10 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       setKey(uuid());
       await open(selected.detail.id);
       // After reloading the sale (which clears messages), confirm the refund and show its slip to hand over.
-      setMessage({ kind: 'info', text: t(f.get('toCredit') === 'on' ? 'history.creditGiven' : 'history.refund', { amount: peso(r.amountDue) }) });
+      const refunded = t(f.get('toCredit') === 'on' ? 'history.creditGiven' : 'history.refund', { amount: peso(r.amountDue) });
+      const tipBack = r.cardTipRefund ? ` ${t(r.cardTipRefund.method === 'CARD' ? 'tipback.card' : 'tipback.cash', { amount: peso(r.cardTipRefund.amount) })}` : '';
+      setMessage({ kind: 'info', text: refunded + tipBack });
+      setPendingTip(r.tipRefundPending ? r.id : null);
       void api<ReceiptData>('GET', `/v1/sale-returns/${r.id}/receipt`).then(setSlip).catch(() => undefined);
       void load();
     } catch (err) {
@@ -115,6 +127,17 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       }
       setKey(uuid());
       setMessage({ kind: 'error', text: err instanceof ApiFailure ? err.error.message : t('common.error') });
+    }
+  }
+
+  /** Give the card tip back again: by cancelling its charge, or in cash from this drawer if the provider refuses. */
+  async function retryTip(returnId: string) {
+    try {
+      const r = await api<{ cardTipRefund: { method: string; amount: string } | null; tipRefundPending: boolean }>('POST', `/v1/sale-returns/${returnId}/tip-refund`, { cashierSessionId: shift.sessionId });
+      if (r.cardTipRefund) setMessage({ kind: 'info', text: t(r.cardTipRefund.method === 'CARD' ? 'tipback.card' : 'tipback.cash', { amount: peso(r.cardTipRefund.amount) }) });
+      setPendingTip(r.tipRefundPending ? returnId : null);
+    } catch (err) {
+      setMessage({ kind: 'error', text: err instanceof ApiFailure ? withReference(err.error.message, err) : t('common.error') });
     }
   }
 
@@ -168,6 +191,12 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       </Note>
       <div className="grid content-start gap-4">
         {message && <Callout kind={message.kind}>{message.text}</Callout>}
+        {pendingTip && (
+          <div className="grid gap-2" data-testid="tip-pending">
+            <Callout kind="warn">{t('tipback.pending')}</Callout>
+            <button type="button" className="btn justify-self-start" onClick={() => void retryTip(pendingTip)}>{t('tipback.retry')}</button>
+          </div>
+        )}
         {selected && (
           <>
             <div className="no-print flex flex-wrap gap-2">

@@ -8,7 +8,7 @@ import { InventoryChrome, inventoryBranch } from '../chrome';
 
 export const metadata = { title: 'Stock movements' };
 
-const TYPES = ['RECEIPT', 'SUPPLIER_RETURN', 'SALE', 'CONSUMPTION', 'RETURN', 'TRANSFER_OUT', 'TRANSFER_IN', 'COUNT', 'ADJUSTMENT', 'WASTE'];
+const TYPES = ['RECEIPT', 'SUPPLIER_RETURN', 'SALE', 'CONSUMPTION', 'RETURN', 'TRANSFER_OUT', 'TRANSFER_IN', 'COUNT', 'ADJUSTMENT', 'WASTE', 'UNPACK_OUT', 'UNPACK_IN'];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 type Row = MovementSummary['data'][number];
 

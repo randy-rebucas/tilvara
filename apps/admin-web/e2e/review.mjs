@@ -46,10 +46,14 @@ try {
   // Auth screens
   await both('sign-up', () => go('/sign-up'));
   await both('sign-up-invalid', async () => {
+    // Through to the last step, where the server refuses the email and password.
     await go('/sign-up');
+    await fill('businessName', 'Invalid Test');
+    await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
+    await fill('displayName', 'Test');
     await fill('email', 'not-an-email');
     await fill('password', 'short');
-    await submit();
+    await b.finishSteps();
     await sleep(600);
   });
   await both('sign-in-error', async () => {
@@ -73,7 +77,7 @@ try {
   await fill('email', email);
   await fill('password', PASSWORD);
   await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
-  await submit();
+  await b.finishSteps();
   await waitFor(`location.pathname === '/'`);
   const entity = await bff('POST', '/api/v1/legal-entities', { registeredName: 'Nena Reyes Trading', tin: '123-456-789', vatStatus: 'NON_VAT' }, true);
   const branch = await bff('POST', '/api/v1/branches', { legalEntityId: entity.body.id, code: 'QC-01', name: 'Cubao' }, true);

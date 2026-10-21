@@ -1,8 +1,8 @@
 import { encodeEscPos, toText } from '@1pos/escpos';
 import { describe, expect, it } from 'vitest';
-import type { Receipt } from '../types';
+import type { FolioStatement, Receipt } from '../types';
 import { escposDrawer, escposPrinter } from './devices';
-import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable, tenderLabel } from './printing';
+import { billToPrintable, offlineReceiptToPrintable, receiptToPrintable, statementToPrintable, tenderLabel } from './printing';
 
 const receipt: Receipt = {
   notice: 'THIS IS NOT AN OFFICIAL INVOICE',
@@ -123,5 +123,47 @@ describe('tender labels (session 20)', () => {
     expect(text).toContain('Customer: Rosa Lim');
     expect(text).toContain('TIN 123-456-789');
     expect(toText(receiptToPrintable(receipt), 48)).not.toContain('Customer:');
+  });
+});
+
+describe('lodging (ADR-0023)', () => {
+  it('prints a charge to a room with its line, amount and the guest’s signature line, after the payment', () => {
+    const roomed: Receipt = {
+      ...receipt,
+      statutory: [],
+      tenders: [{ method: 'ROOM_CHARGE', amount: '173.64' }],
+      totals: { ...receipt.totals, tendered: '173.64', change: '0.00' },
+      roomCharge: { roomNumber: '204', guestSurname: 'Cruz', amount: '173.64', line: 'Charged to room 204 - Cruz', signatureLine: 'Guest signature' },
+    };
+    const text = toText(receiptToPrintable(roomed), 48);
+    const lines = text.split('\n');
+    const at = (s: string) => lines.findIndex((l) => l.includes(s));
+    expect(text).toContain('CHARGE TO ROOM');
+    expect(at('Charged to room 204 - Cruz')).toBeGreaterThan(at('Change'));
+    expect(at('Guest signature')).toBeGreaterThan(at('Charged to room 204'));
+    expect(tenderLabel({ method: 'ROOM_CHARGE' })).toBe('CHARGE TO ROOM');
+  });
+
+  it('prints the folio statement with its title, lines, balance and the signature line', () => {
+    const st: FolioStatement = {
+      title: 'Guest folio - not an invoice',
+      seller: { registeredName: 'Bahay Kubo Inn Corp', tradeName: 'Bahay Kubo Inn', tin: '123-456-789', registeredAddress: null },
+      branch: { name: 'Baguio' },
+      folio: { id: 'f', status: 'SETTLED', openedAt: '2026-10-21T00:00:00Z', settledAt: '2026-10-22T00:00:00Z', currency: 'PHP' },
+      stay: { id: 's', roomNumber: '101', roomType: 'Standard', arrivalDate: '2026-10-21', departureDate: '2026-10-22', guestName: 'Juan Cruz' },
+      lines: [
+        { id: '1', date: '2026-10-21', kind: 'ROOM_NIGHT', description: 'Room night', amount: '2000.00', vatAmount: '214.29' },
+        { id: '2', date: '2026-10-21', kind: 'PAYMENT', description: 'Payment (cash)', amount: '-2000.00', vatAmount: null },
+      ],
+      totals: { roomNights: '2000.00', accommodationTax: '0.00', charges: '0.00', adjustments: '0.00', deposits: '0.00', payments: '-2000.00', balance: '0.00' },
+      signatureLine: 'Guest signature',
+    } as unknown as FolioStatement;
+    const text = toText(statementToPrintable(st), 48);
+    expect(text).toContain('Guest folio - not an invoice');
+    expect(text).toContain('Room 101');
+    expect(text).toContain('Payment (cash)');
+    expect(text).toContain('BALANCE');
+    expect(text).not.toContain('Accommodation tax');
+    expect(text).toContain('Guest signature');
   });
 });

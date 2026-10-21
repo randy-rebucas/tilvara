@@ -10,7 +10,8 @@ const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
 const OUT = process.argv[3] ?? '.impeccable/review';
 const API = process.argv[4] ?? 'http://127.0.0.1:4320';
 
-// --- the day: burger recipe = 1 cheese slice (₱3.00 each); T1 pays ₱473.00; T2's burger is dropped while cooking.
+// --- the day: burger recipe = 1 cheese slice (₱3.00 each); T1 pays ₱473.00 plus a ₱20.00 cash tip, ₱5.00 of
+// tips is paid out from the drawer; T2's burger is dropped while cooking.
 const r = await arrangeRestaurant(API, 'rep');
 const { call, tk } = r;
 const key = () => ({ 'idempotency-key': randomUUID() });
@@ -25,7 +26,8 @@ const fired1 = await call('POST', `/v1/restaurant/orders/${t1.id}/fire`, tk, {})
 const [b1, tea1] = fired1.items;
 for (const [id, steps] of [[b1.id, ['IN_PREP', 'READY', 'SERVED']], [tea1.id, ['READY', 'SERVED']]]) for (const s of steps) await status(id, s);
 const bill = await call('POST', `/v1/restaurant/orders/${t1.id}/bill`, tk, {}, key());
-await call('POST', `/v1/restaurant/bills/${bill.id}/checks`, tk, { cashierSessionId: session.id, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '500.00' }], expectedAmountDue: '473.00' }, key());
+await call('POST', `/v1/restaurant/bills/${bill.id}/checks`, tk, { cashierSessionId: session.id, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '500.00' }], expectedAmountDue: '473.00', tip: { amount: '20.00' } }, key());
+await call('POST', `/v1/cashier-sessions/${session.id}/movements`, tk, { type: 'TIP_PAYOUT', amount: '5.00', reason: 'Shared with the kitchen' }, key());
 
 const t2 = await call('POST', '/v1/restaurant/orders', tk, { branchId: r.branchId, orderType: 'DINE_IN', tableId: r.tables.T2 });
 await call('POST', `/v1/restaurant/orders/${t2.id}/items`, tk, { items: [{ variantId: r.burger, quantity: '1', modifierOptionIds: [r.medium] }] }, key());
@@ -57,6 +59,7 @@ try {
   // Burger 2 × 150 (cost 2 cheese slices for the recipe = ₱6.00); its cheese choice ₱40.00 (2 × ₱3.00); tea ₱90.00.
   check('item performance: burger ₱300.00, cheese choice under it ₱40.00, tea ₱90.00, total ₱430.00', await has('Burger', '₱300.00', '+ Cheese slice', '₱40.00', 'Burger with choices', '₱340.00', 'Iced tea', '₱90.00', '₱430.00'));
   check('item performance: burger cost ₱6.00 (its recipe)', await has('₱6.00'));
+  check('item performance: the free choice Medium is counted under the burger, on 1 order', await has(/Medium[\s\S]*orders: 1/));
   await shot('reports-items.png');
 
   await clickText('Ingredient usage');
@@ -113,11 +116,21 @@ try {
   check('service charge: the RA 11360 / accountant caveat is shown', await has('RA 11360'));
   await shot('reports-charge.png');
 
+  // Tips (session 25): ₱20.00 taken in cash, ₱5.00 paid out, ₱15.00 still owed, equal to Tips payable in the books.
+  await clickText('Tips');
+  await waitFor(`document.body.innerText.includes('Owed to staff')`);
+  check('tips: taken ₱20.00, paid out ₱5.00, owed ₱15.00, equal to the books', await has('₱20.00', '₱5.00', '₱15.00', 'Equals the Tips payable account'));
+  check('tips: explained as owed to staff, not sales', await has('Tips are owed to staff, not sales'));
+  check('tips: taken by the owner as cashier', (await has('Lito Santos')) && (await evaluate('document.body.innerText')).toUpperCase().includes('TAKEN BY CASHIER'));
+  const csv = await evaluate(`fetch(document.querySelector('a[download]').href).then((r) => r.text())`);
+  check('tips CSV: the day, its total and the books line', csv.includes('20.00') && csv.includes('15.00') && csv.includes('Tips payable in the books'));
+  await shot('reports-tips.png');
+
   // A range the API refuses is shown, not crashed.
   await go(`/reports/service-charge?branch=${r.branchId}&from=2026-12-31&to=2026-01-01`);
   check('a reversed range shows the API message', await has('"from" must not be after "to"'));
 
-  for (const path of ['/reports', '/reports/ingredient-usage', '/reports/kitchen-voids', '/reports/prep-times', '/reports/open-orders', '/reports/service-charge']) {
+  for (const path of ['/reports', '/reports/ingredient-usage', '/reports/kitchen-voids', '/reports/prep-times', '/reports/open-orders', '/reports/service-charge', '/reports/tips']) {
     await viewport(390, 844, true);
     await go(path);
     await sleep(300);

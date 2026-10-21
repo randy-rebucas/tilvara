@@ -1,3 +1,4 @@
+import { ChoiceGroups, missingGroups } from './Choices';
 import { ArrowLeft, Minus, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
@@ -31,7 +32,7 @@ interface Diner {
 type Place = { id: string; label: string };
 type Panel =
   | { kind: 'void'; item: { id: string; name: string; status: OrderItem['status'] }; choice: boolean; key: string }
-  | { kind: 'edit'; item: OrderItem; qty: string; course: number; seat: number | null; note: string }
+  | { kind: 'edit'; item: OrderItem; qty: string; course: number; seat: number | null; note: string; chosen: string[] }
   | { kind: 'notes' }
   | { kind: 'transfer'; free: { id: string; code: string }[] }
   | { kind: 'merge'; orders: Place[] }
@@ -185,6 +186,13 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
   const fire = (courses?: number[]) => act(() => api<Order>('POST', `/v1/restaurant/orders/${orderId}/fire`, courses ? { courses } : {}));
   const remove = (itemId: string) => act(() => api<Order>('POST', `/v1/order-items/${itemId}/remove`));
 
+  /** The item's choice groups on the menu served now (empty when it has none or left the menu). */
+  const editGroups = (p: { item: OrderItem }) => menu?.sections.flatMap((s) => s.items).find((m) => m.variantId === p.item.variantId)?.modifierGroups ?? [];
+  const choicesChanged = (p: { item: OrderItem; chosen: string[] }) => {
+    const before = p.item.modifiers.flatMap((m) => (m.modifierOptionId && m.status !== 'VOIDED' ? [m.modifierOptionId] : []));
+    return before.length !== p.chosen.length || before.some((id) => !p.chosen.includes(id));
+  };
+
   /** Change an item not yet sent to the kitchen: only what differs is sent (choices follow the item). */
   function saveEdit() {
     if (panel?.kind !== 'edit') return;
@@ -195,7 +203,10 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
       ...(p.course !== p.item.course && { course: p.course }),
       ...(p.seat !== (p.item.seat ?? null) && { seat: p.seat }),
       ...(note !== (p.item.note ?? '') && { note: note || null }),
+      // Choices changed (session 25): sent whole, checked against the menu again.
+      ...(choicesChanged(p) && { modifierOptionIds: p.chosen }),
     };
+    if (editGroups(p).length && missingGroups(editGroups(p), p.chosen).length) return;
     if (!Object.keys(changes).length) return setPanel(null);
     void act(() => api<Order>('PATCH', `/v1/order-items/${p.item.id}`, changes), () => setPanel(null));
   }
@@ -422,7 +433,7 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
                     canServe={!closed}
                     working={working}
                     onRemove={() => remove(i.id)}
-                    onEdit={editable ? () => setPanel({ kind: 'edit', item: i, qty: toDec(i.quantity).toString(), course: i.course, seat: i.seat ?? null, note: i.note ?? '' }) : undefined}
+                    onEdit={editable ? () => setPanel({ kind: 'edit', item: i, qty: toDec(i.quantity).toString(), course: i.course, seat: i.seat ?? null, note: i.note ?? '', chosen: i.modifiers.flatMap((m) => (m.modifierOptionId ? [m.modifierOptionId] : [])) }) : undefined}
                     onServed={() => served(i.id)}
                     onVoid={() => setPanel({ kind: 'void', item: i, choice: false, key: uuid() })}
                     onVoidChoice={(m) => setPanel({ kind: 'void', item: m, choice: true, key: uuid() })}
@@ -468,9 +479,13 @@ export function OrderScreen({ place: shift, orderId, permissions, active, onBack
                   </div>
                 )}
               </div>
+              {editGroups(panel).length > 0 && <ChoiceGroups groups={editGroups(panel)} chosen={panel.chosen} onChange={(chosen) => setPanel({ ...panel, chosen })} />}
+              {missingGroups(editGroups(panel), panel.chosen).length > 0 && (
+                <p className="text-[0.875rem] text-muted">{t('order.chooseFirst', { groups: missingGroups(editGroups(panel), panel.chosen).map((g) => g.name).join(', ') })}</p>
+              )}
               <Field id="editNote" name="editNote" label={t('order.note')} value={panel.note} maxLength={200} onChange={(e) => setPanel({ ...panel, note: e.target.value })} />
               <div className="flex gap-2">
-                <button type="button" className="btn btn-primary flex-1" disabled={working} onClick={saveEdit}>{t('order.saveChanges')}</button>
+                <button type="button" className="btn btn-primary flex-1" disabled={working || missingGroups(editGroups(panel), panel.chosen).length > 0} onClick={saveEdit}>{t('order.saveChanges')}</button>
                 <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
               </div>
             </Note>

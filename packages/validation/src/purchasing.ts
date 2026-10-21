@@ -106,6 +106,9 @@ export const createGoodsReceiptSchema = z
           rejectionReason: z.string().trim().max(200).optional(),
           /** Defaults to the order line's cost; required for a line not on the order. */
           unitCost: amountSchema.optional(),
+          /** Expiry date of what was accepted (ADR-0020 §3); required for an item that tracks expiry. */
+          expiresOn: z.iso.date().optional(),
+          lotCode: z.string().trim().min(1).max(40).optional(),
         }),
       )
       .min(1)
@@ -117,6 +120,7 @@ export const createGoodsReceiptSchema = z
       if (Number(l.quantity) + rejected <= 0) ctx.addIssue({ code: 'custom', path: ['lines', i, 'quantity'], message: 'Receive or reject a quantity' });
       if (rejected > 0 && !l.rejectionReason) ctx.addIssue({ code: 'custom', path: ['lines', i, 'rejectionReason'], message: 'Say why it was rejected' });
       if (!l.purchaseOrderLineId && l.unitCost === undefined) ctx.addIssue({ code: 'custom', path: ['lines', i, 'unitCost'], message: 'Cost is required for an item not on the order' });
+      if (l.lotCode && !l.expiresOn) ctx.addIssue({ code: 'custom', path: ['lines', i, 'expiresOn'], message: 'A lot needs its expiry date' });
       if (l.purchaseOrderLineId && !v.purchaseOrderId) ctx.addIssue({ code: 'custom', path: ['lines', i, 'purchaseOrderLineId'], message: 'Order lines need the purchase order' });
     });
     unique(v.lines, (l) => l.purchaseOrderLineId, ctx, 'purchaseOrderLineId', 'Each order line once per receipt');

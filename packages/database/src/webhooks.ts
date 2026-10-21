@@ -7,7 +7,10 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  */
 
 /** Topics a business may subscribe to: thin events carrying ids only (the receiver reads details with an API key). */
-export const WEBHOOK_TOPICS = ['sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero'] as const;
+export const WEBHOOK_TOPICS = [
+  'sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero',
+  'stay.checked_in', 'stay.checked_out', 'folio.entry_posted',
+] as const;
 export type WebhookTopic = (typeof WEBHOOK_TOPICS)[number];
 /** The test event a manager can send from the back office. */
 export const WEBHOOK_PING = 'webhook.ping';

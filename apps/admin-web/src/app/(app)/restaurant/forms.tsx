@@ -447,12 +447,13 @@ export function MenuEditor({ draft, variants, groups, stations }: { draft: MenuV
 
 // ---------------------------------------------------------------- recipes
 
-export function RecipeForm({ variantId, ingredients }: { variantId: string; ingredients: VariantOption[] }) {
+/** `supplies`: a salon service's supplies used (ADR-0022 §9), the same recipe in a salon's words. */
+export function RecipeForm({ variantId, ingredients, supplies = false }: { variantId: string; ingredients: VariantOption[]; supplies?: boolean }) {
   const { t } = useT();
-  return <Disclosure label={t('rest.newRecipe')}>{(close) => <RecipeFields variantId={variantId} ingredients={ingredients} close={close} />}</Disclosure>;
+  return <Disclosure label={supplies ? t('prod.newSupplies') : t('rest.newRecipe')}>{(close) => <RecipeFields variantId={variantId} ingredients={ingredients} close={close} supplies={supplies} />}</Disclosure>;
 }
 
-function RecipeFields({ variantId, ingredients, close }: { variantId: string; ingredients: VariantOption[]; close: () => void }) {
+function RecipeFields({ variantId, ingredients, close, supplies }: { variantId: string; ingredients: VariantOption[]; close: () => void; supplies: boolean }) {
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, fieldError, error } = useSubmit();
@@ -471,11 +472,11 @@ function RecipeFields({ variantId, ingredients, close }: { variantId: string; in
   }
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
-      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('rest.recipeHint')}</p>
+      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{supplies ? t('prod.suppliesHint') : t('rest.recipeHint')}</p>
       <LineItems
         fields={[
-          { name: 'variantId', label: t('rest.ingredient'), kind: 'select' },
-          { name: 'quantity', label: t('rest.perPortion'), kind: 'decimal', placeholder: '0' },
+          { name: 'variantId', label: supplies ? t('prod.supply') : t('rest.ingredient'), kind: 'select' },
+          { name: 'quantity', label: supplies ? t('prod.perService') : t('rest.perPortion'), kind: 'decimal', placeholder: '0' },
         ]}
         options={ingredients}
         fieldError={(p) => fieldError(p.replace(/^lines\./, 'ingredients.'))}
@@ -484,7 +485,7 @@ function RecipeFields({ variantId, ingredients, close }: { variantId: string; in
       />
       <TextField label={`${t('rest.effectiveFrom')} (${t('common.optional')})`} name="effectiveFrom" type="datetime-local" hint={t('rest.effectiveHint')} error={fieldError('effectiveFrom')} />
       <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="note" error={fieldError('note')} />
-      <Actions pending={pending} general={general(error) ?? fieldError('ingredients')} submitLabel={t('rest.saveRecipe')} close={close} />
+      <Actions pending={pending} general={general(error) ?? fieldError('ingredients')} submitLabel={supplies ? t('prod.saveSupplies') : t('rest.saveRecipe')} close={close} />
     </form>
   );
 }
@@ -511,20 +512,29 @@ export function SettingsForm({ branchId, settings, menus, vatSeller }: { branchI
       serviceChargeDineIn: f.get('dineIn') === 'on',
       serviceChargeTakeaway: f.get('takeaway') === 'on',
       serviceChargeVatTreatment: text(f, 'vat') || 'VATABLE',
+      counterService: f.get('counterService') === 'on',
     });
     if (r.ok) setSaved(true);
   }
   const published = menus.filter((m) => m.published && !m.archivedAt);
+  // Counter service without a takeaway menu (the API names the field in details.path).
+  const needsMenu = error?.code === 'COUNTER_NEEDS_MENU';
   return (
     <form onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-2" noValidate>
       <SelectField label={t('rest.dineInMenu')} name="dineInMenuId" defaultValue={settings.dineInMenuId ?? ''}>
         <option value="">{t('rest.noMenu')}</option>
         {published.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
       </SelectField>
-      <SelectField label={t('rest.takeawayMenu')} name="takeawayMenuId" defaultValue={settings.takeawayMenuId ?? ''}>
+      <SelectField label={t('rest.takeawayMenu')} name="takeawayMenuId" defaultValue={settings.takeawayMenuId ?? ''} error={needsMenu ? t('rest.counterNeedsMenu') : undefined}>
         <option value="">{t('rest.noMenu')}</option>
         {published.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
       </SelectField>
+      <div className="col-span-full">
+        <label className="flex items-center gap-2 font-semibold">
+          <input type="checkbox" name="counterService" className="size-4" defaultChecked={settings.counterService} aria-describedby="counter-service-hint" /> {t('rest.counterService')}
+        </label>
+        <p id="counter-service-hint" className="mt-1 max-w-[68ch] pl-6 text-[0.8125rem] text-muted">{t('rest.counterServiceHint')}</p>
+      </div>
       <TextField label={t('rest.serviceCharge')} name="rate" inputMode="decimal" defaultValue={percentFromRate(settings.serviceChargeRate)} hint={t('rest.serviceChargeHint')} error={fieldError('serviceChargeRate')} />
       <SelectField label={t('rest.chargeVat')} name="vat" defaultValue={settings.serviceChargeVatTreatment} hint={vatSeller ? t('rest.chargeVatHint') : t('rest.chargeNonVatHint')}>
         <option value="VATABLE">{t('rest.vatable')}</option>
@@ -539,7 +549,7 @@ export function SettingsForm({ branchId, settings, menus, vatSeller }: { branchI
       <div className="col-span-full flex flex-wrap items-center gap-2">
         <button className="btn btn-primary" disabled={pending}>{t('common.save')}</button>
         {saved && <span role="status" className="text-[0.875rem] text-muted">{t('rest.saved')}</span>}
-        <FormError message={general(error)} />
+        <FormError message={needsMenu ? null : general(error)} />
       </div>
     </form>
   );

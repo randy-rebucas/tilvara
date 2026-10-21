@@ -16,6 +16,11 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
   const rows = r?.data?.data ?? [];
   const label = (s: string) => (s === 'SC' ? 'SC' : s === 'PWD' ? 'PWD' : s);
 
+  // Room nights (ADR-0023 §7) have no register or number: the night is the document.
+  const doc = (x: (typeof rows)[number]) =>
+    x.document === 'ROOM_NIGHT' || x.document === 'NIGHT_REVERSAL'
+      ? t(x.document === 'ROOM_NIGHT' ? 'rep.docROOM_NIGHT' : 'rep.docNIGHT_REVERSAL')
+      : `${t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN')} ${x.register ?? ''}-${docNo(x.number ?? 0)}`;
   return (
     <ReportsChrome tab="statutory" scope={scope} error={r?.error}>
       <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('rep.statutoryNote')}</p>
@@ -23,10 +28,10 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
         {rows.length > 0 ? (
           <RecordTable
             rows={rows}
-            rowKey={(x) => `${x.document}:${x.register}:${x.number}:${x.idNumber}`}
+            rowKey={(x) => `${x.document}:${x.register}:${x.number}:${x.idNumber}:${x.day}`}
             columns={[
               { header: t('common.date'), cell: (x) => formatDate(x.day, lang) },
-              { header: t('rep.document'), cell: (x) => <Serial className="text-ink">{t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN')} {x.register}-{docNo(x.number)}</Serial> },
+              { header: t('rep.document'), cell: (x) => <Serial className="text-ink">{doc(x)}</Serial> },
               { header: t('rep.beneficiary'), cell: (x) => <><b>{x.name}</b> <Serial>{label(x.schemeCode)} · {x.idNumber}</Serial></> },
               { header: t('rep.sales'), num: true, cell: (x) => <span className="money">{peso(x.sales)}</span> },
               { header: t('rep.discount'), num: true, cell: (x) => <span className="money">{peso(x.discount)}</span> },
@@ -34,7 +39,7 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
             ]}
             stacked={{
               title: (x) => x.name,
-              meta: (x) => <Serial>{formatDate(x.day, lang)} · {label(x.schemeCode)} {x.idNumber} · {x.register}-{docNo(x.number)}</Serial>,
+              meta: (x) => <Serial>{formatDate(x.day, lang)} · {label(x.schemeCode)} {x.idNumber} · {doc(x)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.discount)}</span>,
             }}
             foot={{

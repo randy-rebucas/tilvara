@@ -219,7 +219,8 @@ describe('schema isolation catalog', () => {
              has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
              has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly
         FROM unnest(ARRAY['platform_metrics()', 'platform_migration_head()', 'worker_heartbeat(text, timestamptz, text)',
-                          'worker_heartbeat_stop(text)', 'outbox_dead_list(int, text)', 'outbox_dead_replay(uuid, text, text)']) AS f`);
+                          'worker_heartbeat_stop(text)', 'outbox_dead_list(int, text)', 'outbox_dead_replay(uuid, text, text)',
+                          'platform_flag_expiring_lots()']) AS f`);
     expect(monitoring).toEqual([
       { fn: 'platform_metrics()', app: true, worker: false, readonly: false },
       { fn: 'platform_migration_head()', app: true, worker: false, readonly: false },
@@ -227,6 +228,8 @@ describe('schema isolation catalog', () => {
       { fn: 'worker_heartbeat_stop(text)', app: false, worker: true, readonly: false },
       { fn: 'outbox_dead_list(int, text)', app: false, worker: true, readonly: false },
       { fn: 'outbox_dead_replay(uuid, text, text)', app: false, worker: true, readonly: false },
+      // Expiry alerts (ADR-0020 §3): the worker's hourly pass flags lots entering their window.
+      { fn: 'platform_flag_expiring_lots()', app: false, worker: true, readonly: false },
     ]);
   });
 
@@ -267,6 +270,12 @@ describe('schema isolation catalog', () => {
       `SELECT has_function_privilege('onepos_app', 'platform_set_subscription(uuid, text, text, timestamptz, timestamptz)', 'EXECUTE') AS ok`,
     );
     expect(setSub!.ok).toBe(false);
+    // The night audit (ADR-0023 §7): the API lists the businesses with nights due; nobody else may.
+    const [due] = await q<{ app: boolean; worker: boolean; readonly: boolean }>(`SELECT
+       has_function_privilege('onepos_app', 'platform_lodging_due_tenants()', 'EXECUTE') AS app,
+       has_function_privilege('onepos_worker', 'platform_lodging_due_tenants()', 'EXECUTE') AS worker,
+       has_function_privilege('onepos_readonly', 'platform_lodging_due_tenants()', 'EXECUTE') AS readonly`);
+    expect(due).toEqual({ app: true, worker: false, readonly: false });
     // MFA resets (session 10): the business resets its own members; support resets need ops credentials.
     const resets = await q<{ fn: string; app: boolean; worker: boolean; readonly: boolean; migrator: boolean }>(`
       SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,

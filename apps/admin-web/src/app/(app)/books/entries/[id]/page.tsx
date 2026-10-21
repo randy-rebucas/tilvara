@@ -11,7 +11,7 @@ import { getT } from '@/i18n/server';
 import { sourceHref } from '../../chrome';
 
 /** Undone through their document (cancel the invoice, void the payment, an opposite note), never by hand; the API refuses it too. */
-const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE'];
+const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE', 'SALE_TIP_REFUND'];
 
 export const metadata = { title: 'Journal entry' };
 

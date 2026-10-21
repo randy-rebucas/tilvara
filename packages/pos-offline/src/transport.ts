@@ -1,4 +1,4 @@
-import type { CatalogVersion, OfflineSale, Snapshot, SnapshotItemsPage, SyncSalesResponse } from '@1pos/sync-protocol';
+import type { CatalogVersion, KitchenStationsResponse, KitchenTicketPrint, OfflineSale, Snapshot, SnapshotItemsPage, SyncSalesResponse } from '@1pos/sync-protocol';
 import { SNAPSHOT_PAGE_SIZE, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER } from '@1pos/sync-protocol';
 
 /** How the engine reaches the server. Swappable so drills can lose answers or take the server away. */
@@ -7,6 +7,10 @@ export interface Transport {
   syncSales(sales: OfflineSale[]): Promise<SyncSalesResponse>;
   /** The server's catalog version (session 16); absent in transports for older servers and some tests. */
   catalogVersion?(): Promise<CatalogVersion>;
+  /** Kitchen printing (session 25): the branch's stations, the next tickets to print, and how printing went. */
+  kitchenStations?(): Promise<KitchenStationsResponse>;
+  claimKitchenTickets?(stationIds: string[]): Promise<{ data: KitchenTicketPrint[] }>;
+  settleKitchenPrint?(ticketId: string, outcome: 'printed' | 'release'): Promise<unknown>;
 }
 
 /**
@@ -84,5 +88,8 @@ export function httpTransport(o: HttpTransportOptions): Transport {
     },
     syncSales: (sales) => call<SyncSalesResponse>('POST', '/v1/sync/sales', { sales }),
     catalogVersion: () => call<CatalogVersion>('GET', '/v1/terminal/catalog-version'),
+    kitchenStations: () => call<KitchenStationsResponse>('GET', '/v1/terminal/kitchen-stations'),
+    claimKitchenTickets: (stationIds) => call<{ data: KitchenTicketPrint[] }>('POST', '/v1/terminal/kitchen-tickets/claim', { stationIds }),
+    settleKitchenPrint: (ticketId, outcome) => call<unknown>('POST', `/v1/terminal/kitchen-tickets/${encodeURIComponent(ticketId)}/${outcome}`, {}),
   };
 }

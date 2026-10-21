@@ -1,10 +1,13 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   and,
+  branches,
   desc,
   eq,
   inArray,
   inventorySettings,
+  isNull,
+  itemLocations,
   or,
   productVariants,
   products,
@@ -30,9 +33,11 @@ import type {
   CreateStockTransferInput,
   InventorySettingsInput,
   ReceiveStockTransferInput,
+  SetItemLocationsInput,
   SetReorderPointsInput,
   StockTransferListQuery,
 } from '@1pos/validation';
+import { hasPermission } from '../auth/authorization.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { nextNumber } from '../common/sequence.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -541,8 +546,8 @@ export class InventoryService extends TenantService {
    */
   private async sheetView(db: Database, auth: AuthContext, sheet: typeof stockCountSheets.$inferSelect, scope: { branchId: string; legalEntityId: string }) {
     const reveal = !sheet.blind || sheet.status !== 'OPEN' || this.can(auth, 'inventory.adjust', scope);
-    const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; expected: string; counted: string | null; counted_by: string | null; counted_at: string | null; moved: string }>(sql`
-      SELECT l.id, l.variant_id, v.sku, p.name, l.expected_quantity::text AS expected, l.counted_quantity::text AS counted,
+    const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; expected: string; counted: string | null; counted_by: string | null; counted_at: string | null; moved: string; location: string | null }>(sql`
+      SELECT l.id, l.variant_id, v.sku, p.name, il.location, l.expected_quantity::text AS expected, l.counted_quantity::text AS counted,
              u.display_name AS counted_by, l.counted_at,
              coalesce((SELECT sum(m.quantity) FROM stock_movements m
                         WHERE m.tenant_id = l.tenant_id AND m.branch_id = ${sheet.branchId} AND m.variant_id = l.variant_id
@@ -551,8 +556,9 @@ export class InventoryService extends TenantService {
         JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
         JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
         LEFT JOIN users u ON u.id = l.counted_by
+        LEFT JOIN item_locations il ON il.branch_id = ${sheet.branchId} AND il.variant_id = l.variant_id
        WHERE l.sheet_id = ${sheet.id}
-       ORDER BY v.sku`);
+       ORDER BY il.location NULLS LAST, v.sku`);
     return {
       id: sheet.id,
       branchId: sheet.branchId,
@@ -569,6 +575,8 @@ export class InventoryService extends TenantService {
         variantId: r.variant_id,
         sku: r.sku,
         name: r.name,
+        // Counted shelf by shelf (ADR-0021 §5).
+        location: r.location,
         countedQuantity: r.counted === null ? null : toDec(r.counted).toString(),
         countedBy: r.counted_by,
         countedAt: r.counted_at ? new Date(r.counted_at).toISOString() : null,
@@ -612,6 +620,7 @@ export class InventoryService extends TenantService {
       branchId,
       negativeStockPolicy: row?.negativeStockPolicy ?? 'ALLOW',
       lowStockAlerts: row?.lowStockAlerts ?? true,
+      expiryAlertDays: row?.expiryAlertDays ?? 30,
       updatedAt: row?.updatedAt.toISOString() ?? null,
     };
   }
@@ -637,6 +646,91 @@ export class InventoryService extends TenantService {
       }
       await this.audit(db, auth, 'stock.reorder_points_set', 'branch', branch.id, { items: input.items.length, removed: remove.length });
       return this.lowStockRows(db, branch.id, false);
+    });
+  }
+
+  // ---------------------------------------------------------------- shelf locations (ADR-0021 §5)
+  /** Where items sit in the branch, by location then SKU. */
+  listItemLocations(auth: AuthContext, q: BranchQuery) {
+    return this.read(auth, async (db) => {
+      const { scope } = await branchScope(db, q.branchId);
+      this.assertCan(auth, 'inventory.read', scope);
+      return { data: await this.locationRows(db, q.branchId) };
+    });
+  }
+
+  /** Set or clear (`location: null`) items' shelf locations; needs `inventory.adjust` or `inventory.count` at the branch. */
+  setItemLocations(auth: AuthContext, input: SetItemLocationsInput) {
+    return this.mutate(auth, async (db) => {
+      const { branch, scope } = await branchScope(db, input.branchId);
+      if (!this.can(auth, 'inventory.count', scope)) this.assertCan(auth, 'inventory.adjust', scope);
+      await assertVariants(db, input.items.map((i) => i.variantId));
+      const tenantId = tenantOf(auth).tenantId;
+      const remove = input.items.filter((i) => !i.location).map((i) => i.variantId);
+      if (remove.length) await db.delete(itemLocations).where(and(eq(itemLocations.branchId, branch.id), inArray(itemLocations.variantId, remove)));
+      for (const i of input.items.filter((x) => x.location)) {
+        await db
+          .insert(itemLocations)
+          .values({ tenantId, branchId: branch.id, variantId: i.variantId, location: i.location!, updatedBy: auth.userId })
+          .onConflictDoUpdate({
+            target: [itemLocations.tenantId, itemLocations.branchId, itemLocations.variantId],
+            set: { location: i.location!, updatedBy: auth.userId, updatedAt: sql`now()` },
+          });
+      }
+      await this.audit(db, auth, 'stock.locations_set', 'branch', branch.id, { items: input.items.length, removed: remove.length });
+      return { data: await this.locationRows(db, branch.id) };
+    });
+  }
+
+  private async locationRows(db: Database, branchId: string) {
+    const { rows } = await db.execute<{ variant_id: string; sku: string; name: string; location: string; updated_at: string }>(sql`
+      SELECT l.variant_id, v.sku, CASE WHEN v.name IS NULL THEN p.name ELSE p.name || ' — ' || v.name END AS name, l.location, l.updated_at
+        FROM item_locations l
+        JOIN product_variants v ON v.id = l.variant_id
+        JOIN products p ON p.id = v.product_id
+       WHERE l.branch_id = ${branchId}
+       ORDER BY l.location, v.sku`);
+    return rows.map((r) => ({ variantId: r.variant_id, sku: r.sku, name: r.name, location: r.location, updatedAt: new Date(r.updated_at).toISOString() }));
+  }
+
+  /**
+   * Stock of every branch the person may read inventory at, item by item (ADR-0021 §5): items with a
+   * balance at one of those branches, active ones first by SKU. At most 2,000 items.
+   */
+  stockByBranch(auth: AuthContext) {
+    return this.read(auth, async (db) => {
+      const all = await db.select({ id: branches.id, code: branches.code, name: branches.name, legalEntityId: branches.legalEntityId }).from(branches).where(isNull(branches.archivedAt));
+      const mine = all
+        .filter((b) => hasPermission(tenantOf(auth).grants, 'inventory.read', { branchId: b.id, legalEntityId: b.legalEntityId }))
+        .sort((x, y) => (x.code < y.code ? -1 : 1));
+      if (!mine.length) throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing: ['inventory.read'] });
+      const ids = mine.map((b) => b.id);
+      const { rows } = await db.execute<{ variant_id: string; sku: string; name: string; branch_id: string; quantity: string; reserved: string }>(sql`
+        WITH items AS (
+          SELECT DISTINCT b.variant_id FROM stock_balances b
+           WHERE b.branch_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+           LIMIT 2000)
+        SELECT v.id AS variant_id, v.sku, CASE WHEN v.name IS NULL THEN p.name ELSE p.name || ' — ' || v.name END AS name,
+               b.branch_id, b.quantity::text AS quantity,
+               coalesce((SELECT sum(r.quantity) FROM stock_reservations r
+                          WHERE r.branch_id = b.branch_id AND r.variant_id = b.variant_id AND r.status = 'ACTIVE'
+                            AND (r.expires_at IS NULL OR r.expires_at > now())), 0)::text AS reserved
+          FROM items i
+          JOIN product_variants v ON v.id = i.variant_id
+          JOIN products p ON p.id = v.product_id
+          JOIN stock_balances b ON b.variant_id = i.variant_id AND b.branch_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+         ORDER BY (v.archived_at IS NOT NULL), v.sku`);
+      const byItem = new Map<string, { variantId: string; sku: string; name: string; total: Dec; branches: Record<string, { quantity: string; available: string }> }>();
+      for (const r of rows) {
+        const item = byItem.get(r.variant_id) ?? { variantId: r.variant_id, sku: r.sku, name: r.name, total: new Dec(0), branches: {} };
+        item.branches[r.branch_id] = { quantity: toDec(r.quantity).toString(), available: toDec(r.quantity).minus(r.reserved).toString() };
+        item.total = item.total.plus(r.quantity);
+        byItem.set(r.variant_id, item);
+      }
+      return {
+        branches: mine.map(({ legalEntityId: _e, ...b }) => b),
+        data: [...byItem.values()].map((i) => ({ ...i, total: i.total.toString() })),
+      };
     });
   }
 

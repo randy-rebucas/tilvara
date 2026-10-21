@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
 import { CatalogModule } from '../catalog/catalog.module.js';
+import { MenusService } from '../restaurant/menus.service.js';
+import { PaymentsModule } from '../payments/payments.module.js';
 import { TaxModule } from '../tax/tax.module.js';
 import { CashService } from './cash.service.js';
 import { CounterService } from './counter.service.js';
@@ -12,9 +14,9 @@ import { ZReadingsController } from './z-readings.controller.js';
 import { ZReadingsService } from './z-readings.service.js';
 
 @Module({
-  imports: [TaxModule, CatalogModule, AuthModule],
+  imports: [TaxModule, CatalogModule, AuthModule, PaymentsModule],
   controllers: [SalesController, ZReadingsController],
-  providers: [CashService, CounterService, SalesService, StockService, ReturnsService, ZReadingsService],
-  exports: [SalesService],
+  providers: [CashService, CounterService, SalesService, StockService, ReturnsService, ZReadingsService, MenusService],
+  exports: [SalesService, MenusService],
 })
 export class SalesModule {}

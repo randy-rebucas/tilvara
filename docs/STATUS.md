@@ -1,6 +1,6 @@
 # Tilvara — Status
 
-_Last updated: 2026-10-20 (session 23 — till quantities and stock movements audit: returns follow the sale's stock, damaged returns written off as waste, approved prices carry a quantity, split-check recipe rounding, one waste per voided choice, till quantity controls. Session 22 — the rest of the audit: supplier credit/debit notes, payments over several invoices and voids, comps and changing pending items at the till, business rename, two role templates, type- and plan-aware roles, samples and screens, webhook DNS pinning, API-key expiry. Session 21 — the audit's three decisions: offline sales after a lapse, plan features, shift close with open bills. Session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
+_Last updated: 2026-10-21 (session 28 — hotels, resorts and transient houses: a LODGING business type, room types and rooms, stays without double-booking, check-in/out with a guest registry, folios on a new Guest ledger account, outlet sales charged to the room, nightly room charges by the night audit, booking deposits, a local accommodation tax, housekeeping, occupancy and guest-ledger reports, a read API scope and webhooks for an outside PMS; ADR-0023. Session 27 — beauty salons, spas and barber shops: a SALON business type, service staff with hours and time off, appointments without double-booking rung up at the till, staff and commission rates on sale lines, prepaid service packages owed until used, tips split per staff, client notes and visits, supplies used per service, email reminders; ADR-0022. Session 26 — retail stores and boutiques: promotions (multi-buy, buy X get Y, quantity breaks) priced by one function on the server and the offline till, sizes and colours, quick keys and "5*" at the till, a whole-cart discount, store barcodes and printable labels, shelf locations and stock across branches; ADR-0021. Session 25 — restaurants, cafés and food trucks: pay-first counter service with choices and a call number, online and offline; kitchen printing from the desktop till with reprints; tips; choices changed in place; free choices in reports; no selling by weight for a restaurant; ADR-0014 amendment. Session 24 — sari-sari stores and groceries: a GROCERY business type, packs and pieces (tingi) opened by hand or by the sale, expiry lots drawn first-expiry-first with alerts and write-offs; ADR-0020. Session 23 — till quantities and stock movements audit: returns follow the sale's stock, damaged returns written off as waste, approved prices carry a quantity, split-check recipe rounding, one waste per voided choice, till quantity controls. Session 22 — the rest of the audit: supplier credit/debit notes, payments over several invoices and voids, comps and changing pending items at the till, business rename, two role templates, type- and plan-aware roles, samples and screens, webhook DNS pinning, API-key expiry. Session 21 — the audit's three decisions: offline sales after a lapse, plan features, shift close with open bills. Session 20 — the audit gaps: counter controls, customers and store credit, reservations and supplier catalog, analysis reports, API keys and webhooks. Session 19 — full audit: `docs/AUDIT-2026-10-19.md`; API without screens wired up. Session 18 — user guide in the admin and the counter. Session 17 — business types. Session 16 — all LEFTOVER items that need no decision, in batches. Session 15 — LEFTOVER items without decisions: one query per transaction at a time, outbox leases, KDS un-bump, sync budget, test DB reset, server-rendered page scan. Session 14 — slice 8 follow-up: log redaction, own account (name, email, closure), account-disable CLI, MFA key rotation, error references. Session 13 — slice 8 runbooks and privacy pack. Session 12 — slice 6 onboarding and support: support access, data export, offboarding runbook, trial sample items. Session 11 — slice 4 backup and restore drill; slice 5 performance. Session 10 — slice 3 monitoring; LEFTOVER batches. Session 9 — Phase 6 planned (ADR-0016); slices 1–2)_
 
 ## Current phase — Phase 6: pilot and commercial readiness (started session 9)
 Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in dependency order:
@@ -17,6 +17,162 @@ Plan: `docs/decisions/ADR-0016-pilot-readiness.md`. It has nine slices in depend
 Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/README.md`.
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
+
+## Session 28 — hotels, resorts and transient houses (ADR-0023)
+The user asked for the "Hospitality & Lodging" industry (`docs/INDUSTRIES.md`). Review: customers, service items, restaurant checks, service charge, tips, payment intents, API keys and webhooks existed; rooms, stays, folios, a guest receivable, deposits and nightly charges did not. They chose the recommended option each time (a light PMS built in plus a read API and webhooks, outlet sales recorded at once with a *Charge to room* tender, room nights charged each night) and all four extras (deposits, guest registry, local accommodation tax, housekeeping). Migrations 0101–0102; the dev DB is migrated to 0102 (back-fills checked: the 5 new accounts on 152/152 legal entities; Housekeeping in the 69 HYBRID businesses; lodging codes in the built-in roles). The payment-intent transition function was added to 0102 after the dev DB had applied it and was applied there by hand as the migrator (a fresh DB gets it from the file).
+- **Business type LODGING** ("Hotel, resort or transient house"): `servesLodging` (LODGING, HYBRID) gates rooms, stays, folios and housekeeping; `servesTables(LODGING)` is true (a resort's restaurant and bar). Changing away from LODGING is refused while guests are in house (`OPEN_STAYS`). Permissions `lodging.read`, `lodging.manage`, `lodging.rates`, `lodging.housekeeping`, `lodging.setup`; role Housekeeping; Front Desk carries the lodging codes.
+- **Rooms**: room types whose room night is an ordinary SERVICE item (branch price = rack rate), rooms per branch, out-of-order blocks, housekeeping status with a history.
+- **Stays**: BOOKED → IN_HOUSE → CHECKED_OUT, or CANCELLED / NO_SHOW (trigger); no double-booking (GiST exclusion, 409 `ROOM_DOUBLE_BOOKED`); availability per night; an agreed rate needs `lodging.rates`; check-in needs a ready room (or the override) and the primary guest in the registry; check-out in two steps (`prepare-check-out` charges the nights due and applies deposits, `check-out` needs a ₱0.00 folio and no deposit left) and marks the room DIRTY.
+- **Folios** (append-only entries: room night, accommodation tax, charge, charge return, deposit applied, payment, adjustment, night reversal) on *1150 Guest ledger*; never below zero; a settled folio takes nothing more. Payments at an open drawer (cash with change, card/QR intents with purpose FOLIO, store credit, bank transfer); cash folio payments and deposits count in the drawer's expected cash and show as "Front desk collections", not in sales.
+- **Charge to room**: tender `ROOM_CHARGE` on counter sales and restaurant checks (same legal entity, in house, charges allowed and within the limit); returns go back onto an open folio; refused offline (quarantined). The receipt prints the room line and a signature line.
+- **Night audit**: `NightAuditScheduler` in the API (every `NIGHT_AUDIT_INTERVAL_MS`, advisory lock, `platform_lodging_due_tenants()`), per-branch audit time, one entry per (stay, night), VAT and SC/PWD through the tax engine, accommodation tax on the ex-VAT amount; `POST /v1/lodging/night-audit` runs it now.
+- **Deposits** on *2320 Guest deposits*, without VAT until applied (forfeit → *4110 Cancellation fees* with VAT); refund or forfeit on cancel/no-show per the branch rule.
+- **Reports**: occupancy (ADR, RevPAR), guest ledger and deposits held beside GL 1150/2320, accommodation tax; room nights in the sales and tax summaries and the SC/PWD book.
+- **Integrations**: API-key scope `lodging.read`; webhook topics `stay.checked_in`, `stay.checked_out`, `folio.entry_posted`.
+- **Admin** (delegated agent, checked here): Lodging band tab (front desk board, rooms × nights grid, booking form, stay detail with registry, SC/PWD guests, bank-transfer deposits, folio with adjustments and night reversals, printable registration card and statement), housekeeping board, set-up, three reports with CSV, customer's stays, role group, integrations copy, guide part; the band tightens for 14 HYBRID tabs.
+- **Till** (delegated agent, checked here): Rooms tab (board, walk-in and booking check-in with registry, cash deposit, folio, check-out paying the balance at the drawer, statement, housekeeping), *Charge to room* in the payment panel (hidden offline), receipt line, guide part.
+
+**Verified (session 28)**
+- `pnpm build` 15/15; `pnpm typecheck` 26/26; `pnpm lint` clean; unit `turbo run test --force --concurrency=4` 26/26 tasks (admin 56, POS 31, accounting 21, validation 15, API 55 after regenerating OpenAPI).
+- Integration: full API run `npx vitest run --config vitest.integration.config.ts` (apps/api) 458/461; the 3 failures were old role lists (HYBRID now also gets Housekeeping), updated and re-run 29/29 (`auth`, `business-type`). Run by the backend agent one at a time: `lodging` 7/7, `isolation` 10/10 (fixtures in all 12 new tables, 35 new `:id` routes), `ledger` 6/6 (GL 1150 = Σ folio entries, GL 2320 = Σ deposits); database integration 33/33 (rls-catalog incl. `platform_lodging_due_tenants`).
+- Dev DB traceability audit: no violations (190 tenants).
+- E2E (run by the agents on their own servers, rate limits off): **`test:e2e:web:lodging` 59/59**, **`test:e2e:pos:lodging` 37/37**; regressions admin `guide` 22/22, `salon` 42/42; till `pos` 41/41, `salon` 31/31, `tables` 37/37.
+- Not run: `backup.test.ts`, the desktop till, the other admin and restaurant E2E suites, workers E2E for the new webhook topics.
+- Nothing committed.
+
+## Session 27 — beauty salons, spas and barber shops (ADR-0022)
+The user asked for the "Beauty Salons, Spas & Barber Shops" industry (`docs/INDUSTRIES.md`). Review: services, customers, reorder alerts, recipes and tips existed; appointments, staff, packages, client service history and supplies per service did not. They chose the recommended option each time and all four extras. Earlier in the session the "Both" option was taken off the business-type choice (kept for a business that already has it). Migrations 0098–0100; the dev DB is migrated to 0100 (back-fills checked: *2310 Prepaid service packages* on 131/131 legal entities; the appointment codes in every business's built-in roles; Front Desk and Stylist in the 67 HYBRID businesses).
+- **Business type SALON** ("Salon, spa or barber shop"): no tables or kitchen; `servesAppointments` (SALON, HYBRID) gates appointments, staff and packages (`assertAppointments`); recipes open to SALON without the restaurant plan (`assertRecipes`). Permissions `appointments.read`, `appointments.manage`, `staff.manage`; roles Front Desk and Stylist. Salon sample items are bookable services.
+- **Service staff**: branch, optional member link, colour, commission rate, services they do (own rate optional), weekly hours (split shifts), time off. Routes `/v1/service-staff…`.
+- **Appointments**: customer or guest, services each with staff and time; no double-booking (checked, plus a GiST exclusion constraint); outside hours refused unless `outsideHours`; free times (`/v1/appointments/availability`, 08:00–20:00 for staff without hours); arrived / no-show / cancelled; rung up once with the sale (`appointmentId`).
+- **Sale lines** name the staff (`staffId`, commission rate kept) and may use a package session (`packageId`, priced at zero). Receipts print the staff first name and "Package session".
+- **Packages** (product type PACKAGE, contents and validity): sold to a customer, ex-VAT value credited to *Prepaid service packages* (VAT at once); each session moves its value into Sales; returns of whole unused packages and of sessions; per-package lock and balance trigger; online only.
+- **Tips per staff** (`sale_tip_shares`, equal split by default), reports Commissions, Service packages, Tips by staff (CSV in the admin).
+- **Client history**: visits, packages, service notes (audited by id; exported; deleted on anonymising, which is refused while sessions are owed).
+- **Reminders**: hourly `platform_flag_appointment_reminders()` → `appointment.reminder` → mail to the customer (first names of staff only).
+- **Admin** (delegated agent, checked here): Appointments band tab (day calendar per staff, week list, booking with free times and "Book anyway", detail, staff with hours/services/time off), product kinds Service/Package with duration, validity and contents, "Supplies used", customer notes/packages/visits, staff and package marks on the sale page, three salon reports, guide part, role group, BFF DELETE for two paths. The band tightens when a HYBRID business has 13 tabs.
+- **Till** (delegated agent, checked here): Appointments tab (day view, actions, booking, ring up), staff per line (from the snapshot offline), "Use package (n left)", package needs a customer, pinned notes, tip split, guide part.
+- **Fixed after the agents' reports**: catalog lookup and quick keys now carry `productType`; `GET /v1/products?productType=`; receipt lines carry staff and package marks (the till prints them); free-time suggestions no longer start at midnight.
+
+**Verified (session 27)**
+- `pnpm build` 15/15; `pnpm lint` clean; unit `turbo run test --force --concurrency=4` 26/26 tasks (accounting 20 with a new package posting test, validation 12, observability 16, pos-offline 18, API 55 after regenerating OpenAPI, POS 27, admin 54).
+- Integration: new **`salon.test.ts` 11/11**; full API run 449/453, the 4 failures were old expectations (role lists now include Front Desk and Stylist; SALON used as the "invalid type") updated and re-run 29/29 (`auth`, `business-type`); `isolation` 10/10 (fixtures in all 12 new tables, 17 new `:id` routes, 16 smuggling cases, 3 reports); `ledger` 5/5 (GL *Prepaid service packages* = Σ package entries); database `rls-catalog` 10/10, `tenant-isolation` 15/15, unit 20/20.
+- Dev DB traceability audit: no violations (151 tenants).
+- E2E on API :4331 (rate limits off), admin `next start` :3329, POS preview :3339 (run here after the last API changes): **`test:e2e:web:salon` 42/42**, **`test:e2e:pos:salon` 31/31**. Run by the agents earlier in the session on their own servers: admin `guide` 22/22, `web` 46/46, `grocery` 23/23, `customers` 21/21, `retail` 20/20; till `pos` 41/41, `counter` 25/25, `retail` 11/11 (10/11 once, a quick-key timing check, then 11/11 twice).
+- Not run: `backup.test.ts`, the desktop till, restaurant E2E, the other admin suites, workers E2E (reminders checked in `salon.test.ts` up to the mail text).
+- Nothing committed.
+
+## Session 26 — retail stores and boutiques (ADR-0021)
+The user asked for a review of the "Retail Stores & Boutiques" industry (`docs/INDUSTRIES.md`).
+- Already strong: barcode scanning and quick checkout.
+- Gaps: multi-item pricing (none), stock below the branch level (none).
+- Clothing-shop gaps: a size × colour grid, quick keys, labels, a cart discount.
+
+They asked for all five fixes, choosing the recommended option each time: SC/PWD wins over a promotion, promotions offline via the snapshot, a shelf field plus an all-branch stock view (not bin-level stock), and printable label sheets from the admin. Migrations 0096–0097 (no back-fill); the dev DB is migrated to 0097.
+
+**Promotions**
+- New package `@1pos/pricing`. Its pure `applyPromotions` is used by `TaxService.computeCart` (only with `{ promotions: true }`: counter quote, sale, exchange, offline re-pricing; not restaurant bills) and by the offline engine.
+- Three kinds:
+  - `MULTI_BUY` ("3 for ₱800", mix and match);
+  - `BUY_X_GET_Y` (the cheaper units off);
+  - `QUANTITY_BREAK` (tiers).
+- One promotion per line, the customer's best first. Lines with a manual discount, an approved price or SC/PWD are left out.
+- The result is the line's ordinary `discount`, so VAT, books, returns and reports need no new rule. `sale_lines.promotion_id` records it.
+- Terms are fixed by trigger. A promotion can only be renamed or ended; one not yet started is "called off" (empty window).
+- The catalog version bumps on any change; `nextChangeAt` includes promotion starts and ends.
+- The snapshot carries the promotions. `PRICE_CHANGED` also compares promotions.
+- Routes: `GET/POST /v1/promotions`, `GET/PATCH /v1/promotions/:id` (`prices.manage`).
+
+**Sizes and colours**
+- The admin generates variants from up to 3 options (attributes saved), on a new product or adding missing combinations later.
+- Report "Sales by size and colour" (`/v1/reports/by-attribute`).
+
+**Quick checkout (till)**
+- `5*` (or `5×`) then the code.
+- Quick keys (`product_variants.quick_key_position`, `GET /v1/catalog/quick-keys`, snapshot `quickKey`).
+- "Discount all": an ordinary line discount on every line without a promotion, approved price, SC/PWD or its own discount.
+- Promotions shown in green on lines and printed on receipts, online and offline.
+
+**Labels**
+- `POST /v1/variants/:id/barcodes/generate`: in-store EAN-13 `29…`.
+- Admin Products → Labels: A4 21/40, a 50×30 roll, shelf-edge strips; our own EAN-13/Code 128 SVG encoder; browser print.
+
+**Shelves and branches**
+- `item_locations` (`GET/PUT /v1/stock/locations`, `inventory.adjust` or `inventory.count`), shown on the stock list (edited in place), count sheets (ordered by shelf) and labels.
+- `GET /v1/stock/balances/by-branch` and admin Inventory → "All branches".
+
+**Reports**: "Promotions" and "Sales by size and colour", with CSV.
+
+**Admin** (done by a delegated agent, checked here with a new E2E):
+- Prices → Promotions (list, form, detail, End now / Call off, Copy).
+- Products → Quick keys and Labels; variant grid; "Make barcode".
+- Inventory shelf column and "All branches"; reports; promotion on the sale page; guide part "Promotions, labels and shelves". No new band tab (the band is full).
+
+**Defects found on the way**
+- The size report's `FULL JOIN … IS NOT DISTINCT FROM` is refused by Postgres (500, caught by `retail.test.ts`); rewritten as a union.
+- A promotion called off before it started still showed SCHEDULED.
+- The promotions report's quantity came back unformatted.
+- The till's `5*` pattern lost its backslashes when written (caught by `test:e2e:pos:retail`).
+- `test:e2e:pos:controls` clicked "Discount all" for the line's "Discount" (the test now clicks the line's button).
+- The labels count read "1 labels on 1 pages".
+
+**Verified (session 26)**
+- Build, lint, unit:
+  - `pnpm build` 15/15; `pnpm lint` clean;
+  - unit `turbo run test --force --concurrency=4` 26/26 tasks (pricing 16 new, POS 19, admin 48, api 55 after regenerating OpenAPI);
+  - `tsc` api/POS/admin.
+- Integration:
+  - new `retail.test.ts` 6/6 (promotions on quote, sale, receipt, return, branch list, manual discount, ending, immutable terms, offline engine end to end, sizes, quick keys, barcodes, shelves, by-branch, promotions report);
+  - `isolation` 10/10 (fixtures for the new tables, 3 new `:id` routes, 6 new smuggle cases, 2 reports);
+  - database `rls-catalog` 10/10.
+- Full API run: 435/442. The 7 failures were 30 s timeouts in `bills`, `offline-engine` and `payables`, while builds and E2E ran on the machine. Re-run alone: 27/28, and the last one passed alone.
+- Dev DB traceability audit: no violations.
+- E2E on API :4326 (rate limits off), POS preview :3336, admin `next start` :3326:
+  - new **`test:e2e:pos:retail` 11/11** and **`test:e2e:web:retail` 20/20**;
+  - till: `pos` 41/41, `pos:controls` 33/33 (after the test fix), `pos:counter` 25/25, `pos:extras` 15/15;
+  - admin: `web` 46/46, `web:guide` 22/22 (after adding the new part to its list), `web:backoffice` 49/49, `web:stock` 22/22, `web:reports` 30/30, `web:grocery` 23/23.
+- Not run:
+  - database `backup.test.ts`: its hook times out because the Docker CLI does not answer on this machine (`docker version` hangs; Postgres keeps serving over TCP);
+  - the desktop till (no Rust changed);
+  - restaurant E2E (`tables`, `service`, `floor`, `kitchen`, `web:restaurant`);
+  - the other admin suites; workers.
+- Nothing committed.
+
+## Session 25 — restaurants, cafés and food trucks (ADR-0014 amendment)
+The user asked for a review of the "Restaurants, Cafes & Food Trucks" industry (`docs/INDUSTRIES.md`): table management, kitchen ticket routing, customizations and split bills were already strong; fast counter checkout was the gap. They then asked to fix the gaps, choosing (the recommended option each time) pay-first counter service, network ESC/POS kitchen printers driven by the desktop till, offline counter service only, and all four small gaps. Migrations 0091–0092; the dev DB is migrated to 0092 (back-fills checked: TIPS_PAYABLE on 84/84 legal entities; 60/60 existing tickets marked printed).
+- **Counter service** (per branch, needs a takeaway menu): choices and a kitchen note on the Sell screen, priced choices as lines under their item, a pickup name; paying records a COUNTER order (fired at once, settled with the sale); call number on the receipt and the KDS; "Handed over"; a void recalls unserved items. Offline: the snapshot carries the menu, the till prices the choices and prints the tickets itself, the server records the kitchen copy as printed and served.
+- **Kitchen printing**: terminal claim/printed/release routes with a 60 s lease; reprint from the KDS or floor; Till settings → Kitchen printers per station.
+- **Tips**: cash or by their own card payment, outside the sale and its tenders (`sale_tips`, TIPS_PAYABLE); a void gives them back in cash; tips paid out from the drawer; tips report; audit rule. Pending the accountant.
+- **Also**: a pending item's choices change in place; free choices count in item performance once their order is settled; `soldBy: WEIGHT` refused for a RESTAURANT business.
+- **Admin** (done by a delegated agent, checked here): counter-service switch, tips report with CSV, free choices, movement labels, tip and call number on the sale page, guide lines.
+- **Defects found on the way**: kitchen-print settle answered 409 instead of 404 for another tenant's ticket (caught by `isolation.test.ts`); the till's tip toggle labelled "Card" sat before the real Card button (caught by `test:e2e:pos`, `tables`, `service`); the KDS printed a counter order's number twice; the restaurant E2E fixture created a weighed product in a RESTAURANT business, now refused by design.
+- **Verified (session 25)**:
+  - `pnpm build` 14/14; `pnpm lint` clean; `tsc` api/POS/admin; unit `turbo run test --force --concurrency=4` 24/24 tasks (accounting 19, pos-offline 17, admin 30, POS 19, api 55, …); OpenAPI regenerated;
+  - integration: api full run 429/433, the 4 failures all from this session (attack matrix, `sale_tips` fixture, chart parse, `-0`), fixed; then `isolation` + `ledger` + `counter-service` 25/25 apart from the chart test, fixed and `ledger` 5/5; `counter-service` 10/10; database 33/33;
+  - dev DB traceability audit: no violations (100 tenants);
+  - E2E on API :4325 (rate limits off), POS preview :3335, admin `next start` :3325: new **`test:e2e:pos:counter` 21/21**; `pos` 41/41, `tables` 37/37, `service` 22/22 (after the tip-toggle fix), `kitchen` 22/22, `floor` 13/13, `pos:controls` 33/33, `pos:extras` 15/15, `web:restaurant` 29/29 (after the fixture fix), `web:reports` 30/30 (after a CSS-uppercase check fix), `web:guide` 22/22.
+  - Not re-run: desktop till (`cargo test`, `test:e2e:desktop`; no Rust changed), offline review, the other admin suites, workers.
+- **Second round (same day): the decisions that needed the user.** Tips stay owed to staff with no VAT (still for the accountant to confirm); a void cancels a card tip's charge after it commits (cash if the provider refuses, retry from the till when it does not answer); offline tills take cash tips; an offline counter order keeps the till's call number; held carts keep their choices; `payment_intents.purpose` tells a tip's charge from the sale's. Migrations 0093–0095; the dev DB is migrated to 0095 (purpose back-fill: no card tips existed on dev).
+  - Verified: API type-check; integration `counter-service` 13/13 and `isolation` 10/10 (each alone), and `ledger`, `sales`, `offline-sync`, `reconciliation` with them (82 tests; the 2 failures were test expectations, fixed and re-run); unit pos-offline 18/18, accounting 19/19, validation 10/10, POS 19/19, admin 30/30, api 54/55 (the OpenAPI drift is session 26's `quickKeyPosition`, regenerated by that session; this session's routes match); E2E on the same servers: `pos:counter` 25/25 (with a card tip voided back to the card), `pos` 41/41, `tables` 37/37, `service` 22/22 and `pos:extras` 15/15 (each failed once at a timeout while another session ran tests on the machine, then passed), `web:restaurant` 29/29, `web:reports` 30/30.
+  - Not re-run: full API integration, the desktop till, the other admin suites. The Docker CLI stopped answering on this machine late in the session (Postgres and Redis kept serving over TCP).
+- Session 26 (retail promotions, another session) works in the same tree at the same time: its migrations 0096/0097 and schema changes are its own.
+- Nothing committed.
+
+## Session 24 — sari-sari stores and groceries (ADR-0020)
+The user asked for a new industry: sari-sari stores and groceries, with expiry date tracking, bulk-to-piece (tingi) conversion and low-stock alerts. They chose (the recommended option each time) a fourth business type, packs opened automatically at the sale, and expiry lots drawn first-expiry-first without picking. Migrations 0085–0090; the dev DB is migrated to 0090 (no back-fill; the 3 existing inventory settings took the 30-day default).
+- **Business type GROCERY** ("Sari-sari store or grocery"): gates like RETAIL everywhere through one `servesTables` rule (API `assertFeature`, roles, business type change with open orders, admin nav/guide/notice, till). Sari-sari sample items; a new product starts with "Keeps expiry dates" ticked.
+- **Packs and pieces**: a pack and its piece are two items linked by `pack_conversions` (one pack per piece, no loops, whole pieces for a piece unit, auto-open switch; archived, never edited). Opening is a `pack_openings` document with `UNPACK_OUT`/`UNPACK_IN` movements; the costing trigger prices the pieces at exactly the packs' value (a revaluation of pieces sold short goes to COGS under journal source `PACK_OPENING`) and checks each movement against its opening. Manual: `POST /v1/stock/pack-openings` (`inventory.adjust`, refused beyond stock under BLOCK). Automatic: `record()` opens just enough whole packs when a sale (counter, check or offline) and its recipes need more pieces than are available, after locking every balance involved in variant order, before the BLOCK check.
+- **Expiry lots**: `products.tracks_expiry`; `stock_lots`/`stock_lot_movements` written only by the definer trigger `app_track_stock_lots` from every movement (undated stock first, then first-expiry-first; returns, transfers and opened packs carry their dates; a removal can name a lot). Dates on receipt lines (required for dated items) and inbound adjustments. `GET /v1/stock/expiring`, `GET /v1/stock/lots`. Per-branch `expiry_alert_days` (default 30); the worker's hourly pass `platform_flag_expiring_lots()` flags each lot once and mails the branch's stock keepers (`stock.expiring`).
+- **Admin**: type choice; product form "Keeps expiry dates"; Packs and pieces on the product page; Inventory → Expiry (windows 7/30/90, expired total at cost, Write off) and Inventory → Packs (Open a pack, history with the sale); expiry date and lot on receiving; expiry date on stock adjustments; alert days in Settings; movement and journal labels; guide part "Tingi and expiry dates" (EN/FIL).
+- **Low-stock alerts** were already built (session 16); the guide part points to them.
+- **Defects found on the way**: the costing trigger's owner could not read the new pack tables, and the app could not update `inventory_settings.expiry_alert_days` or `products.tracks_expiry` (column grants). The first two were fixed in 0087/0089 before the dev DB was migrated; the third was caught by `test:e2e:web:backoffice` (product rename → 500), fixed in 0090, and now has an integration test (mutation-checked: without the grant it fails with the 500).
+- **Verified (session 24)**:
+  - `pnpm build` 14/14; `pnpm lint` clean; `tsc` api/admin; unit `turbo run test --force --concurrency=4` 24/24 tasks; OpenAPI regenerated;
+  - integration `turbo run test:integration --concurrency=1 --continue --force`: database **33/33**, api **422/422** (46 files), workers 24/28. The 4 failures were all in `webhooks.test.ts`, timing out at 30 s while draining the shared test DB's outbox backlog (as in session 22); after it drained, the file passed **6/6**. After migration 0090: `lots.test.ts` **5/5**, database unit 20/20 and integration 33/33.
+  - new suites: `packs.test.ts` 5/5 (links, manual and automatic openings, revaluation, BLOCK, two tills and the last pack), `lots.test.ts` 5/5, `business-type.test.ts` 9/9, `isolation.test.ts` 10/10;
+  - dev DB traceability audit: no violations (88 tenants);
+  - E2E on API :4324 (rate limits off), admin `next start` :3324, POS preview :3334: new **`test:e2e:web:grocery` 23/23** (first run 19/23: four checks of mine compared CSS-uppercased text; screens right); regression `web` 46/46 (after updating the retail-notice copy it checks), `web:guide` 22/22 (with the new part), `web:backoffice` 49/49 (after the 0090 fix), `web:stock` 22/22, `web:payables` 36/36, `web:inventory-extras` 13/13, `pos` 41/41.
+  - Not re-run: restaurant, floor, tables, kitchen, service, offline, onboarding, security, account, drawers, customers, analysis, integrations, pos:controls, pos:extras, desktop till.
 
 ## Session 23 — till quantities and stock movements
 The user asked for an audit of the till's wiring (stock movements, +/− quantity), then to fix everything found. Migration 0084; the dev DB is migrated to 0084.

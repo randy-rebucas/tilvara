@@ -24,7 +24,7 @@ export interface FloorPlace {
 }
 
 /** Table service (ADR-0014): floor → order → bill → checks, all on the server; this tab only shows and asks. */
-export function Tables({ place, permissions, active }: { place: FloorPlace; permissions: string[]; active: boolean }) {
+export function Tables({ place, permissions, active, lodging = false }: { place: FloorPlace; permissions: string[]; active: boolean; lodging?: boolean }) {
   const [view, setView] = useState<View>({ name: 'floor' });
   if (view.name === 'order') {
     return (
@@ -39,7 +39,7 @@ export function Tables({ place, permissions, active }: { place: FloorPlace; perm
     );
   }
   if (view.name === 'bill') {
-    return <BillScreen place={place} billId={view.billId} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
+    return <BillScreen place={place} billId={view.billId} lodging={lodging} onBack={() => setView({ name: 'order', orderId: view.orderId })} onDone={() => setView({ name: 'floor' })} />;
   }
   return <Floor shift={place} active={active} onOpen={(orderId) => setView({ name: 'order', orderId })} />;
 }

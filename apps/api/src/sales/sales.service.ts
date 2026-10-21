@@ -12,6 +12,9 @@ import {
   saleReturns,
   sales,
   saleTenders,
+  saleTips,
+  saleTipShares,
+  serviceStaff,
   branches,
   cashMovements,
   inArray,
@@ -23,9 +26,13 @@ import {
   orderBills,
   registers,
   restaurantOrders,
+  kitchenTickets,
   users,
   paymentEvents,
   paymentIntents,
+  promotions,
+  rooms,
+  stays,
   sql,
   stockMovements,
   terminalTransactions,
@@ -34,11 +41,11 @@ import {
 } from '@1pos/database';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
-import type { CreateCheckInput, CreateExchangeInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput } from '@1pos/validation';
+import type { CreateCheckInput, CreateExchangeInput, CreateSaleInput, PreviewCheckInput, SaleListQuery, TendersInput, TipInput } from '@1pos/validation';
 import { dbNow } from '../common/clock.js';
 import { branchScope } from '../purchasing/purchase-orders.service.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
-import { readOnlyReason } from '../billing/entitlements.js';
+import { hasFeature, readOnlyReason } from '../billing/entitlements.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -53,8 +60,18 @@ import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
 import { planConsumption } from '../restaurant/consumption.js';
+import { versionMenuItems } from '../restaurant/choices.js';
+import { expandCounterLines, recordCounterOrder, type CounterLineInput, type CounterPlan } from '../restaurant/counter.js';
+import { loadSettings } from '../restaurant/floor.service.js';
+import { MenusService } from '../restaurant/menus.service.js';
 import { assertStockAvailable } from './stock-policy.js';
+import { openPacksForSale } from '../inventory/packs.service.js';
 import { addFraction, compareFraction, frac, fractionDec, ONE_FRACTION, ratioOf, subFraction, ZERO_FRACTION, type Fraction } from '../common/fraction.js';
+import { PricingService } from '../catalog/pricing.service.js';
+import { commissionRates } from '../salon/staff.service.js';
+import { completeAppointment } from '../salon/appointments.service.js';
+import { EMPTY_PLAN, planPackages, recordPackages, splitByWeight } from '../salon/packages.js';
+import { insertEntry, planRoomCharge, stayGuestName, surnameOf } from '../lodging/folio.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -116,9 +133,17 @@ interface RecordLine extends Buckets {
   parentIndex: number | null;
   /** An approved price change (session 20). */
   priceOverrideId?: string | null;
+  /** The promotion that priced it (ADR-0021). */
+  promotionId?: string | null;
   allocation?: { billLineId: string; share: Fraction };
   /** A check's share of a bill line: what earlier checks already sold of that line (recipe consumption rounds on the running total). */
   soldBefore?: string;
+  /** Counter lines (ADR-0022): STANDARD, SERVICE or PACKAGE; a check's lines leave it out (never a package). */
+  productType?: string;
+  /** A session of this customer package (priced at zero). */
+  packageId?: string | null;
+  /** Who performed or sold it. */
+  staffId?: string | null;
 }
 
 interface RecordCharge extends Buckets {
@@ -153,6 +178,10 @@ interface PricedSale {
    * refused for stock; the costing trigger flags them instead.
    */
   enforceStock?: boolean;
+  /** Counter service (session 25): the menu items the kitchen gets once this sale is paid. */
+  counter?: CounterPlan | null;
+  /** The appointment this sale rings up (ADR-0022 §4). */
+  appointmentId?: string | null;
 }
 
 /** What a terminal's offline sale needs besides the envelope: who sent it and what it had been told. */
@@ -172,8 +201,15 @@ export interface OfflineContext {
 }
 
 
-/** A retail cart from the tax path, ready to record (counter checkout and offline sales). */
-function pricedFromCart(cart: CartComputation, input: Pick<CreateSaleInput, 'lines' | 'beneficiaries'>): PricedSale {
+/** What a priced line was asked with: its SC/PWD beneficiary, if any. */
+type LineAsked = { variantId: string; statutory?: { beneficiary?: string } | undefined };
+
+/**
+ * A retail cart from the tax path, ready to record (counter checkout and offline sales). `lines` are
+ * the lines the cart was computed from (with counter choices expanded, `parentIndex` says which item a
+ * priced choice belongs to).
+ */
+function pricedFromCart(cart: CartComputation, lines: LineAsked[], beneficiaries: CreateSaleInput['beneficiaries'], parentIndex: (number | null)[] = []): PricedSale {
   return {
     legalEntityId: cart.legalEntityId,
     currency: cart.currency,
@@ -182,7 +218,7 @@ function pricedFromCart(cart: CartComputation, input: Pick<CreateSaleInput, 'lin
     requiresProfessionalReview: cart.requiresProfessionalReview,
     totals: pick(cart.totals),
     lines: cart.lines.map((l, i) => {
-      const statutory = input.lines[i]!.statutory;
+      const statutory = lines[i]!.statutory;
       return {
         ...pick(l),
         clientLineId: l.id,
@@ -200,17 +236,29 @@ function pricedFromCart(cart: CartComputation, input: Pick<CreateSaleInput, 'lin
         beneficiaryRef: statutory?.beneficiary ?? null,
         schemeShare: statutory ? (l.snapshot.scheme?.share ?? '1') : null,
         snapshot: l.snapshot,
-        parentIndex: null,
+        parentIndex: parentIndex[i] ?? null,
         priceOverrideId: l.priceOverrideId,
+        promotionId: l.promotionId,
+        productType: l.productType,
+        packageId: l.packageId,
+        staffId: l.staffId,
       };
     }),
-    beneficiaries: input.beneficiaries.map((b) => {
-      const scheme = cart.lines.find((_, i) => input.lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
+    beneficiaries: beneficiaries.map((b) => {
+      const scheme = cart.lines.find((_, i) => lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
       return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null };
     }),
     charges: [],
     orderBillId: null,
   };
+}
+
+/** The names of the promotions that priced these lines (ADR-0021). */
+async function promotionNames(db: Database, lines: { promotionId: string | null }[]): Promise<Map<string, string>> {
+  const ids = [...new Set(lines.flatMap((l) => (l.promotionId ? [l.promotionId] : [])))];
+  if (!ids.length) return new Map();
+  const rows = await db.select({ id: promotions.id, name: promotions.name }).from(promotions).where(inArray(promotions.id, ids));
+  return new Map(rows.map((r) => [r.id, r.name]));
 }
 
 @Injectable()
@@ -227,8 +275,36 @@ export class SalesService extends TenantService {
     @Inject(TaxService) private readonly tax: TaxService,
     @Inject(ENV) private readonly env: ServerEnv,
     @Inject(ReturnsService) private readonly returns: ReturnsService,
+    @Inject(MenusService) private readonly menus: MenusService,
+    @Inject(PricingService) private readonly pricing: PricingService,
   ) {
     super(tenantDb);
+  }
+
+  /**
+   * Counter service (ADR-0014 amendment, session 25): the takeaway menu a counter sale's choices come
+   * from, when the branch has it on and the business may serve food; else null (a sale with choices is
+   * then refused, an ordinary one is not affected). A plan downgrade turns the kitchen off, never the till.
+   */
+  private async counterMenu(db: Database, branchId: string, pickupName: string | null) {
+    const settings = await loadSettings(db, branchId);
+    if (!settings?.counterService || !(await hasFeature(db, 'restaurant'))) return null;
+    const served = await this.menus.served(db, branchId, 'TAKEAWAY');
+    if (!served.menu) return null;
+    return { menuVersionId: served.menu.menuVersionId, items: served.menu.sections.flatMap((s) => s.items), pickupName, offline: false };
+  }
+
+  /** A counter cart priced on the tax path: choices expanded into lines, SC/PWD as asked. */
+  private async priceCounterCart(db: Database, auth: AuthContext, branchId: string, sale: Pick<CreateSaleInput, 'lines' | 'beneficiaries' | 'pickupName'>) {
+    const expanded = expandCounterLines(sale.lines, await this.counterMenu(db, branchId, sale.pickupName ?? null));
+    const cart = await this.tax.computeCart(db, auth, {
+      branchId,
+      lines: expanded.lines.map(({ statutory, ...l }) => ({
+        ...l,
+        ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
+      })),
+    }, undefined, { promotions: true });
+    return { ...pricedFromCart(cart, expanded.lines, sale.beneficiaries, expanded.parentIndex), counter: expanded.plan };
   }
 
   /**
@@ -240,15 +316,8 @@ export class SalesService extends TenantService {
   create(auth: AuthContext, input: CreateSaleInput) {
     return this.mutate(auth, async (db) => {
       const session = await this.checkoutSession(db, auth, input.cashierSessionId, input.clientTransactionId);
-      const cart = await this.tax.computeCart(db, auth, {
-        branchId: session.branchId,
-        lines: input.lines.map(({ statutory, ...l }) => ({
-          ...l,
-          ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
-        })),
-      });
       const customerId = input.customerId ? (await activeCustomer(db, input.customerId)).id : null;
-      const priced = { ...pricedFromCart(cart, input), enforceStock: true, customerId };
+      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input)), enforceStock: true, customerId, appointmentId: input.appointmentId ?? null };
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
     });
@@ -269,15 +338,8 @@ export class SalesService extends TenantService {
         cashierSessionId: session.id, kind: 'RETURN', reason: input.reason, lines: input.returnLines, refundTo: 'CASH',
         ...(input.expectedRefund !== undefined && { expectedRefund: input.expectedRefund }),
       }, { exchange: true });
-      const cart = await this.tax.computeCart(db, auth, {
-        branchId: session.branchId,
-        lines: input.sale.lines.map(({ statutory, ...l }) => ({
-          ...l,
-          ...(statutory && { statutory: { scheme: statutory.scheme, ...(statutory.share && { share: statutory.share }) } }),
-        })),
-      });
       const customerId = input.sale.customerId ? (await activeCustomer(db, input.sale.customerId)).id : null;
-      const priced = { ...pricedFromCart(cart, input.sale), enforceStock: true, customerId };
+      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input.sale)), enforceStock: true, customerId };
       const refund = toDec(back.amountDue);
       const sale = await this.record(db, auth, session, input.sale, priced, refund.gt(0) ? { saleReturnId: back.id, amount: refund.toString() } : undefined);
       // The refund went out before the new sale came in: only the net may not exceed the drawer.
@@ -375,8 +437,13 @@ export class SalesService extends TenantService {
       if (session.registerId !== ctx.registerId) {
         throw new AppError('WRONG_REGISTER', 'This shift is on another register than the terminal', HttpStatus.CONFLICT);
       }
-      const input = { lines: env.lines, beneficiaries: [] };
-      const cartAt = (at: Date) => this.tax.computeCart(db, auth, { branchId: session.branchId, lines: env.lines }, at);
+      // Counter service offline: choices are checked against the menu version the till sold from (lenient:
+      // the food was handed over), and its tickets were printed by the till itself.
+      const menu = env.menuVersionId
+        ? { menuVersionId: env.menuVersionId, items: await versionMenuItems(db, env.menuVersionId), pickupName: env.pickupName ?? null, offline: true }
+        : null;
+      const expanded = expandCounterLines<CounterLineInput>(env.lines, menu);
+      const cartAt = (at: Date) => this.tax.computeCart(db, auth, { branchId: session.branchId, lines: expanded.lines }, at, { promotions: true });
       const cart = await cartAt(ctx.snapshotAsOf);
 
       const flags: OfflineFlag[] = [];
@@ -387,16 +454,18 @@ export class SalesService extends TenantService {
       if (Math.abs(completedAt.getTime() - occurred.getTime()) > CLOCK_TOLERANCE_MS) flags.push('CLOCK_ADJUSTED');
       // Prices or the tax profile that were in force when the sale happened, if the terminal could not know them.
       const then = await cartAt(completedAt).catch(() => null);
-      const sameAsThen = then && then.taxProfile.id === cart.taxProfile.id && then.lines.every((l, i) => l.priceId === cart.lines[i]!.priceId);
+      const sameAsThen = then && then.taxProfile.id === cart.taxProfile.id && then.lines.every((l, i) => l.priceId === cart.lines[i]!.priceId && l.promotionId === cart.lines[i]!.promotionId);
       if (!sameAsThen) flags.push('PRICE_CHANGED');
       if (completedAt.getTime() > ctx.snapshotAsOf.getTime() + ctx.windowHours * 3_600_000) flags.push('SNAPSHOT_EXPIRED');
       if (readOnly && flags.includes('SNAPSHOT_EXPIRED')) throw readOnly;
 
-      const priced = pricedFromCart(cart, input);
+      const priced = { ...pricedFromCart(cart, expanded.lines, [], expanded.parentIndex), counter: expanded.plan };
       priced.offline = { terminalId: ctx.terminalId, reference: env.localReference, flags, completedAt };
+      // The number the till printed for the kitchen and the customer (its device number) stays the call number.
+      if (priced.counter) priced.counter = { ...priced.counter, tillCallNumber: env.deviceSeq };
       let sale: SaleRow;
       try {
-        sale = await this.record(db, auth, session, { clientTransactionId: env.terminalTxnId, tenders: env.tenders, expectedAmountDue: env.amountDue }, priced);
+        sale = await this.record(db, auth, session, { clientTransactionId: env.terminalTxnId, tenders: env.tenders, expectedAmountDue: env.amountDue, ...(env.tip && { tip: env.tip }) }, priced);
       } catch (e) {
         if (e instanceof AppError && e.code === 'TOTAL_CHANGED') {
           throw new AppError('TOTAL_MISMATCH', 'The terminal charged a different total than its snapshot gives', HttpStatus.CONFLICT, {
@@ -569,7 +638,7 @@ export class SalesService extends TenantService {
     db: Database,
     auth: AuthContext,
     session: Awaited<ReturnType<typeof loadSession>>['session'],
-    input: { clientTransactionId: string; tenders: TendersInput; expectedAmountDue?: string | undefined },
+    input: { clientTransactionId: string; tenders: TendersInput; expectedAmountDue?: string | undefined; tip?: TipInput | undefined },
     priced: PricedSale,
     /** An exchange: the refund of this return, tendered as cash before anything the customer pays. */
     exchangeCredit?: { saleReturnId: string; amount: string },
@@ -601,6 +670,7 @@ export class SalesService extends TenantService {
       if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== priced.currency) {
         throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: pid });
       }
+      if (p.purpose !== 'SALE') throw unprocessable('TIP_PAYMENT_AS_TENDER', 'This payment was taken for the tip, not the sale', { paymentIntentId: pid });
     }
     const electronic = intents.reduce((a, p) => a.plus(p.amount), new Dec(0));
     if (electronic.gt(due)) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: due.toFixed(2) });
@@ -617,8 +687,40 @@ export class SalesService extends TenantService {
       if (balance.lt(storeCredit)) throw new AppError('INSUFFICIENT_STORE_CREDIT', 'The customer has less store credit than that', HttpStatus.CONFLICT, { balance: balance.toFixed(2) });
     }
 
-    // Cash covers the rest; only the last cash tender may give change.
-    let remaining = due.minus(electronic).minus(storeCredit);
+    // Charge to room (ADR-0023 §5.1) next: an in-house guest of this legal entity; all that is left by default.
+    const roomTender = input.tenders.find((t): t is Extract<TendersInput[number], { method: 'ROOM_CHARGE' }> => t.method === 'ROOM_CHARGE');
+    let roomCharge = new Dec(0);
+    let room: Awaited<ReturnType<typeof planRoomCharge>> | null = null;
+    if (roomTender) {
+      if (priced.offline) throw unprocessable('ROOM_CHARGE_OFFLINE', 'A charge to a room needs the server; the offline till cannot take it');
+      const left = due.minus(electronic).minus(storeCredit);
+      roomCharge = roomTender.amount ? toDec(roomTender.amount) : left;
+      if (roomCharge.lte(0)) throw unprocessable('UNNECESSARY_TENDER', 'The sale is already paid');
+      if (roomCharge.gt(left)) throw unprocessable('OVERPAYMENT', 'The room charge is more than what is left to pay', { amountDue: left.toFixed(2) });
+      room = await planRoomCharge(db, { stayId: roomTender.stayId, legalEntityId: priced.legalEntityId, amount: roomCharge });
+    }
+
+    // A tip (session 25): its own card/QR payment of this checkout, or cash on top of what is due. Never
+    // part of the amount due or the tenders: the sale, its receipt and the Z reading see none of it.
+    const tip = input.tip ? toDec(input.tip.amount) : new Dec(0);
+    let tipIntent: (typeof paymentIntents.$inferSelect) | null = null;
+    if (input.tip?.paymentIntentId) {
+      if (intentIds.includes(input.tip.paymentIntentId)) throw unprocessable('DUPLICATE_TENDER', 'A payment can be tendered once');
+      [tipIntent = null] = await db.select().from(paymentIntents).where(eq(paymentIntents.id, input.tip.paymentIntentId)).for('update');
+      const p = tipIntent;
+      if (!p) throw new AppError('NOT_FOUND', 'Payment not found', HttpStatus.NOT_FOUND, { paymentIntentId: input.tip.paymentIntentId });
+      if (p.saleId) throw new AppError('PAYMENT_CONSUMED', 'This payment already paid for another sale', HttpStatus.CONFLICT, { paymentIntentId: p.id });
+      if (p.status !== 'SUCCEEDED') throw new AppError('PAYMENT_NOT_SUCCEEDED', `This payment is ${p.status.toLowerCase()}`, HttpStatus.CONFLICT, { paymentIntentId: p.id, status: p.status });
+      if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== priced.currency) {
+        throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: p.id });
+      }
+      if (p.purpose !== 'TIP') throw unprocessable('TIP_MISMATCH', 'This payment was taken for the sale, not the tip', { paymentIntentId: p.id });
+      if (!toDec(p.amount).equals(tip)) throw unprocessable('TIP_MISMATCH', 'The tip payment is not the tip amount', { tip: tip.toFixed(2), paid: toDec(p.amount).toFixed(2) });
+    }
+    const cashTip = input.tip && !tipIntent ? tip : new Dec(0);
+
+    // Cash covers the rest (and a cash tip); only the last cash tender may give change.
+    let remaining = due.minus(electronic).minus(storeCredit).minus(roomCharge).plus(cashTip);
     const cashTenders: { t: { tendered: string }; i: number; exchangeReturnId?: string }[] = [
       ...(exchangeCredit ? [{ t: { tendered: exchangeCredit.amount }, i: -1, exchangeReturnId: exchangeCredit.saleReturnId }] : []),
       ...input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : [])),
@@ -630,11 +732,34 @@ export class SalesService extends TenantService {
       remaining = remaining.minus(applied);
       return { tendered, applied, change: tendered.minus(applied), exchangeReturnId: exchangeReturnId ?? null };
     });
-    if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: due.toFixed(2) });
+    if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: due.toFixed(2), ...(cashTip.gt(0) && { tip: cashTip.toFixed(2) }) });
     if (cash.slice(0, -1).some((t) => t.change.gt(0))) throw unprocessable('UNNECESSARY_TENDER', 'Only the last tender may give change');
+    // The cash tip comes out of the last cash tender: what stays on the tender is what the sale got.
+    if (cashTip.gt(0)) {
+      const last = cash.at(-1);
+      if (!last || last.exchangeReturnId || last.applied.lt(cashTip)) throw unprocessable('TIP_NEEDS_CASH', 'A cash tip is paid with the last cash tendered', { tip: cashTip.toFixed(2) });
+      last.applied = last.applied.minus(cashTip);
+      last.tendered = last.tendered.minus(cashTip);
+    }
     const cashApplied = cash.reduce((a, t) => a.plus(t.applied), new Dec(0));
-    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit));
+    const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit).plus(roomCharge));
     const change = tendered.minus(due);
+
+    // Staff on the lines (ADR-0022 §5): of this branch; their commission rate at the sale goes on the line.
+    const rates = await this.staffRates(db, session.branchId, priced);
+    // Service packages sold and sessions used (ADR-0022 §6), checked and locked before anything is written.
+    const today = await this.localDate(db, session.branchId, priced.offline?.completedAt ?? (await dbNow(db)));
+    const packages = priced.lines.some((l) => l.productType === 'PACKAGE' || l.packageId)
+      ? await planPackages(
+          db,
+          { customerId: priced.customerId ?? null, legalEntityId: priced.legalEntityId, localDate: today, prices: (ids) => this.pricing.effectivePrices(db, session.branchId, ids) },
+          priced.lines.map((l) => ({
+            productType: l.productType ?? 'STANDARD', variantId: l.variantId, quantity: l.quantity, exVat: exVat(l), packageId: l.packageId ?? null,
+            hasStatutory: l.beneficiaryRef !== null, name: l.name,
+          })),
+        )
+      : EMPTY_PLAN;
+    const packageValue = new Map(packages.redeemed.map((r) => [r.index, r.value]));
 
     const saleNumber = await nextNumber(db, tenantId, session.registerId, 'SALE');
     const [sale] = await db
@@ -700,6 +825,11 @@ export class SalesService extends TenantService {
         taxSnapshot: l.snapshot,
         parentLineId: l.parentIndex === null ? null : lineIds[l.parentIndex]!,
         priceOverrideId: l.priceOverrideId ?? null,
+        promotionId: l.promotionId ?? null,
+        serviceStaffId: l.staffId ?? null,
+        commissionRate: l.staffId ? rates.get(`${l.staffId}:${l.variantId}`)! : null,
+        customerPackageId: l.packageId ?? null,
+        packageValue: packageValue.get(i)?.toString() ?? null,
       }) as typeof saleLines.$inferInsert;
     for (const pass of [false, true]) {
       const batch = priced.lines.map((l, i) => ({ l, i })).filter(({ l }) => (l.parentIndex !== null) === pass);
@@ -717,10 +847,19 @@ export class SalesService extends TenantService {
       l.allocation ? [{ tenantId, orderBillId: priced.orderBillId!, billLineId: l.allocation.billLineId, saleId: sale!.id, saleLineId: lineIds[i]!, shareNum: Number(l.allocation.share.n), shareDen: Number(l.allocation.share.d) }] : [],
     );
     if (allocations.length) await db.insert(orderBillAllocations).values(allocations);
+    if (packages !== EMPTY_PLAN) {
+      await recordPackages(db, {
+        tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, customerId: priced.customerId!, saleId: sale!.id, userId: auth.userId, localDate: today,
+      }, packages, lineIds);
+    }
+    const appointment = priced.appointmentId
+      ? await completeAppointment(db, { appointmentId: priced.appointmentId, branchId: session.branchId, saleId: sale!.id, userId: auth.userId, customerId: priced.customerId ?? null })
+      : null;
 
     await db.insert(saleTenders).values([
       ...intents.map((p) => ({ tenantId, saleId: sale!.id, method: p.method, paymentIntentId: p.id, amount: p.amount, tendered: p.amount, change: '0' })),
       ...(creditTender ? [{ tenantId, saleId: sale!.id, method: 'STORE_CREDIT', amount: storeCredit.toString(), tendered: storeCredit.toString(), change: '0' }] : []),
+      ...(room ? [{ tenantId, saleId: sale!.id, method: 'ROOM_CHARGE', stayId: room.stay.id, amount: roomCharge.toString(), tendered: roomCharge.toString(), change: '0' }] : []),
       ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString(), exchangeReturnId: t.exchangeReturnId })),
     ]);
     for (const p of intents) {
@@ -733,9 +872,25 @@ export class SalesService extends TenantService {
         amount: storeCredit.negated().toString(), saleId: sale!.id, createdBy: auth.userId,
       });
     }
+    if (room) {
+      await insertEntry(db, {
+        tenantId, folioId: room.folio.id, stayId: room.stay.id, kind: 'CHARGE', amount: roomCharge.toString(), saleId: sale!.id,
+        description: `Sale #${saleNumber}`, createdBy: auth.userId,
+      }, auth.correlationId);
+    }
     // Net cash into the drawer = the cash part of the sale (tendered minus change).
     if (cash.length) {
       await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'SALE', amount: cashApplied.toString(), saleId: sale!.id, createdBy: auth.userId });
+    }
+    if (input.tip) {
+      const [tipRow] = await db.insert(saleTips).values({ tenantId, saleId: sale!.id, method: tipIntent?.method ?? 'CASH', paymentIntentId: tipIntent?.id ?? null, amount: tip.toString() }).returning({ id: saleTips.id });
+      await this.tipShares(db, tenantId, session.branchId, tipRow!.id, tip, input.tip.shares, priced.lines);
+      if (tipIntent) {
+        await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, tipIntent.id));
+        await db.insert(paymentEvents).values({ tenantId, paymentIntentId: tipIntent.id, type: 'CONSUMED', detail: { saleId: sale!.id, tip: true }, createdBy: auth.userId });
+      } else {
+        await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'TIP', amount: cashTip.toString(), saleId: sale!.id, createdBy: auth.userId });
+      }
     }
 
     const stock: (typeof stockMovements.$inferInsert & { variantId: string })[] = priced.lines.flatMap((l, i) =>
@@ -751,6 +906,13 @@ export class SalesService extends TenantService {
     for (const c of consumed) {
       stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });
     }
+    // Tingi (ADR-0020): pieces this sale needs and does not have come out of packs it opens itself.
+    const entryDate = priced.offline ? await this.localDate(db, session.branchId, priced.offline.completedAt) : undefined;
+    const opened = await openPacksForSale(
+      db,
+      { tenantId, branchId: session.branchId, legalEntityId: priced.legalEntityId, userId: auth.userId, saleId: sale!.id, saleNumber: String(saleNumber), ...(entryDate && { entryDate }) },
+      stock.map((m) => ({ variantId: m.variantId, quantity: toDec(m.quantity).negated().toString() })),
+    );
     if (priced.enforceStock) {
       await assertStockAvailable(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
     }
@@ -770,7 +932,7 @@ export class SalesService extends TenantService {
       sourceId: sale!.id,
       memo: priced.offline ? `Sale #${saleNumber} (offline ${priced.offline.reference})` : `Sale #${saleNumber}`,
       // An offline sale is booked on the day it happened, in the branch's calendar.
-      ...(priced.offline && { entryDate: await this.localDate(db, session.branchId, priced.offline.completedAt) }),
+      ...(entryDate && { entryDate }),
       lines: salePosting({
         salesExVat: exVat(priced.totals).minus(serviceCharge),
         serviceCharge,
@@ -779,16 +941,32 @@ export class SalesService extends TenantService {
         cash: cashApplied,
         electronic,
         storeCredit,
+        roomCharge,
         cogs: moved.reduce((a, m) => a.minus(m.value), new Dec(0)),
+        ...(input.tip && { tip: { amount: tip, electronic: tipIntent !== null } }),
+        packagesSold: packages.deferred,
+        packageSessions: packages.recognized,
       }, session.branchId),
       createdBy: auth.userId,
     });
 
+    // Counter service: the kitchen's copy of what was just paid for (tickets, call number).
+    const counterOrder = priced.counter
+      ? await recordCounterOrder(db, { tenantId, branchId: session.branchId, saleId: sale!.id, userId: auth.userId }, priced.counter)
+      : null;
+
     await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, {
       saleNumber, amountDue: due.toFixed(2), registerId: session.registerId,
+      ...(input.tip && { tip: tip.toFixed(2) }),
+      ...(counterOrder && { counterOrderId: counterOrder.id, counterOrderNumber: counterOrder.orderNumber }),
       ...(priced.customerId && { customerId: priced.customerId }),
       ...(creditTender && { storeCredit: storeCredit.toFixed(2) }),
+      ...(room && { roomCharge: roomCharge.toFixed(2), stayId: room.stay.id, folioId: room.folio.id }),
       ...(priced.orderBillId && { orderBillId: priced.orderBillId }),
+      ...(opened.length > 0 && { packOpenings: opened.map((o) => o.id) }),
+      ...(appointment && { appointmentId: appointment.id }),
+      ...(packages.sold.length > 0 && { packagesSold: packages.sold.reduce((a, p) => a + p.units.length, 0) }),
+      ...(packages.redeemed.length > 0 && { packageSessions: packages.redeemed.reduce((a, r) => a + r.sessions, 0) }),
       ...(priced.offline && { origin: 'OFFLINE', terminalId: priced.offline.terminalId, offlineReference: priced.offline.reference, flags: priced.offline.flags }),
     });
     await emitEvent(db, {
@@ -798,6 +976,51 @@ export class SalesService extends TenantService {
       correlationId: auth.correlationId,
     });
     return sale!;
+  }
+
+  /**
+   * The staff named on a sale's lines (ADR-0022 §5): each a staff member of the sale's branch, active
+   * (an offline sale may name one archived since: they did the work). Answers each (staff, item)'s rate.
+   */
+  private async staffRates(db: Database, branchId: string, priced: PricedSale) {
+    const named = priced.lines.flatMap((l, i) => (l.staffId ? [{ staffId: l.staffId, variantId: l.variantId, i }] : []));
+    if (!named.length) return new Map<string, string>();
+    const ids = [...new Set(named.map((n) => n.staffId))];
+    const staff = await db.select().from(serviceStaff).where(inArray(serviceStaff.id, ids));
+    for (const n of named) {
+      const s = staff.find((x) => x.id === n.staffId);
+      if (!s) throw new AppError('NOT_FOUND', 'Staff member not found', HttpStatus.NOT_FOUND, { line: n.i, staffId: n.staffId });
+      if (s.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This staff member works at another branch', { line: n.i });
+      if (s.archivedAt && !priced.offline) throw unprocessable('STAFF_ARCHIVED', `${s.displayName} no longer works here`, { line: n.i });
+    }
+    return commissionRates(db, named);
+  }
+
+  /**
+   * A tip's split among staff (ADR-0022 §7): as given (staff of this branch, adding up to the tip), or
+   * equally among the distinct staff on the lines in line order, the first ones taking the leftover
+   * centavos. A sale without staff keeps an unassigned tip.
+   */
+  private async tipShares(db: Database, tenantId: string, branchId: string, saleTipId: string, tip: Dec, given: TipInput['shares'], lines: RecordLine[]) {
+    let shares: { staffId: string; amount: Dec }[];
+    if (given?.length) {
+      const total = given.reduce((a, g) => a.plus(g.amount), new Dec(0));
+      if (!total.equals(tip)) throw unprocessable('TIP_SHARES_MISMATCH', 'The tip shares do not add up to the tip', { tip: tip.toFixed(2), shares: total.toFixed(2) });
+      const staff = await db.select({ id: serviceStaff.id, branchId: serviceStaff.branchId }).from(serviceStaff).where(inArray(serviceStaff.id, given.map((g) => g.staffId)));
+      for (const g of given) {
+        const s = staff.find((x) => x.id === g.staffId);
+        if (!s) throw new AppError('NOT_FOUND', 'Staff member not found', HttpStatus.NOT_FOUND, { staffId: g.staffId });
+        if (s.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This staff member works at another branch', { staffId: g.staffId });
+      }
+      shares = given.map((g) => ({ staffId: g.staffId, amount: toDec(g.amount) }));
+    } else {
+      const staffIds = [...new Set(lines.flatMap((l) => (l.staffId ? [l.staffId] : [])))];
+      if (!staffIds.length) return;
+      const parts = splitByWeight(tip, staffIds.map(() => new Dec(1)));
+      shares = staffIds.map((staffId, i) => ({ staffId, amount: parts[i]! }));
+    }
+    const kept = shares.filter((x) => x.amount.gt(0));
+    if (kept.length) await db.insert(saleTipShares).values(kept.map((x) => ({ tenantId, saleTipId, staffId: x.staffId, amount: x.amount.toString() })));
   }
 
   get(auth: AuthContext, id: string) {
@@ -826,9 +1049,17 @@ export class SalesService extends TenantService {
         () => db.select().from(saleCharges).where(eq(saleCharges.saleId, id)),
       );
       const [customer] = sale.customerId ? await db.select({ name: customers.displayName, tin: customers.tin }).from(customers).where(eq(customers.id, sale.customerId)) : [];
+      const { tip, counterOrder } = await this.extras(db, id);
+      const roomTender = tenders.find((t) => t.method === 'ROOM_CHARGE' && t.stayId);
+      const [roomStay] = roomTender ? await db.select().from(stays).where(eq(stays.id, roomTender.stayId!)) : [];
+      const [roomRow] = roomStay ? await db.select({ number: rooms.number }).from(rooms).where(eq(rooms.id, roomStay.roomId)) : [];
       const exchangeIds = tenders.flatMap((t) => (t.exchangeReturnId ? [t.exchangeReturnId] : []));
       const exchanged = exchangeIds.length ? await db.select({ id: saleReturns.id, returnNumber: saleReturns.returnNumber }).from(saleReturns).where(inArray(saleReturns.id, exchangeIds)) : [];
       const snapshot = sale.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
+      const promos = await promotionNames(db, lines);
+      const staffIds = [...new Set(lines.flatMap((l) => (l.serviceStaffId ? [l.serviceStaffId] : [])))];
+      const staffNames = staffIds.length ? await db.select({ id: serviceStaff.id, name: serviceStaff.displayName }).from(serviceStaff).where(inArray(serviceStaff.id, staffIds)) : [];
+      const firstName = (id: string | null) => (id ? (staffNames.find((x) => x.id === id)?.name.trim().split(/\s+/)[0] ?? null) : null);
       return buildReceipt({
         invoicingMode: entity!.invoicingMode,
         seller: { registeredName: entity!.registeredName, tradeName: entity!.tradeName, registeredAddress: entity!.registeredAddress, tin: entity!.tin, vatStatus: snapshot.vatStatus },
@@ -853,6 +1084,10 @@ export class SalesService extends TenantService {
           vatableSales: l.vatableSales,
           vatExemptSales: l.vatExemptSales,
           beneficiaryId: l.beneficiaryId,
+          isChoice: l.parentLineId !== null,
+          promotion: l.promotionId ? (promos.get(l.promotionId) ?? null) : null,
+          staff: firstName(l.serviceStaffId),
+          packageSession: l.customerPackageId !== null,
         })),
         tenders: tenders.map((t) => ({
           method: t.method, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change),
@@ -861,8 +1096,27 @@ export class SalesService extends TenantService {
         beneficiaries,
         charges: charges.map((c) => ({ kind: c.kind, rate: toDec(c.rate).toString(), gross: c.gross, amountDue: c.amountDue, vatTreatment: c.vatTreatment })),
         customer: customer ?? null,
+        tip,
+        counterOrder: counterOrder ? { orderNumber: counterOrder.callNumber, pickupName: counterOrder.pickupName } : null,
+        roomCharge: roomStay && roomRow ? { roomNumber: roomRow.number, guestSurname: surnameOf(await stayGuestName(db, roomStay)), amount: roomTender!.amount } : null,
       });
     });
+  }
+
+  /** A sale's tip and, for counter service, the kitchen order it sent (call number, pickup name, tickets). */
+  private async extras(db: Database, saleId: string) {
+    const [[tipRow], [order]] = await inSequence(
+      () => db.select().from(saleTips).where(eq(saleTips.saleId, saleId)),
+      () => db.select({ id: restaurantOrders.id, orderNumber: restaurantOrders.orderNumber, tillCallNumber: restaurantOrders.tillCallNumber, pickupName: restaurantOrders.customerName }).from(restaurantOrders).where(eq(restaurantOrders.saleId, saleId)),
+    );
+    const tickets = order
+      ? await db.select({ id: kitchenTickets.id, ticketNumber: kitchenTickets.ticketNumber, stationId: kitchenTickets.stationId }).from(kitchenTickets).where(eq(kitchenTickets.orderId, order.id))
+      : [];
+    return {
+      tip: tipRow ? { method: tipRow.method, amount: fixed(tipRow.amount) } : null,
+      // `callNumber`: what the customer's receipt says (an offline till's own number, else the order number).
+      counterOrder: order ? { ...order, callNumber: order.tillCallNumber ?? order.orderNumber, tickets } : null,
+    };
   }
 
   list(auth: AuthContext, q: SaleListQuery) {
@@ -925,11 +1179,15 @@ export class SalesService extends TenantService {
       () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, s.id)),
       () => db.select().from(saleCharges).where(eq(saleCharges.saleId, s.id)),
     );
+    const promos = await promotionNames(db, lines);
     return {
       ...this.summary(s),
       lines: lines.map((l) => {
         const back = returned.find((r) => r.sale_line_id === l.id)?.quantity ?? '0';
-        const out: Record<string, unknown> = { ...l, quantity: toDec(l.quantity).toString(), unitPrice: toDec(l.unitPrice).toString(), returnedQuantity: toDec(back).toString() };
+        const out: Record<string, unknown> = {
+          ...l, quantity: toDec(l.quantity).toString(), unitPrice: toDec(l.unitPrice).toString(), returnedQuantity: toDec(back).toString(),
+          promotionName: l.promotionId ? (promos.get(l.promotionId) ?? null) : null,
+        };
         for (const k of MONEY_FIELDS) out[k] = fixed(l[k]);
         return out;
       }),
@@ -940,6 +1198,7 @@ export class SalesService extends TenantService {
       }),
       tenders: tenders.map((t) => ({ ...t, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),
       beneficiaries,
+      ...(await this.extras(db, s.id)),
     };
   }
 }

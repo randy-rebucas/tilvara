@@ -18,13 +18,71 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ⬜ Held carts are never discarded automatically: a cart parked and forgotten keeps its lines (and any SC/PWD name and ID) until someone resumes or discards it. Proposed: discard after 7 days (processing register, retention row "Held carts"; DPO to confirm the period).
 - ⬜ Customers are never anonymised automatically (proposed 2 years after the last purchase; waits on the DPO like the other purge jobs).
 - ⏳ `webhook_deliveries` is never purged (proposed 30 days after delivered/dead; retention schedule) — waits on the DPO's periods like the other purge jobs.
-- ⬜ Restaurant: changing a pending item's *choices* at the till is still remove and re-add (quantity, course, seat and note change in place since session 22). Comps use `sales.discount`; a separate comp permission or a comp reason report is not built (reasons are in the `order.billed` audit row).
+- ✅ Restaurant: a pending item's choices change in place (session 25, `PATCH /v1/order-items/:id { modifierOptionIds }`). ⬜ Comps use `sales.discount`; a separate comp permission or a comp reason report is not built (reasons are in the `order.billed` audit row).
 - ⬜ Shift close with open bills (session 21): the admin has no shift-close screen, so the manager override exists only at the till. (`test:e2e:pos` 41/41 and `test:e2e:service` 22/22 re-run in session 22 against the refusal.)
 - ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: restaurant, multi_entity, advanced_reports; Enterprise: all four).
 - ⬜ Watch: `offline-sync.test.ts` failed once with `TAX_PROFILE_MISSING` in a full gate run (session 20) and passed on its own. The likely cause is the Docker VM clock running ~1 s off the host around a profile's effective time. Two billing tests failed the same way and their tolerance was widened. If it recurs, give the fixture's tax profile an earlier effective time.
 - ⬜ Offline sales after a lapse (session 21): a till that stays offline keeps selling on its last writable snapshot for up to `OFFLINE_WINDOW_HOURS` after a lapse or suspension, and those sales are recorded (audited `offline_sale.recorded_while_read_only`); that bound is the posture accepted. Snapshots issued before migration 0080 count as not writable.
 - ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
 - ⬜ Weighing-scale and barcode-scanner adapters (§5.2; manual weight, scale labels and keyboard-wedge work today).
+
+## Session 28 — hotels, resorts and transient houses (ADR-0023)
+- ⏳ Accountant: VAT timing of nightly room charges vs. the invoice issued at check-out; deposits held without VAT until applied; forfeited deposits as cancellation fees with VAT. Add to the review request with store credit, tips and packages.
+- ⏳ Tax adviser: the local accommodation tax (rate and base per LGU; base used = the night's amount due less VAT, after SC/PWD; adjustments carry none), off by default and marked unverified. SC/PWD on room nights follows the pending SC/PWD review; several schemes on one stay split the night into lines (centavo rounding).
+- ⏳ DPO: guest registry (`stay_guests`: nationality, ID type/number, address, birth date, contact) in the processing register and retention schedule; no purge job yet, like the others.
+- ⬜ Group bookings and a master folio, splitting a folio, moving charges between folios; refunding a folio credit balance; a tip charged to the room.
+- ⬜ Writes from an outside PMS (needs write-scoped API keys: a decision), channel managers (Booking.com, Agoda), a public booking page, online deposits; room service as an order type; rate plans (seasons, weekends); per-person environmental fees.
+- ⬜ Till: booking a future stay, cancel and no-show, card/QR deposits, bank-transfer refunds, folio adjustments and night reversals, printing the registration card (all in the admin today). Admin: no one-step walk-in (book, then check in) and no full stays list page.
+- ⬜ Reversing a night after a credit adjustment can be refused (`FOLIO_OVERPAID`) because the night's accommodation-tax reversal is a separate entry; reverse first, then adjust.
+- ⬜ Check-out refuses while a deposit exceeds the balance (`DEPOSIT_HELD`): refund the rest first. Deposits do not take store credit; card refunds of deposits are not supported.
+- ⬜ Tests not written: the night audit skipping a read-only business and catching up once it is writable; Charge to room on restaurant checks in E2E; the hidden tender and Rooms callout offline (browser mode cannot go offline); workers E2E for the three new webhook topics.
+- ⬜ Filipino copy for the lodging screens (admin ~325 keys, till ~143) needs a native speaker's review.
+- ⬜ `backup.test.ts` and the desktop till (`cargo test`, `test:e2e:desktop`) were not re-run in session 28 (no Rust changed; the offline engine is unchanged).
+
+## Session 27 — beauty salons, spas and barber shops (ADR-0022)
+- ⏳ Accountant: packages are owed until used (*2310 Prepaid service packages*, ex VAT; VAT due when paid); unused sessions of an expired package stay owed (breakage not recognised); commissions are a report only. Add to the accountant review request with store credit and tips.
+- ⏳ DPO: service notes may hold allergies (sensitive personal information); retention periods proposed for appointments, notes and staff records (processing register §15a, retention schedule). No purge jobs yet, like the others.
+- ⬜ Refunding part of a used package (only whole unused packages come back), moving a package to another customer, and package sessions on restaurant checks; keep PACKAGE items off restaurant menus (a menu does not refuse them today; a check records such a line as an ordinary sale).
+- ⬜ Public booking page, deposits, SMS reminders (needs a provider), reminders in Filipino; rooms or chairs as booked resources.
+- ⬜ Paying out commissions and tips per staff member (the drawer pays tips out as one amount); payroll.
+- ⬜ Appointments and package sessions need the server (the offline till sells services and names staff, but refuses packages and has no calendar).
+- ⬜ A sale made only of package sessions sends one CASH tender of ₱0.00 (the tender list needs one entry); the API could accept no tenders when nothing is due.
+- ⬜ Time off older than 30 days is not shown on the staff page (kept in the table).
+- ⬜ Filipino copy for the salon screens (admin and till, ~150 keys) needs a native speaker's review.
+- ⬜ `backup.test.ts` and the desktop till (`cargo test`, `test:e2e:desktop`) were not re-run in session 27 (no Rust changed; the offline engine gained staff on lines and refuses packages).
+
+## Session 26 — retail stores and boutiques (ADR-0021)
+- ⏳ Tax adviser: SC/PWD always wins over a promotion on the same line (no double discount, RA 9994 IRR). Whether the beneficiary may instead choose the promotion when it is larger is for the adviser; today the statutory discount applies.
+- ⬜ Promotions by category, cart-level offers ("₱100 off ₱1,000"), coupons and loyalty, a set that cheapens a different set ("buy a shirt, socks half price"), and promotions on restaurant checks.
+- ⬜ One promotion per line: a line with 5 units where 3 make a multi-buy is wholly claimed by it, so the other 2 cannot join another promotion. Splitting lines per promotion would lift this.
+- ⬜ A till older than this server ignores the snapshot's promotions and rings promoted items at full price; the server then refuses the total (`TOTAL_MISMATCH` → quarantined for a manager, not lost). Tills must update with the server.
+- ⬜ A partial return of a promoted line refunds its share pro rata (as for any line discount); a partial return that breaks the group does not claw back the promotion.
+- ⬜ Shelf locations are labels only; quantities stay per branch. Bin-level stock (quantities per shelf, moves between shelves) is not built.
+- ⬜ Labels print through the browser's dialog and were checked on screen only (scale and margins on a real printer and label stock are untested). A label printer driven by the till (ZPL/ESC-POS), and the price from a scheduled price change, are not built.
+- ⬜ Serial numbers, consignment, and layaway with deposits (only stock reservations exist).
+- ⬜ The admin band is full (twelve tabs fit at 1440 px): Promotions, Quick keys and Labels are tabs inside Prices and Products.
+- ⬜ `backup.test.ts` was not re-run in session 26 (the Docker CLI on this machine stopped answering); re-run it when Docker is back.
+
+## Session 25 — restaurants, cafés and food trucks (ADR-0014 amendment)
+- ⏳ Accountant (the user chose the defaults to build on, session 25): tips are owed to staff (`TIPS_PAYABLE`, not revenue, no VAT) and paid out from drawers; still to confirm, plus whether card tips need a settlement report against the card provider.
+- ✅ A void gives a card tip back by cancelling its charge (`sale_tip_refunds`, after the void commits), cash when the provider refuses; pending ones are retried from the till (This shift → the sale → "Give the tip back") or `POST /v1/sale-returns/:id/tip-refund`. ⬜ The void slip does not print the card tip given back (the till's message and the admin's sale page show it). ⬜ Nothing retries a pending one on its own; the admin shows it but cannot retry (the till does).
+- ✅ Offline tills take cash tips (envelope `tip`). Card tips stay online only.
+- ✅ An offline counter sale keeps its till's call number (`restaurant_orders.till_call_number`) on the KDS, receipts, kitchen tickets and the admin.
+- ⬜ Sold-out at an offline till: the snapshot's menu lists what was available when it was fetched; an item 86'd since sells offline and the kitchen finds out from the printed ticket.
+- ⬜ Kitchen printing needs a desktop till that is online and set up for the station; browser-mode screens print nothing to the kitchen. A till that crashes after printing but before marking it printed prints the ticket again a minute later (at-least-once).
+- ✅ Held carts keep counter choices and kitchen notes (the server always stored them; the till now restores their names from the menu served at resume; a choice no longer offered is dropped).
+- ⬜ Exchanges at a counter-service branch accept choices like a sale, untested end to end.
+- ✅ A tip's charge is told from the sale's by `payment_intents.purpose` (TIP | SALE; checkout refuses a tip charge as a tender, `TIP_PAYMENT_AS_TENDER`, and a sale charge as the tip); a lost answer is recovered as the tip's.
+- ⬜ Desktop till kitchen printing is tested in API integration only (claims, leases, reprints); the Tauri print loop and the printer set-up screen have no desktop E2E and no physical printer was used. `test:e2e:desktop` was not re-run.
+
+## Session 24 — sari-sari stores: packs and pieces, expiry dates (ADR-0020)
+- ⏳ Opening packs posts a revaluation of pieces sold short (and rounding) to COGS, like receipts and transfers. Accountant to confirm with the next batch of questions (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`).
+- ⬜ A sale opens one level only: a pack for its pieces, never a case to get a pack. Manual openings work at any level.
+- ⬜ A purchase-order line is received with one expiry date per receipt (the receipt takes each order line once). Two dates in one delivery of an ordered item need two receipts; items off the order can be repeated on one receipt.
+- ⬜ No dates on count sheets or supplier returns: a count surplus is undated, and a supplier return draws by the rule (undated first, then first-expiry-first). A damaged customer return goes back to its sale's lot, but its WASTE then draws undated stock first.
+- ⬜ The till shows nothing of either feature: no "Open a pack" at the counter, no warning when expired stock is sold, and the counter guide has no tingi line (sales open packs on the server, so the till needs none of this to work).
+- ⬜ Grocery sample items are untracked like every sample set, so a trial shows neither packs nor expiry until the owner adds real stock-counted items.
+- ⬜ Turning off "Keeps expiry dates" keeps the item's lots; they are drawn as stock goes out but no new dates come in.
 
 ## Session 23 — till quantities and stock movements
 - ⏳ Damaged returns now move their cost from COGS to Spoilage and waste (RETURN then WASTE). Accountant to confirm this treatment (add to `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md` with the next batch of questions).
@@ -39,7 +97,7 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ✅ Role templates follow the type (session 22): a RETAIL sign-up gets no Restaurant Manager / Kitchen Crew; changing to RESTAURANT/HYBRID adds them. ⬜ Cashier and branch-manager templates still hold `restaurant.orders`/`kitchen.operate` in a retail shop (harmless; the role editor lists them), and existing RETAIL businesses keep the restaurant roles they were given.
 - ✅ `/me` carries the plan's `features` (session 22); the admin hides the Restaurant area, its guide part, a second legal entity and integrations the plan lacks, with the reason; the till hides the kitchen display and server mode. ⬜ The till's Tables tab stays for a restaurant-type business after a downgrade on purpose (printed bills must still be paid).
 - ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; a BILLED one can still be paid (`createFromBill` does not check the type or plan, on purpose: refusing payment for food served is worse), other changes need switching back.
-- ⬜ Selling by weight is hidden for RESTAURANT on screens only (product form and list); the API still accepts `soldBy: WEIGHT` and scale labels from any business.
+- ✅ Selling by weight: `POST /v1/products` refuses `soldBy: WEIGHT` for a RESTAURANT business (session 25). ⬜ Scale-label lookups still resolve a WEIGHT product created before (or under another type).
 
 ## User guide (session 18)
 - ✅ Drawer variance approval has a screen (session 18, second part): admin Drawer counts (`/shifts`) and the shift page; see STATUS.
@@ -80,7 +138,7 @@ Slice 6 (POS browser checkout):
 - ⏳ Price-embedded scale labels (weight labels are read since session 16): which format the scales print, and whether a re-priced total may differ from the label by a centavo, is the user's call
 
 Phase-level:
-- ⬜ `@1pos/pricing` promotions
+- ✅ `@1pos/pricing` promotions (session 26, ADR-0021; open items under Session 26)
 - ⬜ Invoice sequences (dev series only today)
 
 ## Phase 3 — Inventory, purchasing, accounting
@@ -104,8 +162,8 @@ Slice 2 (menu foundation):
 
 Slice 3 (orders + kitchen):
 - ⬜ Per-seat views and "fire course N" reminders/timers
-- ⬜ Kitchen printers (device adapters)
-- ⬜ Reprint a ticket (needs kitchen printers; recalling finished tickets is the KDS Done view since session 10)
+- ✅ Kitchen printers (session 25): network/Windows ESC/POS from the desktop till, claimed per station
+- ✅ Reprint a ticket (session 25: KDS "Reprint" → the printing till prints it again, marked REPRINT)
 - ⬜ Floor push (session 16) at deployment (slice 7): the edge proxy must not buffer `text/event-stream` (`/v1/restaurant/stream`; the API sends `X-Accel-Buffering: no`) and must allow a 10-minute response; open streams are not yet a metric
 
 Slice 4 (bills + checks + service charge):
@@ -114,7 +172,7 @@ Slice 4 (bills + checks + service charge):
 - ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
 
 Slice 5 (restaurant reports):
-- ⬜ Free modifiers ("no onions") counts in item performance (no sale line today). Needs a rule for when a free choice counts as sold (fired, billed or paid), so it is left for the restaurant reporting review
+- ✅ Free modifiers ("no onions") count in item performance once their order is SETTLED (session 25)
 - ⏳ The DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9)
 
 Slice 6 (UI):
@@ -130,7 +188,7 @@ Slice 7 (exit review):
 - ⬜ The "void vs bill" drill asserts both outcomes but cannot force each interleaving
 
 Out of scope for Phase 4 (later):
-- ⬜ Delivery orders; unit conversions/purchase units for recipes; sub-recipes/prep production; rule-based modifier pricing; tips; reservations; kitchen printers
+- ⬜ Delivery orders and delivery platforms (Grab, foodpanda); unit conversions/purchase units for recipes; sub-recipes/prep production; rule-based modifier pricing; table reservations. (Tips and kitchen printers: session 25.)
 
 Open questions for the tax adviser and the accountant:
 - ⏳ Service charge base and VAT; SC/PWD share of the service charge; service charge as a liability

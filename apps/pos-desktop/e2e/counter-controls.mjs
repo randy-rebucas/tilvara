@@ -226,7 +226,8 @@ try {
   // ---- a manager's discount ----
   await scan(`CK-${slug}`);
   await totalShows('₱22.40');
-  await clickText('Discount');
+  // The line's own Discount (not "Discount all" for the whole cart, session 26).
+  await evaluate(`void [...document.querySelectorAll('ul[aria-label=Cart] button')].find((x) => x.getClientRects().length && x.textContent.trim() === 'Discount').click()`);
   await fill('value', '10');
   await submitFormOf('value');
   check('10 % off, priced by the server', await totalShows('₱20.16') && (await text()).includes('−10%'));

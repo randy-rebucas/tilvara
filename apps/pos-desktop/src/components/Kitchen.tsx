@@ -1,4 +1,4 @@
-import { ChefHat, Volume2, VolumeX } from 'lucide-react';
+import { ChefHat, Printer, Volume2, VolumeX } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api } from '../lib/api';
@@ -17,6 +17,13 @@ const LATE_AFTER_MIN = 10;
 /** How long a newly arrived ticket flashes. */
 const FLASH_MS = 8000;
 
+/** Where a ticket's food goes: the table, the takeaway name, or (counter service) the call number and name. */
+function ticketWhere(tk: KitchenTicket, t: ReturnType<typeof useT>['t']): string {
+  if (!tk.order) return '—';
+  if (tk.order.orderType === 'COUNTER') return `#${tk.order.orderNumber}${tk.order.customerName ? ` ${tk.order.customerName}` : ''}`;
+  return tk.order.tableCode ?? tk.order.customerName ?? t('floor.takeaway');
+}
+
 /** Finished tickets, read-only: what was cooked and served, to answer "did table 4's burger go out?". */
 function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null; showStation: boolean }) {
   const { t } = useT();
@@ -30,7 +37,7 @@ function DoneTickets({ tickets, showStation }: { tickets: KitchenTicket[] | null
           <Note className="grid gap-2 p-4 opacity-90">
             <div className="flex items-start justify-between gap-2 border-b border-hair-soft pb-2">
               <div>
-                <p className="serial text-[1.125rem] font-bold">{tk.order ? (tk.order.tableCode ?? tk.order.customerName ?? t('floor.takeaway')) : '—'}</p>
+                <p className="serial text-[1.125rem] font-bold">{ticketWhere(tk, t)}</p>
                 <p className="serial text-[0.8125rem] text-muted">
                   #{tk.order?.orderNumber} · {t('kds.ticket', { n: String(tk.ticketNumber) })}{showStation && <> · <span className="text-violet">{tk.station.code}</span></>}
                 </p>
@@ -248,6 +255,11 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
   const bump = (ticketId: string) => act(ticketId, () => api('POST', `/v1/kitchen/tickets/${ticketId}/bump`));
   // A mistaken bump: ready items go back to preparation (never served ones; the server refuses those).
   const unbump = (ticketId: string) => act(ticketId, () => api('POST', `/v1/kitchen/tickets/${ticketId}/unbump`));
+  const reprint = (ticketId: string) => act(ticketId, () => api('POST', `/v1/kitchen/tickets/${ticketId}/reprint`));
+  // Counter service: what was ready went out with the customer.
+  const handOver = (tk: KitchenTicket) => act(tk.id, async () => {
+    for (const i of tk.items.filter((x) => x.status === 'READY')) await api('POST', `/v1/order-items/${i.id}/status`, { status: 'SERVED' });
+  });
 
   return (
     <div className="grid gap-4 px-4 py-5 sm:px-6">
@@ -288,7 +300,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
             const minutes = Math.max(0, Math.floor((now - Date.parse(tk.firedAt)) / 60000));
             const seconds = Math.max(0, Math.floor((now - Date.parse(tk.firedAt)) / 1000) % 60);
             const late = minutes >= LATE_AFTER_MIN;
-            const where = tk.order ? (tk.order.tableCode ?? tk.order.customerName ?? t('floor.takeaway')) : '—';
+            const where = ticketWhere(tk, t);
             const waiting = tk.items.some((i) => i.status === 'FIRED' || i.status === 'IN_PREP');
             return (
               <li key={tk.id}>
@@ -298,7 +310,7 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                     <div>
                       <p className="serial text-[1.5rem] font-bold leading-tight">{where}</p>
                       <p className="serial text-[0.8125rem] text-muted">
-                        #{tk.order?.orderNumber} · {t('kds.ticket', { n: String(tk.ticketNumber) })}
+                        {tk.order?.orderType !== 'COUNTER' && <>#{tk.order?.orderNumber} · </>}{t('kds.ticket', { n: String(tk.ticketNumber) })}
                         {tk.course > 1 && <> · {t('order.courseN', { n: String(tk.course) })}</>}
                         {!place.station && <> · <span className="text-violet">{tk.station.code}</span></>}
                       </p>
@@ -342,6 +354,18 @@ export function KitchenBoard({ place }: { place: KitchenPlace }) {
                   {!waiting && tk.bumpedAt && tk.items.some((i) => i.status === 'READY') && (
                     <button type="button" className="btn w-full" title={t('kds.unbumpHint')} disabled={busy.current.has(tk.id)} onClick={() => void unbump(tk.id)}>
                       {t('kds.unbump')}
+                    </button>
+                  )}
+                  {/* Counter service: the customer took it; the ticket leaves the screen. */}
+                  {tk.order?.orderType === 'COUNTER' && !waiting && tk.items.some((i) => i.status === 'READY') && (
+                    <button type="button" className="btn btn-primary w-full" disabled={busy.current.has(tk.id)} onClick={() => void handOver(tk)}>
+                      {t('kds.handedOver', { n: String(tk.order.orderNumber) })}
+                    </button>
+                  )}
+                  {/* A till prints this station's tickets: send this one to its printer again. */}
+                  {tk.printedAt !== undefined && (tk.printedAt !== null || (tk.printCount ?? 0) > 0) && (
+                    <button type="button" className="btn btn-sm justify-self-start" disabled={busy.current.has(tk.id) || tk.printedAt === null} onClick={() => void reprint(tk.id)}>
+                      <Printer className="size-4" aria-hidden /> {tk.printedAt === null ? t('kds.reprinting') : t('kds.reprint')}
                     </button>
                   )}
                 </Note>

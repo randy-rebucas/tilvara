@@ -3,7 +3,8 @@
  * what it sends back (offline sale envelopes) and what each envelope became (results). Shared by the
  * API and the POS offline engine; no runtime dependencies beyond zod.
  */
-import { amountSchema, quantitySchema } from '@1pos/validation';
+import { amountSchema, counterChoicesSchema, kitchenNoteSchema, quantitySchema } from '@1pos/validation';
+import type { Promotion } from '@1pos/pricing';
 import { z } from 'zod';
 
 /** Headers a terminal authenticates with (sync and snapshot only). */
@@ -28,6 +29,28 @@ export interface SnapshotItem {
   /** Sold in whole units unless the unit allows fractions or the item is sold by weight. */
   wholeUnits: boolean;
   trackInventory: boolean;
+  /** Its button on the till's quick keys (1–48), if any (ADR-0021 §3; absent from older servers). */
+  quickKey?: number | null;
+  /** STANDARD, SERVICE or PACKAGE (ADR-0022; absent from older servers). A package is sold online only. */
+  productType?: 'STANDARD' | 'SERVICE' | 'PACKAGE';
+}
+
+/**
+ * Counter service at this branch (session 25): the takeaway menu's version (immutable), what the
+ * till may offer with which choices, and where each item's ticket goes, so a till can sell and print
+ * kitchen tickets offline. Prices are the items' own (`items`); a choice with a variant is priced
+ * there too, and one without is a free kitchen instruction.
+ */
+export interface SnapshotCounter {
+  menuVersionId: string;
+  items: {
+    variantId: string;
+    name: string;
+    stationCode: string | null;
+    modifierGroups: { id: string; name: string; minSelect: number; maxSelect: number; options: { id: string; name: string; variantId: string | null }[] }[];
+  }[];
+  /** Active stations of the branch; an item goes to the one with its code, else the default. */
+  stations: { id: string; code: string; name: string; isDefault: boolean }[];
 }
 
 export interface Snapshot {
@@ -65,6 +88,15 @@ export interface Snapshot {
    * or restored from an old copy numbers its next sales after it, so local references never repeat.
    */
   lastDeviceSeq?: number;
+  /** Counter service, when the branch has it on and the plan includes the restaurant (session 25); else null/absent. */
+  counter?: SnapshotCounter | null;
+  /**
+   * Promotions in force at this branch at `asOf` (ADR-0021 §1), applied with `@1pos/pricing` exactly as
+   * the server re-prices the sale; absent from older servers (no promotions).
+   */
+  promotions?: Promotion[];
+  /** The branch's active service staff (ADR-0022 §5), to name who did a service; absent from older servers. */
+  staff?: { id: string; displayName: string; color: string | null }[];
 }
 
 /** `GET /v1/terminal/catalog-version`: cheap enough to ask every half minute. */
@@ -108,12 +140,36 @@ export const offlineSaleSchema = z.object({
   /** What the offline receipt printed, e.g. "R1-T7F2A-000042". */
   localReference: z.string().trim().min(1).max(64),
   lines: z
-    .array(z.object({ id: z.string().trim().min(1).max(64).optional(), variantId: z.uuid(), quantity: quantitySchema }))
+    .array(z.object({
+      id: z.string().trim().min(1).max(64).optional(),
+      variantId: z.uuid(),
+      quantity: quantitySchema,
+      /** Counter service: choices of the snapshot's menu item (`counter.menuVersionId`). */
+      choices: counterChoicesSchema.optional(),
+      kitchenNote: kitchenNoteSchema.optional(),
+      /** Who performed or sold it (ADR-0022 §5): a staff member from the snapshot. */
+      staffId: z.uuid().optional(),
+    }))
     .min(1)
     .max(200),
-  tenders: z.array(z.object({ method: z.literal('CASH'), tendered: amountSchema })).min(1).max(10),
+  /** Counter service: the menu version the till sold from (its snapshot's), and the name called at pickup. */
+  menuVersionId: z.uuid().optional(),
+  pickupName: z.string().trim().min(1).max(60).optional(),
+  /**
+   * Cash only. A charge to a room (ADR-0023 §5.1) is never taken offline; an envelope that carries one
+   * (an older or tampered till) is accepted here so the server can quarantine it (ROOM_CHARGE_OFFLINE).
+   */
+  tenders: z
+    .array(z.discriminatedUnion('method', [
+      z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+      z.object({ method: z.literal('ROOM_CHARGE'), stayId: z.uuid(), amount: amountSchema.optional() }),
+    ]))
+    .min(1)
+    .max(10),
   /** The total the terminal computed and collected; the server must reproduce it exactly. */
   amountDue: amountSchema,
+  /** A cash tip on top (session 25): the tendered cash covers the amount due and the tip. */
+  tip: z.object({ amount: amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero') }).optional(),
 });
 export type OfflineSale = z.infer<typeof offlineSaleSchema>;
 
@@ -135,6 +191,32 @@ export type SyncResult =
 
 export interface SyncSalesResponse {
   results: SyncResult[];
+}
+
+// ------------------------------------------------------------------ kitchen printing (session 25)
+
+/** `POST /v1/terminal/kitchen-tickets/claim`: the stations this till prints for. */
+export const claimKitchenTicketsSchema = z.object({ stationIds: z.array(z.uuid()).min(1).max(20) });
+export type ClaimKitchenTicketsInput = z.infer<typeof claimKitchenTicketsSchema>;
+
+/** A kitchen ticket as a till prints it (claimed for a minute; mark it printed, or release it). */
+export interface KitchenTicketPrint {
+  id: string;
+  ticketNumber: number;
+  /** Printed before: print "REPRINT". */
+  reprint: boolean;
+  course: number;
+  courseNote: string | null;
+  firedAt: string;
+  station: { id: string; code: string; name: string };
+  /** `orderType` COUNTER: `orderNumber` is the call number on the customer's receipt. */
+  order: { orderNumber: number; orderType: string; tableCode: string | null; customerName: string | null };
+  items: { name: string; quantity: string; seat: number | null; note: string | null; choices: string[] }[];
+}
+
+/** `GET /v1/terminal/kitchen-stations`: the stations at the till's branch, for its printer set-up. */
+export interface KitchenStationsResponse {
+  data: { id: string; code: string; name: string; isDefault: boolean }[];
 }
 
 /**

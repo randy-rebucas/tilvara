@@ -17,7 +17,17 @@ describe('counter user guide', () => {
   });
 
   it('leaves tables and the kitchen out for a retail shop', () => {
-    expect(guideSections(false).map((s) => s.id)).toEqual(['start', 'sell', 'shift', 'close', 'till', 'trouble']);
+    expect(guideSections(false, false, false).map((s) => s.id)).toEqual(['start', 'sell', 'shift', 'close', 'till', 'trouble']);
     expect(guideSections(true).map((s) => s.id)).toEqual(GUIDE_SECTIONS.map((s) => s.id));
+  });
+
+  it('shows the appointments part to a salon or hybrid business only', () => {
+    expect(guideSections(false, true, false).map((s) => s.id)).toEqual(['start', 'sell', 'appointments', 'shift', 'close', 'till', 'trouble']);
+    expect(guideSections(true, false).map((s) => s.id)).not.toContain('appointments');
+  });
+
+  it('shows the rooms part (and Charge to room) to a hotel, resort or hybrid business only', () => {
+    expect(guideSections(true, false, true).map((s) => s.id)).toEqual(['start', 'sell', 'rooms', 'shift', 'close', 'tables', 'kitchen', 'till', 'trouble']);
+    expect(guideSections(true, true, false).map((s) => s.id)).not.toContain('rooms');
   });
 });
