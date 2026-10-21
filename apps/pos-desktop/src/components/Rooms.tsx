@@ -645,6 +645,8 @@ function CheckOut({ stay, day, shift, onReload, onCheckedOut, onDone }: {
     try {
       setPrepared(await api<{ folioId: string; balance: string; depositsHeld: string }>('POST', `/v1/stays/${stay.id}/prepare-check-out`, { departEarly }));
       setRefresh((n) => n + 1);
+      // An overstay's departure moved to today: reload the stay so its note goes.
+      void onReload();
       setError(null);
     } catch (err) {
       setError(deskError(err, t));

@@ -28,11 +28,10 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 
 ## Audit 2026-10-21 (session 31)
 Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) and every work item (§3) was fixed in session 31, and decisions A1–A6 were taken as recommended (§4, the user asked to fix them all). Migrations 0107–0109.
-- ⬜ E2E suites not re-run after the audit fixes: `web:onboarding`, `web:account`, `pos:mfa`, `test:e2e:desktop` (the other 33 pass; audit §7). New category, units and trip-edit screens are covered by `backoffice.mjs` and `restaurant.mjs`. There are no E2E steps yet for VOID kitchen slips (printed by the desktop till), the check customer picker, overstays, or staff archive conflicts; integration tests cover them.
-- ⏳ DPO to confirm A1 (service notes refused to API keys and support sessions, appointment notes blanked for them) and the processing-register wording.
+- ⬜ VOID kitchen slips have no E2E: the desktop E2E does not cover kitchen printing (the slip format is unit-tested in `printing.test.ts`, the claim in `counter-service.test.ts`). Every other suite passes after the audit (audit §7), including onboarding, account, `pos:mfa` and the desktop till. The check customer picker, the voided-check re-pay, overstays, the staff archive conflict and calling off a queued cycle now have E2E steps.
+- ⏳ DPO to confirm A1 (service notes refused to API keys and support sessions, appointment notes blanked for them) and the processing-register wording. Asked as question 8 in `compliance/privacy/README.md` §4.
 - ⏳ A3 means branch managers of LAUNDRY and HYBRID businesses (HYBRID is the sign-up default) now need two-step sign-in after the grace period, because they hold `laundry.dispose`. Tell pilot businesses; or decide to take `laundry.dispose` out of the branch-manager template outside LAUNDRY.
-- ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm (add to their questions with store credit).
-- ⬜ Watch: `rate-limit.test.ts` "two replicas share one signup allowance" failed once in a full gate run (400 for 429) and passed alone; and `monitoring.test.ts` "business gauges equal independent counts" can race other suites' outbox events.
+- ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm: question 13 in `accounting/ACCOUNTANT_REVIEW_REQUEST.md`.
 - ⬜ The night audit still runs in the API process with a cross-tenant scan granted to `onepos_app` (A6, documented in ADR-0023). Move it into the worker if another scheduled posting needs the tax and ledger code there.
 
 ## Session 30 — pharmacies and drugstores (ADR-0025)

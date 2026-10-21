@@ -271,6 +271,25 @@ try {
   check('the deliveries report counts the delivery done', await shownAnyCase('Delivery fees', 8000) && (await call('GET', `/v1/reports/deliveries?branchId=${br.id}&from=${today}&to=${today}`, tk)).totals.done === 1);
   await shot('laundry-reports.png');
 
+  // ---- a queued self-service cycle called off (audit 2026-10-21) ----
+  const dryCycle = await product({ name: 'Self-service dry', variants: [{ sku: `DRY-${tag}`, price: '20.00', machineKind: 'DRYER', machineMinutes: 10 }] });
+  const d1 = machines.find((m) => m.label === 'D1');
+  const cycle = () => call('POST', '/v1/sales', tk, { cashierSessionId: shift.id, clientTransactionId: randomUUID(), lines: [{ variantId: dryCycle, quantity: '1', machineId: d1.id }], tenders: [{ method: 'CASH', tendered: '20.00' }] }, idem());
+  await cycle();
+  const queuedSale = await cycle();
+  await go(`/laundry/machines?branch=${br.id}`);
+  const d1Card = `document.querySelector('[data-machine="D1"]').closest('li')`;
+  check('D1 runs one self-service cycle with the next one queued', await present('[data-machine="D1"] [data-machine-status="RUNNING"]') && await waitFor(`${d1Card}.querySelector('[data-testid=machine-queued]')?.innerText.includes('#${queuedSale.saleNumber}')`, 8000).then(() => true, () => false));
+  await shot('laundry-machine-queued.png', false);
+  await evaluate('window.confirm = () => true');
+  await evaluate(`[...${d1Card}.querySelectorAll('[data-testid=machine-queued] button')].find((x) => x.textContent.trim() === 'Call off').click()`);
+  check('“Call off” takes the queued cycle off D1', await waitFor(`!${d1Card}.querySelector('[data-testid=machine-queued]')`, 8000).then(() => true, () => false));
+  const board = await call('GET', `/v1/laundry/machines/board?branchId=${br.id}`, tk);
+  const d1Now = board.data.find((m) => m.label === 'D1');
+  check('the API: D1 still runs the first cycle, nothing queued', d1Now.status === 'RUNNING' && d1Now.queued.length === 0);
+  // Stop the running cycle too, so D1 is free again for the rest of the script.
+  await call('POST', `/v1/machine-runs/${d1Now.current.runId}/stop`, tk);
+
   // ---- the guide ----
   await go('/help');
   check('the guide has the “Job orders, machines and deliveries” part', await shown('Job orders, machines and deliveries'));

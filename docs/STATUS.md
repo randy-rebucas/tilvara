@@ -45,11 +45,17 @@ A second round fixed every §3 work item and took decisions A1–A6 as recommend
 - Dev DB migrated to 0109; dev traceability audit clean.
 - E2E: 20 admin and 13 POS suites, every one passing.
 
-The user's own API, admin and POS servers (4320, 3320, 3330) still run builds from this morning. Restart them to pick up the changes.
+The user's own API, admin and POS servers (4320, 3320, 3330) were found stopped at the end of the session; the cause is unknown. Start them again (`pnpm dev:api`, `pnpm dev:web`, `pnpm dev:pos`, or `pnpm build` and the start commands) to run the new code. The dev DB is already at 0109.
+
+Follow-ups (audit §7):
+- The remaining E2E suites pass: onboarding, account, pos:mfa, and the desktop till (rebuilt).
+- E2E steps added for the new flows; one till display defect they found is fixed.
+- The two flaky tests are fixed (new setting `RATE_LIMIT_REDIS_TIMEOUT_MS`).
+- A1 and A5 added to the DPO's and the accountant's question lists.
 
 **Next:**
-- E2E suites not run: onboarding, account, pos:mfa, desktop.
-- Open items: DPO on A1, accountant on A5, and telling pilot LAUNDRY/HYBRID branch managers about two-step sign-in (A3). See `LEFTOVER.md`, "Audit 2026-10-21".
+- Answers from the DPO (A1) and the accountant (A5).
+- The user's call on A3: telling pilot LAUNDRY/HYBRID branch managers about two-step sign-in, or narrowing `laundry.dispose`. See `LEFTOVER.md`, "Audit 2026-10-21".
 - Then the Phase 6 slices that wait on D1–D6.
 
 ## Session 30 — pharmacies and drugstores (ADR-0025)
