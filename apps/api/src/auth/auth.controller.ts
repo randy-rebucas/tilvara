@@ -193,7 +193,7 @@ export class AuthController {
             tenantId: auth.tenant.tenantId,
             membershipId: auth.tenant.membershipId,
             status: auth.tenant.status,
-            // Which features the screens offer (the server refuses what the type leaves out itself, e.g. `assertAppointments`).
+            // The business type (RETAIL only since 0112; kept so the screens and older tills read it as before).
             businessType: business!.businessType,
             // What the plan includes (multi_entity, api_access, advanced_reports): the screens
             // hide the rest, which the server refuses anyway (`assertFeature`).

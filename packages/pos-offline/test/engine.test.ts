@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { drugLabel, LocalStore, needsPrescription, OfflineEngine, OfflineSaleError, TransportError, type Transport } from '../src/index.js';
+import { LocalStore, OfflineEngine, OfflineSaleError, TransportError, type Transport } from '../src/index.js';
 import { nodeSqliteDriver } from '../src/node-sqlite.js';
 
 const CASHIER = '0199f0a0-0000-7000-8000-00000000c0de';
@@ -277,104 +277,5 @@ describe('scale labels offline (session 16)', () => {
     const unit = '254321010000';
     expect(await engine.lookup(`${unit}${ean13CheckDigit(unit)}`)).toBeNull();
     expect(await engine.lookup(`${first12}${(ean13CheckDigit(first12) + 1) % 10}`)).toBeNull();
-  });
-});
-
-describe('a cash tip offline (session 25)', () => {
-  it('the cash covers the sale and the tip; the envelope and receipt carry it, outside the total', async () => {
-    const server = fakeServer();
-    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
-    await engine.refreshSnapshot();
-    await expect(engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '25', tip: '5' })).rejects.toMatchObject({ code: 'INSUFFICIENT_TENDER' });
-    const { sale, receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50', tip: '5' });
-    expect(sale.envelope).toMatchObject({ amountDue: '22.40', tip: { amount: '5.00' }, tenders: [{ method: 'CASH', tendered: '50.00' }] });
-    expect(receipt).toMatchObject({ tip: '5.00', change: '22.60', totals: { amountDue: '22.40' } });
-  });
-});
-
-describe('medicines offline (ADR-0025)', () => {
-  const AMOXIL = '0199f0a0-0000-7000-8000-0000000a0001';
-  const AMOX_GEN = '0199f0a0-0000-7000-8000-0000000a0002';
-  const PARA = '0199f0a0-0000-7000-8000-0000000a0003';
-  const VALIUM = '0199f0a0-0000-7000-8000-0000000a0004';
-  const med = (variantId: string, sku: string, name: string, unitPrice: string, drug: NonNullable<Snapshot['items'][number]['drug']>): Snapshot['items'][number] => ({
-    variantId, sku, name, barcodes: [], priceId: `p-${sku}`, priceListId: 'l1', unitPrice, priceIncludesTax: true, vatTreatment: 'VAT_EXEMPT', taxCategoryCode: 'EX', wholeUnits: true, trackInventory: true, drug,
-  });
-  const amox = { drugClass: 'ANTIBIOTIC' as const, genericName: 'Amoxicillin', strength: '500 mg', dosageForm: 'CAPSULE', genericKey: 'amoxicillin|500 mg|CAPSULE' };
-  const drugstore: Snapshot = {
-    ...snapshot,
-    items: [
-      ...snapshot.items,
-      med(AMOXIL, 'AMOXIL', 'Amoxil 500', '18.0000', amox),
-      med(AMOX_GEN, 'AMOX-G', 'RiteMed Amoxicillin', '9.0000', amox),
-      med(PARA, 'BIO', 'Biogesic', '5.5000', { drugClass: 'OTC', genericName: 'Paracetamol', strength: '500 mg', dosageForm: 'TABLET', genericKey: 'paracetamol|500 mg|TABLET' }),
-      med(VALIUM, 'VAL', 'Valium 5', '25.0000', { drugClass: 'DANGEROUS', genericName: 'Diazepam', strength: '5 mg', dosageForm: 'TABLET', genericKey: 'diazepam|5 mg|TABLET' }),
-    ],
-  };
-  const pharmacy = async () => {
-    const s = fakeServer();
-    s.transport.snapshot = async () => drugstore;
-    const { engine } = await till(dbFile(), s, { t: Date.parse('2026-10-17T02:00:00Z') });
-    await engine.refreshSnapshot();
-    return engine;
-  };
-  type Rx = NonNullable<Parameters<OfflineEngine['ringUp']>[0]['prescriptions']>[number];
-  const rx = (extra: Partial<Rx> = {}): Rx => ({
-    ref: 'rx1', patientName: 'Juan Dela Cruz', prescriberName: 'Dr. Ana Santos', prescriberLicenseNo: 'PRC-0123456', issuedOn: '2026-10-16',
-    items: [{ ref: 'i1', genericName: 'Amoxicillin', strength: '500 mg', dosageForm: 'CAPSULE', quantity: '21', drugClass: 'ANTIBIOTIC' }],
-    ...extra,
-  });
-  const onRx = { prescriptionRef: 'rx1', itemRef: 'i1' };
-
-  it('finds medicines by generic name, and equivalents by the same generic, cheapest first', async () => {
-    const engine = await pharmacy();
-    expect((await engine.search('amoxicillin')).map((i) => i.sku)).toEqual(['AMOXIL', 'AMOX-G']);
-    expect((await engine.search('ritemed')).map((i) => i.sku)).toEqual(['AMOX-G']);
-    expect((await engine.search('paracetamol 500')).map((i) => i.sku)).toEqual(['BIO']);
-    expect((await engine.search('cola')).map((i) => i.sku)).toEqual(['COLA']);
-    expect(await engine.search('  ')).toEqual([]);
-    expect((await engine.equivalents(AMOXIL)).map((i) => [i.sku, i.unitPrice])).toEqual([['AMOX-G', '9.0000']]);
-    expect(await engine.equivalents(COLA)).toEqual([]);
-  });
-
-  it('puts the prescription recorded at the till into the envelope exactly as the schema takes it, and the generic on the receipt', async () => {
-    const engine = await pharmacy();
-    const { sale, receipt } = await engine.ringUp({
-      cashierUserId: CASHIER, tendered: '200', prescriptions: [rx()],
-      lines: [{ variantId: AMOXIL, quantity: '7', prescription: onRx }, { variantId: AMOX_GEN, quantity: '7', prescription: onRx }, { variantId: PARA, quantity: '2' }],
-    });
-    expect(sale.envelope.lines).toEqual([
-      { variantId: AMOXIL, quantity: '7', prescription: onRx },
-      { variantId: AMOX_GEN, quantity: '7', prescription: onRx },
-      { variantId: PARA, quantity: '2' },
-    ]);
-    expect(sale.envelope.prescriptions).toEqual([rx()]);
-    expect(offlineSaleSchema.safeParse(sale.envelope).success).toBe(true);
-    expect(receipt.lines.map((l) => l.generic)).toEqual(['Amoxicillin 500 mg capsule', 'Amoxicillin 500 mg capsule', 'Paracetamol 500 mg tablet']);
-    // An OTC sale carries no prescriptions at all.
-    const otc = await engine.ringUp({ cashierUserId: CASHIER, tendered: '20', lines: [{ variantId: PARA, quantity: '2' }] });
-    expect(otc.sale.envelope).not.toHaveProperty('prescriptions');
-    expect(otc.sale.envelope.lines[0]).not.toHaveProperty('prescription');
-  });
-
-  it('refuses a dangerous drug offline, and a prescription the server would refuse, storing nothing', async () => {
-    const engine = await pharmacy();
-    const ring = (lines: Parameters<OfflineEngine['ringUp']>[0]['lines'], prescriptions: Rx[]) =>
-      engine.ringUp({ cashierUserId: CASHIER, tendered: '500', lines, prescriptions }).catch((e: OfflineSaleError) => e.code);
-    const dd = rx({ patientAddress: '12 Rizal St', prescriberS2No: 'S2-1', yellowFormNo: 'YF-1', items: [{ ref: 'i1', genericName: 'Diazepam', strength: '5 mg', dosageForm: 'TABLET', quantity: '10', drugClass: 'DANGEROUS' }] });
-    expect(await ring([{ variantId: VALIUM, quantity: '10', prescription: onRx }], [dd])).toBe('DANGEROUS_DRUG_OFFLINE');
-    // A line pointing at a prescription not on the sale, an unused prescription, an incomplete one.
-    expect(await ring([{ variantId: AMOXIL, quantity: '7', prescription: { prescriptionRef: 'rx9', itemRef: 'i1' } }], [rx()])).toBe('INVALID_PRESCRIPTION');
-    expect(await ring([{ variantId: PARA, quantity: '1' }], [rx()])).toBe('INVALID_PRESCRIPTION');
-    expect(await ring([{ variantId: AMOXIL, quantity: '7', prescription: onRx }], [rx({ prescriberLicenseNo: '' })])).toBe('INVALID_PRESCRIPTION');
-    expect((await engine.status()).pending).toBe(0);
-    // Without a prescription an antibiotic is still recorded offline: the server flags it for the pharmacist.
-    expect((await engine.ringUp({ cashierUserId: CASHIER, tendered: '200', lines: [{ variantId: AMOXIL, quantity: '1' }] })).sale.deviceSeq).toBe(1);
-  });
-
-  it('labels medicines as the server does', () => {
-    expect(drugLabel({ genericName: ' Ascorbic acid ', strength: '100 mg/5 mL', dosageForm: 'SYRUP' })).toBe('Ascorbic acid 100 mg/5 mL syrup');
-    expect(drugLabel({ genericName: 'Zinc', strength: null, dosageForm: 'OTHER' })).toBe('Zinc other');
-    expect([needsPrescription({ drugClass: 'OTC' }), needsPrescription({ drugClass: 'RX' }), needsPrescription(null)]).toEqual([false, true, false]);
   });
 });

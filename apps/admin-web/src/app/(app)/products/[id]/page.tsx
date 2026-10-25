@@ -2,16 +2,13 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Note, Serial } from '@/components/note';
-import { allProducts, api, apiOrNull, type Category, type CurrentPrice, type Me, type PackageItems, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
-import { servesAppointments, servesPharmacy } from '@/lib/business-type';
-import { genericLabel } from '@/lib/pharmacy';
-import { DrugBadge } from '../drug-fields';
+import { allProducts, api, apiOrNull, type Category, type CurrentPrice, type Me, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
 import { peso } from '@/lib/format';
 import { isUuid, variantOptions } from '@/lib/options';
 import { categoryOptions } from '@/lib/categories';
 import { getT } from '@/i18n/server';
 import { AddCombinations } from '../variant-grid';
-import { AddBarcode, AddPackLink, AddVariant, EditProduct, EditVariant, MakeBarcode, PackageContents, RemoveBarcode } from './forms';
+import { AddBarcode, AddPackLink, AddVariant, EditProduct, EditVariant, MakeBarcode, RemoveBarcode } from './forms';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('products.item');
@@ -44,16 +41,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const mine = new Set(product.variants.map((v) => v.id));
   const packLinks = (links?.data ?? []).filter((l) => mine.has(l.pack.variantId) || mine.has(l.piece.variantId));
   const stocked = product.trackInventory && canManage ? variantOptions((await allProducts())?.data, { stocked: true }) : [];
-  // Salons (ADR-0022): a service's duration and supplies used; a package's validity and contents.
-  const salon = servesAppointments(me.activeTenant?.businessType);
-  const isPackage = product.productType === 'PACKAGE';
-  const contents = isPackage ? await Promise.all(live.map((v) => apiOrNull<PackageItems>(`/variants/${v.id}/package-items`))) : [];
-  const serviceOptions = isPackage && canManage
-    ? ((await allProducts())?.data ?? [])
-        .filter((p) => p.productType === 'SERVICE' && !p.archivedAt)
-        .flatMap((p) => p.variants.filter((v) => !v.archivedAt).map((v) => ({ id: v.id, label: `${v.sku} · ${p.name}${v.name ? ` — ${v.name}` : ''}` })))
-    : [];
-  const kindLabel = product.productType === 'SERVICE' ? t('prod.service') : isPackage ? t('prod.package') : product.trackInventory ? t('prod.tracked') : t('prod.untracked');
+  const kindLabel = product.productType === 'SERVICE' ? t('prod.service') : product.trackInventory ? t('prod.tracked') : t('prod.untracked');
 
   return (
     <div className="flex flex-col gap-6">
@@ -65,13 +53,6 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
           {product.tracksExpiry && <> · {t('prod.expiryTag')}</>}
           {' · '}<span data-testid="product-category">{categoryLabel ?? t('prod.noCategory')}</span>
         </Serial>
-        {product.drugClass && (
-          <p className="mt-2 flex flex-wrap items-center gap-2 text-[0.9375rem]" data-testid="drug-line">
-            <DrugBadge drugClass={product.drugClass} />
-            <span>{genericLabel(t, product)}</span>
-            {product.fdaRegistrationNo && <Serial>{t('drug.fdaShort', { no: product.fdaRegistrationNo })}</Serial>}
-          </p>
-        )}
         {product.description && <p className="mt-2 max-w-[68ch] text-muted">{product.description}</p>}
       </div>
 
@@ -79,7 +60,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
       {canManage && taxes && (
         <div className="flex flex-wrap items-start gap-2">
-          <EditProduct product={product} taxes={taxes.data} categories={catOptions} pharmacy={servesPharmacy(me.activeTenant?.businessType)} />
+          <EditProduct product={product} taxes={taxes.data} categories={catOptions} />
           <AddVariant productId={product.id} />
           <AddCombinations product={product} />
           <ActionButton url={`/api/v1/products/${product.id}/archive`} label={t('prod.archive')} confirmText={t('prod.archiveConfirm', { name: product.name })} />
@@ -95,10 +76,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="min-w-0">
                   <p className="font-semibold">{v.name ?? product.name}{v.archivedAt && <span className="tag ml-2">{t('prod.archived')}</span>}</p>
                   <Serial className="text-ink">{v.sku}</Serial>
-                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage) && (
+                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition) && (
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {product.productType === 'SERVICE' && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
-                      {isPackage && <span className="tag">{v.packageValidDays ? t('prod.validTag', { n: v.packageValidDays }) : t('prod.noExpiry')}</span>}
                       {Object.entries(v.attributes ?? {}).map(([k, val]) => <span key={k} className="tag">{k}: {val}</span>)}
                       {v.quickKeyPosition && <span className="tag border-blue/40 text-blue!">{t('qk.keyN', { n: v.quickKeyPosition })}</span>}
                     </div>
@@ -124,26 +103,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="flex flex-wrap items-end gap-3">
                   <AddBarcode variantId={v.id} />
                   {v.barcodeIds.length === 0 && <MakeBarcode variantId={v.id} />}
-                  <EditVariant variant={v} productType={product.productType} />
-                  {product.productType === 'SERVICE' && salon && (
-                    <Link href={`/products/${product.id}/supplies/${v.id}`} className="btn">{t('prod.suppliesUsed')}</Link>
-                  )}
+                  <EditVariant variant={v} />
                   {live.length > 1 && (
                     <ActionButton url={`/api/v1/variants/${v.id}/archive`} label={t('prod.archiveVariant')} confirmText={t('prod.archiveVariantConfirm', { sku: v.sku })} />
-                  )}
-                </div>
-              )}
-              {isPackage && !v.archivedAt && (
-                <div className="border-t border-hair-soft pt-3">
-                  <p className="mb-2 text-[0.875rem] font-semibold">{t('prod.pkgContents')}</p>
-                  {canManage ? (
-                    <PackageContents variantId={v.id} services={serviceOptions} items={contents[live.indexOf(v)]?.items ?? []} />
-                  ) : (contents[live.indexOf(v)]?.items.length ?? 0) > 0 ? (
-                    <ul className="grid gap-0.5 text-[0.9375rem]">
-                      {contents[live.indexOf(v)]!.items.map((i) => <li key={i.serviceVariantId}>{t('prod.pkgLine', { n: i.sessions, name: i.name })}</li>)}
-                    </ul>
-                  ) : (
-                    <p className="text-[0.875rem] text-muted">{t('prod.pkgEmpty')}</p>
                   )}
                 </div>
               )}

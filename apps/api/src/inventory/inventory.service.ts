@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { expiredStockRule } from '../pharmacy/drugs.js';
+import { expiredStockRule } from './expiry.js';
 import {
   and,
   branches,
@@ -622,7 +622,7 @@ export class InventoryService extends TenantService {
       negativeStockPolicy: row?.negativeStockPolicy ?? 'ALLOW',
       lowStockAlerts: row?.lowStockAlerts ?? true,
       expiryAlertDays: row?.expiryAlertDays ?? 30,
-      /** As set (null: the business type's default), and the rule in force (ADR-0025 §4). */
+      /** As set (null: ALLOW), and the rule in force. */
       expiredStock: row?.expiredStock ?? null,
       expiredStockRule: await expiredStockRule(db, branchId),
       updatedAt: row?.updatedAt.toISOString() ?? null,

@@ -21,6 +21,11 @@ describe('offline sale envelope', () => {
     expect(offlineSaleSchema.safeParse({ ...sale, deviceSeq: 0 }).success).toBe(false);
     expect(offlineSaleSchema.safeParse({ ...sale, amountDue: 44.8 }).success).toBe(false); // never JS numbers for money
     expect(offlineSaleSchema.safeParse({ ...sale, occurredAt: '2026-10-17 10:00' }).success).toBe(false);
+    // Tips, service staff and prescriptions were removed (migration 0112): a sale queued before the update
+    // that still carries one fails the check, so the server quarantines it instead of recording it without.
+    expect(offlineSaleSchema.safeParse({ ...sale, tip: { amount: '5.00' } }).success).toBe(false);
+    expect(offlineSaleSchema.safeParse({ ...sale, prescriptions: [] }).success).toBe(false);
+    expect(offlineSaleSchema.safeParse({ ...sale, lines: sale.lines.map((l) => ({ ...l, staffId: sale.snapshotId })) }).success).toBe(false);
     expect(syncSalesRequestSchema.safeParse({ sales: [] }).success).toBe(false);
   });
 

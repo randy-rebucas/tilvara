@@ -1,7 +1,8 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, foreignKey, index, integer, numeric, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { productVariants } from './catalog.js';
 import { branches } from './organization.js';
+import { tenants } from './platform.js';
 import { customers } from './customers.js';
 
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -189,7 +190,7 @@ export const inventorySettings = pgTable(
     lowStockAlerts: boolean('low_stock_alerts').notNull().default(true),
     /** Mail the stock keepers about lots expiring within this many days (0: no mail). ADR-0020 §3. */
     expiryAlertDays: integer('expiry_alert_days').notNull().default(30),
-    /** Expired or held lots may be sold (ALLOW) or not (BLOCK); null = BLOCK for a pharmacy, else ALLOW (ADR-0025 §4). */
+    /** Expired or held lots may be sold (ALLOW) or not (BLOCK); null = ALLOW (ADR-0025 §4; 0112 wrote BLOCK for former pharmacies). */
     expiredStock: text('expired_stock'),
     updatedBy: uuid('updated_by').notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -312,5 +313,42 @@ export const stockReservations = pgTable(
     check('stock_reservations_status_check', sql`${t.status} IN ('ACTIVE','RELEASED')`),
     check('stock_reservations_released_check', sql`(${t.status} = 'RELEASED') = (${t.releasedAt} IS NOT NULL) AND (${t.releasedAt} IS NULL) = (${t.releasedBy} IS NULL) AND (${t.releasedAt} IS NULL) = (${t.releaseReason} IS NULL)`),
     check('stock_reservations_expiry_check', sql`${t.expiresAt} IS NULL OR ${t.expiresAt} > ${t.createdAt}`),
+  ],
+);
+
+// ------------------------------------------------------------------ lot holds (ADR-0025 §5, kept for every shop in 0112)
+
+/**
+ * A batch kept off sale (a recall, an FDA advisory) at one branch or all. Held lots are not sellable where
+ * expired stock is blocked; they are written off or returned as usual. Released, never deleted.
+ */
+export const lotHolds = pgTable(
+  'lot_holds',
+  {
+    id: uuid('id').primaryKey().default(sql`uuidv7()`),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    variantId: uuid('variant_id').notNull(),
+    lotCode: text('lot_code').notNull(),
+    /** Null: every branch. */
+    branchId: uuid('branch_id'),
+    reason: text('reason').notNull(),
+    reference: text('reference'),
+    placedBy: uuid('placed_by').notNull(),
+    placedAt: timestamp('placed_at', { withTimezone: true }).notNull().defaultNow(),
+    releasedBy: uuid('released_by'),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
+    releaseReason: text('release_reason'),
+  },
+  (t) => [
+    unique('lot_holds_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
+    foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
+    uniqueIndex('lot_holds_open_once')
+      .on(t.tenantId, t.variantId, sql`upper(btrim(${t.lotCode}))`, sql`coalesce(${t.branchId}, '00000000-0000-0000-0000-000000000000'::uuid)`)
+      .where(sql`${t.releasedAt} IS NULL`),
+    check('lot_holds_reason_check', sql`length(btrim(${t.reason})) BETWEEN 1 AND 200 AND length(btrim(${t.lotCode})) BETWEEN 1 AND 64`),
+    check('lot_holds_release_check', sql`(${t.releasedAt} IS NULL) = (${t.releasedBy} IS NULL) AND (${t.releasedAt} IS NULL OR length(btrim(coalesce(${t.releaseReason}, ''))) > 0)`),
   ],
 );

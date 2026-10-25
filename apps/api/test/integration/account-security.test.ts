@@ -312,15 +312,6 @@ describe('grace period', () => {
     }
   });
 
-  it('decision A3: recording pharmacist licences needs two-step sign-in where the business has them', async () => {
-    // A pharmacy role holding pharmacy.setup only (pharmacist licences): privileged.
-    const pharmacy = await signup(app, 'grace-pharmacy');
-    await http().patch('/v1/business').set(bearer(pharmacy.access)).send({ businessType: 'PHARMACY' }).expect(200);
-    await http().post('/v1/roles').set(bearer(pharmacy.access)).send({ key: 'licences', name: 'Licences', permissions: ['pharmacy.setup', 'pharmacy.read'] }).expect(201);
-    const clerk = await addMember(owner, pharmacy.tenantId, 'licences');
-    const clerkToken = (await login(clerk.email).expect(200)).body.tokens.accessToken;
-    expect((await http().get('/v1/me').set(bearer(clerkToken)).expect(200)).body.mfa.required).toBe(true);
-  });
 });
 
 describe('password reset', () => {

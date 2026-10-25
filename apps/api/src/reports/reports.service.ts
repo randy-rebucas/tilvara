@@ -333,7 +333,7 @@ export class ReportsService extends TenantService {
 
   /**
    * SC/PWD sales book (RR 5-2017 §5.9): one row per beneficiary per sale, returns as negative rows.
-   * `purchase_booklet`: on a discount that covered a medicine, whether the booklet was presented (ADR-0025 §8).
+   * `purchase_booklet`: on a discount that covered a medicine (sales before 0112 removed pharmacies), whether the booklet was presented.
    */
   statutoryBook(auth: AuthContext, range: ReportRange & { scheme?: string }) {
     return this.run(auth, range, async (db, w) => {

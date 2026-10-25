@@ -53,12 +53,8 @@ export interface LineMeta {
   /** The promotion that priced this line (ADR-0021), else null; its discount is the line's `discount`. */
   promotionId: string | null;
   promotionName?: string;
-  /** STANDARD, SERVICE or PACKAGE (ADR-0022). */
+  /** STANDARD or SERVICE. */
   productType: string;
-  /** A session of this customer package, priced at zero (ADR-0022 §6); checked when the sale is recorded. */
-  packageId: string | null;
-  /** The staff member who performed or sold it (ADR-0022 §5); checked when the sale is recorded. */
-  staffId: string | null;
 }
 
 export type CartComputation = Awaited<ReturnType<TaxService['computeCart']>>;
@@ -221,9 +217,7 @@ export class TaxService extends TenantService {
         statutory = { scheme, ...(l.statutory.share && { share: l.statutory.share }) };
       }
       const override = l.priceOverrideId ? overrides.get(l.priceOverrideId)! : null;
-      if (l.packageId && item.productType !== 'SERVICE') throw unprocessable('PACKAGE_DOES_NOT_COVER', 'Only a service can be used from a package', { line: lineId });
-      // A package session was paid for when the package was sold: nothing to pay, no VAT (ADR-0022 §6).
-      const unitPrice = l.packageId ? '0' : override ? override.unitPrice : price.amount;
+      const unitPrice = override ? override.unitPrice : price.amount;
       lines.push({
         id: lineId,
         unitPrice,
@@ -247,11 +241,9 @@ export class TaxService extends TenantService {
         priceListId: price.priceListId,
         trackInventory: item.trackInventory,
         priceOverrideId: override?.id ?? null,
-        ...((override || l.packageId) && { listUnitPrice: toDec(price.amount).toString() }),
+        ...(override && { listUnitPrice: toDec(price.amount).toString() }),
         promotionId: null,
         productType: item.productType,
-        packageId: l.packageId ?? null,
-        staffId: l.staffId ?? null,
       });
     }
     if (!currency || !isCurrencyCode(currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${currency} is not supported`);
@@ -266,7 +258,7 @@ export class TaxService extends TenantService {
             variantId: meta[i]!.variantId,
             unitPrice: l.unitPrice,
             quantity: l.quantity,
-            eligible: l.discount === undefined && l.discountRate === undefined && !l.statutory && !meta[i]!.priceOverrideId && !meta[i]!.packageId,
+            eligible: l.discount === undefined && l.discountRate === undefined && !l.statutory && !meta[i]!.priceOverrideId,
           })),
           inForce,
           { scale: minorUnits(currency), mode: profile.roundingMode },

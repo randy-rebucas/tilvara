@@ -3,7 +3,7 @@
  * what it sends back (offline sale envelopes) and what each envelope became (results). Shared by the
  * API and the POS offline engine; no runtime dependencies beyond zod.
  */
-import { amountSchema, quantitySchema, salePrescriptionSchema } from '@1pos/validation';
+import { amountSchema, quantitySchema } from '@1pos/validation';
 import type { Promotion } from '@1pos/pricing';
 import { z } from 'zod';
 
@@ -31,21 +31,8 @@ export interface SnapshotItem {
   trackInventory: boolean;
   /** Its button on the till's quick keys (1–48), if any (ADR-0021 §3; absent from older servers). */
   quickKey?: number | null;
-  /** STANDARD, SERVICE or PACKAGE (ADR-0022; absent from older servers). A package is sold online only. */
-  productType?: 'STANDARD' | 'SERVICE' | 'PACKAGE';
-  /** A medicine (ADR-0025 §2): searched by generic name, equivalents by `genericKey`; absent for other items and from older servers. */
-  drug?: SnapshotDrug | null;
-}
-
-/** A medicine's details as the till shows and searches them (ADR-0025 §3). */
-export interface SnapshotDrug {
-  drugClass: 'OTC' | 'RX' | 'ANTIBIOTIC' | 'DANGEROUS';
-  genericName: string;
-  strength: string | null;
-  dosageForm: string;
-  genericKey: string;
-  /** Pieces in one unit down its pack links (a box of 10 strips of 10: "100"); a prescription counts pieces. Absent from older servers. */
-  piecesPerUnit?: string;
+  /** STANDARD or SERVICE (absent from older servers). */
+  productType?: 'STANDARD' | 'SERVICE';
 }
 
 export interface Snapshot {
@@ -88,8 +75,6 @@ export interface Snapshot {
    * the server re-prices the sale; absent from older servers (no promotions).
    */
   promotions?: Promotion[];
-  /** The branch's active service staff (ADR-0022 §5), to name who did a service; absent from older servers. */
-  staff?: { id: string; displayName: string; color: string | null }[];
 }
 
 /** `GET /v1/terminal/catalog-version`: cheap enough to ask every half minute. */
@@ -121,6 +106,13 @@ export type SnapshotItemsQuery = z.infer<typeof snapshotItemsQuerySchema>;
 
 // ------------------------------------------------------------------ envelopes (terminal → server)
 
+/**
+ * A field of a feature removed on 2026-10-25 (tips, service staff, prescriptions; migration 0112). A sale a
+ * till queued before its update may still carry one: it fails the check and is quarantined
+ * (VALIDATION_FAILED) as received for a manager to review, never recorded without it.
+ */
+const retired = (what: string) => z.never({ error: `${what} were removed; review this sale by hand` }).optional();
+
 export const offlineSaleSchema = z.object({
   terminalTxnId: z.uuid(),
   /** Strictly increasing per terminal; the server processes a batch in this order. */
@@ -137,18 +129,12 @@ export const offlineSaleSchema = z.object({
       id: z.string().trim().min(1).max(64).optional(),
       variantId: z.uuid(),
       quantity: quantitySchema,
-      /** Who performed or sold it (ADR-0022 §5): a staff member from the snapshot. */
-      staffId: z.uuid().optional(),
-      /** A prescription medicine (ADR-0025 §6): the item of a prescription recorded with this sale. */
-      prescription: z.object({ prescriptionRef: z.string().trim().min(1).max(64), itemRef: z.string().trim().min(1).max(64) }).optional(),
+      staffId: retired('Service staff'),
+      prescription: retired('Prescriptions'),
     }))
     .min(1)
     .max(200),
-  /**
-   * Prescriptions recorded at the offline till (ADR-0025 §6); the snapshot has no patient data, so an
-   * offline sale never fills an earlier prescription. A dangerous drug is never sold offline.
-   */
-  prescriptions: z.array(salePrescriptionSchema).max(10).optional(),
+  prescriptions: retired('Prescriptions'),
   /** Cash only; an envelope with any other tender is quarantined as unreadable (VALIDATION_FAILED). */
   tenders: z
     .array(z.object({ method: z.literal('CASH'), tendered: amountSchema }))
@@ -156,8 +142,7 @@ export const offlineSaleSchema = z.object({
     .max(10),
   /** The total the terminal computed and collected; the server must reproduce it exactly. */
   amountDue: amountSchema,
-  /** A cash tip on top (session 25): the tendered cash covers the amount due and the tip. */
-  tip: z.object({ amount: amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero') }).optional(),
+  tip: retired('Tips'),
 });
 export type OfflineSale = z.infer<typeof offlineSaleSchema>;
 
@@ -184,12 +169,11 @@ export type ReceivedEnvelope = SyncSalesBatch['sales'][number];
 
 // ------------------------------------------------------------------ results (server → terminal)
 
-/** Recorded, but a person should look: none of these refuse a sale (the cash was taken). */
 /**
- * PRESCRIPTION_REVIEW (ADR-0025 §6): a prescription medicine was dispensed without a valid prescription
- * record; EXPIRED_STOCK (§4): it drew expired or held lots (read from the lot draws, not stored on the sale).
+ * Recorded, but a person should look: none of these refuse a sale (the cash was taken). EXPIRED_STOCK
+ * (ADR-0025 §4): it drew expired or held lots (read from the lot draws, not stored on the sale).
  */
-export const OFFLINE_FLAGS = ['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'PRESCRIPTION_REVIEW', 'EXPIRED_STOCK'] as const;
+export const OFFLINE_FLAGS = ['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'EXPIRED_STOCK'] as const;
 export type OfflineFlag = (typeof OFFLINE_FLAGS)[number];
 
 export type SyncResult =

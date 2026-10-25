@@ -14,7 +14,6 @@ import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { ReportsService } from './reports.service.js';
 import { AnalysisReportsService } from './analysis-reports.service.js';
-import { SalonReportsService } from './salon-reports.service.js';
 
 const range = new ZodPipe(reportRangeSchema);
 const id = new ZodPipe(idParamSchema);
@@ -26,7 +25,6 @@ export class ReportsController {
   constructor(
     @Inject(ReportsService) private readonly reports: ReportsService,
     @Inject(AnalysisReportsService) private readonly analysis: AnalysisReportsService,
-    @Inject(SalonReportsService) private readonly salon: SalonReportsService,
   ) {}
 
   // Session 20 (SPEC §6.10)
@@ -111,38 +109,6 @@ export class ReportsController {
   @Get('refund-watch')
   refundWatch(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
     return this.reports.refundWatch(auth, q);
-  }
-
-  /** Tips taken, given back on voids and paid out to staff, per local day and per cashier (session 25). */
-  @Get('tips')
-  tips(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.salon.tips(auth, q);
-  }
-
-  // Session 27 (ADR-0022): salons, spas and barber shops.
-
-  /** Commission per staff member: rate × ex-VAT sales or package session value, less returns. */
-  @Get('commissions')
-  commissions(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.salon.commissions(auth, q);
-  }
-
-  /** Service packages sold, used and given back; what is still owed beside the ledger; open packages. */
-  @Get('service-packages')
-  servicePackages(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.salon.packages(auth, q);
-  }
-
-  /** Supplies used against their recipes ("supplies used"), waste and count variance, per supply. */
-  @Get('ingredient-usage')
-  ingredientUsage(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.salon.ingredientUsage(auth, q);
-  }
-
-  /** Tips per staff member (their shares), less those given back by voids. */
-  @Get('tips-by-staff')
-  tipsByStaff(@Auth() auth: AuthContext, @Query(range) q: ReportRangeQuery) {
-    return this.salon.tipsByStaff(auth, q);
   }
 
   @Get('cashier-sessions/:id')

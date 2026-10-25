@@ -12,9 +12,6 @@ import {
   saleReturns,
   sales,
   saleTenders,
-  saleTips,
-  saleTipShares,
-  serviceStaff,
   branches,
   cashMovements,
   inArray,
@@ -32,7 +29,7 @@ import {
 } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import type { OfflineFlag, OfflineSale } from '@1pos/sync-protocol';
-import type { CreateExchangeInput, CreateSaleInput, LinePrescriptionInput, PermissionCode, SaleListQuery, SalePrescriptionInput, TendersInput, TipInput } from '@1pos/validation';
+import type { CreateExchangeInput, CreateSaleInput, SaleListQuery, TendersInput } from '@1pos/validation';
 import { dbNow } from '../common/clock.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { readOnlyReason } from '../billing/entitlements.js';
@@ -49,15 +46,9 @@ import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
-import { planConsumption } from '../recipes/consumption.js';
 import { assertStockAvailable } from './stock-policy.js';
 import { openPacksForSale } from '../inventory/packs.service.js';
-import { assertNotExpired, expiredDraws, expiredStockRule } from '../pharmacy/drugs.js';
-import { bookletOf, planDispensing, recordDispensing } from '../pharmacy/dispensing.js';
-import { PricingService } from '../catalog/pricing.service.js';
-import { assertStaffDoServices, commissionRates } from '../salon/staff.service.js';
-import { completeAppointment } from '../salon/appointments.service.js';
-import { EMPTY_PLAN, planPackages, recordPackages, splitByWeight } from '../salon/packages.js';
+import { assertNotExpired, expiredDraws, expiredStockRule } from '../inventory/expiry.js';
 
 type SaleRow = typeof sales.$inferSelect;
 
@@ -99,14 +90,6 @@ interface RecordLine extends Buckets {
   priceOverrideId?: string | null;
   /** The promotion that priced it (ADR-0021). */
   promotionId?: string | null;
-  /** STANDARD, SERVICE or PACKAGE (ADR-0022). */
-  productType: string;
-  /** A session of this customer package (priced at zero). */
-  packageId?: string | null;
-  /** Who performed or sold it. */
-  staffId?: string | null;
-  /** The prescription item a medicine fills (ADR-0025 §6). */
-  prescription?: LinePrescriptionInput | undefined;
 }
 
 /** Everything priced and taxed; recording adds tenders, numbers, stock, books, audit and outbox. */
@@ -119,7 +102,7 @@ interface PricedSale {
   /** Header: Σ lines. */
   totals: Buckets;
   lines: RecordLine[];
-  beneficiaries: { ref: string; schemeCode: string; schemeVersion: number; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | undefined }[];
+  beneficiaries: { ref: string; schemeCode: string; schemeVersion: number; name: string; idNumber: string; tin: string | null }[];
   /** A sale rung up offline and recorded at sync (ADR-0015 §5). */
   offline?: { terminalId: string; reference: string; flags: OfflineFlag[]; completedAt: Date };
   /** The customer it was rung up for (ADR-0018); needed to pay with store credit. */
@@ -130,11 +113,6 @@ interface PricedSale {
    * trigger flags them instead.
    */
   enforceStock?: boolean;
-  /** The appointment this sale rings up (ADR-0022 §4). */
-  appointmentId?: string | null;
-  /** Prescriptions recorded with the sale and a pharmacist's approval (ADR-0025 §6). */
-  prescriptions?: SalePrescriptionInput[];
-  dispenseApprovalId?: string | undefined;
 }
 
 /** What a terminal's offline sale needs besides the envelope: who sent it and what it had been told. */
@@ -154,8 +132,8 @@ export interface OfflineContext {
 }
 
 
-/** What a priced line was asked with: its SC/PWD beneficiary, if any, and the prescription item it fills. */
-type LineAsked = { variantId: string; statutory?: { beneficiary?: string } | undefined; prescription?: LinePrescriptionInput | undefined };
+/** What a priced line was asked with: its SC/PWD beneficiary, if any. */
+type LineAsked = { variantId: string; statutory?: { beneficiary?: string } | undefined };
 
 /** A cart from the tax path, ready to record (counter checkout and offline sales). `lines` are the lines the cart was computed from. */
 function pricedFromCart(cart: CartComputation, lines: LineAsked[], beneficiaries: CreateSaleInput['beneficiaries']): PricedSale {
@@ -187,15 +165,11 @@ function pricedFromCart(cart: CartComputation, lines: LineAsked[], beneficiaries
         snapshot: l.snapshot,
         priceOverrideId: l.priceOverrideId,
         promotionId: l.promotionId,
-        productType: l.productType,
-        packageId: l.packageId,
-        staffId: l.staffId,
-        prescription: lines[i]!.prescription,
       };
     }),
     beneficiaries: beneficiaries.map((b) => {
       const scheme = cart.lines.find((_, i) => lines[i]!.statutory?.beneficiary === b.ref)!.snapshot.scheme!;
-      return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null, purchaseBooklet: b.purchaseBooklet };
+      return { ref: b.ref, schemeCode: scheme.code, schemeVersion: scheme.version, name: b.name, idNumber: b.idNumber, tin: b.tin ?? null };
     }),
   };
 }
@@ -215,7 +189,6 @@ export class SalesService extends TenantService {
     terminal_transactions_txn_unique: ['DUPLICATE_TRANSACTION', 'This terminal already delivered this transaction'],
     sale_lines_price_override_once: ['PRICE_OVERRIDE_USED', 'This approved price was already used on a sale'],
     sale_tenders_exchange_once: ['ALREADY_EXCHANGED', 'This return already paid for an exchange'],
-    prescriptions_yellow_form_once: ['YELLOW_FORM_USED', 'This yellow prescription form number is already on another prescription'],
   };
 
   constructor(
@@ -223,7 +196,6 @@ export class SalesService extends TenantService {
     @Inject(TaxService) private readonly tax: TaxService,
     @Inject(ENV) private readonly env: ServerEnv,
     @Inject(ReturnsService) private readonly returns: ReturnsService,
-    @Inject(PricingService) private readonly pricing: PricingService,
   ) {
     super(tenantDb);
   }
@@ -250,10 +222,7 @@ export class SalesService extends TenantService {
     return this.mutate(auth, async (db) => {
       const session = await this.checkoutSession(db, auth, input.cashierSessionId, input.clientTransactionId);
       const customerId = input.customerId ? (await activeCustomer(db, input.customerId)).id : null;
-      const priced = {
-        ...(await this.priceCounterCart(db, auth, session.branchId, input)), enforceStock: true, customerId, appointmentId: input.appointmentId ?? null,
-        prescriptions: input.prescriptions, dispenseApprovalId: input.dispenseApprovalId,
-      };
+      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input)), enforceStock: true, customerId };
       const sale = await this.record(db, auth, session, input, priced);
       return this.view(db, sale);
     });
@@ -275,10 +244,7 @@ export class SalesService extends TenantService {
         ...(input.expectedRefund !== undefined && { expectedRefund: input.expectedRefund }),
       }, { exchange: true });
       const customerId = input.sale.customerId ? (await activeCustomer(db, input.sale.customerId)).id : null;
-      const priced = {
-        ...(await this.priceCounterCart(db, auth, session.branchId, input.sale)), enforceStock: true, customerId,
-        prescriptions: input.sale.prescriptions, dispenseApprovalId: input.sale.dispenseApprovalId,
-      };
+      const priced = { ...(await this.priceCounterCart(db, auth, session.branchId, input.sale)), enforceStock: true, customerId };
       const refund = toDec(back.amountDue);
       const sale = await this.record(db, auth, session, input.sale, priced, refund.gt(0) ? { saleReturnId: back.id, amount: refund.toString() } : undefined);
       // The refund went out before the new sale came in: only the net may not exceed the drawer.
@@ -332,11 +298,11 @@ export class SalesService extends TenantService {
       if (completedAt.getTime() > ctx.snapshotAsOf.getTime() + ctx.windowHours * 3_600_000) flags.push('SNAPSHOT_EXPIRED');
       if (readOnly && flags.includes('SNAPSHOT_EXPIRED')) throw readOnly;
 
-      const priced = { ...pricedFromCart(cart, env.lines, []), prescriptions: env.prescriptions ?? [] };
+      const priced = pricedFromCart(cart, env.lines, []);
       priced.offline = { terminalId: ctx.terminalId, reference: env.localReference, flags, completedAt };
       let sale: SaleRow;
       try {
-        sale = await this.record(db, auth, session, { clientTransactionId: env.terminalTxnId, tenders: env.tenders, expectedAmountDue: env.amountDue, ...(env.tip && { tip: env.tip }) }, priced);
+        sale = await this.record(db, auth, session, { clientTransactionId: env.terminalTxnId, tenders: env.tenders, expectedAmountDue: env.amountDue }, priced);
       } catch (e) {
         if (e instanceof AppError && e.code === 'TOTAL_CHANGED') {
           throw new AppError('TOTAL_MISMATCH', 'The terminal charged a different total than its snapshot gives', HttpStatus.CONFLICT, {
@@ -404,13 +370,13 @@ export class SalesService extends TenantService {
   /**
    * Record a priced sale in the caller's transaction: stale-total and review gates, tenders (intents
    * first, cash covers the rest), number, sale + beneficiaries + lines + tenders, cash movement, stock
-   * (SALE for tracked items, CONSUMPTION for recipes), one journal entry, audit and outbox.
+   * (SALE for tracked items, packs it opens), one journal entry, audit and outbox.
    */
   private async record(
     db: Database,
     auth: AuthContext,
     session: Awaited<ReturnType<typeof loadSession>>['session'],
-    input: { clientTransactionId: string; tenders: TendersInput; expectedAmountDue?: string | undefined; tip?: TipInput | undefined },
+    input: { clientTransactionId: string; tenders: TendersInput; expectedAmountDue?: string | undefined },
     priced: PricedSale,
     /** An exchange: the refund of this return, tendered as cash before anything the customer pays. */
     exchangeCredit?: { saleReturnId: string; amount: string },
@@ -442,7 +408,8 @@ export class SalesService extends TenantService {
       if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== priced.currency) {
         throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: pid });
       }
-      if (p.purpose !== 'SALE') throw unprocessable('TIP_PAYMENT_AS_TENDER', 'This payment was taken for the tip, not the sale', { paymentIntentId: pid });
+      // A payment of a feature no longer offered (a folio or a down payment, before 0110–0111) never pays for a sale.
+      if (p.purpose !== 'SALE') throw unprocessable('PAYMENT_NOT_FOR_SALE', 'This payment was not taken for a sale', { paymentIntentId: pid });
     }
     const electronic = intents.reduce((a, p) => a.plus(p.amount), new Dec(0));
     if (electronic.gt(due)) throw unprocessable('OVERPAYMENT', 'Card/QR payments exceed the total; cancel one and take the exact amount', { amountDue: due.toFixed(2) });
@@ -459,27 +426,8 @@ export class SalesService extends TenantService {
       if (balance.lt(storeCredit)) throw new AppError('INSUFFICIENT_STORE_CREDIT', 'The customer has less store credit than that', HttpStatus.CONFLICT, { balance: balance.toFixed(2) });
     }
 
-    // A tip (session 25): its own card/QR payment of this checkout, or cash on top of what is due. Never
-    // part of the amount due or the tenders: the sale, its receipt and the Z reading see none of it.
-    const tip = input.tip ? toDec(input.tip.amount) : new Dec(0);
-    let tipIntent: (typeof paymentIntents.$inferSelect) | null = null;
-    if (input.tip?.paymentIntentId) {
-      if (intentIds.includes(input.tip.paymentIntentId)) throw unprocessable('DUPLICATE_TENDER', 'A payment can be tendered once');
-      [tipIntent = null] = await db.select().from(paymentIntents).where(eq(paymentIntents.id, input.tip.paymentIntentId)).for('update');
-      const p = tipIntent;
-      if (!p) throw new AppError('NOT_FOUND', 'Payment not found', HttpStatus.NOT_FOUND, { paymentIntentId: input.tip.paymentIntentId });
-      if (p.saleId) throw new AppError('PAYMENT_CONSUMED', 'This payment already paid for another sale', HttpStatus.CONFLICT, { paymentIntentId: p.id });
-      if (p.status !== 'SUCCEEDED') throw new AppError('PAYMENT_NOT_SUCCEEDED', `This payment is ${p.status.toLowerCase()}`, HttpStatus.CONFLICT, { paymentIntentId: p.id, status: p.status });
-      if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== priced.currency) {
-        throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: p.id });
-      }
-      if (p.purpose !== 'TIP') throw unprocessable('TIP_MISMATCH', 'This payment was taken for the sale, not the tip', { paymentIntentId: p.id });
-      if (!toDec(p.amount).equals(tip)) throw unprocessable('TIP_MISMATCH', 'The tip payment is not the tip amount', { tip: tip.toFixed(2), paid: toDec(p.amount).toFixed(2) });
-    }
-    const cashTip = input.tip && !tipIntent ? tip : new Dec(0);
-
-    // Cash covers the rest (and a cash tip); only the last cash tender may give change.
-    let remaining = due.minus(electronic).minus(storeCredit).plus(cashTip);
+    // Cash covers the rest; only the last cash tender may give change.
+    let remaining = due.minus(electronic).minus(storeCredit);
     const cashTenders: { t: { tendered: string }; i: number; exchangeReturnId?: string }[] = [
       ...(exchangeCredit ? [{ t: { tendered: exchangeCredit.amount }, i: -1, exchangeReturnId: exchangeCredit.saleReturnId }] : []),
       ...input.tenders.flatMap((t, i) => (t.method === 'CASH' ? [{ t, i }] : [])),
@@ -491,44 +439,11 @@ export class SalesService extends TenantService {
       remaining = remaining.minus(applied);
       return { tendered, applied, change: tendered.minus(applied), exchangeReturnId: exchangeReturnId ?? null };
     });
-    if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: due.toFixed(2), ...(cashTip.gt(0) && { tip: cashTip.toFixed(2) }) });
+    if (remaining.gt(0)) throw unprocessable('INSUFFICIENT_TENDER', 'The tendered amount does not cover the total', { amountDue: due.toFixed(2) });
     if (cash.slice(0, -1).some((t) => t.change.gt(0))) throw unprocessable('UNNECESSARY_TENDER', 'Only the last tender may give change');
-    // The cash tip comes out of the last cash tender: what stays on the tender is what the sale got.
-    if (cashTip.gt(0)) {
-      const last = cash.at(-1);
-      if (!last || last.exchangeReturnId || last.applied.lt(cashTip)) throw unprocessable('TIP_NEEDS_CASH', 'A cash tip is paid with the last cash tendered', { tip: cashTip.toFixed(2) });
-      last.applied = last.applied.minus(cashTip);
-      last.tendered = last.tendered.minus(cashTip);
-    }
     const cashApplied = cash.reduce((a, t) => a.plus(t.applied), new Dec(0));
     const tendered = cash.reduce((a, t) => a.plus(t.tendered), electronic.plus(storeCredit));
     const change = tendered.minus(due);
-
-    // Staff on the lines (ADR-0022 §5): of this branch; their commission rate at the sale goes on the line.
-    const rates = await this.staffRates(db, session.branchId, priced);
-    // Service packages sold and sessions used (ADR-0022 §6), checked and locked before anything is written.
-    const today = await this.localDate(db, session.branchId, priced.offline?.completedAt ?? (await dbNow(db)));
-    const packages = priced.lines.some((l) => l.productType === 'PACKAGE' || l.packageId)
-      ? await planPackages(
-          db,
-          { customerId: priced.customerId ?? null, legalEntityId: priced.legalEntityId, localDate: today, prices: (ids) => this.pricing.effectivePrices(db, session.branchId, ids) },
-          priced.lines.map((l) => ({
-            productType: l.productType, variantId: l.variantId, quantity: l.quantity, exVat: exVat(l), packageId: l.packageId ?? null,
-            hasStatutory: l.beneficiaryRef !== null, name: l.name,
-          })),
-        )
-      : EMPTY_PLAN;
-    const packageValue = new Map(packages.redeemed.map((r) => [r.index, r.value]));
-    // Medicines (ADR-0025 §6, §8): the prescriptions filled, who dispenses, SC/PWD purchase booklets.
-    const dispenseCtx = {
-      tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, userId: auth.userId, membershipId: tenantOf(auth).membershipId, offline: Boolean(priced.offline),
-      can: (perm: PermissionCode) => this.can(auth, perm, { legalEntityId: priced.legalEntityId, branchId: session.branchId, registerId: session.registerId }),
-    };
-    const dispensing = await planDispensing(db, dispenseCtx, priced.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity, name: l.name, prescription: l.prescription })), {
-      prescriptions: priced.prescriptions ?? [], dispenseApprovalId: priced.dispenseApprovalId,
-    });
-    if (dispensing.review && priced.offline && !priced.offline.flags.includes('PRESCRIPTION_REVIEW')) priced.offline.flags.push('PRESCRIPTION_REVIEW');
-    const booklets = await bookletOf(db, priced.beneficiaries, priced.lines, dispensing.drugs);
 
     const saleNumber = await nextNumber(db, tenantId, session.registerId, 'SALE');
     const [sale] = await db
@@ -564,7 +479,7 @@ export class SalesService extends TenantService {
     for (const b of priced.beneficiaries) {
       const [row] = await db
         .insert(saleBeneficiaries)
-        .values({ tenantId, saleId: sale!.id, schemeCode: b.schemeCode, schemeVersion: b.schemeVersion, name: b.name, idNumber: b.idNumber, tin: b.tin, purchaseBooklet: booklets.get(b.ref) ?? null })
+        .values({ tenantId, saleId: sale!.id, schemeCode: b.schemeCode, schemeVersion: b.schemeVersion, name: b.name, idNumber: b.idNumber, tin: b.tin })
         .returning({ id: saleBeneficiaries.id });
       beneficiaryIds.set(b.ref, row!.id);
     }
@@ -591,33 +506,15 @@ export class SalesService extends TenantService {
         taxSnapshot: l.snapshot,
         priceOverrideId: l.priceOverrideId ?? null,
         promotionId: l.promotionId ?? null,
-        serviceStaffId: l.staffId ?? null,
-        commissionRate: l.staffId ? rates.get(`${l.staffId}:${l.variantId}`)! : null,
-        customerPackageId: l.packageId ?? null,
-        packageValue: packageValue.get(i)?.toString() ?? null,
-        drugClass: dispensing.drugs.get(l.variantId)?.drugClass ?? null,
-        drugLabel: dispensing.drugs.get(l.variantId)?.label ?? null,
       }) as typeof saleLines.$inferInsert);
     const lineIds: string[] = [];
     for (const r of await db.insert(saleLines).values(lineRows).returning({ id: saleLines.id, lineNo: saleLines.lineNo })) lineIds[r.lineNo - 1] = r.id;
-    if (packages !== EMPTY_PLAN) {
-      await recordPackages(db, {
-        tenantId, legalEntityId: priced.legalEntityId, branchId: session.branchId, customerId: priced.customerId!, saleId: sale!.id, userId: auth.userId, localDate: today,
-      }, packages, lineIds);
-    }
-    const dispensed = dispensing.fills.length || dispensing.newPrescriptions.length || dispensing.approvalId
-      ? await recordDispensing(db, dispenseCtx, dispensing, sale!.id, lineIds)
-      : null;
-    const appointment = priced.appointmentId
-      ? await completeAppointment(db, { appointmentId: priced.appointmentId, branchId: session.branchId, saleId: sale!.id, userId: auth.userId, customerId: priced.customerId ?? null })
-      : null;
-
     const tenderRows = [
       ...intents.map((p) => ({ tenantId, saleId: sale!.id, method: p.method, paymentIntentId: p.id, amount: p.amount, tendered: p.amount, change: '0' })),
       ...(creditTender ? [{ tenantId, saleId: sale!.id, method: 'STORE_CREDIT', amount: storeCredit.toString(), tendered: storeCredit.toString(), change: '0' }] : []),
       ...cash.map((t) => ({ tenantId, saleId: sale!.id, method: 'CASH', amount: t.applied.toString(), tendered: t.tendered.toString(), change: t.change.toString(), exchangeReturnId: t.exchangeReturnId })),
     ];
-    // A sale paid in full by package sessions has nothing to tender (ADR-0022 §6).
+    // A sale of nothing but zero-priced lines has nothing to tender.
     if (tenderRows.length) await db.insert(saleTenders).values(tenderRows);
     for (const p of intents) {
       await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, p.id));
@@ -633,33 +530,14 @@ export class SalesService extends TenantService {
     if (cash.length) {
       await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'SALE', amount: cashApplied.toString(), saleId: sale!.id, createdBy: auth.userId });
     }
-    if (input.tip) {
-      const [tipRow] = await db.insert(saleTips).values({ tenantId, saleId: sale!.id, method: tipIntent?.method ?? 'CASH', paymentIntentId: tipIntent?.id ?? null, amount: tip.toString() }).returning({ id: saleTips.id });
-      await this.tipShares(db, tenantId, session.branchId, tipRow!.id, tip, input.tip.shares, priced.lines);
-      if (tipIntent) {
-        await db.update(paymentIntents).set({ saleId: sale!.id }).where(eq(paymentIntents.id, tipIntent.id));
-        await db.insert(paymentEvents).values({ tenantId, paymentIntentId: tipIntent.id, type: 'CONSUMED', detail: { saleId: sale!.id, tip: true }, createdBy: auth.userId });
-      } else {
-        await db.insert(cashMovements).values({ tenantId, cashierSessionId: session.id, type: 'TIP', amount: cashTip.toString(), saleId: sale!.id, createdBy: auth.userId });
-      }
-    }
-
     const stock: (typeof stockMovements.$inferInsert & { variantId: string })[] = priced.lines.flatMap((l, i) =>
       l.trackInventory
         ? [{ tenantId, branchId: session.branchId, variantId: l.variantId, quantity: toDec(l.quantity).negated().toString(), type: 'SALE', saleId: sale!.id, saleLineId: lineIds[i]!, createdBy: auth.userId }]
         : [],
     );
-    // Items made from a recipe consume their supplies with the sale (ADR-0014 §4, ADR-0022 §9).
-    const consumed = await planConsumption(
-      db,
-      priced.lines.flatMap((l, i) => (l.trackInventory ? [] : [{ saleLineId: lineIds[i]!, variantId: l.variantId, quantity: l.quantity }])),
-    );
-    for (const c of consumed) {
-      stock.push({ tenantId, branchId: session.branchId, ...c, type: 'CONSUMPTION', saleId: sale!.id, createdBy: auth.userId });
-    }
     // Tingi (ADR-0020): pieces this sale needs and does not have come out of packs it opens itself.
     const entryDate = priced.offline ? await this.localDate(db, session.branchId, priced.offline.completedAt) : undefined;
-    // Only a sale that moves stock asks the branch's expired-stock rule (ADR-0025 §4).
+    // Only a sale that moves stock asks the branch's expired-stock rule.
     const expiredRule = stock.length ? await expiredStockRule(db, session.branchId) : 'ALLOW';
     const opened = await openPacksForSale(
       db,
@@ -667,7 +545,7 @@ export class SalesService extends TenantService {
       stock.map((m) => ({ variantId: m.variantId, quantity: toDec(m.quantity).negated().toString() })),
       { sellableOnly: !priced.offline && expiredRule === 'BLOCK' },
     );
-    // Expired or held lots are not sold where the branch blocks them (ADR-0025 §4); offline sales are flagged instead.
+    // Expired or held lots are not sold where the branch blocks them; offline sales are flagged instead.
     if (!priced.offline && expiredRule === 'BLOCK') {
       await assertNotExpired(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
     }
@@ -701,25 +579,16 @@ export class SalesService extends TenantService {
         electronic,
         storeCredit,
         cogs: moved.reduce((a, m) => a.minus(m.value), new Dec(0)),
-        ...(input.tip && { tip: { amount: tip, electronic: tipIntent !== null } }),
-        packagesSold: packages.deferred,
-        packageSessions: packages.recognized,
       }, session.branchId),
       createdBy: auth.userId,
     });
 
     await this.audit(db, auth, 'sale.completed', 'sale', sale!.id, {
       saleNumber, amountDue: due.toFixed(2), registerId: session.registerId,
-      ...(input.tip && { tip: tip.toFixed(2) }),
       ...(priced.customerId && { customerId: priced.customerId }),
       ...(creditTender && { storeCredit: storeCredit.toFixed(2) }),
       ...(opened.length > 0 && { packOpenings: opened.map((o) => o.id) }),
-      ...(appointment && { appointmentId: appointment.id }),
-      ...(dispensed && { prescriptionsRecorded: dispensed.prescriptions, prescriptionFills: dispensed.fills, dispensedBy: dispensing.dispensedBy, ...(dispensing.approvalId && { dispenseApprovalId: dispensing.approvalId }) }),
-      ...(dispensing.review && { prescriptionReview: true }),
       ...(expiredOut.length > 0 && { expiredStockLots: expiredOut.length }),
-      ...(packages.sold.length > 0 && { packagesSold: packages.sold.reduce((a, p) => a + p.units.length, 0) }),
-      ...(packages.redeemed.length > 0 && { packageSessions: packages.redeemed.reduce((a, r) => a + r.sessions, 0) }),
       ...(priced.offline && { origin: 'OFFLINE', terminalId: priced.offline.terminalId, offlineReference: priced.offline.reference, flags: priced.offline.flags }),
     });
     await emitEvent(db, {
@@ -729,54 +598,6 @@ export class SalesService extends TenantService {
       correlationId: auth.correlationId,
     });
     return sale!;
-  }
-
-  /**
-   * The staff named on a sale's lines (ADR-0022 §5): each a staff member of the sale's branch, active
-   * (an offline sale may name one archived since: they did the work). Answers each (staff, item)'s rate.
-   */
-  private async staffRates(db: Database, branchId: string, priced: PricedSale) {
-    const named = priced.lines.flatMap((l, i) => (l.staffId ? [{ staffId: l.staffId, variantId: l.variantId, i }] : []));
-    if (!named.length) return new Map<string, string>();
-    const ids = [...new Set(named.map((n) => n.staffId))];
-    const staff = await db.select().from(serviceStaff).where(inArray(serviceStaff.id, ids));
-    for (const n of named) {
-      const s = staff.find((x) => x.id === n.staffId);
-      if (!s) throw new AppError('NOT_FOUND', 'Staff member not found', HttpStatus.NOT_FOUND, { line: n.i, staffId: n.staffId });
-      if (s.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This staff member works at another branch', { line: n.i });
-      if (s.archivedAt && !priced.offline) throw unprocessable('STAFF_ARCHIVED', `${s.displayName} no longer works here`, { line: n.i });
-    }
-    // The booking's rule at the till (audit 2026-10-21): a service line names someone who does that
-    // service (no list = every service). Online only, like the archived check: offline, the work is done.
-    if (!priced.offline) await assertStaffDoServices(db, named, staff);
-    return commissionRates(db, named);
-  }
-
-  /**
-   * A tip's split among staff (ADR-0022 §7): as given (staff of this branch, adding up to the tip), or
-   * equally among the distinct staff on the lines in line order, the first ones taking the leftover
-   * centavos. A sale without staff keeps an unassigned tip.
-   */
-  private async tipShares(db: Database, tenantId: string, branchId: string, saleTipId: string, tip: Dec, given: TipInput['shares'], lines: RecordLine[]) {
-    let shares: { staffId: string; amount: Dec }[];
-    if (given?.length) {
-      const total = given.reduce((a, g) => a.plus(g.amount), new Dec(0));
-      if (!total.equals(tip)) throw unprocessable('TIP_SHARES_MISMATCH', 'The tip shares do not add up to the tip', { tip: tip.toFixed(2), shares: total.toFixed(2) });
-      const staff = await db.select({ id: serviceStaff.id, branchId: serviceStaff.branchId }).from(serviceStaff).where(inArray(serviceStaff.id, given.map((g) => g.staffId)));
-      for (const g of given) {
-        const s = staff.find((x) => x.id === g.staffId);
-        if (!s) throw new AppError('NOT_FOUND', 'Staff member not found', HttpStatus.NOT_FOUND, { staffId: g.staffId });
-        if (s.branchId !== branchId) throw unprocessable('WRONG_BRANCH', 'This staff member works at another branch', { staffId: g.staffId });
-      }
-      shares = given.map((g) => ({ staffId: g.staffId, amount: toDec(g.amount) }));
-    } else {
-      const staffIds = [...new Set(lines.flatMap((l) => (l.staffId ? [l.staffId] : [])))];
-      if (!staffIds.length) return;
-      const parts = splitByWeight(tip, staffIds.map(() => new Dec(1)));
-      shares = staffIds.map((staffId, i) => ({ staffId, amount: parts[i]! }));
-    }
-    const kept = shares.filter((x) => x.amount.gt(0));
-    if (kept.length) await db.insert(saleTipShares).values(kept.map((x) => ({ tenantId, saleTipId, staffId: x.staffId, amount: x.amount.toString() })));
   }
 
   get(auth: AuthContext, id: string) {
@@ -805,22 +626,16 @@ export class SalesService extends TenantService {
         () => db.select().from(saleCharges).where(eq(saleCharges.saleId, id)),
       );
       const [customer] = sale.customerId ? await db.select({ name: customers.displayName, tin: customers.tin }).from(customers).where(eq(customers.id, sale.customerId)) : [];
-      const { tip } = await this.extras(db, id);
       const exchangeIds = tenders.flatMap((t) => (t.exchangeReturnId ? [t.exchangeReturnId] : []));
       const exchanged = exchangeIds.length ? await db.select({ id: saleReturns.id, returnNumber: saleReturns.returnNumber }).from(saleReturns).where(inArray(saleReturns.id, exchangeIds)) : [];
       const snapshot = sale.taxSnapshot as { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string };
       const promos = await promotionNames(db, lines);
-      const staffIds = [...new Set(lines.flatMap((l) => (l.serviceStaffId ? [l.serviceStaffId] : [])))];
-      const staffNames = staffIds.length ? await db.select({ id: serviceStaff.id, name: serviceStaff.displayName }).from(serviceStaff).where(inArray(serviceStaff.id, staffIds)) : [];
-      const firstName = (id: string | null) => (id ? (staffNames.find((x) => x.id === id)?.name.trim().split(/\s+/)[0] ?? null) : null);
-      // The lots each medicine line was drawn from (ADR-0025 §5).
-      const { rows: lotRows } = lines.some((l) => l.drugClass)
-        ? await db.execute<{ sale_line_id: string; lot_code: string | null; expires_on: string }>(sql`
-            SELECT m.sale_line_id, l.lot_code, l.expires_on::text FROM stock_movements m
-              JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id
-              JOIN stock_lots l ON l.tenant_id = lm.tenant_id AND l.id = lm.lot_id
-             WHERE m.sale_id = ${id} AND m.type = 'SALE' GROUP BY 1, 2, 3 ORDER BY 3, 2`)
-        : { rows: [] };
+      // The expiry lots each line was drawn from (ADR-0020 §3, ADR-0025 §5).
+      const { rows: lotRows } = await db.execute<{ sale_line_id: string; lot_code: string | null; expires_on: string }>(sql`
+        SELECT m.sale_line_id, l.lot_code, l.expires_on::text FROM stock_movements m
+          JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id
+          JOIN stock_lots l ON l.tenant_id = lm.tenant_id AND l.id = lm.lot_id
+         WHERE m.sale_id = ${id} AND m.type = 'SALE' GROUP BY 1, 2, 3 ORDER BY 3, 2`);
       return buildReceipt({
         invoicingMode: entity!.invoicingMode,
         seller: { registeredName: entity!.registeredName, tradeName: entity!.tradeName, registeredAddress: entity!.registeredAddress, tin: entity!.tin, vatStatus: snapshot.vatStatus },
@@ -847,9 +662,6 @@ export class SalesService extends TenantService {
           beneficiaryId: l.beneficiaryId,
           isChoice: l.parentLineId !== null,
           promotion: l.promotionId ? (promos.get(l.promotionId) ?? null) : null,
-          staff: firstName(l.serviceStaffId),
-          packageSession: l.customerPackageId !== null,
-          drugLabel: l.drugLabel,
           lots: lotRows.filter((r) => r.sale_line_id === l.id).map((r) => ({ lotCode: r.lot_code, expiresOn: r.expires_on })),
         })),
         tenders: tenders.map((t) => ({
@@ -859,15 +671,8 @@ export class SalesService extends TenantService {
         beneficiaries,
         charges: charges.map((c) => ({ kind: c.kind, rate: toDec(c.rate).toString(), gross: c.gross, amountDue: c.amountDue, vatTreatment: c.vatTreatment })),
         customer: customer ?? null,
-        tip,
       });
     });
-  }
-
-  /** A sale's tip (session 25). */
-  private async extras(db: Database, saleId: string) {
-    const [tipRow] = await db.select().from(saleTips).where(eq(saleTips.saleId, saleId));
-    return { tip: tipRow ? { method: tipRow.method, amount: fixed(tipRow.amount) } : null };
   }
 
   list(auth: AuthContext, q: SaleListQuery) {
@@ -966,7 +771,6 @@ export class SalesService extends TenantService {
       }),
       tenders: tenders.map((t) => ({ ...t, amount: fixed(t.amount), tendered: fixed(t.tendered), change: fixed(t.change) })),
       beneficiaries,
-      ...(await this.extras(db, s.id)),
     };
   }
 }

@@ -1,7 +1,6 @@
 import type { Denomination } from '@/components/note';
 import type { MessageKey } from '@/i18n/messages';
-import { servesAppointments, servesPharmacy, type BusinessType } from './business-type';
-import { NAV_ITEMS, offered, permitted, type NavItem } from './nav';
+import { NAV_ITEMS, permitted, type NavItem } from './nav';
 
 /**
  * The user guide (`/help`): one section per area of the back office, in the order an owner sets
@@ -16,8 +15,6 @@ export type GuideTopic =
   | 'inventory'
   | 'tingi'
   | 'purchasing'
-  | 'salon'
-  | 'pharmacy'
   | 'reports'
   | 'customers'
   | 'books'
@@ -37,7 +34,7 @@ export interface GuideSection {
   id: GuideTopic;
   title: MessageKey;
   lede: MessageKey;
-  /** The band tab for this area: its permissions and business type decide who can open it. */
+  /** The band tab for this area: its permissions decide who can open it. */
   area?: NavItem;
   /** Where "Open …" goes when it is not the tab's own page. */
   href?: string;
@@ -79,13 +76,9 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   // ADR-0021: promotions, sizes and colours, quick keys, labels and shelf locations (a shop's or boutique's tools).
   section('retail', 'guide.retail.title', 'blue', 6, 3, { area: area('/products'), href: '/prices/promotions' }),
   section('inventory', 'nav.inventory', 'gold', 5, 4, { area: area('/inventory') }),
-  // ADR-0020: packs and pieces, expiry dates. For every type; the sari-sari store's part above all.
-  section('tingi', 'guide.tingi.title', 'gold', 4, 3, { area: area('/inventory'), href: '/inventory/packs' }),
+  // ADR-0020: packs and pieces, expiry dates; ADR-0025 §5: lot holds and the batch trace.
+  section('tingi', 'guide.tingi.title', 'gold', 4, 5, { area: area('/inventory'), href: '/inventory/packs' }),
   section('purchasing', 'nav.purchasing', 'gold', 7, 5, { area: area('/purchasing') }),
-  // ADR-0022: staff, the appointment calendar, services and packages, client history, commissions, tips.
-  section('salon', 'guide.salon.title', 'green', 6, 5, { area: area('/appointments') }),
-  // ADR-0025: medicines and their classes, receiving batches, prescriptions, the two books, batch trace and holds, expired stock.
-  section('pharmacy', 'guide.pharmacy.title', 'none', 7, 5, { area: area('/pharmacy') }),
   section('reports', 'nav.reports', 'none', 4, 3, { area: area('/reports/sales') }),
   // No band tab (the band is full): reached from the Overview and from each sale; who may open it is its own rule.
   section('customers', 'cust.title', 'green', 5, 2, { area: CUSTOMERS_AREA }),
@@ -101,12 +94,11 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
 ];
 
 /**
- * The guide as this business sees it: areas its type leaves out are gone.
- * `permitted` is false when the person's role does not open the area (the section still shows, so
+ * The guide as this person sees it: `permitted` is false when the person's role does not open the area (the section still shows, so
  * a cashier can read what a manager does).
  */
-export function guideFor(businessType: BusinessType, permissions: readonly string[]) {
-  return GUIDE_SECTIONS.filter((s) => !s.area || offered(s.area, businessType)).map((s) => ({
+export function guideFor(permissions: readonly string[]) {
+  return GUIDE_SECTIONS.map((s) => ({
     ...s,
     permitted: !s.area || permitted(s.area, permissions),
   }));
@@ -124,14 +116,9 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
   ['/inventory', 'inventory'],
   ['/inventory/packs', 'tingi'],
   ['/inventory/expiry', 'tingi'],
+  ['/inventory/holds', 'tingi'],
+  ['/inventory/batches', 'tingi'],
   ['/purchasing', 'purchasing'],
-  ['/appointments', 'salon'],
-  ['/reports/commissions', 'salon'],
-  ['/reports/service-packages', 'salon'],
-  ['/reports/staff-tips', 'salon'],
-  ['/reports/tips', 'salon'],
-  ['/reports/ingredient-usage', 'salon'],
-  ['/pharmacy', 'pharmacy'],
   ['/reports', 'reports'],
   ['/sales', 'reports'],
   ['/customers', 'customers'],
@@ -146,16 +133,8 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
   ['/security', 'account'],
 ];
 
-/**
- * The guide section for the page at `path` (the band's help button opens `/help#<topic>`). An
- * appointments or pharmacy page in a business that does not offer it shows a notice to change the
- * type of business, so it opens the Subscription part, which explains that (the guide has no salon
- * part for a retail shop).
- */
-export function topicFor(path: string, businessType: BusinessType = 'HYBRID'): GuideTopic {
+/** The guide section for the page at `path` (the band's help button opens `/help#<topic>`). */
+export function topicFor(path: string): GuideTopic {
   const hit = TOPIC_BY_PATH.filter(([p]) => path === p || path.startsWith(`${p}/`)).sort((a, b) => b[0].length - a[0].length)[0];
-  const topic = hit?.[1] ?? 'start';
-  if (topic === 'salon' && !servesAppointments(businessType)) return 'subscription';
-  if (topic === 'pharmacy' && !servesPharmacy(businessType)) return 'subscription';
-  return topic;
+  return hit?.[1] ?? 'start';
 }

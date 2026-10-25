@@ -3,8 +3,6 @@ import { en, fil } from '../i18n/messages';
 import { GUIDE_SECTIONS, guideFor, topicFor } from './guide';
 import { NAV_ITEMS } from './nav';
 
-const ALL = ['catalog.read', 'inventory.read', 'purchasing.manage', 'accounting.read', 'reports.read', 'cash.reconcile', 'org.read', 'members.read', 'tenant.manage'];
-
 describe('user guide', () => {
   it('words every section, step and tip in English and Filipino', () => {
     for (const dict of [en, fil] as Record<string, string>[]) {
@@ -43,10 +41,10 @@ describe('user guide', () => {
     expect(topicFor('/productsx')).toBe('start');
   });
 
-  it('picks the parts for a shop, a sari-sari store and a boutique', () => {
-    expect(topicFor('/products', 'RETAIL')).toBe('products');
-    // ADR-0020: packs and expiry have their own part; the rest of Inventory stays with inventory.
-    expect([topicFor('/inventory/packs', 'GROCERY'), topicFor('/inventory/expiry'), topicFor('/inventory/movements', 'GROCERY')]).toEqual(['tingi', 'tingi', 'inventory']);
+  it('picks the parts for packs, expiry, recalls and a boutique', () => {
+    expect(topicFor('/products')).toBe('products');
+    // ADR-0020/0025: packs, expiry, lot holds and the batch trace have their own part; the rest of Inventory stays with inventory.
+    expect([topicFor('/inventory/packs'), topicFor('/inventory/expiry'), topicFor('/inventory/holds'), topicFor('/inventory/batches'), topicFor('/inventory/movements')]).toEqual(['tingi', 'tingi', 'tingi', 'tingi', 'inventory']);
     // ADR-0021: promotions, quick keys and labels have their own part; the rest of Prices and Products stay put.
     expect([topicFor('/prices/promotions/abc'), topicFor('/products/labels'), topicFor('/products/quick-keys'), topicFor('/prices'), topicFor('/products/abc')]).toEqual(['retail', 'retail', 'retail', 'prices', 'products']);
     // Categories, units and tax categories are part of Products.
@@ -54,35 +52,9 @@ describe('user guide', () => {
   });
 
   it('still explains areas the role does not open, marked as such', () => {
-    const cashier = guideFor('HYBRID', ['catalog.read', 'sales.create', 'cash.session']);
+    const cashier = guideFor(['catalog.read', 'sales.create', 'cash.session']);
     const by = Object.fromEntries(cashier.map((s) => [s.id, s.permitted]));
-    expect(by).toMatchObject({ start: true, products: true, prices: true, books: false, team: false, salon: false, account: true, till: true });
+    expect(by).toMatchObject({ start: true, products: true, prices: true, books: false, team: false, tingi: false, account: true, till: true });
     expect(cashier).toHaveLength(GUIDE_SECTIONS.length);
-  });
-
-  it('a salon gets the appointments part; a shop does not (ADR-0022)', () => {
-    const salon = guideFor('SALON', [...ALL, 'appointments.read']);
-    expect(salon.map((s) => s.id)).toContain('salon');
-    expect(salon.map((s) => s.id)).not.toContain('pharmacy');
-    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('salon');
-    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('salon');
-    expect(topicFor('/appointments/staff/abc', 'SALON')).toBe('salon');
-    expect(topicFor('/reports/commissions', 'SALON')).toBe('salon');
-    expect([topicFor('/reports/tips', 'SALON'), topicFor('/reports/ingredient-usage', 'HYBRID'), topicFor('/products/abc/supplies/def', 'SALON')]).toEqual(['salon', 'salon', 'products']);
-    expect(topicFor('/appointments', 'RETAIL')).toBe('subscription');
-  });
-});
-
-describe('pharmacy guide (ADR-0025)', () => {
-  it('a pharmacy gets its part and no salon part; other types do not get it', () => {
-    const pharmacy = guideFor('PHARMACY', [...ALL, 'pharmacy.read']).map((s) => s.id);
-    expect(pharmacy).toContain('pharmacy');
-    expect(pharmacy).toContain('tingi');
-    expect(pharmacy).not.toContain('salon');
-    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('pharmacy');
-    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('pharmacy');
-    expect(topicFor('/pharmacy/prescriptions/abc', 'PHARMACY')).toBe('pharmacy');
-    expect(topicFor('/pharmacy/batches', 'HYBRID')).toBe('pharmacy');
-    expect(topicFor('/pharmacy', 'GROCERY')).toBe('subscription');
   });
 });

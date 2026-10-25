@@ -11,7 +11,7 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { negativeStockPolicy } from '../sales/stock-policy.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { reservedAt } from './reservations.service.js';
-import { unsellableAt } from '../pharmacy/drugs.js';
+import { unsellableAt } from './expiry.js';
 
 /** How far up a sale opens packs to get pieces: a strip for tablets, a box for strips, a case for boxes (ADR-0025 §7). */
 const MAX_PACK_LEVELS = 3;
@@ -94,7 +94,7 @@ async function recordOpening(db: Database, ctx: OpeningContext, link: { id: stri
 
 /**
  * A sale short of pieces opens packs by itself (ADR-0020 §2), in the sale's transaction, before its
- * own movements and the BLOCK check. `outbound`: what the sale and its recipes take out, per item.
+ * own movements and the BLOCK check. `outbound`: what the sale takes out, per item.
  * Chains (ADR-0025 §7): when the pack above is short too, the next pack up is opened first (a box for
  * strips, then strips for tablets), at most three levels up. Every balance involved is locked first, in
  * one call in variant order (as the sale's movements will lock them a moment later), so two tills cannot
@@ -190,9 +190,9 @@ export class PacksService extends TenantService {
       // One link change at a time per business, so two cannot close a loop between them.
       await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(app_current_tenant_id()::text || ':pack-links'))`);
       const { rows: items } = await db.execute<{
-        id: string; archived_at: string | null; track_inventory: boolean; product_archived_at: string | null; allows_fraction: boolean; drug_class: string | null; generic_key: string | null;
+        id: string; archived_at: string | null; track_inventory: boolean; product_archived_at: string | null; allows_fraction: boolean;
       }>(sql`
-        SELECT v.id, v.archived_at, p.track_inventory, p.archived_at AS product_archived_at, u.allows_fraction, p.drug_class, p.generic_key
+        SELECT v.id, v.archived_at, p.track_inventory, p.archived_at AS product_archived_at, u.allows_fraction
           FROM product_variants v
           JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
           JOIN units_of_measure u ON u.tenant_id = p.tenant_id AND u.id = p.uom_id
@@ -204,13 +204,6 @@ export class PacksService extends TenantService {
       if (!pack.track_inventory || !piece.track_inventory) throw unprocessable('NOT_TRACKED', 'Both the pack and the piece must count their stock');
       if (!piece.allows_fraction && !toDec(input.piecesPerPack).isInteger()) {
         throw unprocessable('FRACTIONAL_PIECES', 'This piece is counted in whole units, so a pack holds a whole number of them', { path: ['piecesPerPack'] });
-      }
-      // A box of a prescription medicine holds that medicine (ADR-0025 §2, §6): the same drug class and
-      // generic (name, strength, form), or neither is a medicine, so a pack never sells without the prescription its pieces need.
-      if (pack.drug_class !== piece.drug_class || (pack.drug_class !== null && pack.generic_key !== piece.generic_key)) {
-        throw unprocessable('PACK_DRUG_MISMATCH', 'The pack and the piece must be the same medicine (drug class, generic name, strength and form)', {
-          pack: { drugClass: pack.drug_class, genericKey: pack.generic_key }, piece: { drugClass: piece.drug_class, genericKey: piece.generic_key },
-        });
       }
       // A loop (the piece is, through its packs, the pack's own source) would open packs in a circle.
       let current = input.packVariantId;

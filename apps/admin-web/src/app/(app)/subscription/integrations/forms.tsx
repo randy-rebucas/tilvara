@@ -8,7 +8,7 @@ import { useT } from '@/i18n/client';
 import type { MessageKey } from '@/i18n/messages';
 
 /** As @1pos/validation lists them (API_KEY_SCOPES, WEBHOOK_TOPIC_NAMES). */
-export const SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read', 'appointments.read'] as const;
+export const SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read'] as const;
 export const TOPICS = ['sale.completed', 'sale.returned', 'sale.voided', 'stock.low', 'stock.below_zero'] as const;
 
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);

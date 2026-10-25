@@ -85,7 +85,7 @@ export async function expiryAlertMail(client: PoolClient, payload: Record<string
 
 /**
  * A sale that drew expired or held stock where it is blocked (ADR-0025 §4): an offline sale recorded at
- * sync, or a recipe's consumption. Read from the sale's lot draws; null when there are none.
+ * sync. Read from the sale's lot draws; null when there are none.
  */
 export async function expiredSoldMail(client: PoolClient, payload: Record<string, unknown>): Promise<{ subject: string; text: string } | null> {
   const { rows: [sale] } = await client.query<{ sale_number: number; branch: string; code: string }>(
@@ -111,7 +111,7 @@ export async function expiredSoldMail(client: PoolClient, payload: Record<string
     text: [
       `Sale ${reference} at ${sale.branch} took stock that is expired or on hold:`,
       ...rows.map((r) => `- ${r.name} (${r.sku})${r.lot_code ? `, lot ${r.lot_code}` : ''}, expiry ${r.expires_on}: ${r.quantity}`),
-      'Check the sale with the pharmacist, and write off or return what is left of these lots.',
+      'Check the sale, and write off or return what is left of these lots.',
     ].join('\n'),
   };
 }

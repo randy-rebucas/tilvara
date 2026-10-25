@@ -180,7 +180,7 @@ percentage tax computed on 896.00 (3%) = 26.88
 
 ## 8. Service charge — RA 11360 (2019) — **Partially verified**
 - Service charges collected by hotels, restaurants, and similar establishments must be distributed **100%** **equally** among covered (non-managerial) employees (previously 85/15). DOLE **DO 242-2024** (effective 1 Feb 2024) replaced DO 206-2019: distribution at least twice a month, no more than 16 days apart; reportedly covers agency/contractual workers and distribution by actual hours/days worked.
-- Tips/gratuities voluntarily given are separate (not "service charge") — treatment **unverified**.
+- Tips/gratuities voluntarily given are separate (not "service charge") — treatment **unverified**. *(2026-10-25: tips are no longer taken; old tips stay as recorded.)*
 - **Tilvara implication:** service charge is a separate, configurable charge line (rate, applies to dine-in/takeout, taxable VAT status configurable — VAT on service charge commonly applied; **confirm**), never merged into item price; report "service charge collected per period" to support DOLE distribution; optional per-employee hours import for distribution calculation (P2).
 
 ## 9. Data Privacy Act of 2012 (RA 10173) and NPC rules — **Partially verified**
@@ -195,6 +195,8 @@ percentage tax computed on 896.00 (3%) = 26.88
 - **Tilvara implication:** Never touch raw PAN. Use PH acquirers/terminals with semi-integrated or P2PE terminals (card data stays on the terminal) and hosted/redirect payment pages for online ordering (target SAQ A / SAQ P2PE scope for merchants; Tilvara as a service provider minimizes scope). QR Ph / GCash / Maya flows are not card data but still need secure webhook handling and reconciliation.
 
 ## 10A. Pharmacies and drugstores (session 30, ADR-0025) — **Unverified: for the pharmacist-in-charge, the DPO and the tax adviser**
+> **Withdrawn 2026-10-25** (retail only, migration 0112): pharmacies were removed, so prescriptions, dangerous drugs, the SC/PWD booklet and drug data below no longer apply. What stays for every shop is the expired-stock rule per branch (default ALLOW, BLOCK where set), lot codes (optional), lot holds and the batch trace; no medicine-specific claim is made. Kept as the record of what was assumed.
+
 Tilvara records what the rules below seem to need. None of it is confirmed with FDA, DOH, PDEA/DDB or the PRC, and the product makes no compliance claim for pharmacies.
 - **Prescription medicines** (RA 10918 Philippine Pharmacy Act and its IRR; RA 6675 Generics Act; DOH antibiotic stewardship). *Assumed:* Rx and antibiotic medicines are dispensed only against a prescription, the pharmacy keeps a record of each dispensing (patient, prescriber and PRC licence number, date, medicine in generic name, quantity, pharmacist), a prescription may be filled in parts, and the pharmacist may dispense a generic or brand equivalent of what was prescribed (same generic name, strength and dosage form). **To confirm:** the prescription book's required fields and format; how long dispensing records are kept (Tilvara assumes the fiscal period at least; the retention schedule leaves it to the DPO); whether antibiotics need anything beyond an ordinary prescription; whether a pharmacy assistant may hand over Rx medicines under the pharmacist's supervision (Tilvara asks for the pharmacist's approval at the till).
 - **Dangerous drugs** (RA 9165 Comprehensive Dangerous Drugs Act; DDB regulations). *Assumed:* dispensed only by a licensed pharmacist against the DOH yellow prescription form with the prescriber's S2 licence number, the patient's name and address; **one full fill per yellow form, no partial fills or refills**; the pharmacy keeps a dangerous drugs register (opening, received, dispensed, closing per drug) and reports it. Tilvara never dispenses them offline. **To confirm:** the register format and reporting period, partial fills, which items the business must class as dangerous (the business classes its own items; Tilvara keeps no official list).
@@ -227,9 +229,9 @@ Tilvara records what the rules below seem to need. None of it is confirmed with 
 12. Is RMC 98-2026 (PTI/PTT/downtime rules) authentic and what does it say verbatim?
 13. Retention: 5 years (EOPT) vs any longer requirement for e-journals or sales machines?
 14. Offline operation: is issuing invoices from a disconnected terminal (later sync) acceptable for accredited POS? (We believe yes since non-volatile local storage is required, but confirm.)
-15. VAT treatment of service charge; tips.
+15. VAT treatment of service charge; tips. *(Moot for new sales since 2026-10-25: neither is taken any more; only the treatment of rows already recorded remains.)*
 16. NPC: does Tilvara need DPS registration as a PIP, and are merchants required to register because of SC/PWD data?
-17. Pharmacies (§10A): the prescription book and dangerous drugs register formats and retention; partial fills of yellow prescriptions; the current SC/PWD purchase booklet rule for medicines; whether the lot must appear on the invoice. (Pharmacist-in-charge and DPO; tax adviser for the booklet and VAT-exempt lists.)
+17. *(Moot since 2026-10-25: pharmacies were removed.)* Pharmacies (§10A): the prescription book and dangerous drugs register formats and retention; partial fills of yellow prescriptions; the current SC/PWD purchase booklet rule for medicines; whether the lot must appear on the invoice. (Pharmacist-in-charge and DPO; tax adviser for the booklet and VAT-exempt lists.)
 
 ## Release gates (must all pass before selling to PH merchants as an invoicing POS)
 

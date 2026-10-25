@@ -27,7 +27,7 @@ describe('browser-tab titles', () => {
   });
 
   it('gives every page a title through pageTitle(), never a literal English one', () => {
-    expect(pages.length).toBeGreaterThan(100);
+    expect(pages.length).toBeGreaterThan(80);
     const missing: string[] = [];
     const unknown: string[] = [];
     for (const page of pages) {

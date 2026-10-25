@@ -3,14 +3,11 @@ import { notFound } from 'next/navigation';
 import { ActionButton, ReasonAction } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { api, apiOrNull, type Branch, type CreditEntry, type Customer, type CustomerSale, type Me } from '@/lib/api';
-import { servesAppointments, servesPharmacy } from '@/lib/business-type';
+import { apiOrNull, type Branch, type CreditEntry, type Customer, type CustomerSale } from '@/lib/api';
 import { formatDateTime, formatTin, peso, signOf } from '@/lib/format';
 import { branchLabel, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { ConsentForm, EditCustomerForm, ExportButton } from '../forms';
-import { SalonHistory } from './salon-history';
-import { CustomerPrescriptions } from './prescriptions';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('customers.item');
@@ -23,12 +20,11 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [customer, sales, credit, branches, me] = await Promise.all([
+  const [customer, sales, credit, branches] = await Promise.all([
     apiOrNull<Customer>(`/customers/${id}`),
     apiOrNull<{ data: CustomerSale[] }>(`/customers/${id}/sales?limit=50`),
     apiOrNull<{ data: CreditEntry[] }>(`/customers/${id}/store-credit`),
     apiOrNull<{ data: Branch[] }>('/branches'),
-    api<Me>('/me'),
   ]);
   if (!customer) notFound();
   const manage = customer.canManage && !customer.anonymisedAt;
@@ -104,12 +100,6 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
             <ReasonAction url={`/api/v1/customers/${customer.id}/anonymise`} label={t('cust.anonymise')} reasonLabel={t('common.reason')} hint={t('cust.anonymiseHint')} danger />
           )}
         </div>
-      )}
-
-      {/* Client history for a salon, spa or barber shop (ADR-0022 §8). */}
-      {servesAppointments(me.activeTenant?.businessType) && <SalonHistory customerId={customer.id} canManage={manage} branches={branches?.data} />}
-      {servesPharmacy(me.activeTenant?.businessType) && (me.activeTenant?.permissions.includes('pharmacy.read') ?? false) && (
-        <CustomerPrescriptions customerId={customer.id} branches={branches?.data?.filter((b) => !b.archivedAt)} canRecord={me.activeTenant?.permissions.includes('pharmacy.dispense') ?? false} />
       )}
 
       <section>

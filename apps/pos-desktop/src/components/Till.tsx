@@ -3,7 +3,7 @@ import { Printer, Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
-import { offlineReceiptToPrintable, tipLabel } from '../lib/printing';
+import { offlineReceiptToPrintable } from '../lib/printing';
 import { useTill } from '../lib/till';
 import { AuthStub } from './AuthNote';
 import { Callout, Field, Money, Note } from './ui';
@@ -206,7 +206,6 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
             <li key={i}>
               <p className="flex justify-between gap-3"><span>{l.name}</span><span className="money">{l.amount} {l.flag}</span></p>
               <p className="text-muted">{l.quantity} × {l.unitPrice}</p>
-              {l.generic && <p className="text-[0.75rem] text-muted" data-testid="receipt-generic">{l.generic}</p>}
               {l.promotion && <p className="text-muted">{l.promotion.name} −{l.promotion.discount}</p>}
             </li>
           ))}
@@ -220,7 +219,6 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
         <div className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
           <p className="flex justify-between"><span>CASH</span><Money value={data.tendered} /></p>
           <p className="flex justify-between font-semibold"><span>Change</span><Money value={data.change} /></p>
-          {data.tip && <p className="flex justify-between" data-testid="receipt-tip"><span>{tipLabel('CASH')}</span><Money value={data.tip} /></p>}
         </div>
         <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.cashierName} · {data.register.name}</p>
       </div>

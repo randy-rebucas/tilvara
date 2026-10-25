@@ -19,7 +19,7 @@ import {
   mapInSequence,
 } from '@1pos/database';
 import { toDec } from '@1pos/money';
-import { cashMovementPosting, cashVariancePosting, tipPayoutPosting } from '@1pos/accounting';
+import { cashMovementPosting, cashVariancePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
 import type { ApproveVarianceInput, CashierSessionListQuery, CashMovementInput, CloseCashierSessionInput, OpenCashierSessionInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -182,22 +182,10 @@ export class CashService extends TenantService {
       if (session.status !== 'OPEN') throw notOpen();
       const out = input.type !== 'PAY_IN';
       const amount = out ? toDec(input.amount).negated().toString() : input.amount;
-      // Cash that leaves (a pay-out, or tips handed to staff, session 25) must be in the drawer.
+      // Cash that leaves (a pay-out) must be in the drawer.
       if (out) {
         const available = toDec(await expectedCash(db, id));
         if (available.lt(input.amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for that', { available: available.toFixed(2) });
-      }
-      // Tips are paid out against what is owed to staff: the branch's TIPS_PAYABLE as the books hold it.
-      // Serialized per branch, so two drawers cannot pay the same tips out twice.
-      if (input.type === 'TIP_PAYOUT') {
-        await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`tips-payout:${session.branchId}`}, 0))`);
-        const { rows: [owed] } = await db.execute<{ owed: string }>(sql`
-          SELECT coalesce(sum(l.credit - l.debit), 0)::text AS owed
-            FROM journal_lines l JOIN accounts a ON a.id = l.account_id
-           WHERE a.system_key = 'TIPS_PAYABLE' AND a.legal_entity_id = ${scope.legalEntityId} AND l.branch_id = ${session.branchId}`);
-        if (toDec(owed!.owed).lt(input.amount)) {
-          throw new AppError('TIPS_EXCEEDED', 'More than the tips owed to staff at this branch', HttpStatus.CONFLICT, { owed: toDec(owed!.owed).toFixed(2) });
-        }
       }
       const [row] = await db
         .insert(cashMovements)
@@ -209,8 +197,8 @@ export class CashService extends TenantService {
         branchId: session.branchId,
         sourceType: 'CASH_MOVEMENT',
         sourceId: row!.id,
-        memo: `${input.type === 'TIP_PAYOUT' ? 'Tips paid out' : out ? 'Pay-out' : 'Pay-in'}: ${input.reason}`,
-        lines: input.type === 'TIP_PAYOUT' ? tipPayoutPosting(input.amount, session.branchId) : cashMovementPosting(amount, session.branchId),
+        memo: `${out ? 'Pay-out' : 'Pay-in'}: ${input.reason}`,
+        lines: cashMovementPosting(amount, session.branchId),
         createdBy: auth.userId,
       });
       await this.audit(db, auth, `cash.${input.type.toLowerCase()}`, 'cashier_session', id, { amount: input.amount, reason: input.reason });
@@ -234,7 +222,7 @@ export class CashService extends TenantService {
             eq(paymentIntents.cashierSessionId, id),
             // Only a sale's or a tip's payment waits for a sale; one of a purpose no longer offered (a laundry
             // down payment before 0110, a folio payment before 0111) was settled by its own document (same rule as the trigger).
-            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), inArray(paymentIntents.purpose, ['SALE', 'TIP']))),
+            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), eq(paymentIntents.purpose, 'SALE'))),
           ),
         );
       if (outstanding.length) {
@@ -332,11 +320,12 @@ export class CashService extends TenantService {
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
     const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy]);
-    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry).
+    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry; tips
+    // paid out on shifts before 0112 removed tips show among them).
     const payInOut = await db
       .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
       .from(cashMovements)
-      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT', 'TIP_PAYOUT'])))
+      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT'])))
       .orderBy(cashMovements.createdAt, cashMovements.id);
     return {
       ...base,

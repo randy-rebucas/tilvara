@@ -4,7 +4,6 @@ import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
-import { servesAppointments } from '@/lib/business-type';
 import { PrintButton } from '@/components/print-button';
 import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
@@ -13,8 +12,7 @@ import { getT } from '@/i18n/server';
 export type ReportTab =
   | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z'
   | 'promotions' | 'attributes'
-  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments'
-  | 'commissions' | 'servicePackages' | 'staffTips' | 'tips' | 'usage';
+  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments';
 const PATHS: Record<ReportTab, string> = {
   sales: '/reports/sales',
   products: '/reports/products',
@@ -31,11 +29,6 @@ const PATHS: Record<ReportTab, string> = {
   discounts: '/reports/discounts',
   purchases: '/reports/purchases',
   payments: '/reports/payments',
-  commissions: '/reports/commissions',
-  servicePackages: '/reports/service-packages',
-  staffTips: '/reports/staff-tips',
-  tips: '/reports/tips',
-  usage: '/reports/ingredient-usage',
 };
 /** All branches at once: no branch to pick. */
 const CONSOLIDATED: readonly ReportTab[] = ['branches'];
@@ -46,9 +39,6 @@ const GROUPS = {
   sales: ['sales', 'products', 'promotions', 'attributes', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'z'],
   // Session 20 (SPEC §6.10): across categories and branches, discounts and price changes, purchasing, payments.
   analysis: ['category', 'branches', 'discounts', 'purchases', 'payments'],
-  // ADR-0022: a salon's staff commissions, prepaid service packages, tips per staff member, tips owed
-  // and paid out, and the supplies its services used.
-  salon: ['commissions', 'servicePackages', 'staffTips', 'tips', 'usage'],
 } as const satisfies Record<string, readonly ReportTab[]>;
 
 export interface ReportQuery {
@@ -101,20 +91,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   const { t, lang } = await getT();
   const { branches, branch, from, to } = scope;
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
-  // Only a business that takes appointments has the salon group (business type).
   const tenant = (await api<Me>('/me')).activeTenant;
-  const salon = servesAppointments(tenant?.businessType);
-  if (group === 'salon' && !salon) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
-        <Callout>
-          {t('biz.salonOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.changeTypeLink')}</a>
-        </Callout>
-      </div>
-    );
-  }
   // Analysis is the plan's `advanced_reports` (Growth and Enterprise): the group stays visible, with the
   // reason. From /me, so everyone sees it (not only those who may read the subscription).
   const notOnPlan = group === 'analysis' && tenant?.features !== undefined && !tenant.features.includes('advanced_reports');
@@ -125,7 +102,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : 'rep.salonLede')} />
+      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : 'rep.analysisLede')} />
       {/* On paper (or a saved PDF): which report, branch and range, and when it was printed. */}
       {branch && (
         <p className="hidden text-[0.9375rem] print:block" data-testid="print-heading">
@@ -134,7 +111,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
         </p>
       )}
       <div className="contents print:hidden">
-      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => g !== 'salon' || salon).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
+      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav level={2} label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
       {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, from, to, ...extra })}`} />}
       {branch && (

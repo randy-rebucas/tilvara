@@ -26,7 +26,7 @@ try {
   await fill('displayName', 'Maria Santos');
   await fill('email', `${slug}@example.ph`);
   await fill('password', 'correct horse battery staple');
-  await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').click()`);
+  check('sign-up has two steps (no choice of business type)', await evaluate(`document.body.innerText.includes('Step 1 of 2') && !document.querySelector('input[name=businessType]')`));
   await b.finishSteps();
   await waitFor(`location.pathname === '/' || document.querySelector('[role=alert]')`);
   const signupError = await evaluate(`document.querySelector('[role=alert]')?.textContent ?? ''`);
@@ -36,20 +36,12 @@ try {
   check('tokens are not readable by page JS', !(await evaluate(`document.cookie.includes('onepos_at') || document.cookie.includes('onepos_rt')`)));
   await shot('overview-empty.png');
 
-  // 2b. Business type: a retail shop sees no appointments; changing the type brings them into view.
+  // 2b. Retail only (2026-10-25): no Appointments or Pharmacy tab, and no type of business to choose.
   const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=main-nav] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
-  check('retail shop: no Appointments tab', !(await navHas('Appointments')));
-  await go('/appointments');
-  check('retail shop: appointments say they are off', await evaluate(`document.body.innerText.includes('are for a salon, spa or barber shop')`));
+  check('no Appointments or Pharmacy tab', !(await navHas('Appointments')) && !(await navHas('Pharmacy')));
   await go('/subscription/business');
-  check('business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').checked`));
-  await shot('business-type.png');
-  await evaluate(`document.querySelector('input[name=businessType][value=SALON]').click()`);
-  // The type's own form (the page also has the business name form, session 22).
-  await evaluate(`document.querySelector('input[name=businessType]').closest('form').querySelector('button.btn-primary').click()`);
-  await waitFor(`[...document.querySelectorAll('[role=status]')].some((x) => x.textContent.startsWith('Saved'))`);
-  await go('/');
-  check('after changing to Salon: Appointments tab shown', await navHas('Appointments'));
+  check('business page: the name, and no type of business to choose', await evaluate(`!!document.querySelector('input[name=businessName]') && !document.querySelector('input[name=businessType]')`));
+  await shot('business.png');
 
   // 3. CSRF: a mutation without the custom header is refused by the BFF
   const csrf = await evaluate(`fetch('/api/v1/categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' }).then((r) => r.status)`);

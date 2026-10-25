@@ -71,7 +71,7 @@ try {
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.getElementById('scan')`);
   check('shift opened; counter shows the scan field focused', await evaluate(`document.activeElement?.id === 'scan'`));
-  check('retail shop: the counter tabs are Sell, This shift and Close shift', (await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].map((x) => x.textContent.trim()).join('|')`)) === 'Sell|This shift|Close shift');
+  check('retail shop: the counter tabs are Sell, This shift and Close shift', (await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].filter((x) => x.offsetParent !== null).map((x) => x.textContent.trim()).join('|')`)) === 'Sell|This shift|Close shift');
 
   // Customer display (session 16): opened before the sale. A same-origin iframe stands in for the
   // second window (the till feeds it over a BroadcastChannel, which reaches both alike).
@@ -96,7 +96,7 @@ try {
   await evaluate(`document.querySelector('header button[title^="Help and user guide"]').click()`);
   await waitFor(`document.getElementById('guide-sell')`);
   check('the ? button opens the guide at Sell, marked "You are here"', await evaluate(`document.getElementById('guide-sell').innerText.includes('You are here') && !document.getElementById('guide-start').innerText.includes('You are here')`));
-  check('retail shop: the guide leaves out appointments and medicines, keeps the desktop till and problems', await evaluate(`!document.getElementById('guide-appointments') && !document.getElementById('guide-pharmacy') && !!document.getElementById('guide-till') && !!document.getElementById('guide-trouble')`));
+  check('the guide has the counter parts only, with the desktop till and problems', await evaluate(`[...document.querySelectorAll('[id^="guide-"][aria-labelledby]')].map((e) => e.id).join(',') === 'guide-start,guide-sell,guide-shift,guide-close,guide-till,guide-trouble'`));
   check('the counter is hidden behind the guide, which lists the counter keys', await evaluate(`document.querySelector('main').hidden`) && (await text()).includes('F8 exact cash'));
   await shot('guide-sell.png', false);
   await pressKey('F8');

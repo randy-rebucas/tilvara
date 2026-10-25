@@ -11,8 +11,8 @@ import type pg from 'pg';
  *   value ties:          per document and branch, the entry's inventory lines equal the value of
  *                        that document's movements, and goods in transit clear when received;
  *   payables:            per supplier invoice, the books owe what it still owes and cleared the GRNI its receipts held;
- *   sub-ledgers:         per legal entity, store credit 2300, packages 2310 and tips 2210 hold what their
- *                        sub-ledger rows add up to;
+ *   sub-ledgers:         per legal entity, store credit 2300 holds what
+ *                        its sub-ledger rows add up to;
  *   expiry lots:         a lot = Σ its lot movements, and an item's lots ≤ max(on hand, 0) per branch.
  *
  * Also used against the dev database after migrations (scripts in the exit review).
@@ -48,12 +48,11 @@ const DOCS = `
     UNION ALL SELECT 'PACK_OPENING', id, branch_id, 0 FROM pack_openings
     UNION ALL SELECT 'TRANSFER_DISPATCH', id, from_branch_id, 0 FROM stock_transfers
     UNION ALL SELECT 'TRANSFER_RECEIPT', id, to_branch_id, 0 FROM stock_transfers WHERE status = 'RECEIVED'
-    UNION ALL SELECT 'CASH_MOVEMENT', m.id, s.branch_id, m.amount FROM cash_movements m JOIN cashier_sessions s ON s.id = m.cashier_session_id WHERE m.type IN ('PAY_IN', 'PAY_OUT', 'TIP_PAYOUT')
+    UNION ALL SELECT 'CASH_MOVEMENT', m.id, s.branch_id, m.amount FROM cash_movements m JOIN cashier_sessions s ON s.id = m.cashier_session_id WHERE m.type IN ('PAY_IN', 'PAY_OUT')
     UNION ALL SELECT 'CASH_VARIANCE', r.cashier_session_id, s.branch_id, r.variance FROM cash_reconciliations r JOIN cashier_sessions s ON s.id = r.cashier_session_id
     UNION ALL SELECT 'SUPPLIER_INVOICE', id, branch_id, total_amount FROM supplier_invoices
     UNION ALL SELECT 'SUPPLIER_PAYMENT', id, branch_id, amount FROM supplier_payments
-    UNION ALL SELECT 'SUPPLIER_NOTE', id, branch_id, total_amount FROM supplier_notes
-    UNION ALL SELECT 'SALE_TIP_REFUND', f.id, r.branch_id, f.amount FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id),
+    UNION ALL SELECT 'SUPPLIER_NOTE', id, branch_id, total_amount FROM supplier_notes),
   inv AS (
     SELECT e.source_type AS doc_type, e.source_id AS doc_id, l.branch_id, sum(l.debit - l.credit) AS amount
       FROM journal_entries e JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
@@ -126,42 +125,18 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
     SELECT i.id, i.total_amount::text, 'overpaid' FROM supplier_invoices i
      WHERE i.total_amount + (SELECT coalesce(sum(CASE n.kind WHEN 'DEBIT' THEN n.total_amount ELSE -n.total_amount END), 0) FROM supplier_notes n WHERE n.supplier_invoice_id = i.id)
          < (SELECT coalesce(sum(a.amount), 0) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id = a.supplier_payment_id WHERE a.supplier_invoice_id = i.id AND p.voided_at IS NULL)`,
-  // Tips (session 25): each one's money moved exactly as recorded, and a void gave back exactly the tip.
-  'tip whose money did not move as recorded': `
-    SELECT t.id, t.method FROM sale_tips t
-     WHERE (t.method = 'CASH' AND t.amount <> coalesce((SELECT sum(m.amount) FROM cash_movements m WHERE m.sale_id = t.sale_id AND m.type = 'TIP'), 0))
-        OR (t.method <> 'CASH' AND NOT EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = t.payment_intent_id AND p.sale_id = t.sale_id AND p.amount = t.amount AND p.purpose = 'TIP'
-              AND (p.status = 'SUCCEEDED' OR (p.status = 'CANCELED' AND EXISTS (SELECT 1 FROM sale_tip_refunds f WHERE f.payment_intent_id = p.id AND f.method = 'CARD')))))
-    UNION ALL
-    -- A void gives back a cash tip itself (tip_refund) and a card tip afterwards (sale_tip_refunds): cash
-    -- out of drawers for tips of this void = the cash tip + a card tip the provider refused.
-    SELECT r.id, 'void' FROM sale_returns r
-     WHERE r.tip_refund <> coalesce((SELECT t.amount FROM sale_tips t WHERE t.sale_id = r.sale_id AND r.kind = 'VOID' AND t.method = 'CASH'), 0)
-        OR r.tip_refund + coalesce((SELECT f.amount FROM sale_tip_refunds f WHERE f.sale_return_id = r.id AND f.method = 'CASH'), 0)
-           <> coalesce((SELECT -sum(m.amount) FROM cash_movements m WHERE m.sale_return_id = r.id AND m.type = 'TIP_REFUND'), 0)
-    UNION ALL
-    SELECT f.id, 'card tip refund' FROM sale_tip_refunds f JOIN sale_tips t ON t.id = f.sale_tip_id JOIN sale_returns r ON r.id = f.sale_return_id
-     WHERE r.kind <> 'VOID' OR r.sale_id <> t.sale_id OR f.amount <> t.amount OR t.method = 'CASH'
-        OR (f.method = 'CARD' AND NOT EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = f.payment_intent_id AND p.id = t.payment_intent_id AND p.status = 'CANCELED'))`,
   // Balance-sheet accounts kept by a sub-ledger (audit 2026-10-21 §3): per legal entity, the books hold
   // exactly what the sub-ledger rows add up to. Balances as credit − debit. (The guest ledger 1150 and guest
-  // deposits 2320 lost their sub-ledgers with lodging in 0111: their balances stay in the books, unchecked.)
+  // deposits 2320 lost their sub-ledgers with lodging in 0111: their balances stay in the books, unchecked.
+  // Tips 2210 and prepaid service packages 2310 left the books with their rows in 0113.)
   'balance-sheet account ≠ its sub-ledger (per legal entity)': `
     WITH gl AS (
       SELECT a.system_key, a.legal_entity_id, sum(l.credit - l.debit) AS balance
         FROM journal_lines l JOIN accounts a ON a.id = l.account_id
-       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'TIPS_PAYABLE')
+       WHERE a.system_key = 'CUSTOMER_STORE_CREDIT'
        GROUP BY 1, 2),
     sub AS (
-      SELECT 'CUSTOMER_STORE_CREDIT' AS system_key, legal_entity_id, sum(amount) AS balance FROM customer_credit_entries GROUP BY 2
-      UNION ALL SELECT 'PREPAID_SERVICES', p.legal_entity_id, sum(e.value) FROM customer_package_entries e JOIN customer_packages p ON p.id = e.customer_package_id GROUP BY 2
-      -- Tips: taken with sales − given back by voids (cash tip_refund, card tips' sale_tip_refunds) − paid out from drawers.
-      UNION ALL SELECT 'TIPS_PAYABLE', le, sum(v) FROM (
-        SELECT s.legal_entity_id AS le, t.amount AS v FROM sale_tips t JOIN sales s ON s.id = t.sale_id
-        UNION ALL SELECT r.legal_entity_id, -r.tip_refund FROM sale_returns r WHERE r.tip_refund <> 0
-        UNION ALL SELECT r.legal_entity_id, -f.amount FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id
-        UNION ALL SELECT b.legal_entity_id, m.amount FROM cash_movements m JOIN cashier_sessions cs ON cs.id = m.cashier_session_id JOIN branches b ON b.id = cs.branch_id
-         WHERE m.type = 'TIP_PAYOUT') tips GROUP BY 2)
+      SELECT 'CUSTOMER_STORE_CREDIT' AS system_key, legal_entity_id, sum(amount) AS balance FROM customer_credit_entries GROUP BY 2)
     SELECT coalesce(g.system_key, s.system_key) AS account, coalesce(g.legal_entity_id, s.legal_entity_id) AS legal_entity_id,
            coalesce(g.balance, 0)::text AS books, coalesce(s.balance, 0)::text AS sub_ledger
       FROM gl g FULL JOIN sub s ON s.system_key = g.system_key AND s.legal_entity_id = g.legal_entity_id

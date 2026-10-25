@@ -14,11 +14,7 @@ import {
   saleReturnCharges,
   saleReturnLines,
   saleReturns,
-  saleTips,
-  saleTipRefunds,
   saleTenders,
-  paymentIntents,
-  paymentEvents,
   sales,
   sql,
   stockAdjustments,
@@ -32,7 +28,7 @@ import {
 } from '@1pos/database';
 import { buildReturnReceipt } from './receipt.js';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
-import type { CreateSaleReturnInput, PreviewSaleReturnInput, TipRefundInput } from '@1pos/validation';
+import type { CreateSaleReturnInput, PreviewSaleReturnInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { nextNumber } from '../common/sequence.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -41,12 +37,9 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { expectedCash, loadSession } from './cash.service.js';
-import { saleReturnPosting, stockChangePosting, tipRefundPosting } from '@1pos/accounting';
-import { PaymentProvider } from '../payments/provider.js';
+import { saleReturnPosting, stockChangePosting } from '@1pos/accounting';
 import { activeCustomer } from '../customers/customers.service.js';
 import { post } from '../accounting/ledger.js';
-import { packageReturnValue, returnPackages, splitByWeight } from '../salon/packages.js';
-import { returnFills } from '../pharmacy/dispensing.js';
 import { assertTendersCurrent } from './retired-tenders.js';
 
 const BUCKETS = [
@@ -54,8 +47,6 @@ const BUCKETS = [
   'vatExemptSales', 'zeroRatedSales', 'percentageTaxSales',
 ] as const;
 type Bucket = (typeof BUCKETS)[number];
-/** The buckets whose sum is a line's sales ex VAT. */
-const SALES_BUCKETS = ['vatableSales', 'vatExemptSales', 'zeroRatedSales', 'percentageTaxSales'] as const;
 type Amounts = Record<Bucket | 'amountDue', Dec>;
 
 const zero = (): Amounts => Object.fromEntries([...BUCKETS, 'amountDue'].map((k) => [k, new Dec(0)])) as Amounts;
@@ -113,90 +104,13 @@ async function recordDamagedWaste(
 export class ReturnsService extends TenantService {
   protected readonly conflicts: ConflictMap = {};
 
-  constructor(
-    @Inject(TenantDb) tenantDb: TenantDb,
-    @Inject(PaymentProvider) private readonly provider: PaymentProvider,
-  ) {
+  constructor(@Inject(TenantDb) tenantDb: TenantDb) {
     super(tenantDb);
   }
 
-  /**
-   * A void or return. A voided sale's card tip is given back right after the void commits, by
-   * cancelling the tip's own charge (the provider is never called inside a transaction); if that
-   * cannot be done now, the void says so (`tipRefundPending`) and `refundTip` finishes it later.
-   */
-  async create(auth: AuthContext, saleId: string, input: CreateSaleReturnInput) {
-    const doc = await this.mutate(auth, async (db) => this.view(db, await this.record(db, auth, saleId, input)));
-    if (!doc.tipRefundPending) return doc;
-    const id = String((doc as { id?: unknown }).id);
-    try {
-      await this.refundTip(auth, id, {});
-    } catch {
-      // Left pending: the slip and the sale say so; "Give the tip back" retries.
-    }
-    return this.get(auth, id);
-  }
-
-  /**
-   * Give a voided sale's card tip back (session 25): cancel its charge with the provider; when the
-   * provider refuses, from the drawer in cash (the void's shift, or `cashierSessionId` if that one has
-   * closed). Once per void: a second call returns what was done. A provider that cancelled but whose
-   * answer was lost is asked again before any cash leaves the drawer.
-   */
-  async refundTip(auth: AuthContext, saleReturnId: string, input: TipRefundInput) {
-    const plan = await this.read(auth, async (db) => {
-      const [doc] = await db.select().from(saleReturns).where(eq(saleReturns.id, saleReturnId));
-      if (!doc) throw notFound('Return');
-      this.assertCan(auth, 'sales.void', { legalEntityId: doc.legalEntityId, branchId: doc.branchId, registerId: doc.registerId });
-      const [tip] = doc.kind === 'VOID' ? await db.select().from(saleTips).where(eq(saleTips.saleId, doc.saleId)) : [];
-      if (!tip || tip.method === 'CASH') throw unprocessable('NO_CARD_TIP', 'This void has no card tip to give back');
-      const [done] = await db.select().from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, saleReturnId));
-      return { doc, tip, done };
-    });
-    if (plan.done) return this.get(auth, saleReturnId);
-    const intentId = plan.tip.paymentIntentId!;
-    let cancelled = (await this.provider.cancel(intentId)).status === 'CANCELED';
-    // Cancelled on an earlier attempt whose answer was lost: the provider says so, never cash twice.
-    if (!cancelled) {
-      const found = await this.provider.retrieve(intentId);
-      cancelled = found.status === 'FAILED' && found.failureCode === 'canceled';
-    }
-    await this.tenantDb.run(auth, async (db) => {
-      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`tip-refund:${saleReturnId}`}, 0))`);
-      const [already] = await db.select().from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, saleReturnId));
-      if (already) return;
-      const { doc, tip } = plan;
-      const tenantId = tenantOf(auth).tenantId;
-      let sessionId: string | null = null;
-      if (!cancelled) {
-        sessionId = input.cashierSessionId ?? doc.cashierSessionId;
-        const { session } = await loadSession(db, sessionId, true);
-        if (session.status !== 'OPEN' || session.branchId !== doc.branchId) {
-          throw new AppError('TIP_REFUND_NEEDS_DRAWER', 'The card provider refused; give the tip back in cash from an open drawer at this branch', HttpStatus.CONFLICT);
-        }
-        const drawer = toDec(await expectedCash(db, session.id));
-        if (drawer.lt(tip.amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the tip', { available: drawer.toFixed(2) });
-      }
-      const [row] = await db.insert(saleTipRefunds).values({
-        tenantId, saleReturnId, saleTipId: tip.id, method: cancelled ? 'CARD' : 'CASH',
-        paymentIntentId: cancelled ? tip.paymentIntentId : null, amount: tip.amount, createdBy: auth.userId,
-      }).returning();
-      if (cancelled) {
-        await db.update(paymentIntents).set({ status: 'CANCELED' }).where(eq(paymentIntents.id, intentId));
-        await db.insert(paymentEvents).values({ tenantId, paymentIntentId: intentId, type: 'CANCELED', detail: { saleReturnId, tip: true }, createdBy: auth.userId });
-      } else {
-        await db.insert(cashMovements).values({
-          tenantId, cashierSessionId: sessionId!, type: 'TIP_REFUND', amount: toDec(tip.amount).negated().toString(), saleId: doc.saleId, saleReturnId,
-          reason: `Card tip of void #${doc.returnNumber} (card refused)`, createdBy: auth.userId,
-        });
-      }
-      await post(db, {
-        tenantId, legalEntityId: doc.legalEntityId, branchId: doc.branchId, sourceType: 'SALE_TIP_REFUND', sourceId: row!.id,
-        memo: `Tip given back, void #${doc.returnNumber}`, lines: tipRefundPosting(tip.amount, cancelled ? 'CARD' : 'CASH', doc.branchId), createdBy: auth.userId,
-      });
-      await this.audit(db, auth, 'sale.tip_refunded', 'sale', doc.saleId, { saleReturnId, method: cancelled ? 'CARD' : 'CASH', amount: toDec(tip.amount).toFixed(2) });
-    });
-    return this.get(auth, saleReturnId);
+  /** A void or return. */
+  create(auth: AuthContext, saleId: string, input: CreateSaleReturnInput) {
+    return this.mutate(auth, async (db) => this.view(db, await this.record(db, auth, saleId, input)));
   }
 
   /**
@@ -230,10 +144,6 @@ export class ReturnsService extends TenantService {
     const toCredit = input.refundTo === 'STORE_CREDIT';
     if (toCredit && options.exchange) throw unprocessable('EXCHANGE_IN_CASH', 'An exchange puts the refund towards the new items');
     const creditCustomer = toCredit ? await activeCustomer(db, input.customerId ?? sale.customerId ?? notNamed()) : null;
-    // A void gives the sale's tip back too (session 25): a cash tip here, from the drawer; a card tip
-    // by cancelling its charge once this commits (`refundTip`). A return keeps the tip.
-    const [tip] = input.kind === 'VOID' ? await db.select({ amount: saleTips.amount, method: saleTips.method }).from(saleTips).where(eq(saleTips.saleId, saleId)) : [];
-    const tipRefund = toDec(tip?.method === 'CASH' ? tip.amount : '0');
     const tenders = await db.select({ method: saleTenders.method, amount: saleTenders.amount }).from(saleTenders).where(eq(saleTenders.saleId, saleId));
     assertTendersCurrent(tenders);
     const creditUsed = tenders.filter((t) => t.method === 'STORE_CREDIT').reduce((a, t) => a.plus(t.amount), new Dec(0));
@@ -247,9 +157,8 @@ export class ReturnsService extends TenantService {
     }
     const cashBack = toCredit ? new Dec(0) : refund.minus(creditBack);
     if (!options.exchange) {
-      const cashOut = cashBack.plus(tipRefund);
       const drawer = toDec(await expectedCash(db, session.id));
-      if (cashOut.gt(0) && drawer.lt(cashOut)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the refund', { available: drawer.toFixed(2) });
+      if (cashBack.gt(0) && drawer.lt(cashBack)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for the refund', { available: drawer.toFixed(2) });
     }
 
     const returnNumber = await nextNumber(db, tenantId, session.registerId, 'RETURN');
@@ -269,21 +178,12 @@ export class ReturnsService extends TenantService {
         currency: sale.currency,
         ...out(totals),
         refundMethod: toCredit || (refund.gt(0) && cashBack.isZero()) ? 'STORE_CREDIT' : 'CASH',
-        tipRefund: tipRefund.toString(),
       })
       .returning();
     const inserted = await db
       .insert(saleReturnLines)
       .values(planned.map((p) => ({ tenantId, saleReturnId: doc!.id, saleLineId: p.line.id, quantity: p.quantity.toString(), disposition: p.req.disposition, ...out(p.amounts) })))
       .returning({ id: saleReturnLines.id, saleLineId: saleReturnLines.saleLineId });
-    // Medicines given back return their pieces to the prescriptions they filled (ADR-0025 §6).
-    await returnFills(db, { tenantId, userId: auth.userId }, planned.filter((p) => p.line.drugClass !== null).map((p) => ({ saleLineId: p.line.id, saleReturnLineId: inserted.find((i) => i.saleLineId === p.line.id)!.id, quantity: p.quantity })));
-    // Packages (ADR-0022 §6): whole unused packages leave what is owed; sessions come back to their package.
-    const packages = await returnPackages(
-      db,
-      { tenantId, saleReturnId: doc!.id, userId: auth.userId },
-      planned.map((p) => ({ saleLineId: p.line.id, quantity: p.quantity, soldQuantity: toDec(p.line.quantity), customerPackageId: p.line.customerPackageId, packageValue: p.line.packageValue })),
-    );
     if (chargeParts.length) {
       await db.insert(saleReturnCharges).values(chargeParts.map((c) => ({ tenantId, saleReturnId: doc!.id, saleChargeId: c.chargeId, ...out(c.amounts) })));
     }
@@ -339,9 +239,6 @@ export class ReturnsService extends TenantService {
         refundTo: toCredit ? 'STORE_CREDIT' : 'CASH',
         storeCredit: creditBack,
         restocked: restockedValue,
-        tipRefund,
-        packagesRefunded: packages.prepaid,
-        packageSessionsRestored: packages.restored,
       }, sale.branchId),
       createdBy: auth.userId,
     });
@@ -364,17 +261,10 @@ export class ReturnsService extends TenantService {
         createdBy: auth.userId,
       });
     }
-    if (tipRefund.gt(0)) {
-      await db.insert(cashMovements).values({
-        tenantId, cashierSessionId: session.id, type: 'TIP_REFUND', amount: tipRefund.negated().toString(), saleId, saleReturnId: doc!.id,
-        reason: `Tip of void #${returnNumber}`, createdBy: auth.userId,
-      });
-    }
     await this.audit(db, auth, input.kind === 'VOID' ? 'sale.voided' : 'sale.returned', 'sale', saleId, {
       saleReturnId: doc!.id,
       returnNumber,
       refund: refund.toFixed(2),
-      ...(tipRefund.gt(0) && { tipRefund: tipRefund.toFixed(2) }),
       reason: input.reason,
       ...(wasteAdjustmentId && { wasteAdjustmentId }),
       ...(options.exchange && { exchange: true }),
@@ -440,7 +330,7 @@ export class ReturnsService extends TenantService {
     sessionId: string | null,
   ) {
     const lines = await db
-      .select({ line: saleLines, soldBy: products.soldBy, productType: products.productType, allowsFraction: unitsOfMeasure.allowsFraction })
+      .select({ line: saleLines, soldBy: products.soldBy, allowsFraction: unitsOfMeasure.allowsFraction })
       .from(saleLines)
       .innerJoin(productVariants, eq(productVariants.id, saleLines.variantId))
       .innerJoin(products, eq(products.id, productVariants.productId))
@@ -456,9 +346,9 @@ export class ReturnsService extends TenantService {
       priorBy.set(p.saleLineId, acc);
     }
 
-    // Lines made from a recipe consumed their supplies, which never go back on the shelf (ADR-0014 §4).
-    // What left stock with the sale decides what goes back, not whether the item is tracked now:
-    // a line with a SALE movement is restocked, one that consumed a recipe never is (ADR-0014 §4).
+    // Lines made from a recipe (sales from before 0112 removed recipes) consumed their supplies, which
+    // never go back on the shelf. What left stock with the sale decides what goes back, not whether the
+    // item is tracked now: a line with a SALE movement is restocked, one that consumed a recipe never is.
     const movedRows = await db
       .selectDistinct({ saleLineId: stockMovements.saleLineId, type: stockMovements.type })
       .from(stockMovements)
@@ -491,10 +381,6 @@ export class ReturnsService extends TenantService {
       const before = priorBy.get(found.line.id) ?? { quantity: new Dec(0), amounts: zero() };
       const remaining = sold.minus(before.quantity);
       const q = toDec(req.quantity);
-      // Packages and their sessions come back whole (ADR-0022 §6), whatever the unit allows.
-      if ((found.productType === 'PACKAGE' || found.line.customerPackageId) && !q.isInteger()) {
-        throw unprocessable('QUANTITY_NOT_ALLOWED', found.line.customerPackageId ? 'Package sessions are returned in whole sessions' : 'A package is returned in whole units', { saleLineId: req.saleLineId });
-      }
       // Whole-unit items come back in whole units; a fractional rest of one (a share of a split restaurant check before 0111) comes back whole.
       if (found.soldBy === 'UNIT' && !found.allowsFraction && !q.isInteger() && !q.equals(remaining)) {
         throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is returned in whole units', { saleLineId: req.saleLineId });
@@ -508,13 +394,6 @@ export class ReturnsService extends TenantService {
         const lineValue = toDec(found.line[k]);
         // The final return of a line takes the exact remainder, so returns always sum to the sale.
         amounts[k] = last ? lineValue.minus(before.amounts[k]) : r2(lineValue.times(q).dividedBy(sold));
-      }
-      // A package line gives back exactly the recorded value of the packages that leave (ADR-0022 §6), so
-      // Sales returns nets to zero against Prepaid service packages; the line's last return takes the rest.
-      const packaged = found.productType === 'PACKAGE' && !last && q.gt(0) ? await packageReturnValue(db, found.line.id, q) : null;
-      if (packaged) {
-        const parts = splitByWeight(packaged, SALES_BUCKETS.map((k) => toDec(found.line[k])));
-        for (const [i, k] of SALES_BUCKETS.entries()) amounts[k] = parts[i]!;
       }
       amounts.amountDue = amounts.vatableSales.plus(amounts.vatAmount).plus(amounts.vatExemptSales).plus(amounts.zeroRatedSales).plus(amounts.percentageTaxSales).minus(amounts.statutoryDiscount);
       for (const k of [...BUCKETS, 'amountDue'] as const) totals[k] = totals[k].plus(amounts[k]);
@@ -640,22 +519,13 @@ export class ReturnsService extends TenantService {
     const money = (v: string) => toDec(v).toFixed(2);
     const fmt = <T extends Record<string, unknown>>(r: T) => {
       const o: Record<string, unknown> = { ...r };
-      for (const k of [...BUCKETS, 'amountDue', 'tipRefund']) if (typeof o[k] === 'string') o[k] = money(o[k] as string);
+      for (const k of [...BUCKETS, 'amountDue']) if (typeof o[k] === 'string') o[k] = money(o[k] as string);
       return o;
     };
-    // A voided sale's card tip (session 25): given back by card or cash afterwards, or still pending.
-    const [[cardTip], [given]] = d.kind === 'VOID'
-      ? await inSequence(
-          () => db.select({ amount: saleTips.amount }).from(saleTips).where(and(eq(saleTips.saleId, d.saleId), sql`${saleTips.method} <> 'CASH'`)),
-          () => db.select({ method: saleTipRefunds.method, amount: saleTipRefunds.amount }).from(saleTipRefunds).where(eq(saleTipRefunds.saleReturnId, d.id)),
-        )
-      : [[], []];
     return {
       ...fmt(d),
       lines: lines.map((l) => ({ ...fmt(l), quantity: toDec(l.quantity).toString() })),
-      cardTipRefund: given ? { method: given.method, amount: money(given.amount) } : null,
       refunds: await this.refundParts(db, d),
-      tipRefundPending: Boolean(cardTip && !given),
     };
   }
 }

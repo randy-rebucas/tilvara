@@ -1,23 +1,21 @@
-import { CalendarClock, FileText, MonitorUp, Minus, PauseCircle, Pill, Pin, Plus, ScanLine, ShieldCheck, Ticket, Trash2, UserRound } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { MonitorUp, Minus, PauseCircle, Plus, ScanLine, Trash2, UserRound } from 'lucide-react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
 import { gte, isPositive, isZero, peso, sub } from '../lib/money';
-import { clockTime, zonedDay } from '../lib/calendar';
 import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
 import { openCustomerDisplay, usePublishDisplay, type DisplayState } from '../lib/customer-display';
-import type { AppointmentRingUp, CounterCustomer, CustomerNote, CustomerPackage, DrugInfo, LookupItem, Quote, Receipt as ReceiptData } from '../types';
+import type { CounterCustomer, LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
-import { errorText, PaymentPanel, unanswered, usePayment, type Notice, type TipStaff } from './Payment';
+import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './Payment';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { OfflineReceipt } from './Till';
 import { Callout, Empty, Field, Money, Note } from './ui';
 import { QuickKeys } from './QuickKeys';
 import { CartDiscountPanel, CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
-import { ApprovalPanel, DrugLine, EquivalentsPanel, linePrescriptionBody, needsRx, pharmacyErrorText, PrescriptionPanel, type DispenseApproval, type LinePrescription, type NewPrescription } from './Pharmacy';
 
 interface CartLine {
   id: string;
@@ -30,24 +28,8 @@ interface CartLine {
   /** Session 20: an ordinary discount (needs `sales.discount`) and a manager-approved price. */
   discount?: LineDiscount;
   override?: LineOverride;
-  /** ADR-0022: who did or sold it (a service staff member), and the customer's package paying for it. */
-  staffId?: string;
-  packageId?: string;
-  packageName?: string;
-  /** ADR-0025: a medicine (generic label, class badge, equivalents) and the prescription the line fills. */
-  drug?: DrugInfo;
-  prescription?: LinePrescription;
   /** What the lookup said is sellable here when expired or held stock is blocked (online). */
   sellable?: string;
-}
-
-/** A service staff member as the till offers them on a line (from the server, or the till's snapshot offline). */
-interface LineStaff {
-  id: string;
-  displayName: string;
-  color: string | null;
-  /** The services they do; none = every service (absent offline: anyone). */
-  services?: { variantId: string }[];
 }
 
 /** What the API takes for a cart line (quote, sale, held cart); the quote sends only the SC/PWD scheme. */
@@ -60,9 +42,6 @@ function lineBody(l: CartLine, forQuote = false) {
     ...(l.discount?.kind === 'RATE' && { discountRate: rateOf(l.discount.percent) }),
     ...(l.discount?.kind === 'AMOUNT' && { discount: l.discount.amount }),
     ...(l.override && { priceOverrideId: l.override.id }),
-    ...(l.staffId && { staffId: l.staffId }),
-    ...(l.packageId && { packageId: l.packageId }),
-    ...(!forQuote && l.prescription && { prescription: linePrescriptionBody(l.prescription) }),
   };
 }
 
@@ -71,16 +50,10 @@ interface Beneficiary {
   scheme: 'SC' | 'PWD';
   name: string;
   idNumber: string;
-  /** Medicines on the discount (ADR-0025 §8): the purchase booklet was presented and filled in. */
-  purchaseBooklet?: boolean;
 }
 interface ProductHit {
   id: string;
   name: string;
-  drugClass?: DrugInfo['drugClass'] | null;
-  genericName?: string | null;
-  strength?: string | null;
-  dosageForm?: string | null;
   variants: { id: string; sku: string; name: string | null }[];
 }
 /** A search hit as the till lists it (server product list online, the snapshot offline). */
@@ -88,13 +61,9 @@ interface Hit {
   key: string;
   sku: string;
   name: string;
-  drug: Pick<DrugInfo, 'drugClass' | 'genericName' | 'strength' | 'dosageForm'> | null;
 }
 const hitsOf = (ps: ProductHit[]): Hit[] =>
-  ps.flatMap((p) => p.variants.map((v) => ({
-    key: v.id, sku: v.sku, name: v.name ? `${p.name} — ${v.name}` : p.name,
-    drug: p.drugClass && p.genericName && p.dosageForm ? { drugClass: p.drugClass, genericName: p.genericName, strength: p.strength ?? null, dosageForm: p.dosageForm } : null,
-  })));
+  ps.flatMap((p) => p.variants.map((v) => ({ key: v.id, sku: v.sku, name: v.name ? `${p.name} — ${v.name}` : p.name })));
 
 /**
  * The counter: scan → cart priced by the server (/v1/tax/quote) → tender → POST /v1/sales.
@@ -104,7 +73,7 @@ const hitsOf = (ps: ProductHit[]): Hit[] =>
  * Items and prices come from the till's snapshot, priced by the same tax engine the server re-runs
  * at sync; the sale is kept on the till under this checkout's transaction id.
  */
-export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd, salon = false, ringUp = null, onRingUpTaken }: {
+export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd }: {
   shift: Shift;
   cashierUserId: string;
   active?: boolean;
@@ -113,11 +82,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   /** An exchange started from This shift: the refund pays for the cart first (session 20). */
   exchange?: ExchangeStart | null;
   onExchangeEnd?: () => void;
-  /** A salon or hybrid business (ADR-0022): staff on lines, packages, client notes, appointments. */
-  salon?: boolean;
-  /** An appointment to ring up, handed over from the Appointments tab; `onRingUpTaken` once it is read. */
-  ringUp?: AppointmentRingUp | null;
-  onRingUpTaken?: () => void;
 }) {
   const { t } = useT();
   const till = useTill();
@@ -134,14 +98,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   const [hits, setHits] = useState<Hit[] | null>(null);
   /** The line whose SC/PWD, discount or price form is open. */
   const [panel, setPanel] = useState<{ lineId: string; kind: PanelKind } | null>(null);
-  // Pharmacies (ADR-0025): prescriptions recorded with this sale, and a pharmacist's approval for it.
-  const [prescriptions, setPrescriptions] = useState<NewPrescription[]>([]);
-  const [approval, setApproval] = useState<DispenseApproval | null>(null);
-  const [approving, setApproving] = useState(false);
-  /** Set when a sale was refused for want of a pharmacist: it is sent again once they approve. */
-  const retryAfterApproval = useRef(false);
-  const canDispense = permissions.includes('pharmacy.dispense');
-  const canDangerous = canDispense && permissions.includes('pharmacy.dangerous_drugs');
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [held, setHeld] = useState<HeldCart[]>([]);
   const [showHeld, setShowHeld] = useState(false);
@@ -158,19 +114,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   // Store credit pays first, up to what is due; an exchange's refund likewise (the rest is paid, or comes back as change).
   const credit = usingCredit && !exchange && isPositive(creditHere) ? (gte(creditHere, due) ? due : toDec(creditHere).toFixed(2)) : '0.00';
   const payable = exchange ? (gte(exchange.refund, due) ? '0.00' : sub(due, exchange.refund)) : sub(due, credit);
-  // Salons (ADR-0022): the branch's staff, the appointment being rung up, the customer's packages and pinned notes.
-  const [staff, setStaff] = useState<LineStaff[]>([]);
-  const [appointment, setAppointment] = useState<AppointmentRingUp['appointment'] | null>(null);
-  const [packages, setPackages] = useState<CustomerPackage[]>([]);
-  const [pinnedNotes, setPinnedNotes] = useState<CustomerNote[]>([]);
-  const staffName = (id: string) => staff.find((x) => x.id === id)?.displayName ?? appointment?.services.find((x) => x.staffId === id)?.staffName ?? '';
-  // The tip is shared among the distinct staff on the lines, in line order (ADR-0022 §7).
-  const staffKey = cart.map((l) => l.staffId ?? '').join(',');
-  const tipStaff = useMemo<TipStaff[]>(
-    () => [...new Set(cart.flatMap((l) => (l.staffId ? [l.staffId] : [])))].map((id) => ({ id, name: staffName(id) })),
-    [staffKey, staff],
-  );
-  const pay = usePayment({ shift, due: payable, setNotice, allowTip: !exchange, tipStaff });
+  const pay = usePayment({ shift, due: payable, setNotice });
 
   const loadHeld = () =>
     api<{ data: HeldCart[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`)
@@ -190,64 +134,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     if (till.mode === 'ready') void till.refreshSnapshot();
   }, [till.mode, shift.sessionId]);
 
-  // Salons: the staff who can be named on a line. Online from the server; offline from the till's snapshot.
-  useEffect(() => {
-    if (!salon) return;
-    let live = true;
-    const fromSnapshot = () => till.snapshotStaff();
-    const load: Promise<LineStaff[]> = offline
-      ? fromSnapshot()
-      : api<{ data: (LineStaff & { archivedAt: string | null })[] }>('GET', `/v1/service-staff?branchId=${shift.branch.id}`)
-          .then((r) => r.data.filter((x) => !x.archivedAt))
-          .catch(() => fromSnapshot());
-    load.then((xs) => live && setStaff(xs)).catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [salon, offline, shift.branch.id]);
-
-  // Salons: the customer's open packages (to use a session) and pinned notes (allergies, preferences).
-  useEffect(() => {
-    setPackages([]);
-    setPinnedNotes([]);
-    if (!salon || !customer || offline) return;
-    let live = true;
-    api<{ data: CustomerPackage[] }>('GET', `/v1/customers/${customer.id}/packages?open=true`)
-      .then((r) => live && setPackages(r.data.filter((p) => !p.expired)))
-      .catch(() => undefined);
-    api<{ data: CustomerNote[] }>('GET', `/v1/customers/${customer.id}/notes`)
-      .then((r) => live && setPinnedNotes(r.data.filter((n) => n.pinned)))
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [salon, customer?.id, offline]);
-
-  // An appointment handed over from the Appointments tab: its services become the cart, with their staff.
-  useEffect(() => {
-    if (!ringUp) return;
-    onRingUpTaken?.();
-    if (cart.length > 0 || pay.intents.length > 0 || exchange || receipt || offlineReceipt) {
-      setNotice({ kind: 'warn', text: t('appt.cartBusy') });
-      return;
-    }
-    const a = ringUp.appointment;
-    setCart(a.services.map((x) => ({ id: uuid(), variantId: x.variantId, sku: '', name: x.name, quantity: '1', wholeUnits: true, staffId: x.staffId })));
-    setAppointment(a);
-    setNotice(null);
-    if (a.customerId) {
-      api<CounterCustomer>('GET', `/v1/customers/${a.customerId}`)
-        .then((c) => setCustomer(c))
-        .catch((err) => setNotice({ kind: 'warn', text: errorText(err, t('common.error'), t('common.network')) }));
-    }
-    focusScan();
-  }, [ringUp?.nonce]);
-
-  // Clearing the cart forgets the appointment it was rung up for.
-  useEffect(() => {
-    if (cart.length === 0 && appointment) setAppointment(null);
-  }, [cart.length]);
-
   // Server-authoritative pricing and tax for the current cart.
   useEffect(() => {
     if (cart.length === 0) {
@@ -261,8 +147,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         if (offline) {
           if (cart.some((l) => l.statutory)) throw new OfflineRefusal(t('till.offlineSc'));
           if (cart.some((l) => l.discount || l.override)) throw new OfflineRefusal(t('till.offlineDiscount'));
-          if (cart.some((l) => l.packageId)) throw new OfflineRefusal(t('pkg.onlineOnly'));
-          const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity, staffId: l.staffId })));
+          const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity })));
           if (live) {
             setQuote(offlineQuote(r, cart));
             setNotice((n) => (n?.kind === 'error' ? null : n));
@@ -306,7 +191,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       soldBy: item.wholeUnits ? 'UNIT' : 'WEIGHT', uom: { code: '', allowsFraction: !item.wholeUnits },
       ...(item.quantity && { quantity: item.quantity }),
       ...(item.productType && { productType: item.productType as LookupItem['productType'] }),
-      ...(item.drug && { drug: item.drug }),
     };
   }
 
@@ -314,16 +198,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   function addItem(item: LookupItem, times?: string) {
     if (!item.price) {
       setNotice({ kind: 'warn', text: t('sell.unpriced', { name: item.name }) });
-      return;
-    }
-    // A dangerous drug needs the pharmacist and the yellow form checked online (ADR-0025 §6): never offline.
-    if (offline && item.drug?.drugClass === 'DANGEROUS') {
-      setNotice({ kind: 'error', text: t('rx.dangerousOffline', { name: item.name }) });
-      return;
-    }
-    // A package needs the server (the customer's balance, ADR-0022 §6): the till refuses it offline.
-    if (offline && item.productType === 'PACKAGE') {
-      setNotice({ kind: 'warn', text: t('pkg.onlineOnlyItem', { name: item.name }) });
       return;
     }
     setNotice(null);
@@ -338,11 +212,11 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       return;
     }
     const n = times ?? '1';
-    // Expired or held stock is not sold here (ADR-0025 §4): say so now, not when the sale is refused.
+    // Expired or held stock is not sold here: say so now, not when the sale is refused.
     const sellable = item.sellable?.sellable;
     const already = cart.filter((l) => l.variantId === item.variantId).reduce((a, l) => a.plus(l.quantity), toDec('0'));
-    if (sellable !== undefined && toDec(sellable).lt(already.plus(n))) setNotice({ kind: 'warn', text: t('rx.expiredWarn', { n: sellable, name: item.name }) });
-    const med = { ...(item.drug && { drug: item.drug }), ...(sellable !== undefined && { sellable }) };
+    if (sellable !== undefined && toDec(sellable).lt(already.plus(n))) setNotice({ kind: 'warn', text: t('sell.expiredWarn', { n: sellable, name: item.name }) });
+    const med = sellable !== undefined ? { sellable } : {};
     setCart((c) => {
       // Never into a discounted or manager-priced line: the approval was for what was on it then.
       const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && !l.discount && !l.override && l.wholeUnits);
@@ -374,9 +248,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         scanRef.current!.value = '';
         return;
       }
-      // By name or a medicine's generic name, from the till's own list (ADR-0025 §3).
+      // By name, from the till's own list.
       const found = await till.engine!.search(q);
-      if (found.length) setHits(found.map((i) => ({ key: i.variantId, sku: i.sku, name: i.name, drug: i.drug ?? null })));
+      if (found.length) setHits(found.map((i) => ({ key: i.variantId, sku: i.sku, name: i.name })));
       else setNotice({ kind: 'warn', text: t('till.notFoundOffline', { q }) });
     };
     try {
@@ -432,12 +306,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     const name = String(f.get('name') ?? '').trim();
     const idNumber = String(f.get('idNumber') ?? '').trim();
     if (!name || !idNumber) return;
-    // The booklet tick is offered on a medicine line only (ADR-0025 §8); once ticked it stays for that person.
-    const booklet = f.get('booklet') === 'on';
     const existing = beneficiaries.find((b) => b.scheme === scheme && b.idNumber === idNumber);
     const ref = existing?.ref ?? `b${beneficiaries.length + 1}`;
-    if (!existing) setBeneficiaries((b) => [...b, { ref, scheme, name, idNumber, ...(booklet && { purchaseBooklet: true }) }]);
-    else if (booklet && !existing.purchaseBooklet) setBeneficiaries((bs) => bs.map((b) => (b.ref === ref ? { ...b, purchaseBooklet: true } : b)));
+    if (!existing) setBeneficiaries((b) => [...b, { ref, scheme, name, idNumber }]);
     patchLine(lineId, (l) => {
       // SC/PWD and an ordinary discount never stack on one line (the tax engine refuses it).
       const { discount: _, ...rest } = l;
@@ -495,12 +366,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       await api('POST', '/v1/held-carts', {
         cashierSessionId: shift.sessionId,
         label,
-        // A package session needs the customer, who is not held with the cart: the line is held without it.
-        lines: cart.map((l) => {
-          const { packageId: _p, prescription: _rx, ...body } = lineBody(l);
-          return { ...body, name: l.name, sku: l.sku || (quote?.lines.find((q) => q.id === l.id)?.sku ?? l.variantId.slice(0, 8)), wholeUnits: l.wholeUnits };
-        }),
-        beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)).map(({ purchaseBooklet: _b, ...b }) => b),
+        lines: cart.map((l) => ({ ...lineBody(l), name: l.name, sku: l.sku || (quote?.lines.find((q) => q.id === l.id)?.sku ?? l.variantId.slice(0, 8)), wholeUnits: l.wholeUnits })),
+        beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)),
         ...(quote && { amountDue: quote.totals.amountDue }),
       }, { 'idempotency-key': uuid() });
       setHolding(false);
@@ -522,7 +389,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         ...(l.discount && { discount: { kind: 'AMOUNT' as const, amount: l.discount } }),
         // The approval travels with the line; once it has expired the quote says so and it can be removed.
         ...(l.priceOverrideId && { override: { id: l.priceOverrideId, unitPrice: '', approvedByName: null } }),
-        ...(l.staffId && { staffId: l.staffId }),
       })));
       setBeneficiaries(r.beneficiaries);
       setShowHeld(false);
@@ -544,20 +410,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     void loadHeld();
   }
 
-  /** The prescriptions recorded with this sale that a line still fills (one may have lost its line). */
-  const usedPrescriptions = prescriptions.filter((p) => cart.some((l) => l.prescription?.kind === 'new' && l.prescription.prescriptionRef === p.ref));
-
   async function completeOffline() {
     if (!pay.cashAmount || pay.intents.length > 0) return;
     try {
       const { receipt: kept } = await till.engine!.ringUp({
         cashierUserId, terminalTxnId: pay.txId, tendered: pay.cashAmount,
-        lines: cart.map((l) => ({
-          variantId: l.variantId, quantity: l.quantity, staffId: l.staffId,
-          ...(l.prescription?.kind === 'new' && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
-        })),
-        ...(usedPrescriptions.length > 0 && { prescriptions: usedPrescriptions }),
-        ...(isPositive(pay.cashTip) && { tip: pay.cashTip }),
+        lines: cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
       });
       setNotice(null);
       setOfflineReceipt(kept);
@@ -567,21 +425,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     }
   }
 
-  async function complete(approvalId?: string) {
+  async function complete() {
     if (!quote) return;
     if (offline) return completeOffline();
     const lines = cart.map((l) => lineBody(l));
-    // The booklet is said only for a discount that covers a medicine (the server records null otherwise).
-    const used = beneficiaries
-      .filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref))
-      .map(({ purchaseBooklet, ...b }) => (cart.some((l) => l.drug && l.statutory?.beneficiary === b.ref) ? { ...b, purchaseBooklet: Boolean(purchaseBooklet) } : b));
-    const dispenseApprovalId = approvalId ?? approval?.id;
-    const withCustomer = {
-      ...(customer && { customerId: customer.id }),
-      ...(usedPrescriptions.length > 0 && { prescriptions: usedPrescriptions }),
-      ...(dispenseApprovalId && { dispenseApprovalId }),
-    };
-    let refusal: unknown = null;
+    const used = beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref));
+    const withCustomer = customer ? { customerId: customer.id } : {};
     const creditTender = isPositive(credit) ? [{ method: 'STORE_CREDIT' as const, amount: credit }] : [];
     const saleId = await pay.submit(
       (body, key) =>
@@ -599,30 +448,20 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
               'POST',
               '/v1/sales',
               {
-                // Nothing to pay (package sessions only): the sale still names a tender, cash of nothing.
+                // Nothing to pay (e.g. free items): the sale still names a tender, cash of nothing.
                 cashierSessionId: shift.sessionId, ...body, tenders: creditTender.length || body.tenders.length ? [...creditTender, ...body.tenders] : [{ method: 'CASH' as const, tendered: '0.00' }],
                 lines, beneficiaries: used, expectedAmountDue: due, ...withCustomer,
-                ...(appointment && { appointmentId: appointment.id }),
               },
               { 'idempotency-key': key },
             ),
       () => setCart((c) => [...c]),
       () => till.reportUnreachable(),
-      (err) => (refusal = err),
+      (err) => {
+        const text = expiredStockText(err, t);
+        if (text) setNotice({ kind: 'error', text });
+      },
     );
-    if (!saleId) {
-      // Pharmacy refusals (ADR-0025) in plain words; a missing pharmacist opens the approval here.
-      const code = refusal instanceof ApiFailure ? refusal.error.code : null;
-      if (code === 'DISPENSE_APPROVAL_INVALID') setApproval(null);
-      if (code === 'DISPENSE_APPROVAL_REQUIRED') {
-        setApproval(null);
-        retryAfterApproval.current = true;
-        setApproving(true);
-      }
-      const text = pharmacyErrorText(refusal, t, (i) => cart[i]?.name ?? '');
-      if (text) setNotice({ kind: code === 'DISPENSE_APPROVAL_REQUIRED' ? 'warn' : 'error', text });
-      return;
-    }
+    if (!saleId) return;
     try {
       setReceipt(await api<ReceiptData>('GET', `/v1/sales/${saleId}/receipt`));
     } catch (e) {
@@ -642,17 +481,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   function newSale() {
     if (exchange) onExchangeEnd?.();
-    setAppointment(null);
     setCustomer(null);
     setUsingCredit(false);
     setPickingCustomer(false);
     setCart([]);
     setBeneficiaries([]);
     setPanel(null);
-    setPrescriptions([]);
-    setApproval(null);
-    setApproving(false);
-    retryAfterApproval.current = false;
     pay.reset();
     setReceipt(null);
     setOfflineReceipt(null);
@@ -698,94 +532,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   }
 
   const quoteLine = (id: string) => quote?.lines.find((l) => l.id === id);
-  /** Take the customer off the sale: package sessions on the cart were theirs, so the lines go back to full price. */
+  const isOpen = (lineId: string, kind: PanelKind) => panel?.lineId === lineId && panel.kind === kind;
+  const toggle = (lineId: string, kind: PanelKind) => setPanel(isOpen(lineId, kind) ? null : { lineId, kind });
   const removeCustomer = () => {
     setCustomer(null);
     setUsingCredit(false);
-    setCart((c) => (c.some((l) => l.packageId) ? c.map(({ packageId: _p, packageName: _n, ...rest }) => rest) : c));
   };
-  /**
-   * Staff offered on a line: for a service, those who do it (none listed = every service) and whoever is
-   * on it now; anyone for a product (who sold it).
-   */
-  const staffFor = (l: CartLine) => {
-    if (quoteLine(l.id)?.productType !== 'SERVICE') return staff;
-    return staff.filter((x) => x.id === l.staffId || !x.services?.length || x.services.some((v) => v.variantId === l.variantId));
-  };
-  /**
-   * A package of the customer's that covers this service line, with the sessions it has left after the
-   * other lines of this cart using it (ADR-0022 §6). Online only; never on a line with a discount of its own.
-   */
-  const packageFor = (l: CartLine) => {
-    if (offline || l.packageId || quoteLine(l.id)?.productType !== 'SERVICE') return null;
-    for (const p of packages) {
-      const item = p.services.find((x) => x.variantId === l.variantId);
-      if (!item) continue;
-      const used = cart.filter((o) => o.id !== l.id && o.packageId === p.id && o.variantId === l.variantId).reduce((a, o) => a.plus(o.quantity), toDec('0'));
-      const left = toDec(String(item.sessionsLeft)).minus(used);
-      if (left.gte(l.quantity)) return { pkg: p, left: left.toString() };
-    }
-    return null;
-  };
-  function applyPackage(lineId: string, p: CustomerPackage) {
-    // A session is paid for already: no SC/PWD, discount or approved price on it (the server refuses them).
-    patchLine(lineId, ({ statutory: _s, discount: _d, override: _o, ...rest }) => ({ ...rest, packageId: p.id, packageName: p.name }));
-    if (panel?.lineId === lineId) setPanel(null);
-    focusScan();
-  }
-  const dropPackage = (lineId: string) => patchLine(lineId, ({ packageId: _p, packageName: _n, ...rest }) => rest);
-  // A package sold needs a customer to own it (ADR-0022 §6): said before payment, not by a refused sale.
-  const packageNeedsCustomer = !customer && Boolean(quote?.lines.some((l) => l.productType === 'PACKAGE'));
-  const isOpen = (lineId: string, kind: PanelKind) => panel?.lineId === lineId && panel.kind === kind;
-  const toggle = (lineId: string, kind: PanelKind) => setPanel(isOpen(lineId, kind) ? null : { lineId, kind });
-  // Pharmacies (ADR-0025): every Rx, antibiotic or dangerous-drug line names its prescription before payment.
-  const rxMissing = cart.filter((l) => needsRx(l.drug) && !l.prescription);
-  const rxLines = cart.filter((l) => needsRx(l.drug));
-  const hasDangerous = cart.some((l) => l.drug?.drugClass === 'DANGEROUS');
-  // A cashier who may not dispense asks a pharmacist first (online; offline the server flags it for review).
-  const approvalNeeded = !offline && rxLines.length > 0 && (hasDangerous ? !canDangerous && !approval?.allowsDangerous : !canDispense && !approval);
-  const rxLineOf = (l: CartLine) => ({ id: l.id, name: l.name, quantity: l.quantity, drug: l.drug!, prescription: l.prescription });
-  function recordPrescription(p: NewPrescription, fills: Record<string, string>) {
-    setPrescriptions((ps) => [...ps, p]);
-    setCart((c) => c.map((l) => (fills[l.id] ? { ...l, prescription: { kind: 'new' as const, prescriptionRef: p.ref, itemRef: fills[l.id]! } } : l)));
-    setPanel(null);
-    focusScan();
-  }
-  function addPrescriptionItem(lineId: string, ref: string, item: NewPrescription['items'][number]) {
-    setPrescriptions((ps) => ps.map((p) => (p.ref === ref ? { ...p, items: [...p.items, item] } : p)));
-    patchLine(lineId, (l) => ({ ...l, prescription: { kind: 'new', prescriptionRef: ref, itemRef: item.ref } }));
-    setPanel(null);
-  }
-  function pickPrescription(lineId: string, p: LinePrescription) {
-    patchLine(lineId, (l) => ({ ...l, prescription: p }));
-    setPanel(null);
-    focusScan();
-  }
-  /** Swap a medicine line for another brand of the same medicine (its prescription still fits). */
-  async function swapLine(lineId: string, e: { variantId: string; sku: string }) {
-    try {
-      const item = offline ? await lookupOffline(e.sku) : await api<LookupItem>('GET', `/v1/catalog/lookup?code=${encodeURIComponent(e.sku)}&branchId=${shift.branch.id}`);
-      if (!item) return;
-      patchLine(lineId, ({ discount: _d, override: _o, sellable: _s, ...l }) => ({
-        ...l, variantId: item.variantId, sku: item.sku, name: item.name, ...(item.drug && { drug: item.drug }), ...(item.sellable && { sellable: item.sellable.sellable }),
-      }));
-      setPanel(null);
-      setNotice({ kind: 'info', text: t('rx.swapped', { name: item.name }) });
-    } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
-    }
-    focusScan();
-  }
-  function approved(a: DispenseApproval) {
-    setApproval(a);
-    setApproving(false);
-    setNotice({ kind: 'info', text: t('rx.approvedBy', { name: a.approvedByName }) });
-    // Refused for want of a pharmacist: the same sale goes again with the approval.
-    if (retryAfterApproval.current) {
-      retryAfterApproval.current = false;
-      void complete(a.id);
-    }
-  }
 
   return (
     <div className={`mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px] ${cart.length > 0 ? 'pb-28 lg:pb-5' : ''}`}>
@@ -816,15 +568,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
         {exchange && <ExchangeBanner exchange={exchange} total={quote?.totals.amountDue} onCancel={newSale} />}
 
-        {appointment && (
-          <div className="no-print flex flex-wrap items-center gap-2 rounded-[5px] border border-hair bg-white px-3 py-2" data-testid="sale-appointment">
-            <CalendarClock className="size-4 text-muted" aria-hidden />
-            <span className="font-semibold">{t('appt.ringing', { time: clockTime(appointment.startsAt, shift.branch.timezone) })}</span>
-            <span className="text-muted">{appointment.customerName ?? appointment.guestName ?? ''}</span>
-            <button type="button" className="btn btn-sm ml-auto" onClick={() => setAppointment(null)}>{t('appt.forget')}</button>
-          </div>
-        )}
-
         {/* A customer on the sale needs the server: not offered offline. */}
         {!offline && (customer ? (
           <div className="no-print flex flex-wrap items-center gap-2 rounded-[5px] border border-hair bg-white px-3 py-2" data-testid="sale-customer">
@@ -840,16 +583,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
               )}
               <button type="button" className="btn btn-sm" onClick={removeCustomer}>{t('custc.remove')}</button>
             </span>
-            {pinnedNotes.length > 0 && (
-              <ul className="grid w-full gap-1 border-t border-hair-soft pt-2 text-[0.875rem]" aria-label={t('notes.pinned')} data-testid="customer-notes">
-                {pinnedNotes.map((n) => (
-                  <li key={n.id} className="flex items-start gap-2">
-                    <Pin className="mt-0.5 size-4 shrink-0 text-orange" aria-hidden />
-                    <span className="whitespace-pre-line">{n.body}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
           </div>
         ) : pickingCustomer ? (
           <CustomerPanel canAdd={permissions.includes('customers.manage')} onPick={(c) => { setCustomer(c); setPickingCustomer(false); focusScan(); }} onCancel={() => setPickingCustomer(false)} />
@@ -895,10 +628,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
               {hits.map((h) => (
                 <li key={h.key}>
                   <button className="flex w-full items-center justify-between gap-3 rounded px-2 py-2 text-left hover:bg-paper" data-testid="search-hit" data-sku={h.sku} onClick={() => pick(h.sku)}>
-                    <span className="min-w-0">
-                      <span className="block">{h.name}</span>
-                      {h.drug && <DrugLine drug={h.drug} />}
-                    </span>
+                    <span className="min-w-0">{h.name}</span>
                     <span className="serial shrink-0 text-[0.8125rem] text-muted">{h.sku}</span>
                   </button>
                 </li>
@@ -923,28 +653,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                     <div className="grid grid-cols-[1fr_auto] items-start gap-3 xl:grid-cols-[1fr_auto_auto]">
                       <div className="min-w-0">
                         <p className="font-semibold">{l.name}</p>
-                        {l.drug && <DrugLine drug={l.drug} />}
                         <p className="serial text-[0.75rem] text-muted">
                           {l.sku || q?.sku}
                           {q && <> · <Money value={q.unitPrice} /></>}
                         </p>
                         {l.sellable !== undefined && toDec(l.sellable).lt(l.quantity) && (
-                          <p className="mt-1 text-[0.8125rem]" data-testid="line-expired"><span className="tag tag-bad">{t('rx.expiredChip', { n: l.sellable })}</span></p>
-                        )}
-                        {l.prescription && (
-                          <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]" data-testid="line-rx">
-                            <span className="chip bg-violet">
-                              {l.prescription.kind === 'record'
-                                ? t('rx.recordChip', { patient: l.prescription.patientName, left: l.prescription.left })
-                                : t('rx.newChip', { patient: (() => { const ref = l.prescription.prescriptionRef; return prescriptions.find((p) => p.ref === ref)?.patientName ?? ''; })() })}
-                            </span>
-                          </p>
-                        )}
-                        {l.packageId && (
-                          <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]" data-testid="line-package">
-                            <span className="chip bg-green">{t('pkg.fromPackage', { name: l.packageName ?? '' })}</span>
-                            <button type="button" className="btn btn-sm" onClick={() => dropPackage(l.id)}>{t('pkg.stop')}</button>
-                          </p>
+                          <p className="mt-1 text-[0.8125rem]" data-testid="line-expired"><span className="tag tag-bad">{t('sell.expiredChip', { n: l.sellable })}</span></p>
                         )}
                         {q?.promotionName && q.discount && isPositive(q.discount) && (
                           <p className="mt-1 text-[0.8125rem]" data-testid="line-promotion">
@@ -970,7 +684,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                         {b && (
                           <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]">
                             <span className="chip bg-blue">{b.scheme}</span>
-                            {l.drug && b.purchaseBooklet && <span className="tag" data-testid="line-booklet">{t('rx.bookletChip')}</span>}
                             <span>{b.name}</span>
                             <span className="serial text-muted">{b.idNumber}</span>
                             <button className="btn btn-sm btn-danger" onClick={() => clearStatutory(l.id)}>{t('sell.removeDiscount')}</button>
@@ -1009,48 +722,18 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                             }}
                           />
                         )}
-                        {salon && staff.length > 0 && (
-                          <select
-                            className="input h-9 w-auto max-w-[11rem] py-0 text-[0.875rem]"
-                            aria-label={t('staff.forLine', { name: l.name })}
-                            data-testid="line-staff"
-                            value={l.staffId ?? ''}
-                            onChange={(e) => patchLine(l.id, ({ staffId: _s, ...rest }) => (e.target.value ? { ...rest, staffId: e.target.value } : rest))}
-                          >
-                            <option value="">{t('staff.none')}</option>
-                            {staffFor(l).map((x) => <option key={x.id} value={x.id}>{x.displayName}</option>)}
-                          </select>
-                        )}
-                        {(() => {
-                          const offer = packageFor(l);
-                          return offer && (
-                            <button type="button" className="btn btn-sm" data-testid="use-package" onClick={() => applyPackage(l.id, offer.pkg)}>
-                              <Ticket className="size-4" aria-hidden /> {t('pkg.use', { n: offer.left })}
-                            </button>
-                          );
-                        })()}
-                        {needsRx(l.drug) && (
-                          <button className={`btn btn-sm ${l.prescription || isOpen(l.id, 'rx') ? '' : 'btn-primary'}`} aria-pressed={isOpen(l.id, 'rx')} data-testid="rx-button" onClick={() => toggle(l.id, 'rx')}>
-                            <FileText className="size-4" aria-hidden /> {l.prescription ? t('rx.change') : t('rx.button')}
-                          </button>
-                        )}
-                        {l.drug && (
-                          <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'equiv')} data-testid="equiv-button" onClick={() => toggle(l.id, 'equiv')}>
-                            <Pill className="size-4" aria-hidden /> {t('rx.equivalents')}
-                          </button>
-                        )}
-                        {/* Discounts and price changes need the server: not offered offline (ADR-0015 §1). A package session takes none. */}
-                        {!l.statutory && !offline && !l.packageId && (
+                        {/* Discounts and price changes need the server: not offered offline (ADR-0015 §1). */}
+                        {!l.statutory && !offline && (
                           <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'sc')} onClick={() => toggle(l.id, 'sc')}>
                             {t('sell.sc')}
                           </button>
                         )}
-                        {canDiscount && !l.statutory && !offline && !l.packageId && (
+                        {canDiscount && !l.statutory && !offline && (
                           <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'discount')} onClick={() => toggle(l.id, 'discount')}>
                             {t('disc.button')}
                           </button>
                         )}
-                        {!offline && !l.packageId && (
+                        {!offline && (
                           <button className="btn btn-sm" aria-pressed={isOpen(l.id, 'price')} onClick={() => (l.override ? setOverride(l.id, null) : toggle(l.id, 'price'))}>
                             {l.override ? t('price.undo') : t('price.button')}
                           </button>
@@ -1084,25 +767,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                         onCancel={() => setPanel(null)}
                       />
                     )}
-                    {isOpen(l.id, 'rx') && l.drug && (
-                      <PrescriptionPanel
-                        key={l.id}
-                        line={rxLineOf(l)}
-                        others={rxMissing.filter((o) => o.id !== l.id).map(rxLineOf)}
-                        customer={customer}
-                        branchId={shift.branch.id}
-                        offline={offline}
-                        prescriptions={prescriptions}
-                        today={zonedDay(new Date(), shift.branch.timezone)}
-                        onPick={(p) => pickPrescription(l.id, p)}
-                        onRecord={recordPrescription}
-                        onAddItem={(ref, item) => addPrescriptionItem(l.id, ref, item)}
-                        onCancel={() => setPanel(null)}
-                      />
-                    )}
-                    {isOpen(l.id, 'equiv') && l.drug && (
-                      <EquivalentsPanel branchId={shift.branch.id} variantId={l.variantId} drug={l.drug} offline={offline} engine={till.engine} onSwap={(e) => void swapLine(l.id, e)} onCancel={() => setPanel(null)} />
-                    )}
                     {isOpen(l.id, 'sc') && (
                       <form className="mt-3 grid gap-3 rounded-[5px] border border-hair bg-white p-4" onSubmit={(e) => applyStatutory(l.id, e)}>
                         <p className="font-semibold">{t('sell.scTitle')}</p>
@@ -1118,12 +782,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                           <Field id={`bn-${l.id}`} name="name" required label={t('sell.beneficiaryName')} autoFocus />
                           <Field id={`bid-${l.id}`} name="idNumber" required label={t('sell.idNumber')} />
                         </div>
-                        {l.drug && (
-                          <label className="flex items-start gap-2 text-[0.875rem]" data-testid="booklet">
-                            <input type="checkbox" name="booklet" className="mt-1" />
-                            <span><span className="font-semibold">{t('rx.booklet')}</span><span className="block text-[0.8125rem] text-muted">{t('rx.bookletHint')}</span></span>
-                          </label>
-                        )}
                         <div className="flex gap-2">
                           <button className="btn btn-primary">{t('sell.apply')}</button>
                           <button type="button" className="btn" onClick={() => setPanel(null)}>{t('common.cancel')}</button>
@@ -1161,32 +819,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           {quote?.requiresProfessionalReview && <div className="mt-3"><Callout kind="warn">{t('sell.pendingReview')}</Callout></div>}
         </Note>
 
-        {packageNeedsCustomer && <Callout kind="warn">{t('pkg.needsCustomer')}</Callout>}
-        {rxMissing.length > 0 && <div data-testid="rx-missing"><Callout kind="warn">{t('rx.needed', { names: rxMissing.map((l) => l.name).join(', ') })}</Callout></div>}
-        {approval && rxLines.length > 0 && (
-          <p className="no-print flex items-center gap-2 text-[0.9375rem]" data-testid="rx-approved">
-            <ShieldCheck className="size-4 text-green" aria-hidden /> {t('rx.approvedBy', { name: approval.approvedByName })}
-          </p>
-        )}
-        {approvalNeeded && !approving && (
-          <Note className="no-print grid gap-2 p-4" data-testid="rx-approval-needed">
-            <p className="text-[0.9375rem]">{t(hasDangerous ? 'rx.approvalNeededDd' : 'rx.approvalNeeded')}</p>
-            <button type="button" className="btn justify-self-start" onClick={() => setApproving(true)}>
-              <ShieldCheck className="size-4" aria-hidden /> {t('rx.approvalAsk')}
-            </button>
-          </Note>
-        )}
-        {approving && !offline && (
-          <ApprovalPanel branchId={shift.branch.id} needsDangerous={hasDangerous} onApproved={approved} onCancel={() => { setApproving(false); retryAfterApproval.current = false; }} />
-        )}
-        {offline && appointment && <Callout kind="warn">{t('appt.offlineRingUp')}</Callout>}
-
         <PaymentPanel
           pay={pay}
           priced={cart.length > 0 && !!quote && !quoting}
           submitLabel={offline ? t('till.offlineSubmit') : exchange ? t('exch.complete') : t('pay.complete')}
           onSubmit={() => void complete()}
-          canSubmit={cart.length > 0 && !packageNeedsCustomer && rxMissing.length === 0 && !approvalNeeded && !(offline && (cart.some((l) => l.statutory || l.discount || l.override || l.packageId) || exchange || appointment))}
+          canSubmit={cart.length > 0 && !(offline && (cart.some((l) => l.statutory || l.discount || l.override) || exchange))}
           cashOnly={offline}
         />
       </aside>
@@ -1210,7 +848,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 }
 
 /** The form open under a cart line. */
-type PanelKind = 'sc' | 'discount' | 'price' | 'rx' | 'equiv';
+type PanelKind = 'sc' | 'discount' | 'price';
 
 /** A held cart's line as the server gives it back on resume. */
 interface HeldLine {
@@ -1224,7 +862,16 @@ interface HeldLine {
   discountRate?: string;
   discount?: string;
   priceOverrideId?: string;
-  staffId?: string;
+}
+
+/** 409 EXPIRED_STOCK: only expired or held stock is left for some lines (the server's answer, in the cashier's words). */
+function expiredStockText(err: unknown, t: ReturnType<typeof useT>['t']): string | null {
+  if (!(err instanceof ApiFailure) || err.error.code !== 'EXPIRED_STOCK') return null;
+  const d = err.error.details ?? {};
+  const lines = Array.isArray(d.lines) ? (d.lines as { name?: string; sellable?: string }[]) : [];
+  return t('sell.expiredRefused', {
+    items: lines.map((l) => (l.sellable && toDec(l.sellable).gt(0) ? `${l.name ?? ''} (${t('sell.sellableN', { n: l.sellable })})` : (l.name ?? ''))).join(', '),
+  });
 }
 
 /** A refusal the till makes itself, before pricing (e.g. a discount while offline). */

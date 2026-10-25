@@ -608,6 +608,26 @@ describe('quarantine', () => {
     expect(await audit(s)).toEqual(CLEAN);
   });
 
+  it('an old till’s sale with a tip, prescriptions, or staff or a prescription on a line (removed in 0112) is quarantined VALIDATION_FAILED alone', async () => {
+    const s = await shop('off-retired');
+    const snap = await snapshot(s);
+    const ok = sale(s, snap);
+    const tipped = { ...sale(s, snap), tip: { amount: '5.00' } } as unknown as OfflineSale;
+    const rx = { ...sale(s, snap), prescriptions: [{ ref: 'p', patientName: 'X' }] } as unknown as OfflineSale;
+    const staffed = { ...sale(s, snap), lines: [{ variantId: s.cola, quantity: '2', staffId: randomUUID() }] } as unknown as OfflineSale;
+    const filled = { ...sale(s, snap), lines: [{ variantId: s.cola, quantity: '2', prescription: { itemId: randomUUID() } }] } as unknown as OfflineSale;
+    const res = (await sync(s.t1, [tipped, rx, staffed, filled, ok]).expect(200)).body.results as { deviceSeq: number; status: string; code?: string }[];
+    expect(res.map((r) => [r.deviceSeq, r.status, r.code])).toEqual([
+      [tipped.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'], [rx.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'],
+      [staffed.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'], [filled.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED'],
+      [ok.deviceSeq, 'RECORDED', undefined],
+    ].sort((x, y) => (x[0] as number) - (y[0] as number)));
+    const [stored] = await sql<{ error_detail: { details: { issues: { path: string }[] } } }>(s, `SELECT error_detail FROM terminal_transactions WHERE terminal_txn_id = $1`, [tipped.terminalTxnId]);
+    expect(stored!.error_detail.details.issues.map((i) => i.path)).toContain('tip');
+    // Nothing of the tip was written anywhere.
+    expect(await sql(s, `SELECT 1 FROM cash_movements WHERE type = 'TIP'`)).toEqual([]);
+  });
+
   it('a retry follows the delivery rule for snapshots: a revoked till’s on the same register is recovered (audited), another active till’s never', async () => {
     const s = await shop('off-retry-snap');
     const snap = await snapshot(s);

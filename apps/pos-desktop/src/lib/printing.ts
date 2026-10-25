@@ -32,20 +32,11 @@ const SIGNATURE = 'Signature of the beneficiary';
 
 /** A promoted line prints the promotion and what it took off under the quantity (ADR-0021). */
 const promoDetail = (detail: string, promo?: { name: string; discount: string }) => (promo ? `${detail}  ${promo.name} -${promo.discount}` : detail);
-/** A salon line (ADR-0022) adds who did it and whether it was a package session, as the server's receipt says. */
-const salonDetail = (detail: string, l: { staff?: string; packageSession?: boolean }) =>
-  [detail, ...(l.packageSession ? ['Package session'] : []), ...(l.staff ? [l.staff] : [])].join(' · ');
-
 /**
- * A medicine line (ADR-0025 §3, §5) adds its generic label and each batch its sale drew ("Lot NEW-1 ·
- * Exp 03/2027"), under the item in small print; the printer has one detail line per item, so they follow
- * the quantity there, kept apart by " | ".
+ * An expiry item's line adds each batch its sale drew ("Lot NEW-1 · Exp 03/2027"), under the item in small
+ * print; the printer has one detail line per item, so they follow the quantity there, kept apart by " | ".
  */
-export const drugDetail = (detail: string, l: { generic?: string | undefined; lots?: string[] | undefined }) =>
-  [detail, ...(l.generic ? [l.generic] : []), ...(l.lots ?? [])].join(' | ');
-
-/** Under the SC/PWD details when the discount covered a medicine and the booklet was presented (ADR-0025 §8). */
-export const BOOKLET_PRESENTED = 'Purchase booklet presented';
+export const lotDetail = (detail: string, l: { lots?: string[] | undefined }) => [detail, ...(l.lots ?? [])].join(' | ');
 
 /** The server's receipt document as a thermal-printer receipt: same content, same order, same notice. */
 export function receiptToPrintable(r: Receipt): PrintableReceipt {
@@ -55,7 +46,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     notice: r.notice,
     meta: [[r.transaction.reference, r.transaction.dateTime]],
     items: [
-      ...r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(salonDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion && l.discount ? { name: l.promotion, discount: l.discount } : undefined), l), l) })),
+      ...r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: lotDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion && l.discount ? { name: l.promotion, discount: l.discount } : undefined), l) })),
       // An older sale's service charge: its own line after the items, as the server words it.
       ...(r.charges ?? []).map((c) => ({ name: c.label, amount: `${c.amount} ${c.flag}`.trim() })),
     ],
@@ -65,10 +56,9 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     payments: [
       ...r.tenders.map((t) => ({ label: tenderLabel(t), amount: peso(t.amount) })),
       ...SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k).map(([, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v) }))),
-      ...(r.tip ? [{ label: tipLabel(r.tip.method), amount: peso(r.tip.amount) }] : []),
     ],
     blocks: r.statutory.map((s) => ({
-      lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`, ...(s.purchaseBooklet ? [BOOKLET_PRESENTED] : [])],
+      lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`],
       // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
       pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
@@ -87,18 +77,12 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
     header: [r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
     notice: r.notice,
     meta: [[r.localReference, dateTime]],
-    items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion), l) })),
+    items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion) })),
     totals: totals.map(([k, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v), ...(k === 'amountDue' && { emphasis: true }) })),
-    payments: [
-      { label: 'CASH', amount: peso(r.totals.amountDue) }, { label: 'Tendered', amount: peso(r.tendered) }, { label: 'Change', amount: peso(r.change) },
-      ...(r.tip ? [{ label: tipLabel('CASH'), amount: peso(r.tip) }] : []),
-    ],
+    payments: [{ label: 'CASH', amount: peso(r.totals.amountDue) }, { label: 'Tendered', amount: peso(r.tendered) }, { label: 'Change', amount: peso(r.change) }],
     footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `Cashier: ${r.cashierName} · ${r.register.name}`],
   };
 }
-
-/** A tip on the receipt (session 25): after the payment, for the staff, not part of the total. */
-export const tipLabel = (method: string) => (method === 'CASH' ? 'Tip (cash)' : `Tip (${method.toLowerCase()})`);
 
 /** How a tender reads on a receipt: an exchange credit names the return it came from. */
 export const tenderLabel = (t: { method: string; exchangeReturnNumber?: number }) =>

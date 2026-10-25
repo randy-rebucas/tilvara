@@ -358,7 +358,7 @@ export class AuthService {
             WHERE t.id = $1`,
           [tenantId],
         );
-        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'HYBRID', features: rows[0]?.features ?? [] };
+        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'RETAIL', features: rows[0]?.features ?? [] };
       },
       { userId: auth.userId, correlationId: auth.correlationId },
     );

@@ -20,14 +20,12 @@ import {
   type PgTableExtraConfigValue,
 } from 'drizzle-orm/pg-core';
 import { packConversions, productPrices, productVariants, promotions } from './catalog.js';
-import { recipeVersions } from './recipes.js';
 import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
 import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers, terminals } from './organization.js';
 import { tenants } from './platform.js';
 import { taxProfiles } from './tax.js';
 import { customers } from './customers.js';
-import { customerPackages, serviceStaff } from './salon.js';
 
 const money = (name: string) => numeric(name, { precision: 20, scale: 4 });
 const qty = (name: string) => numeric(name, { precision: 18, scale: 4 });
@@ -71,11 +69,8 @@ export const cashierSessions = pgTable(
   ],
 );
 
-/**
- * TIP: a cash tip taken with a sale; TIP_REFUND: a voided sale's tip given back; TIP_PAYOUT: tips
- * handed to staff from the drawer (session 25). Tips are owed to staff (TIPS_PAYABLE), never sales.
- */
-export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT'] as const;
+/** Tips (TIP, TIP_REFUND, TIP_PAYOUT) were removed with their rows on 2026-10-25 (migrations 0112–0113). */
+export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND'] as const;
 export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
 
 /** Append-only drawer ledger; expected cash = Σ amount (signed: + into the drawer). */
@@ -99,14 +94,13 @@ export const cashMovements = pgTable(
     // Declared later in this file; resolved lazily.
     foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
     index('cash_movements_session_idx').on(t.tenantId, t.cashierSessionId),
-    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND','TIP','TIP_REFUND','TIP_PAYOUT')`),
+    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND')`),
     check(
       'cash_movements_sign_check',
-      sql`(${t.type} IN ('PAY_OUT','REFUND','TIP_REFUND','TIP_PAYOUT') AND ${t.amount} < 0) OR (${t.type} IN ('PAY_IN','TIP') AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
+      sql`(${t.type} IN ('PAY_OUT','REFUND') AND ${t.amount} < 0) OR (${t.type} = 'PAY_IN' AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
     ),
-    check('cash_movements_refund_link', sql`(${t.type} IN ('REFUND','TIP_REFUND')) = (${t.saleReturnId} IS NOT NULL)`),
-    check('cash_movements_tip_link', sql`${t.type} <> 'TIP' OR ${t.saleId} IS NOT NULL`),
-    check('cash_movements_reason_check', sql`${t.type} NOT IN ('PAY_IN','PAY_OUT','TIP_PAYOUT') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
+    check('cash_movements_refund_link', sql`(${t.type} = 'REFUND') = (${t.saleReturnId} IS NOT NULL)`),
+    check('cash_movements_reason_check', sql`${t.type} NOT IN ('PAY_IN','PAY_OUT') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],
 );
 
@@ -284,24 +278,9 @@ export const saleLines = pgTable(
     priceOverrideId: uuid('price_override_id'),
     /** The promotion that priced this line (ADR-0021); its `discount` is the promotion's. */
     promotionId: uuid('promotion_id'),
-    /** Who performed or sold it (ADR-0022 §5), and their commission rate at the sale. */
-    serviceStaffId: uuid('service_staff_id'),
-    commissionRate: numeric('commission_rate', { precision: 7, scale: 6 }),
-    /** A session of this package used (ADR-0022 §6): priced at zero; `package_value` turned from owed into sales. */
-    customerPackageId: uuid('customer_package_id'),
-    packageValue: money('package_value'),
-    /** A medicine (ADR-0025): its class and "generic strength form" as sold, printed under the brand. */
-    drugClass: text('drug_class'),
-    drugLabel: text('drug_label'),
   },
   (t) => [
     unique('sale_lines_tenant_id_id_unique').on(t.tenantId, t.id),
-    foreignKey({ columns: [t.tenantId, t.serviceStaffId], foreignColumns: [serviceStaff.tenantId, serviceStaff.id] }),
-    foreignKey({ columns: [t.tenantId, t.customerPackageId], foreignColumns: [customerPackages.tenantId, customerPackages.id] }),
-    index('sale_lines_staff_idx').on(t.tenantId, t.serviceStaffId).where(sql`${t.serviceStaffId} IS NOT NULL`),
-    index('sale_lines_package_idx').on(t.tenantId, t.customerPackageId).where(sql`${t.customerPackageId} IS NOT NULL`),
-    check('sale_lines_staff_rate', sql`(${t.serviceStaffId} IS NULL) = (${t.commissionRate} IS NULL)`),
-    check('sale_lines_package_value', sql`(${t.customerPackageId} IS NULL) = (${t.packageValue} IS NULL) AND coalesce(${t.packageValue}, 0) >= 0`),
     foreignKey({ columns: [t.tenantId, t.promotionId], foreignColumns: [promotions.tenantId, promotions.id] }),
     index('sale_lines_promotion_idx').on(t.tenantId, t.promotionId).where(sql`${t.promotionId} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.priceOverrideId], foreignColumns: [priceOverrides.tenantId, priceOverrides.id] }),
@@ -431,7 +410,7 @@ export const paymentIntents = pgTable(
     providerReference: text('provider_reference'),
     failureCode: text('failure_code'),
     saleId: uuid('sale_id'),
-    /** What the charge pays for (session 25): the sale itself, or a tip given with it (`sale_tips`). */
+    /** What the charge pays for: a sale (other values are history of removed features, NOT VALID in 0111–0112). */
     purpose: text('purpose').notNull().default('SALE'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -439,10 +418,11 @@ export const paymentIntents = pgTable(
   },
   (t) => [
     unique('payment_intents_tenant_id_id_unique').on(t.tenantId, t.id),
-    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE','TIP')`),
+    // NOT VALID in 0111: payments of removed industries stand, a new one is for a sale.
+    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE')`),
     check(
       'payment_intents_consumer_check',
-      sql`(${t.saleId} IS NULL OR ${t.purpose} IN ('SALE','TIP'))`,
+      sql`(${t.saleId} IS NULL OR ${t.purpose} IN ('SALE'))`,
     ),
     unique('payment_intents_request_key_unique').on(t.tenantId, t.requestKey),
     foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
@@ -454,8 +434,7 @@ export const paymentIntents = pgTable(
     check('payment_intents_status_check', sql`${t.status} IN ('PROCESSING','SUCCEEDED','FAILED','UNKNOWN','CANCELED')`),
     check('payment_intents_method_check', sql`${t.method} IN ('CARD','QR','EWALLET')`),
     check('payment_intents_amount_positive', sql`${t.amount} > 0`),
-    // A card tip of a voided sale is cancelled with the provider afterwards (session 25): consumed, then CANCELED.
-    check('payment_intents_consumed_only_succeeded', sql`${t.saleId} IS NULL OR ${t.status} = 'SUCCEEDED' OR (${t.purpose} = 'TIP' AND ${t.status} = 'CANCELED')`),
+    check('payment_intents_consumed_only_succeeded', sql`${t.saleId} IS NULL OR ${t.status} = 'SUCCEEDED'`),
   ],
 );
 
@@ -521,66 +500,6 @@ export const saleTenders = pgTable(
   ],
 );
 
-/**
- * A tip given with a sale (session 25): in cash, or by its own card/QR payment of the same checkout.
- * Not part of the sale's amount due or its tenders (receipts, Z readings and tax see none of it); the
- * books credit TIPS_PAYABLE. Append-only. A void gives the tip back in cash (`sale_returns.tip_refund`).
- */
-export const saleTips = pgTable(
-  'sale_tips',
-  {
-    id: uuid('id').primaryKey().default(sql`uuidv7()`),
-    tenantId: uuid('tenant_id').notNull(),
-    saleId: uuid('sale_id').notNull(),
-    method: text('method').notNull(),
-    paymentIntentId: uuid('payment_intent_id'),
-    amount: money('amount').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    unique('sale_tips_tenant_id_id_unique').on(t.tenantId, t.id),
-    foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
-    foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
-    uniqueIndex('sale_tips_one_per_sale').on(t.tenantId, t.saleId),
-    uniqueIndex('sale_tips_intent_once').on(t.tenantId, t.paymentIntentId).where(sql`${t.paymentIntentId} IS NOT NULL`),
-    check('sale_tips_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET')`),
-    check('sale_tips_intent_check', sql`(${t.method} = 'CASH') = (${t.paymentIntentId} IS NULL)`),
-    check('sale_tips_amount_check', sql`${t.amount} > 0`),
-  ],
-);
-
-/**
- * A card tip given back after its sale was voided (session 25): the tip's own charge cancelled with
- * the provider (CARD), or, when the provider refused, cash from the void's drawer (CASH, with a
- * TIP_REFUND movement). Written after the void commits, since the provider is never called inside a
- * transaction; one per void. Append-only. A cash tip is given back inside the void (`tip_refund`).
- */
-export const saleTipRefunds = pgTable(
-  'sale_tip_refunds',
-  {
-    id: uuid('id').primaryKey().default(sql`uuidv7()`),
-    tenantId: uuid('tenant_id').notNull(),
-    saleReturnId: uuid('sale_return_id').notNull(),
-    saleTipId: uuid('sale_tip_id').notNull(),
-    method: text('method').notNull(),
-    paymentIntentId: uuid('payment_intent_id'),
-    amount: money('amount').notNull(),
-    createdBy: uuid('created_by').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    unique('sale_tip_refunds_tenant_id_id_unique').on(t.tenantId, t.id),
-    // Declared later in this file; resolved lazily.
-    foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
-    foreignKey({ columns: [t.tenantId, t.saleTipId], foreignColumns: [saleTips.tenantId, saleTips.id] }),
-    foreignKey({ columns: [t.tenantId, t.paymentIntentId], foreignColumns: [paymentIntents.tenantId, paymentIntents.id] }),
-    uniqueIndex('sale_tip_refunds_one_per_void').on(t.tenantId, t.saleReturnId),
-    check('sale_tip_refunds_method_check', sql`${t.method} IN ('CARD','CASH')`),
-    check('sale_tip_refunds_intent_check', sql`(${t.method} = 'CARD') = (${t.paymentIntentId} IS NOT NULL)`),
-    check('sale_tip_refunds_amount_check', sql`${t.amount} > 0`),
-  ],
-);
-
 // ------------------------------------------------------------------ returns (ADR-0011)
 
 /**
@@ -605,13 +524,10 @@ export const saleReturns = pgTable(
     currency: char('currency', { length: 3 }).notNull(),
     ...taxBuckets(),
     refundMethod: text('refund_method').notNull(),
-    /** A void gives the sale's tip back too, in cash (session 25); not part of `amount_due`. */
-    tipRefund: money('tip_refund').notNull().default('0'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('sale_returns_tenant_id_id_unique').on(t.tenantId, t.id),
-    check('sale_returns_tip_refund_check', sql`${t.tipRefund} >= 0 AND (${t.tipRefund} = 0 OR ${t.kind} = 'VOID')`),
     unique('sale_returns_register_number_unique').on(t.tenantId, t.registerId, t.returnNumber),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     foreignKey({ columns: [t.tenantId, t.branchId, t.registerId], foreignColumns: [registers.tenantId, registers.branchId, registers.id] }),
@@ -829,7 +745,7 @@ export const stockMovements = pgTable(
     stockTransferLineId: uuid('stock_transfer_line_id'),
     stockCountLineId: uuid('stock_count_line_id'),
     stockAdjustmentId: uuid('stock_adjustment_id'),
-    /** CONSUMPTION: the recipe version the sale line consumed with (ADR-0014 §4). */
+    /** CONSUMPTION: the recipe version the sale line consumed with (ADR-0014 §4; recipes removed in 0112, kept for those rows). */
     recipeVersionId: uuid('recipe_version_id'),
     /** UNPACK_OUT / UNPACK_IN: the pack opening (ADR-0020 §2). */
     packOpeningId: uuid('pack_opening_id'),
@@ -855,8 +771,9 @@ export const stockMovements = pgTable(
     check('stock_movements_count_link', sql`(${t.type} = 'COUNT') = (${t.stockCountLineId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.stockAdjustmentId], foreignColumns: [stockAdjustments.tenantId, stockAdjustments.id] }),
     check('stock_movements_adjustment_link', sql`(${t.type} IN ('ADJUSTMENT','WASTE')) = (${t.stockAdjustmentId} IS NOT NULL)`),
-    foreignKey({ columns: [t.tenantId, t.recipeVersionId], foreignColumns: [recipeVersions.tenantId, recipeVersions.id] }),
     check('stock_movements_consumption_link', sql`(${t.type} = 'CONSUMPTION') = (${t.recipeVersionId} IS NOT NULL)`),
+    // NOT VALID in 0112: recipes were removed; earlier consumption stands, no new one.
+    check('stock_movements_consumption_retired', sql`${t.type} <> 'CONSUMPTION'`),
     foreignKey({ columns: [t.tenantId, t.packOpeningId], foreignColumns: [packOpenings.tenantId, packOpenings.id] }),
     check('stock_movements_pack_opening_link', sql`(${t.type} IN ('UNPACK_OUT','UNPACK_IN')) = (${t.packOpeningId} IS NOT NULL)`),
     foreignKey({ columns: [t.tenantId, t.lotId], foreignColumns: [stockLots.tenantId, stockLots.id] }),

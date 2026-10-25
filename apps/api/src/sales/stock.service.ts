@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { reservedAt } from '../inventory/reservations.service.js';
-import { and, branches, eq, inArray, mapInSequence, products, productVariants, sql, stockAdjustments, stockBalances, stockLots, stockMovements, type Database } from '@1pos/database';
+import { and, branches, eq, inArray, mapInSequence, productVariants, sql, stockAdjustments, stockBalances, stockLots, stockMovements, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { stockChangePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
@@ -10,7 +10,6 @@ import { archived, notFound, TenantService, type ConflictMap } from '../common/t
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { HttpStatus } from '@nestjs/common';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { unprocessable } from '../tax/tax.service.js';
 
 /** Inventory ledger (append-only) and its trigger-maintained balances. Negative stock is allowed and visible. */
 @Injectable()
@@ -28,19 +27,11 @@ export class StockService extends TenantService {
       if (branch.archivedAt) throw archived('Branch');
       const ids = [...new Set(input.items.map((i) => i.variantId))];
       const found = await db
-        .select({ id: productVariants.id, referenceCost: productVariants.referenceCost, drugClass: products.drugClass })
+        .select({ id: productVariants.id, referenceCost: productVariants.referenceCost })
         .from(productVariants)
-        .innerJoin(products, eq(products.id, productVariants.productId))
         .where(inArray(productVariants.id, ids));
       const missing = ids.filter((id) => !found.some((f) => f.id === id));
       if (missing.length) throw new AppError('NOT_FOUND', 'Variant not found', HttpStatus.NOT_FOUND, { variantIds: missing });
-      // A dated medicine comes in with its lot (batch) number (ADR-0025 §5).
-      input.items.forEach((i, n) => {
-        if (i.expiresOn && !i.lotCode && found.find((f) => f.id === i.variantId)?.drugClass) {
-          const message = 'This medicine needs its lot (batch) number from the pack';
-          throw unprocessable('LOT_CODE_REQUIRED', message, { line: n, issues: [{ path: `items.${n}.lotCode`, message }] });
-        }
-      });
       const tenantId = tenantOf(auth).tenantId;
       // A lot named for a removal must be one this business can see (the trigger checks item and branch).
       const lotIds = [...new Set(input.items.flatMap((i) => (i.lotId ? [i.lotId] : [])))];

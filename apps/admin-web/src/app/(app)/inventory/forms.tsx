@@ -9,6 +9,8 @@ import { useT } from '@/i18n/client';
 import type { Branch, Transfer } from '@/lib/api';
 import { qty } from '@/lib/format';
 
+const orNull = (s: string) => (s === '' ? null : s);
+
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 
@@ -41,7 +43,7 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
     const kind = f.get('kind') === 'WASTE' ? 'WASTE' : 'ADJUSTMENT';
     const items = readLines(f, ['variantId', 'quantity', 'expiresOn', 'lotCode']).map((l) => {
       const quantity = kind === 'WASTE' && l.quantity && !l.quantity.startsWith('-') ? `-${l.quantity}` : l.quantity;
-      // A date only on stock coming in (ADR-0020): it makes an expiry lot; a medicine's also needs its lot code (ADR-0025 §5).
+      // A date only on stock coming in (ADR-0020): it makes an expiry lot, with its lot code when one is given.
       const inbound = l.expiresOn && !quantity?.startsWith('-');
       return { variantId: l.variantId, quantity, ...(inbound ? { expiresOn: l.expiresOn, ...(l.lotCode && { lotCode: l.lotCode }) } : {}) };
     });
@@ -71,8 +73,7 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
         addLabel={t('common.addLine')}
         removeLabel={t('common.removeLine')}
       />
-      {/* LOT_CODE_REQUIRED names its line: the message shows on that row's lot field. */}
-      <Actions pending={pending} general={(error?.code === 'LOT_CODE_REQUIRED' ? null : general(error)) ?? apiFieldError('items')} submitLabel={t('inv.adjustSave')} close={close} />
+      <Actions pending={pending} general={general(error) ?? apiFieldError('items')} submitLabel={t('inv.adjustSave')} close={close} />
     </form>
   );
 }
@@ -374,4 +375,56 @@ function OpenPackFields({ close, branchId, links }: { close: () => void; branchI
 export function OpenPackForm(props: { branchId: string; links: { id: string; label: string }[] }) {
   const { t } = useT();
   return <Disclosure label={t('packs.title')}>{(close) => <OpenPackFields close={close} {...props} />}</Disclosure>;
+}
+
+// ---------------------------------------------------------------- holds on a lot
+/** Place a hold on a lot (a recall, a supplier or FDA advisory): one branch or every branch (ADR-0025 §5). */
+export function PlaceHold({ variants, branches, initial }: { variants: { id: string; label: string }[]; branches: Branch[]; initial?: { variantId?: string; lotCode?: string } }) {
+  const { t } = useT();
+  const key = useFormKey();
+  const { pending, submit, error, fieldError } = useSubmit();
+  return (
+    <Disclosure label={t('lot.placeHold')}>
+      {(close) => (
+        <form
+          noValidate
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            const branchId = text(f, 'holdBranchId');
+            const r = await submit('POST', '/api/v1/stock/lot-holds', {
+              variantId: text(f, 'variantId'),
+              lotCode: text(f, 'lotCode'),
+              ...(branchId && { branchId }),
+              reason: text(f, 'reason'),
+              reference: orNull(text(f, 'reference')),
+            }, { idempotencyKey: key });
+            if (r.ok) close();
+          }}
+        >
+          <div className="sm:col-span-2">
+            <SelectField label={t('common.item')} name="variantId" defaultValue={initial?.variantId ?? ''} error={fieldError('variantId')}>
+              <option value="" disabled>—</option>
+              {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+            </SelectField>
+          </div>
+          <TextField label={t('exp.lot')} name="lotCode" required maxLength={64} defaultValue={initial?.lotCode ?? ''} error={fieldError('lotCode')} />
+          <SelectField label={t('lot.holdWhere')} name="holdBranchId" defaultValue="" hint={t('lot.holdWhereHint')} error={fieldError('branchId')}>
+            <option value="">{t('rep.allBranches')}</option>
+            {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
+          </SelectField>
+          <div className="sm:col-span-2">
+            <TextField label={t('common.reason')} name="reason" required maxLength={200} placeholder={t('lot.holdReasonHint')} error={fieldError('reason')} />
+          </div>
+          <TextField label={`${t('lot.holdReference')} (${t('common.optional')})`} name="reference" maxLength={100} placeholder="FDA Advisory 2026-123" error={fieldError('reference')} />
+          <div className="col-span-full flex flex-wrap items-center gap-2">
+            <button className="btn btn-primary" disabled={pending}>{t('lot.placeHold')}</button>
+            <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
+            <FormError message={general(error)} />
+          </div>
+        </form>
+      )}
+    </Disclosure>
+  );
 }

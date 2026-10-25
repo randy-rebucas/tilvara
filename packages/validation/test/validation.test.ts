@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BUSINESS_TYPES, isPrivilegedSet, PHARMACY_CODES, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, servesAppointments, signupSchema, tendersSchema, usesPackages, usesRecipes } from '../src/index.js';
+import { BUSINESS_TYPES, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -40,35 +40,17 @@ describe('role templates', () => {
     }
   });
 
-  it('decision A3: recording pharmacist licences needs two-step sign-in, where the business has that industry', () => {
-    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
-    expect(isPrivilegedSet(['pharmacy.setup'])).toBe(true);
-    expect(isPrivilegedSet(['pharmacy.setup'], 'PHARMACY')).toBe(true);
-    expect(isPrivilegedSet(['pharmacy.setup'], 'HYBRID')).toBe(true);
-    expect(isPrivilegedSet(['pharmacy.setup'], 'RETAIL')).toBe(false);
-    expect(isPrivilegedSet(of('branch_manager'), 'HYBRID')).toBe(false);
-    // Other privileged codes count everywhere.
-    expect(isPrivilegedSet(['tax.manage'], 'RETAIL')).toBe(true);
-  });
-
   it.each([
     ['0081_role_templates_senior_cashier_purchasing.sql', ['senior_cashier', 'purchasing_officer']],
-    ['0099_salons_appointments_packages_rls.sql', ['front_desk', 'stylist']],
-    ['0106_pharmacy_prescriptions_lots_rls.sql', ['pharmacist', 'pharmacy_assistant']],
   ])('migration %s back-fills exactly these templates into existing businesses', (file, keys) => {
     const sql = readFileSync(fileURLToPath(new URL(`../../database/drizzle/${file}`, import.meta.url)), 'utf8');
     for (const key of keys) {
       const t = ROLE_TEMPLATES.find((x) => x.key === key)!;
       const m = new RegExp(`\\('${key}', '${t.name}', ARRAY\\[([^\\]]*)\\]`).exec(sql);
       expect(m, key).not.toBeNull();
-      // Codes catalogued after the migration was written are granted to existing roles by their own migration (0099).
-      const later = [
-        ...(file < '0099' ? ['appointments.read', 'appointments.manage', 'staff.manage'] : []),
-        ...(file < '0106' ? PHARMACY_CODES : []),
-      ];
-      // Restaurant and lodging codes left the catalog and every role in 0111.
-      const removed = /^(restaurant|kitchen|lodging)\./;
-      expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).filter((p) => !removed.test(p)).sort()).toEqual(t.permissions.filter((p) => !later.includes(p)).sort());
+      // Restaurant and lodging codes left the catalog and every role in 0111; salon and pharmacy codes in 0112.
+      const removed = /^(restaurant|kitchen|lodging|appointments|staff|pharmacy)\./;
+      expect(m![1]!.split(',').map((s) => s.trim().replace(/'/g, '')).filter((p) => !removed.test(p)).sort()).toEqual([...t.permissions].sort());
     }
   });
 
@@ -82,48 +64,40 @@ describe('role templates', () => {
     expect(isPrivilegedSet(of('purchasing_officer'))).toBe(false);
   });
 
-  it('a retail business gets the shop roles; HYBRID gets every template', () => {
-    expect(roleTemplatesFor('RETAIL').some((t) => t.key === 'cashier')).toBe(true);
-    expect(roleTemplatesFor('RETAIL')).toEqual(ROLE_TEMPLATES.filter((t) => !t.salon && !t.pharmacy));
-    // A pharmacy (ADR-0025): the shop set plus the pharmacist and the assistant; the pharmacist needs two-step sign-in.
-    expect(roleTemplatesFor('PHARMACY').map((t) => t.key)).toEqual([...roleTemplatesFor('RETAIL').map((t) => t.key).filter((k) => !['pharmacist', 'pharmacy_assistant'].includes(k)), 'pharmacist', 'pharmacy_assistant'].sort((x, y) => ROLE_TEMPLATES.findIndex((t) => t.key === x) - ROLE_TEMPLATES.findIndex((t) => t.key === y)));
-    expect(isPrivilegedSet(ROLE_TEMPLATES.find((t) => t.key === 'pharmacist')!.permissions)).toBe(true);
-    expect(isPrivilegedSet(ROLE_TEMPLATES.find((t) => t.key === 'pharmacy_assistant')!.permissions)).toBe(false);
-    expect(roleTemplatesFor('HYBRID')).toEqual(ROLE_TEMPLATES);
-    // A sari-sari store or grocery (ADR-0020) is a shop: the retail set.
-    expect(roleTemplatesFor('GROCERY')).toEqual(roleTemplatesFor('RETAIL'));
-  });
-
-  it('a salon (ADR-0022) gets the shop roles plus front desk and stylist; nobody else but HYBRID gets those', () => {
-    const keys = (t: Parameters<typeof roleTemplatesFor>[0]) => roleTemplatesFor(t).map((x) => x.key);
-    expect(keys('SALON')).toEqual(expect.arrayContaining(['front_desk', 'stylist', 'cashier']));
-    for (const t of ['RETAIL', 'GROCERY', 'PHARMACY'] as const) expect(keys(t)).not.toContain('front_desk');
-    expect(servesAppointments('SALON')).toBe(true);
-    expect(servesAppointments('HYBRID')).toBe(true);
-    expect(servesAppointments('RETAIL')).toBe(false);
-    expect(usesRecipes('SALON')).toBe(true);
-    expect(usesRecipes('GROCERY')).toBe(false);
-    const of = (k: string) => ROLE_TEMPLATES.find((t) => t.key === k)!.permissions;
-    expect(of('stylist')).not.toContain('sales.create');
-    expect(isPrivilegedSet(of('front_desk'))).toBe(false);
-  });
-
   it('restaurant and lodging are not business types (removed 2026-10-25): no table-service or room roles, codes or tenders', () => {
     expect(BUSINESS_TYPES).not.toContain('RESTAURANT');
     expect(BUSINESS_TYPES).not.toContain('LODGING');
     expect(ROLE_TEMPLATES.map((t) => t.key)).not.toEqual(expect.arrayContaining(['restaurant_manager', 'kitchen_crew', 'housekeeping']));
     expect(PERMISSIONS.some((p) => /^(restaurant|kitchen|lodging)\./.test(p))).toBe(false);
     expect(tendersSchema.safeParse([{ method: 'ROOM_CHARGE', stayId: '0195f0a0-0000-7000-8000-000000000001' }]).success).toBe(false);
-    expect(usesRecipes('HYBRID')).toBe(true);
   });
 
   it('laundry is not a business type (removed 2026-10-25); a client never tenders a down payment', () => {
     expect(BUSINESS_TYPES).not.toContain('LAUNDRY');
     expect(ROLE_TEMPLATES.map((t) => t.key)).not.toEqual(expect.arrayContaining(['laundry_attendant', 'rider']));
     expect(PERMISSIONS.some((p) => p.startsWith('laundry.'))).toBe(false);
-    expect([usesPackages('SALON'), usesPackages('HYBRID'), usesPackages('RETAIL'), usesRecipes('SALON'), usesRecipes('RETAIL')]).toEqual([true, true, false, true, false]);
     const jobOrderId = '0195f0a0-0000-7000-8000-000000000001';
     expect(tendersSchema.safeParse([{ method: 'JOB_DEPOSIT', jobOrderId }]).success).toBe(false);
+  });
+
+  it('retail only (2026-10-25, migration 0112): no salon, pharmacy, grocery or hybrid type, roles, codes, packages, tips or prescriptions', () => {
+    expect(BUSINESS_TYPES).toEqual(['RETAIL']);
+    expect(signupSchema.parse({ email: 'a@b.ph', password: 'correct horse battery', displayName: 'A', businessName: 'B', tenantSlug: 'bb' }).businessType).toBe('RETAIL');
+    for (const t of ['SALON', 'PHARMACY', 'GROCERY', 'HYBRID']) expect(signupSchema.safeParse({ email: 'a@b.ph', password: 'correct horse battery', displayName: 'A', businessName: 'B', tenantSlug: 'bb', businessType: t }).success).toBe(false);
+    expect(ROLE_TEMPLATES.map((t) => t.key)).not.toEqual(expect.arrayContaining(['front_desk', 'stylist', 'pharmacist', 'pharmacy_assistant']));
+    expect(PERMISSIONS.some((p) => /^(appointments|staff|pharmacy)\./.test(p))).toBe(false);
+    expect(roleTemplatesFor('RETAIL')).toEqual(ROLE_TEMPLATES);
+    const product = { name: 'P', taxCategoryId: '0195f0a0-0000-7000-8000-000000000001', uomId: '0195f0a0-0000-7000-8000-000000000002', variants: [{ sku: 'P1' }] };
+    expect(createProductSchema.safeParse({ ...product, productType: 'PACKAGE', trackInventory: false }).success).toBe(false);
+    // Unknown keys (a tip, an appointment, prescriptions) are stripped, never recorded.
+    const sale = createSaleSchema.parse({
+      cashierSessionId: '0195f0a0-0000-7000-8000-000000000003', clientTransactionId: 'c1',
+      lines: [{ variantId: '0195f0a0-0000-7000-8000-000000000004', quantity: '1', staffId: '0195f0a0-0000-7000-8000-000000000005' }],
+      tenders: [{ method: 'CASH', tendered: '10' }], tip: { amount: '5' }, prescriptions: [],
+    } as unknown);
+    expect(sale).not.toHaveProperty('tip');
+    expect(sale).not.toHaveProperty('prescriptions');
+    expect(sale.lines[0]).not.toHaveProperty('staffId');
   });
 
   it('owner holds every permission; admin cannot manage the subscription', () => {

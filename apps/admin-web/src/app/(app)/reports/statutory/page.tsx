@@ -16,7 +16,6 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
   const r = scope.branch ? await loadReport<StatutoryBook>(`/reports/statutory-book?branchId=${scope.branch.id}&from=${scope.from}&to=${scope.to}`) : null;
   const rows = r?.data?.data ?? [];
   const label = (s: string) => (s === 'SC' ? 'SC' : s === 'PWD' ? 'PWD' : s);
-  const booklet = (b: boolean | null | undefined) => (b == null ? '—' : b ? t('rep.bookletYes') : t('rep.bookletNo'));
 
   const doc = (x: (typeof rows)[number]) => `${t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN')} ${x.register}-${docNo(x.number)}`;
   return (
@@ -34,16 +33,14 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
               { header: t('rep.sales'), num: true, cell: (x) => <span className="money">{peso(x.sales)}</span> },
               { header: t('rep.discount'), num: true, cell: (x) => <span className="money">{peso(x.discount)}</span> },
               { header: t('rep.net'), num: true, cell: (x) => <span className="money font-semibold">{peso(x.net)}</span> },
-              // ADR-0025 §8: whether the purchase booklet was presented, when the discount covered a medicine.
-              { header: t('rep.booklet'), cell: (x) => <span data-booklet={String(x.purchaseBooklet ?? '')}>{booklet(x.purchaseBooklet)}</span> },
             ]}
             stacked={{
               title: (x) => x.name,
-              meta: (x) => <Serial>{formatDate(x.day, lang)} · {label(x.schemeCode)} {x.idNumber} · {doc(x)}{x.purchaseBooklet != null && ` · ${t('rep.booklet')}: ${booklet(x.purchaseBooklet)}`}</Serial>,
+              meta: (x) => <Serial>{formatDate(x.day, lang)} · {label(x.schemeCode)} {x.idNumber} · {doc(x)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.discount)}</span>,
             }}
             foot={{
-              cells: [t('common.total'), '', '', ...(['sales', 'discount', 'net'] as const).map((k) => <span key={k} className="money">{peso(sumDecimal(rows.map((x) => x[k])))}</span>), ''],
+              cells: [t('common.total'), '', '', ...(['sales', 'discount', 'net'] as const).map((k) => <span key={k} className="money">{peso(sumDecimal(rows.map((x) => x[k])))}</span>)],
               title: t('rep.discount'),
               figure: <span className="money">{peso(sumDecimal(rows.map((x) => x.discount)))}</span>,
             }}

@@ -9,12 +9,11 @@ import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { MessageKey } from '@/i18n/messages';
 import type { Branch, LegalEntity, Member, Role } from '@/lib/api';
-import type { BusinessType } from '@/lib/business-type';
-import { permissionGroupsFor, PRIVILEGED_PERMISSIONS } from '@/lib/permissions';
+import { PERMISSION_GROUPS, PRIVILEGED_PERMISSIONS } from '@/lib/permissions';
 
 // ---------------------------------------------------------------- roles
 /** A custom role's name and permissions (the key is set once, at creation). */
-function RoleFields({ close, role, businessType }: { close: () => void; role?: Role; businessType?: BusinessType }) {
+function RoleFields({ close, role }: { close: () => void; role?: Role }) {
   const { t } = useT();
   const router = useRouter();
   const { pending, submit, fieldError, error } = useSubmit();
@@ -44,7 +43,7 @@ function RoleFields({ close, role, businessType }: { close: () => void; role?: R
         <legend className="mb-1 text-[0.875rem] font-semibold">{t('team.permissions')}</legend>
         <p className="text-[0.8125rem] text-muted">{t('team.privilegedNote')}</p>
         <div className="grid gap-4 md:grid-cols-2">
-          {permissionGroupsFor(businessType, role?.permissions).map((g) => (
+          {PERMISSION_GROUPS.map((g) => (
             <div key={g.key} className="rounded-[5px] border border-hair-soft p-3">
               <p className="mb-2 text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-muted">{t(`permGroup.${g.key}` as MessageKey)}</p>
               <ul className="grid gap-1.5">
@@ -74,14 +73,14 @@ function RoleFields({ close, role, businessType }: { close: () => void; role?: R
   );
 }
 
-export function NewRoleForm({ businessType }: { businessType?: BusinessType }) {
+export function NewRoleForm() {
   const { t } = useT();
-  return <Disclosure label={t('team.newRole')}>{(close) => <RoleFields close={close} businessType={businessType} />}</Disclosure>;
+  return <Disclosure label={t('team.newRole')}>{(close) => <RoleFields close={close} />}</Disclosure>;
 }
 
-export function EditRoleForm({ role, businessType }: { role: Role; businessType?: BusinessType }) {
+export function EditRoleForm({ role }: { role: Role }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('team.editRole')}>{(close) => <RoleFields close={close} role={role} businessType={businessType} />}</Disclosure>;
+  return <Disclosure kind="edit" label={t('team.editRole')}>{(close) => <RoleFields close={close} role={role} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- member access

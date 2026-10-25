@@ -86,7 +86,7 @@ try {
   check('8 labelled sample items are added', await shown('8 sample items are on your list'));
   await shot('onboarding-sample.png');
   await go('/products');
-  check('products show them tagged Sample and named “(sample)”', (await text()).includes('Iced coffee 16oz (sample)') && (await evaluate(`[...document.querySelectorAll('.tag')].filter((x) => x.textContent === 'Sample').length`)) === 8);
+  check('products show them tagged Sample and named “(sample)”', (await text()).includes('Rice 5 kg (sample)') && (await evaluate(`[...document.querySelectorAll('.tag')].filter((x) => x.textContent === 'Sample').length`)) === 8);
 
   // 2. Support access, given by the owner.
   await go('/subscription/support');
@@ -94,7 +94,7 @@ try {
   check('subscription has Plan · Business · Your records · Support access · Integrations tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Business', 'Your records', 'Support access', 'Integrations']));
   check('the page says support cannot see the business unless allowed', await shown('Tilvara support cannot see your business unless you allow it here.'));
   await clickText('Give support access');
-  await fill('purpose', 'Please check why the sample coffee price shows twice');
+  await fill('purpose', 'Please check why the sample rice price shows twice');
   await evaluate(`(() => { const s = document.querySelector('select[name="hours"]'); s.value = '4'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await fill('ticketRef', 'T-2026-77');
   await clickText('Allow read-only access');
@@ -129,13 +129,13 @@ try {
   await signIn(staffEmail, staffSecret);
   await waitFor(`document.body.innerText.includes('Overview')`);
   await go('/support');
-  check('staff see the business that asked, with its purpose', await shown(`Kapihan ni Marites ${stamp}`) && (await text()).includes('Please check why the sample coffee price shows twice'));
+  check('staff see the business that asked, with its purpose', await shown(`Kapihan ni Marites ${stamp}`) && (await text()).includes('Please check why the sample rice price shows twice'));
   await shot('onboarding-staff-list.png');
   await evaluate(`[...document.querySelectorAll('.note')].find((n) => n.innerText.includes(${JSON.stringify(`Kapihan ni Marites ${stamp}`)})).querySelector('button').click()`);
   check('the support view shows a read-only banner naming the business', await shown('Support view of') && (await text()).includes(`Kapihan ni Marites ${stamp}`) && (await text()).includes('read-only'));
   await shot('onboarding-staff-view.png');
   await go('/products');
-  check('staff can read the products', await shown('Iced coffee 16oz (sample)'));
+  check('staff can read the products', await shown('Rice 5 kg (sample)'));
   const write = await bff('POST', '/api/v1/categories', { name: 'Support was here' });
   check('a write from the support view is refused (SUPPORT_READ_ONLY)', write.status === 403 && write.body?.error?.code === 'SUPPORT_READ_ONLY');
   await viewport(390, 844, true);

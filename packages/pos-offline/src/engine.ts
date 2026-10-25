@@ -1,6 +1,6 @@
 import { Dec, isCurrencyCode, minorUnits, toDec } from '@1pos/money';
 import { applyPromotions, PromotionError, type PromotionLineResult } from '@1pos/pricing';
-import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type SnapshotDrug, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
+import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
 import type { CounterCartLine } from './counter.js';
 import { calculateTax, TaxError, type TaxResult } from '@1pos/tax';
 import { LocalStore, type OfflineReceipt, type QueuedSale } from './store.js';
@@ -9,25 +9,13 @@ import { TransportError, type Transport } from './transport.js';
 /** A refusal at the till, before anything is stored (the cashier fixes the cart and tries again). */
 export class OfflineSaleError extends Error {
   constructor(
-    readonly code: 'NO_SNAPSHOT' | 'NO_OPEN_SHIFT' | 'NOT_SHIFT_OWNER' | 'UNKNOWN_ITEM' | 'QUANTITY_NOT_ALLOWED' | 'INSUFFICIENT_TENDER' | 'TAX_REFUSED' | 'TERMINAL_REVOKED' | 'ONLINE_ONLY' | 'UNKNOWN_STAFF' | 'DANGEROUS_DRUG_OFFLINE' | 'INVALID_PRESCRIPTION' | 'INVALID_SALE',
+    readonly code: 'NO_SNAPSHOT' | 'NO_OPEN_SHIFT' | 'NOT_SHIFT_OWNER' | 'UNKNOWN_ITEM' | 'QUANTITY_NOT_ALLOWED' | 'INSUFFICIENT_TENDER' | 'TAX_REFUSED' | 'TERMINAL_REVOKED' | 'INVALID_SALE',
     message: string,
   ) {
     super(message);
     this.name = 'OfflineSaleError';
   }
 }
-
-/** A prescription recorded at the offline till (ADR-0025 §6), as the envelope carries it. */
-export type OfflinePrescription = NonNullable<OfflineSale['prescriptions']>[number];
-
-/** "Amoxicillin 500 mg capsule": a medicine's generic label, worded as the server words it (ADR-0025 §3). */
-export function drugLabel(d: { genericName: string; strength: string | null; dosageForm: string }): string {
-  return [d.genericName.trim(), d.strength?.trim(), d.dosageForm.toLowerCase()].filter(Boolean).join(' ');
-}
-
-/** Classes a line needs a prescription for (ADR-0025 §6). */
-export const needsPrescription = (d: Pick<SnapshotDrug, 'drugClass'> | null | undefined): boolean =>
-  d?.drugClass === 'RX' || d?.drugClass === 'ANTIBIOTIC' || d?.drugClass === 'DANGEROUS';
 
 export interface EngineOptions {
   store: LocalStore;
@@ -154,32 +142,16 @@ export class OfflineEngine {
     return weighed ? { ...weighed, quantity: label!.quantity } : null;
   }
 
-  /**
-   * Search the stored snapshot by name, SKU or a medicine's generic name (ADR-0025 §3), case-insensitive;
-   * names that start with the first word come first.
-   */
+  /** Search the stored snapshot by name or SKU, case-insensitive; names that start with the first word come first. */
   async search(q: string, limit = 8): Promise<Snapshot['items']> {
     const items = (await this.store.snapshot())?.body.items ?? [];
     const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
-    const text = (i: Snapshot['items'][number]) => `${i.name} ${i.sku} ${i.drug ? drugLabel(i.drug) : ''}`.toLowerCase();
+    const text = (i: Snapshot['items'][number]) => `${i.name} ${i.sku}`.toLowerCase();
     const hits = items.filter((i) => words.every((w) => text(i).includes(w)));
     const first = words[0]!;
-    const starts = (i: Snapshot['items'][number]) => i.name.toLowerCase().startsWith(first) || Boolean(i.drug?.genericName.toLowerCase().startsWith(first));
+    const starts = (i: Snapshot['items'][number]) => i.name.toLowerCase().startsWith(first);
     return [...hits.filter(starts), ...hits.filter((i) => !starts(i))].slice(0, limit);
-  }
-
-  /**
-   * Other items of the same medicine (same generic, strength and form: `drug.genericKey`) in the stored
-   * snapshot, cheapest first (ADR-0025 §3; offline the till knows prices, not stock).
-   */
-  async equivalents(variantId: string): Promise<Snapshot['items']> {
-    const items = (await this.store.snapshot())?.body.items ?? [];
-    const key = items.find((i) => i.variantId === variantId)?.drug?.genericKey;
-    if (!key) return [];
-    return items
-      .filter((i) => i.variantId !== variantId && i.drug?.genericKey === key)
-      .sort((a, b) => toDec(a.unitPrice).comparedTo(toDec(b.unitPrice)) || a.name.localeCompare(b.name));
   }
 
   /**
@@ -189,7 +161,7 @@ export class OfflineEngine {
    * `terminalTxnId`: the counter passes the id of the checkout it was trying online. If that attempt
    * did reach the server, the delivery is refused as a duplicate (quarantined), never recorded twice.
    */
-  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string; tip?: string; prescriptions?: OfflinePrescription[] }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt }> {
+  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt }> {
     return this.serial(async () => {
       if ((await this.store.meta('auth_state')) === 'REVOKED') throw new OfflineSaleError('TERMINAL_REVOKED', 'This till was revoked; it cannot record sales');
       // The same checkout submitted again (double tap, retry after a crash): the sale already queued.
@@ -201,22 +173,10 @@ export class OfflineEngine {
       const shift = snap.openSession;
       if (!shift) throw new OfflineSaleError('NO_OPEN_SHIFT', 'Open a shift while online before selling offline');
       if (shift.openedBy !== input.cashierUserId) throw new OfflineSaleError('NOT_SHIFT_OWNER', 'Only the cashier who opened this shift can sell on it');
-      // Packages and their sessions need the customer's balance, which only the server has (ADR-0022 §6).
-      for (const l of input.lines) {
-        const item = snap.items.find((x) => x.variantId === l.variantId);
-        if (item?.productType === 'PACKAGE') throw new OfflineSaleError('ONLINE_ONLY', `${item.name} is a package: sell it while online`);
-        if (l.staffId && snap.staff && !snap.staff.some((s) => s.id === l.staffId)) throw new OfflineSaleError('UNKNOWN_STAFF', 'That staff member is not on this till’s list; connect to refresh it');
-        // A dangerous drug needs the pharmacist and the yellow form checked online: never sold offline (ADR-0025 §6).
-        if (item?.drug?.drugClass === 'DANGEROUS') throw new OfflineSaleError('DANGEROUS_DRUG_OFFLINE', `${item.name} is a dangerous drug: sell it while online`);
-      }
-      const prescriptions = checkPrescriptions(input.prescriptions ?? [], input.lines);
       const priced = price(snap, input.lines);
       const due = toDec(priced.totals.amountDue);
       const tendered = toDec(input.tendered);
-      // A cash tip (session 25) comes on top: the cash must cover both; the server records it the same way.
-      const tip = input.tip && toDec(input.tip).gt(0) ? toDec(input.tip) : null;
-      const cashDue = tip ? due.plus(tip) : due;
-      if (tendered.lt(cashDue)) throw new OfflineSaleError('INSUFFICIENT_TENDER', `The cash tendered does not cover ${cashDue.toFixed(2)}`);
+      if (tendered.lt(due)) throw new OfflineSaleError('INSUFFICIENT_TENDER', `The cash tendered does not cover ${due.toFixed(2)}`);
       const occurredAt = new Date(this.now()).toISOString();
       const isVat = snap.taxProfile.vatStatus === 'VAT';
       const queued = await this.store.enqueue((seq) => {
@@ -224,13 +184,8 @@ export class OfflineEngine {
         const envelope: OfflineSale = {
           terminalTxnId: input.terminalTxnId ?? this.uuid(), deviceSeq: seq, snapshotId: snap.snapshotId, cashierSessionId: shift.id, cashierUserId: input.cashierUserId,
           occurredAt, localReference,
-          lines: input.lines.map((l) => ({
-            variantId: l.variantId, quantity: l.quantity, ...(l.staffId && { staffId: l.staffId }),
-            ...(l.prescription && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
-          })),
-          ...(prescriptions.length > 0 && { prescriptions }),
+          lines: input.lines.map((l) => ({ variantId: l.variantId, quantity: l.quantity })),
           tenders: [{ method: 'CASH', tendered: tendered.toFixed(2) }], amountDue: due.toFixed(2),
-          ...(tip && { tip: { amount: tip.toFixed(2) } }),
         };
         // Checked as the server checks it, before it is queued: a sale it cannot read would only be
         // quarantined later (cash taken, nothing recorded). Refused here, nothing is stored.
@@ -254,15 +209,13 @@ export class OfflineEngine {
               quantity: input.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.amountDue).toFixed(2),
               flag: !isVat ? '' : item.vatTreatment === 'ZERO_RATED' ? 'Z' : item.vatTreatment === 'VAT_EXEMPT' ? 'E' : 'V',
               ...promotionOf(snap, priced.promotions[i]!),
-              ...(item.drug && { generic: drugLabel(item.drug) }),
             };
           }),
           totals: {
             gross: priced.totals.gross, vatableSales: priced.totals.vatableSales, vatAmount: priced.totals.vatAmount, vatExemptSales: priced.totals.vatExemptSales,
             zeroRatedSales: priced.totals.zeroRatedSales, percentageTaxSales: priced.totals.percentageTaxSales, amountDue: due.toFixed(2),
           },
-          tendered: tendered.toFixed(2), change: tendered.minus(cashDue).toFixed(2), notice: NOT_AN_INVOICE,
-          ...(tip && { tip: tip.toFixed(2) }),
+          tendered: tendered.toFixed(2), change: tendered.minus(due).toFixed(2), notice: NOT_AN_INVOICE,
         };
         return { envelope, receipt };
       }, this.now());
@@ -372,32 +325,6 @@ export class OfflineEngine {
     this.chain = run.catch(() => undefined);
     return run;
   }
-}
-
-/**
- * The prescriptions recorded at the till for this sale, as the envelope schema takes them: each valid,
- * each used by a line, and every line's reference pointing at one of them (the server would refuse the
- * whole envelope otherwise, and an offline sale must never be lost to a typing slip).
- */
-function checkPrescriptions(given: OfflinePrescription[], lines: CounterCartLine[]): OfflinePrescription[] {
-  if (!given.length && !lines.some((l) => l.prescription)) return [];
-  const parsed = offlineSaleSchema.shape.prescriptions.safeParse(given);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const where = issue ? issue.path.filter((x) => typeof x === 'string').join(' ') : '';
-    throw new OfflineSaleError('INVALID_PRESCRIPTION', `The prescription is not complete${where ? ` (${where})` : ''}: ${issue?.message ?? 'check it'}`);
-  }
-  const rx = parsed.data ?? [];
-  if (new Set(rx.map((p) => p.ref)).size !== rx.length) throw new OfflineSaleError('INVALID_PRESCRIPTION', 'Two prescriptions share one reference');
-  for (const [i, l] of lines.entries()) {
-    if (!l.prescription) continue;
-    const p = rx.find((x) => x.ref === l.prescription!.prescriptionRef);
-    if (!p?.items.some((it) => it.ref === l.prescription!.itemRef)) throw new OfflineSaleError('INVALID_PRESCRIPTION', `Line ${i + 1} points at a prescription that is not on this sale`);
-  }
-  for (const p of rx) {
-    if (!lines.some((l) => l.prescription?.prescriptionRef === p.ref)) throw new OfflineSaleError('INVALID_PRESCRIPTION', `The prescription for ${p.patientName} is not used by any line`);
-  }
-  return rx;
 }
 
 /** A receipt line's promotion: its name and the discount it gave (none when it took part for nothing). */

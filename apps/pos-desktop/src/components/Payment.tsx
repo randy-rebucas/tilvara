@@ -2,17 +2,13 @@ import { CreditCard, QrCode } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
-import { add, gte, isPositive, isZero, parseAmount, quickTenders, splitEqually, sub, sumAmounts } from '../lib/money';
+import { add, gte, isPositive, isZero, parseAmount, quickTenders, sub } from '../lib/money';
 import type { PaymentIntent } from '../types';
 import type { Shift } from './Registers';
 import { Callout, methodLabel, Money, Note, PaymentTag } from './ui';
 
 export type Notice = { kind: 'error' | 'warn' | 'info'; text: string } | null;
 export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: 'CASH'; tendered: string };
-/** A tip (session 25): cash on top of what is due, or its own card payment. Never part of the sale's total. */
-export type TipBody = { amount: string; paymentIntentId?: string; shares?: { staffId: string; amount: string }[] };
-/** Someone a tip can be shared with (ADR-0022 §7): a staff member named on the cart's lines. */
-export type TipStaff = { id: string; name: string };
 
 /** No answer, or the server/database failed: the request may or may not have taken effect. */
 export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500);
@@ -24,101 +20,37 @@ export const errorText = (err: unknown, fallback: string, network: string) =>
  * Taking payment for one sale (ADR-0009/0010): card/QR intents first, cash for the rest.
  * One payment = one terminal transaction id; its sale key is kept when an answer is lost, so a retry
  * can never record twice.
- * `allowTip` (session 25): the cashier may add a tip, in cash (added to the cash due, outside the
- * sale) or by its own card payment of the same checkout.
  */
-export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff = [] }: {
+export function usePayment({ shift, due, setNotice }: {
   shift: Shift;
   due: string;
   setNotice: (n: Notice | ((n: Notice) => Notice)) => void;
-  allowTip?: boolean;
-  tipStaff?: TipStaff[];
 }) {
   const { t } = useT();
   const [txId, setTxId] = useState(uuid);
   const [saleKey, setSaleKey] = useState(uuid);
   const [intents, setIntents] = useState<PaymentIntent[]>([]);
   const [cash, setCash] = useState('');
-  const [tipText, setTip] = useState('');
-  const [tipMethod, setTipMethod] = useState<'CASH' | 'CARD'>('CASH');
-  const [tipIntent, setTipIntent] = useState<PaymentIntent | null>(null);
-  // A tip split by hand between the staff on the cart (ADR-0022 §7); left alone, the server splits it equally.
-  const [splitting, setSplitting] = useState(false);
-  const [shareText, setShareText] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   // Synchronous guards: a double click lands before React re-renders the disabled button.
   const busy = useRef(false);
   // Card/QR request whose answer never arrived: retried with the same key, so it cannot charge twice.
   const unansweredIntent = useRef<{ key: string; method: PaymentIntent['method']; amount: string } | null>(null);
-  const unansweredTip = useRef<{ key: string; amount: string } | null>(null);
 
-  const tip = allowTip ? parseAmount(tipText) : null;
-  const tipValid = tipText.trim() === '' || (tip !== null && isPositive(tip));
-  const cashTip = tip && isPositive(tip) && tipMethod === 'CASH' ? tip : '0.00';
   const paidElectronic = intents.filter((i) => i.status === 'SUCCEEDED').reduce((a, i) => add(a, i.amount), '0.00');
   const remaining = gte(paidElectronic, due) ? '0.00' : sub(due, paidElectronic);
-  // What the cash must cover: the rest of the sale, plus a cash tip.
-  const cashDue = add(remaining, cashTip);
+  // What the cash must cover: the rest of the sale.
+  const cashDue = remaining;
   const cashAmount = parseAmount(cash);
   const covered = isZero(cashDue) || (cashAmount !== null && gte(cashAmount, cashDue));
-  const pendingIntent = intents.some((i) => i.status === 'UNKNOWN' || i.status === 'PROCESSING') || tipIntent?.status === 'UNKNOWN' || tipIntent?.status === 'PROCESSING';
-  const cardTipNeeded = Boolean(tip && isPositive(tip) && tipMethod === 'CARD' && !(tipIntent?.status === 'SUCCEEDED' && tipIntent.amount === tip));
-  const canSplit = allowTip && tipStaff.length >= 2;
-  const split = canSplit && splitting && tip !== null && isPositive(tip);
-  const shareAmounts = tipStaff.map((s) => ({ staffId: s.id, amount: (shareText[s.id] ?? '').trim() === '' ? '0.00' : parseAmount(shareText[s.id]!) }));
-  const sharesValid = !split || (shareAmounts.every((x) => x.amount !== null) && sumAmounts(shareAmounts.map((x) => x.amount!)) === tip);
+  const pendingIntent = intents.some((i) => i.status === 'UNKNOWN' || i.status === 'PROCESSING');
   // Why the submit button is disabled, in words (only for things the cashier can act on).
-  const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : !tipValid ? 'tip.invalid' : !sharesValid ? 'tip.sharesMismatch' : cardTipNeeded ? 'tip.needCard' : !covered ? 'pay.needCash' : null;
-
-  /** Turn the split on (equal shares to start from) or off (the server splits equally). */
-  function setSplit(on: boolean) {
-    setSplitting(on);
-    if (on && tip && isPositive(tip)) {
-      const parts = splitEqually(tip, tipStaff.length);
-      setShareText(Object.fromEntries(tipStaff.map((s, i) => [s.id, parts[i]!])));
-    }
-  }
+  const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : !covered ? 'pay.needCash' : null;
 
   /** The server's record of this payment's card/QR intents (finds one whose answer was lost). */
   async function syncIntents() {
     const { data } = await api<{ data: PaymentIntent[] }>('GET', `/v1/payment-intents?cashierSessionId=${shift.sessionId}`);
-    const mine = data.filter((i) => i.clientTransactionId === txId);
-    setIntents(mine.filter((i) => i.purpose !== 'TIP').reverse());
-    // A tip charge whose answer was lost comes back here too, as the tip's (never as a tender).
-    const tipCharge = mine.find((i) => i.purpose === 'TIP' && i.status !== 'FAILED' && i.status !== 'CANCELED');
-    if (tipCharge) setTipIntent(tipCharge);
-  }
-
-  /** Charge the tip by card, as its own payment of this checkout (retried with the same key after a lost answer). */
-  async function takeTipByCard() {
-    if (!tip || !isPositive(tip) || busy.current) return;
-    busy.current = true;
-    try {
-      const key = unansweredTip.current?.amount === tip ? unansweredTip.current.key : uuid();
-      unansweredTip.current = { key, amount: tip };
-      const intent = await api<PaymentIntent>('POST', '/v1/payment-intents', { cashierSessionId: shift.sessionId, clientTransactionId: txId, method: 'CARD', amount: tip, purpose: 'TIP' }, { 'idempotency-key': key });
-      unansweredTip.current = null;
-      setTipIntent(intent);
-      setNotice(intent.status === 'FAILED' ? { kind: 'warn', text: t('pay.declined') } : null);
-    } catch (err) {
-      if (unanswered(err)) setNotice({ kind: 'warn', text: t('pay.intentUnconfirmed') });
-      else {
-        unansweredTip.current = null;
-        setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
-      }
-    } finally {
-      busy.current = false;
-    }
-  }
-
-  async function cancelTipIntent() {
-    if (!tipIntent) return;
-    try {
-      const updated = await api<PaymentIntent>('POST', `/v1/payment-intents/${tipIntent.id}/cancel`);
-      setTipIntent(updated.status === 'CANCELED' ? null : updated);
-    } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
-    }
+    setIntents(data.filter((i) => i.clientTransactionId === txId).reverse());
   }
 
   async function takeElectronic(method: PaymentIntent['method']) {
@@ -155,7 +87,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
   async function settleIntent(id: string, action: 'reconcile' | 'cancel') {
     try {
       const updated = await api<PaymentIntent>('POST', `/v1/payment-intents/${id}/${action}`);
-      if (id === tipIntent?.id) setTipIntent(updated);
       setIntents((xs) => xs.map((i) => (i.id === id ? updated : i)));
       setNotice(updated.status === 'FAILED' ? { kind: 'warn', text: t('pay.declined') } : null);
     } catch (err) {
@@ -169,10 +100,10 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
    * resolves to the sale already recorded; TOTAL_CHANGED calls `onTotalChanged` to re-price.
    */
   async function submit(
-    send: (body: { clientTransactionId: string; tenders: Tender[]; tip?: TipBody }, key: string) => Promise<{ id: string }>,
+    send: (body: { clientTransactionId: string; tenders: Tender[] }, key: string) => Promise<{ id: string }>,
     onTotalChanged?: () => void,
     onUnanswered?: () => void,
-    /** The server refused it (a final answer): the caller may word the refusal itself (ADR-0025). */
+    /** The server refused it (a final answer): the caller may word the refusal itself. */
     onRefused?: (err: unknown) => void,
   ): Promise<string | null> {
     if (busy.current) return null;
@@ -182,13 +113,8 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
       ...intents.filter((i) => i.status === 'SUCCEEDED').map((i) => ({ method: 'INTENT' as const, paymentIntentId: i.id })),
       ...(isPositive(cashDue) && cashAmount ? [{ method: 'CASH' as const, tendered: cashAmount }] : []),
     ];
-    // Shares of nothing are left out (each share is positive); they still add up to the tip.
-    const shares = split ? shareAmounts.filter((x) => x.amount && isPositive(x.amount)).map((x) => ({ staffId: x.staffId, amount: x.amount! })) : [];
-    const tipBody: TipBody | undefined = tip && isPositive(tip)
-      ? { amount: tip, ...(tipMethod === 'CARD' && tipIntent && { paymentIntentId: tipIntent.id }), ...(shares.length > 0 && { shares }) }
-      : undefined;
     try {
-      const sale = await send({ clientTransactionId: txId, tenders, ...(tipBody && { tip: tipBody }) }, saleKey);
+      const sale = await send({ clientTransactionId: txId, tenders }, saleKey);
       setNotice(null);
       return sale.id;
     } catch (err) {
@@ -219,12 +145,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
   function reset() {
     setIntents([]);
     setCash('');
-    setTip('');
-    setTipMethod('CASH');
-    setTipIntent(null);
-    setSplitting(false);
-    setShareText({});
-    unansweredTip.current = null;
     setTxId(uuid());
     setSaleKey(uuid());
     unansweredIntent.current = null;
@@ -232,8 +152,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
 
   return {
     txId, intents, cash, setCash, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, takeElectronic, settleIntent, submit, reset,
-    allowTip, tipText, setTip, tipMethod, setTipMethod, tip, cashTip, tipIntent, takeTipByCard, cancelTipIntent,
-    tipStaff, canSplit, splitting: split, setSplit, shareText, setShare: (staffId: string, v: string) => setShareText((x) => ({ ...x, [staffId]: v })),
   };
 }
 
@@ -277,12 +195,6 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
       )}
       {isPositive(cashDue) && (
         <>
-          {isPositive(pay.cashTip) && (
-            <p className="flex justify-between text-[0.9375rem]" data-testid="cash-due">
-              <span className="text-muted">{t('tip.cashDue')}</span>
-              <Money value={cashDue} />
-            </p>
-          )}
           <div className="field">
             <label htmlFor="cash">{t('pay.tendered')}</label>
             <input id="cash" className="input input-money" inputMode="decimal" value={pay.cash} onChange={(e) => pay.setCash(e.target.value)} placeholder="0.00" />
@@ -325,92 +237,10 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
           )}
         </>
       )}
-      {pay.allowTip && <TipField pay={pay} priced={priced} cashOnly={cashOnly} />}
       {priced && pay.blocker && <p className="text-[0.875rem] text-muted">{t(cashOnly && pay.blocker === 'pay.needCash' ? 'till.needCash' : pay.blocker)}</p>}
       <button id="pay-submit" className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || pay.blocker !== null || pay.submitting} onClick={onSubmit}>
         {submitLabel}
       </button>
     </Note>
-  );
-}
-
-/**
- * The tip (session 25): an amount, and whether it comes in cash (added to the cash due) or by card
- * (its own charge, taken here before the sale). Tips are the staff's: never in the sale's total.
- */
-function TipField({ pay, priced, cashOnly }: { pay: Payment; priced: boolean; cashOnly: boolean }) {
-  const { t } = useT();
-  const charged = pay.tipIntent && pay.tipIntent.status !== 'FAILED' && pay.tipIntent.status !== 'CANCELED';
-  return (
-    <div className="grid gap-2 border-t border-hair-soft pt-3" data-testid="tip">
-      <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-        <div className="field">
-          <label htmlFor="tip">{t('tip.label')}</label>
-          <input id="tip" className="input input-money" inputMode="decimal" value={pay.tipText} disabled={Boolean(charged)} onChange={(e) => pay.setTip(e.target.value)} placeholder="0.00" />
-        </div>
-        <div className="flex gap-1" role="group" aria-label={t('tip.method')}>
-          {/* Offline (the desktop till): cash tips only, like every offline payment. */}
-          {(cashOnly ? (['CASH'] as const) : (['CASH', 'CARD'] as const)).map((m) => (
-            <button key={m} type="button" className="btn btn-sm" aria-pressed={pay.tipMethod === m} disabled={Boolean(charged)} onClick={() => pay.setTipMethod(m)}>
-              {m === 'CASH' ? t('tip.cash') : t('tip.card')}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="text-[0.8125rem] text-muted">{t('tip.hint')}</p>
-      {/* Offline the till sends the tip alone: the server splits it equally among the staff on the lines. */}
-      {pay.canSplit && !cashOnly && pay.tip && isPositive(pay.tip) && <TipSplit pay={pay} />}
-      {pay.tipMethod === 'CARD' && pay.tip && isPositive(pay.tip) && (
-        charged ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 text-[0.9375rem]">
-            <span>{t('tip.paidCard')} <PaymentTag status={pay.tipIntent!.status} /></span>
-            <span className="flex items-center gap-2">
-              <Money value={pay.tipIntent!.amount} />
-              {pay.tipIntent!.status === 'SUCCEEDED' && <button type="button" className="btn btn-sm btn-danger" onClick={() => void pay.cancelTipIntent()}>{t('pay.cancelPayment')}</button>}
-              {(pay.tipIntent!.status === 'UNKNOWN' || pay.tipIntent!.status === 'PROCESSING') && <button type="button" className="btn btn-sm" onClick={() => void pay.settleIntent(pay.tipIntent!.id, 'reconcile')}>{t('pay.check')}</button>}
-            </span>
-          </div>
-        ) : (
-          <button type="button" className="btn" disabled={!priced || pay.pendingIntent} onClick={() => void pay.takeTipByCard()}>
-            <CreditCard className="size-4" aria-hidden /> {t('tip.chargeCard', { amount: pay.tip })}
-          </button>
-        )
-      )}
-    </div>
-  );
-}
-
-/**
- * Who gets the tip (ADR-0022 §7), when two or more staff are named on the cart: left alone the server
- * shares it equally; "Split" lets the cashier give each their part (starting from equal shares).
- */
-function TipSplit({ pay }: { pay: Payment }) {
-  const { t } = useT();
-  const total = sumAmounts(pay.tipStaff.map((s) => parseAmount(pay.shareText[s.id] ?? '') ?? '0.00'));
-  return (
-    <div className="grid gap-2" data-testid="tip-split">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-[0.875rem]">{pay.splitting ? t('tip.splitBy') : t('tip.splitEqual', { n: String(pay.tipStaff.length) })}</span>
-        <button type="button" className="btn btn-sm" aria-pressed={pay.splitting} onClick={() => pay.setSplit(!pay.splitting)}>
-          {pay.splitting ? t('tip.splitEqualButton') : t('tip.split')}
-        </button>
-      </div>
-      {pay.splitting && (
-        <>
-          <ul className="grid gap-2">
-            {pay.tipStaff.map((s) => (
-              <li key={s.id} className="grid grid-cols-[1fr_120px] items-center gap-2">
-                <label htmlFor={`share-${s.id}`} className="truncate text-[0.9375rem]">{s.name}</label>
-                <input id={`share-${s.id}`} className="input input-money h-9" inputMode="decimal" value={pay.shareText[s.id] ?? ''} placeholder="0.00" onChange={(e) => pay.setShare(s.id, e.target.value)} />
-              </li>
-            ))}
-          </ul>
-          <p className="flex justify-between text-[0.8125rem] text-muted">
-            <span>{t('tip.sharesTotal')}</span>
-            <span><Money value={total} /> / <Money value={pay.tip} /></span>
-          </p>
-        </>
-      )}
-    </div>
   );
 }

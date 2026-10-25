@@ -2,7 +2,6 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { BusinessTypeField } from '@/components/business-type-field';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
@@ -19,7 +18,6 @@ const slugify = (s: string) =>
 /** The steps in order, with the fields each one holds (a server error jumps back to its step). */
 const STEPS = [
   { title: 'auth.stepBusiness', fields: ['businessName', 'tenantSlug'] },
-  { title: 'auth.stepType', fields: ['businessType'] },
   { title: 'auth.stepAccount', fields: ['displayName', 'email', 'password'] },
 ] as const;
 
@@ -27,7 +25,7 @@ const STEPS = [
 const FIELD_CODES: Record<string, string> = { SLUG_UNAVAILABLE: 'tenantSlug', EMAIL_UNAVAILABLE: 'email' };
 
 /**
- * Sign-up in three steps: the business, its type, then the owner's account. Every step stays
+ * Sign-up in two steps: the business, then the owner's account (a retail business: the only type). Every step stays
  * mounted (hidden when not current) so one form submits all fields at the end.
  */
 export function SignUpForm() {
@@ -74,7 +72,6 @@ export function SignUpForm() {
         displayName: f.get('displayName'),
         businessName: f.get('businessName'),
         tenantSlug: f.get('tenantSlug'),
-        businessType: f.get('businessType'),
       },
       { refresh: false },
     );
@@ -109,11 +106,7 @@ export function SignUpForm() {
           onChange={(e) => { setSlugTouched(true); setSlug(e.target.value); }} />
       </div>
 
-      <div ref={(el) => { stepRefs.current[1] = el; }} hidden={step !== 1}>
-        <BusinessTypeField error={errorFor('businessType')} />
-      </div>
-
-      <div ref={(el) => { stepRefs.current[2] = el; }} hidden={step !== 2} className="flex flex-col gap-4">
+      <div ref={(el) => { stepRefs.current[1] = el; }} hidden={step !== 1} className="flex flex-col gap-4">
         <TextField label={t('auth.displayName')} name="displayName" autoComplete="name" required error={errorFor('displayName')} />
         <TextField label={t('auth.email')} name="email" type="email" autoComplete="email" required error={errorFor('email')} />
         <TextField label={t('auth.password')} name="password" type="password" autoComplete="new-password" required minLength={12}

@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { sql, type BusinessType, type Database } from '@1pos/database';
-import { roleTemplatesFor, servesAppointments, servesPharmacy, type BusinessUpdateInput } from '@1pos/validation';
-import { addRoleTemplates } from '../auth/role-templates.js';
+import type { BusinessUpdateInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -14,11 +13,8 @@ type BusinessRow = {
 };
 
 /**
- * The business's own details. Its type decides which features its people see: only SALON and HYBRID
- * take appointments, sell packages and record supplies used (`assertAppointments`, `assertPackages`,
- * `assertRecipes`, ADR-0022), only PHARMACY and HYBRID dispense prescription medicines (`assertPharmacy`,
- * ADR-0025; a pharmacy's branches block expired stock unless set otherwise), HYBRID shows everything.
- * Records are never removed by a change of type.
+ * The business's own details. RETAIL is the only business type for now (0112 removed the others); the
+ * type stays on the business and in the update, which accepts RETAIL only (validation).
  */
 @Injectable()
 export class BusinessService extends TenantService {
@@ -49,16 +45,7 @@ export class BusinessService extends TenantService {
         sql`UPDATE tenants SET business_type = ${input.businessType} WHERE id = ${tenantId}
             RETURNING id, slug, name, business_type`,
       );
-      // A business that started without appointments or a dispensary has no salon or pharmacy roles yet;
-      // they come with the type that uses them (existing roles are left as they are).
-      const added = !servesAppointments(input.businessType) && !servesPharmacy(input.businessType)
-        ? new Map()
-        : await addRoleTemplates(db, tenantId, roleTemplatesFor(input.businessType));
-      await this.audit(db, auth, 'tenant.business_type_changed', 'tenant', before.id, {
-        from: before.business_type,
-        to: input.businessType,
-        ...(added.size > 0 && { rolesAdded: [...added.keys()] }),
-      });
+      await this.audit(db, auth, 'tenant.business_type_changed', 'tenant', before.id, { from: before.business_type, to: input.businessType });
       return view(rows[0]!);
     });
   }

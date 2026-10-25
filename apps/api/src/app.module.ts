@@ -15,18 +15,15 @@ import { ReportsModule } from './reports/reports.module.js';
 import { PurchasingModule } from './purchasing/purchasing.module.js';
 import { InventoryModule } from './inventory/inventory.module.js';
 import { AccountingModule } from './accounting/accounting.module.js';
-import { RecipesModule } from './recipes/recipes.module.js';
 import { SyncModule } from './sync/sync.module.js';
 import { SupportModule } from './support/support.module.js';
 import { BusinessModule } from './business/business.module.js';
-import { SalonModule } from './salon/salon.module.js';
-import { PharmacyModule } from './pharmacy/pharmacy.module.js';
 import { BillingController } from './billing/billing.controller.js';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { IdempotencyInterceptor } from './infrastructure/idempotency.js';
 
 @Module({
-  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, CustomersModule, IntegrationsModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, RecipesModule, SyncModule, SupportModule, BusinessModule, SalonModule, PharmacyModule],
+  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, CustomersModule, IntegrationsModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, SyncModule, SupportModule, BusinessModule],
   controllers: [BillingController],
   providers: [{ provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor }],
 })

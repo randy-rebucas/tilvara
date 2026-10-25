@@ -131,58 +131,6 @@ describe('API keys', () => {
   });
 });
 
-describe('API keys at a salon (audit 2026-10-21)', () => {
-  /** A SALON on a plan with API access: a branch, a cut, a stylist, a customer with a service note and a booking with notes. */
-  async function salonWithBooking(prefix: string) {
-    const s = await signup(app, prefix);
-    const sAuth = bearer(s.access);
-    await http().patch('/v1/business').set(sAuth).send({ businessType: 'SALON' }).expect(200);
-    await plan(s, 'enterprise');
-    const le = (await http().post('/v1/legal-entities').set(sAuth).send({ registeredName: 'Salon Corp', vatStatus: 'VAT' }).expect(201)).body.id;
-    const branch = (await http().post('/v1/branches').set(sAuth).send({ legalEntityId: le, code: 'B1', name: 'One' }).expect(201)).body.id as string;
-    const vat = ((await http().get('/v1/tax-categories').set(sAuth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
-    const pc = ((await http().get('/v1/uoms').set(sAuth)).body.data as { id: string; code: string }[]).find((u) => u.code === 'PC')!.id;
-    const cut = (await http().post('/v1/products').set(sAuth).send({ name: 'Haircut', uomId: pc, taxCategoryId: vat, productType: 'SERVICE', variants: [{ sku: `CUT-${randomUUID().slice(0, 6)}`, price: '500.00', serviceMinutes: 30 }] }).expect(201)).body.variants[0].id as string;
-    const staff = (await http().post('/v1/service-staff').set(sAuth).set('Idempotency-Key', randomUUID()).send({ branchId: branch, displayName: 'Ana' }).expect(201)).body.id as string;
-    const customer = (await http().post('/v1/customers').set(sAuth).send({ displayName: 'Liza' }).expect(201)).body.id as string;
-    await http().post(`/v1/customers/${customer}/notes`).set(sAuth).set('Idempotency-Key', randomUUID()).send({ body: 'Allergic to PPD' }).expect(201);
-    const startsAt = new Date(Date.now() + 3 * 86_400_000);
-    startsAt.setUTCMinutes(0, 0, 0);
-    const appt = (await http().post('/v1/appointments').set(sAuth).set('Idempotency-Key', randomUUID())
-      .send({ branchId: branch, customerId: customer, outsideHours: true, notes: 'Sensitive scalp', services: [{ variantId: cut, staffId: staff, startsAt: startsAt.toISOString() }] }).expect(201)).body;
-    const window = { branchId: branch, from: new Date(Date.now() - 86_400_000).toISOString(), to: new Date(Date.now() + 7 * 86_400_000).toISOString() };
-    return { sAuth, branch, cut, staff, customer, appt, startsAt, window };
-  }
-
-  it('service notes are never read with a key, even with customers.read (decision A1); staff keep them', async () => {
-    const { sAuth, customer, window } = await salonWithBooking('intg-notes');
-    const key = withKey((await http().post('/v1/api-keys').set(sAuth).send({ name: 'CRM', scopes: ['customers.read'] }).expect(201)).body.key);
-    const refused = (await http().get(`/v1/customers/${customer}/notes`).set(key).expect(403)).body.error;
-    expect([refused.code, refused.details.session]).toEqual(['SERVICE_NOTES_RESTRICTED', 'API_KEY']);
-    await http().get(`/v1/customers/${customer}`).set(key).expect(200);
-    expect((await http().get(`/v1/customers/${customer}/notes`).set(sAuth).expect(200)).body.data.map((n: { body: string }) => n.body)).toEqual(['Allergic to PPD']);
-    // Without appointments.read, the calendar is out of reach.
-    expect((await http().get('/v1/appointments').query(window).set(key).expect(403)).body.error.code).toBe('FORBIDDEN');
-  });
-
-  // The DB check `api_keys_scopes_check` allowed only the first six scopes until migration 0109.
-  it('appointments.read reads the calendar, free times and staff, with appointment notes blanked', async () => {
-    const { sAuth, branch, cut, staff, customer, appt, startsAt, window } = await salonWithBooking('intg-appts');
-    const made = (await http().post('/v1/api-keys').set(sAuth).send({ name: 'Booking site', scopes: ['appointments.read', 'customers.read'] }).expect(201)).body;
-    expect(made.scopes).toEqual(['appointments.read', 'customers.read']);
-    const key = withKey(made.key);
-    const listed = (await http().get('/v1/appointments').query(window).set(key).expect(200)).body.data as { id: string; notes: string | null }[];
-    expect(listed.map((x) => [x.id, x.notes])).toEqual([[appt.id, null]]);
-    expect((await http().get(`/v1/appointments/${appt.id}`).set(key).expect(200)).body.notes).toBeNull();
-    expect((await http().get('/v1/service-staff').query({ branchId: branch }).set(key).expect(200)).body.data.map((x: { id: string }) => x.id)).toEqual([staff]);
-    await http().get('/v1/appointments/availability').query({ branchId: branch, variantId: cut, date: startsAt.toISOString().slice(0, 10) }).set(key).expect(200);
-    expect((await http().get(`/v1/appointments/${appt.id}`).set(sAuth).expect(200)).body.notes).toBe('Sensitive scalp');
-    const visits = (await http().get(`/v1/customers/${customer}/visits`).set(key).expect(200)).body;
-    expect(visits.appointments.map((x: { notes: string | null }) => x.notes)).toEqual([null]);
-    await http().get(`/v1/customers/${customer}/notes`).set(key).expect(403);
-  });
-});
-
 describe('webhooks', () => {
   it('https on a public host in production settings; the secret is shown at creation and on rotation only', async () => {
     const bAuth = bearer(b.access);

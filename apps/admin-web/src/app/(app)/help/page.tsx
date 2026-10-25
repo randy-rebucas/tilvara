@@ -13,14 +13,14 @@ export const generateMetadata = pageTitle('help');
 const OWN_PAGE: Partial<Record<GuideTopic, string>> = { start: '/', account: '/account' };
 
 /**
- * The user guide: every area the business offers, in set-up order. Areas the person's role does
+ * The user guide: every area of the back office, in set-up order. Areas the person's role does
  * not open are still explained (marked), so a cashier can see what a manager does.
  */
 export default async function HelpPage() {
   const me = await api<Me>('/me');
   const { t } = await getT();
   const tenant = me.activeTenant!;
-  const sections = guideFor(tenant.businessType, tenant.permissions);
+  const sections = guideFor(tenant.permissions);
 
   const openHref = (id: GuideTopic, areaHref: string | undefined) => (id === 'till' ? POS_URL : (areaHref ?? OWN_PAGE[id] ?? null));
 

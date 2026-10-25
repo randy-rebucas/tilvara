@@ -1,19 +1,14 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   and,
-  appointments,
   asc,
   customerConsentEvents,
-  customerNotes,
   customerCreditEntries,
   customers,
   desc,
   eq,
   isNull,
   legalEntities,
-  prescriptionFills,
-  prescriptionItems,
-  prescriptions,
   registers,
   saleLines,
   sales,
@@ -36,7 +31,6 @@ import { hasPermission } from '../auth/authorization.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { customerPackageBalances } from '../salon/packages.js';
 
 type CustomerRow = typeof customers.$inferSelect;
 
@@ -177,20 +171,6 @@ export class CustomersService extends TenantService {
           balances: rows.map((r) => ({ legalEntityId: r.legal_entity_id, balance: money(r.v) })),
         });
       }
-      // Sessions paid for and not used are owed to the customer too (ADR-0022 §6).
-      const { rows: owed } = await db.execute<{ n: number }>(
-        sql`SELECT count(*)::int AS n FROM (SELECT e.customer_package_id FROM customer_package_entries e JOIN customer_packages p ON p.id = e.customer_package_id
-             WHERE p.customer_id = ${id} GROUP BY 1 HAVING sum(e.sessions) > 0) x`,
-      );
-      if (Number(owed[0]?.n ?? 0) > 0) {
-        throw new AppError('CUSTOMER_HAS_PACKAGES', 'This customer still has package sessions; use or refund them first', HttpStatus.CONFLICT, { packages: Number(owed[0]!.n) });
-      }
-      // Service notes may hold health information; appointment notes may name them: both go (ADR-0022 §8).
-      await db.delete(customerNotes).where(eq(customerNotes.customerId, id));
-      await db.update(appointments).set({ notes: null, updatedBy: auth.userId, updatedAt: sql`now()` }).where(and(eq(appointments.customerId, id), sql`${appointments.notes} IS NOT NULL`));
-      // Prescriptions are dispensing records the pharmacy keeps (ADR-0025 §6): only the link to the customer goes;
-      // the patient's details stay until the retention period ends (the DPO's decision, G6).
-      await db.execute(sql`UPDATE prescriptions SET customer_id = NULL, updated_by = ${auth.userId}, updated_at = now() WHERE customer_id = ${id}`);
       const [row] = await db
         .update(customers)
         .set({
@@ -261,8 +241,7 @@ export class CustomersService extends TenantService {
 
   /**
    * Everything the business holds about the customer, as one JSON document (a data subject's access
-   * request, privacy pack): the profile, consent history, purchases with their lines, store credit,
-   * appointments and packages, and prescriptions.
+   * request, privacy pack): the profile, consent history, purchases with their lines and store credit.
    * A suspended or lapsed business must still answer such a request, so this write (its audit row) is allowed then.
    */
   export(auth: AuthContext, id: string) {
@@ -277,18 +256,6 @@ export class CustomersService extends TenantService {
       const lines = bought.length
         ? await db.select().from(saleLines).where(inArray(saleLines.saleId, bought.map((b) => b.sale.id))).orderBy(saleLines.lineNo)
         : [];
-      const [notes, booked] = await inSequence(
-        () => db.select().from(customerNotes).where(eq(customerNotes.customerId, id)).orderBy(asc(customerNotes.createdAt)),
-        () => db.select().from(appointments).where(eq(appointments.customerId, id)).orderBy(asc(appointments.startsAt)),
-      );
-      const packages = await customerPackageBalances(db, id);
-      // Their prescriptions (ADR-0025).
-      const rxRows = await db.select().from(prescriptions).where(eq(prescriptions.customerId, id)).orderBy(asc(prescriptions.createdAt));
-      const rxIds = rxRows.map((p) => p.id);
-      const [rxItems, fills] = await inSequence(
-        () => (rxIds.length ? db.select().from(prescriptionItems).where(inArray(prescriptionItems.prescriptionId, rxIds)).orderBy(asc(prescriptionItems.lineNo)) : Promise.resolve([])),
-        () => (rxIds.length ? db.select().from(prescriptionFills).where(inArray(prescriptionFills.prescriptionId, rxIds)).orderBy(asc(prescriptionFills.createdAt)) : Promise.resolve([])),
-      );
       await this.audit(db, auth, 'customer.exported', 'customer', id);
       return {
         format: 'tilvara-customer-export/1',
@@ -303,17 +270,6 @@ export class CustomersService extends TenantService {
           lines: lines.filter((l) => l.saleId === s.id).map((l) => ({ name: l.name, quantity: toDec(l.quantity).toString(), amountDue: money(l.amountDue) })),
         })),
         storeCredit: credit.map((e) => ({ kind: e.kind, amount: money(e.amount), createdAt: e.createdAt })),
-        serviceNotes: notes.map((n) => ({ body: n.body, pinned: n.pinned, createdAt: n.createdAt, updatedAt: n.updatedAt })),
-        appointments: booked.map((a) => ({ status: a.status, startsAt: a.startsAt, endsAt: a.endsAt, notes: a.notes, cancelReason: a.cancelReason })),
-        packages: packages.map((p) => ({ name: p.name, boughtAt: p.boughtAt, expiresOn: p.expiresOn, services: p.services.map((x) => ({ name: x.name, sessions: x.sessions, sessionsLeft: x.sessionsLeft })) })),
-        prescriptions: rxRows.map((p) => ({
-          patientName: p.patientName, patientAddress: p.patientAddress, prescriberName: p.prescriberName, prescriberLicenseNo: p.prescriberLicenseNo, issuedOn: p.issuedOn,
-          notes: p.notes, createdAt: p.createdAt, voidedAt: p.voidedAt, voidReason: p.voidReason,
-          items: rxItems.filter((i) => i.prescriptionId === p.id).map((i) => ({
-            genericName: i.genericName, strength: i.strength, dosageForm: i.dosageForm, quantity: toDec(i.quantity).toString(), drugClass: i.drugClass, directions: i.directions,
-            fills: fills.filter((f) => f.prescriptionItemId === i.id).map((f) => ({ quantity: toDec(f.quantity).toString(), dispensedAt: f.createdAt })),
-          })),
-        })),
       };
     }, { allowReadOnlyBusiness: true });
   }

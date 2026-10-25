@@ -34,19 +34,3 @@ export function quickTenders(due: string): string[] {
   }
   return [...out];
 }
-
-/**
- * An amount split equally into `n` shares to the centavo, the extra centavos going to the first shares
- * (as the server splits a tip, ADR-0022 §7). Decimal strings only; the shares always add up to `amount`.
- */
-export function splitEqually(amount: string, n: number): string[] {
-  if (n < 1) return [];
-  const cents = toDec(amount).times(100).toDecimalPlaces(0);
-  const base = cents.dividedBy(n).floor();
-  // The centavos left over (fewer than n): one more to each of the first shares.
-  const extra = cents.minus(base.times(n));
-  return Array.from({ length: n }, (_, i) => (extra.gt(i) ? base.plus(1) : base).dividedBy(100).toFixed(2));
-}
-
-/** Sum of decimal strings, to the centavo. */
-export const sumAmounts = (xs: readonly string[]) => xs.reduce((a, x) => add(a, x), '0.00');

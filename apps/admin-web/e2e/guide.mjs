@@ -1,8 +1,8 @@
 // End-to-end test of the admin user guide (/help): the band's help button on every page opens the
-// part about that page; the guide lists every area the business offers, marks none for an owner,
-// links to each area; the band still fits all its tabs at 1440px with a long business name (thirteen for
-// a business that does both, Appointments since ADR-0022, Pharmacy since ADR-0025);
-// a retail shop sees no appointments or pharmacy part; Filipino; phone width.
+// part about that page; the guide lists every area, marks none for an owner, links to each area; the
+// band still fits all eleven tabs at 1440px with a long business name; there is no appointments or
+// pharmacy part (retail only since 2026-10-25), and packs, expiry and recalls keep theirs; Filipino;
+// phone width.
 // Usage: node apps/admin-web/e2e/guide.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
@@ -15,12 +15,12 @@ const call = client(API);
 const stamp = Date.now().toString(36);
 const email = `guide-${stamp}@example.ph`;
 // Long on purpose: the help button joins the band, which must still fit every tab at 1440px.
-const BUSINESS = `Sari-sari Store at Botika ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
-await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Lorna Reyes', businessName: BUSINESS, tenantSlug: `guide-${stamp}`, businessType: 'HYBRID' });
+const BUSINESS = `Sari-sari Store at Tindahan ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
+await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Lorna Reyes', businessName: BUSINESS, tenantSlug: `guide-${stamp}` });
 
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9349 });
-const { evaluate, viewport, waitFor, go, fill, clickText, shot, bff, noHorizontalScroll } = b;
+const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll } = b;
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
 const helpHref = () => evaluate(`document.querySelector('header a[href^="/help"]')?.getAttribute('href') ?? null`);
@@ -34,11 +34,11 @@ try {
   await evaluate(`[...document.querySelectorAll('form button.btn-primary')].filter((x) => x.getClientRects().length).at(-1).click()`);
   await waitFor(`location.pathname === '/'`);
 
-  check('1440px, long business name: the help button is in the band and all thirteen tabs still fit', await evaluate(`(() => {
+  check('1440px, long business name: the help button is in the band and all eleven tabs still fit', await evaluate(`(() => {
     const nav = document.querySelector('nav[data-testid=main-nav]');
     const help = document.querySelector('header a[href^="/help"]');
     const r = help?.getBoundingClientRect();
-    return nav.querySelectorAll('a').length === 13 && nav.scrollWidth <= nav.clientWidth + 1 && !!r && r.right <= innerWidth && r.width > 0;
+    return nav.querySelectorAll('a').length === 11 && nav.scrollWidth <= nav.clientWidth + 1 && !!r && r.right <= innerWidth && r.width > 0;
   })()`));
   check('…and it has a label for screen readers and a tooltip', await evaluate(`(() => { const a = document.querySelector('header a[href^="/help"]'); return a.title === 'Help and user guide' && a.innerText.includes('Help and user guide'); })()`));
   await shot('guide-band-1440.png', false);
@@ -46,7 +46,7 @@ try {
   check('the setup checklist links to the guide', await evaluate(`[...document.querySelectorAll('aside a')].some((a) => a.getAttribute('href') === '/help#start' && a.textContent.includes('Read the user guide'))`));
 
   // The button follows the page.
-  const pages = [['/products', 'products'], ['/prices', 'prices'], ['/inventory/counts', 'inventory'], ['/purchasing', 'purchasing'], ['/books/periods', 'books'], ['/appointments/staff', 'salon'], ['/pharmacy/holds', 'pharmacy'], ['/reports/z-readings', 'reports'], ['/offline-sales', 'offline'], ['/shifts', 'drawers'], ['/locations', 'locations'], ['/team', 'team'], ['/audit', 'team'], ['/subscription/export', 'subscription']];
+  const pages = [['/products', 'products'], ['/prices', 'prices'], ['/inventory/counts', 'inventory'], ['/purchasing', 'purchasing'], ['/books/periods', 'books'], ['/inventory/packs', 'tingi'], ['/inventory/holds', 'tingi'], ['/inventory/batches', 'tingi'], ['/reports/z-readings', 'reports'], ['/offline-sales', 'offline'], ['/shifts', 'drawers'], ['/locations', 'locations'], ['/team', 'team'], ['/audit', 'team'], ['/subscription/export', 'subscription']];
   const wrong = [];
   for (const [path, topic] of pages) {
     await go(path);
@@ -65,8 +65,8 @@ try {
   await shot('guide-inventory-1440.png', false);
 
   await go('/help');
-  const all = ['start', 'products', 'prices', 'retail', 'inventory', 'tingi', 'purchasing', 'salon', 'pharmacy', 'reports', 'customers', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
-  check('a business that does both sees every part, in set-up order', JSON.stringify(await sectionIds()) === JSON.stringify(all));
+  const all = ['start', 'products', 'prices', 'retail', 'inventory', 'tingi', 'purchasing', 'reports', 'customers', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
+  check('every part, in set-up order, with no appointments or pharmacy part', JSON.stringify(await sectionIds()) === JSON.stringify(all));
   check('the contents link to every part', await evaluate(`[...document.querySelectorAll('nav[aria-label="Contents"] a')].map((a) => a.getAttribute('href')).join() === ${JSON.stringify(all.map((i) => `#${i}`).join())}`));
   check('each part has numbered steps', await evaluate(`[...document.querySelectorAll('main article')].every((a) => a.querySelectorAll('ol li').length >= 3)`));
   check('an owner has no part marked as outside the role', !(await text()).includes('Not in your role'));
@@ -74,7 +74,7 @@ try {
     const link = (id) => document.getElementById(id).querySelector('a.btn')?.getAttribute('href');
     return link('inventory') === '/inventory' && link('reports') === '/reports/sales' && link('start') === '/' && link('account') === '/account';
   })()`));
-  check('salon tips and selling-by-weight tips both show for a business that does both', (await text()).includes('Reports → Salon → Tips') && (await text()).includes('set “Sold by” to Weight'));
+  check('selling by weight, and recalls under packs and expiry, are explained', (await text()).includes('set “Sold by” to Weight') && (await text()).includes('Inventory → Batch trace'));
   await shot('guide-1440.png');
 
   // Filipino.
@@ -94,19 +94,11 @@ try {
   await shot('guide-390.png', false);
   await viewport(1440, 900);
 
-  // A retail shop.
-  const changed = await bff('PATCH', '/api/v1/business', { businessType: 'RETAIL' }, true);
-  check('the business becomes a retail shop', changed.status === 200);
-  await go('/help');
-  const retail = await sectionIds();
-  check('retail: no appointments or pharmacy part, everything else stays', !retail.includes('salon') && !retail.includes('pharmacy') && retail.length === all.length - 2);
-  check('retail: selling by weight still explained', (await text()).includes('set “Sold by” to Weight'));
+  // The removed areas are gone: their old addresses are not pages any more.
   await go('/appointments');
-  check('retail: on an appointments page the help button opens the part about changing the type of business', (await helpHref()) === '/help#subscription');
-
-  const back = await bff('PATCH', '/api/v1/business', { businessType: 'SALON' }, true);
-  await go('/help');
-  check('salon: the appointments part is back, the pharmacy part is not', back.status === 200 && (await sectionIds()).includes('salon') && !(await sectionIds()).includes('pharmacy'));
+  check('/appointments is not a page any more', await shown('could not be found', 5000) || await shown('404', 1000));
+  await go('/pharmacy/holds');
+  check('/pharmacy/holds is not a page any more (lot holds live under Inventory)', await shown('could not be found', 5000) || await shown('404', 1000));
   b.close();
 } catch (e) {
   console.error(e);

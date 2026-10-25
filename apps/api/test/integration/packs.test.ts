@@ -29,7 +29,6 @@ afterAll(async () => {
 async function store(prefix: string) {
   const t = await signup(app, prefix);
   const auth = bearer(t.access);
-  await http().patch('/v1/business').set(auth).send({ businessType: 'GROCERY' }).expect(200);
   const le = await http().post('/v1/legal-entities').set(auth).send({ registeredName: `${prefix} Store`, vatStatus: 'VAT' }).expect(201);
   const branchId = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le.body.id, code: 'B1', name: 'One' }).expect(201)).body.id as string;
   const registerId = (await http().post('/v1/registers').set(auth).send({ branchId, code: 'R1', name: 'Counter 1' }).expect(201)).body.id as string;

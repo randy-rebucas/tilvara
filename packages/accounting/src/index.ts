@@ -18,12 +18,8 @@ export const DEFAULT_CHART = [
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
   { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
-  // Session 25: tips are the staff's, never sales; paid out from the drawer. Pending the accountant.
-  { key: 'TIPS_PAYABLE', code: '2210', name: 'Tips payable', type: 'LIABILITY' },
   // Session 20 (ADR-0018): refunds given as store credit, owed to customers until spent. Pending the accountant.
   { key: 'CUSTOMER_STORE_CREDIT', code: '2300', name: 'Customer store credit', type: 'LIABILITY' },
-  // Session 27 (ADR-0022 §6): service packages paid for and not used yet, ex VAT. Pending the accountant.
-  { key: 'PREPAID_SERVICES', code: '2310', name: 'Prepaid service packages', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },
   { key: 'SALES', code: '4000', name: 'Sales', type: 'REVENUE' },
   { key: 'SALES_RETURNS', code: '4010', name: 'Sales returns', type: 'REVENUE' },
@@ -97,26 +93,16 @@ export interface SaleAmounts {
   storeCredit?: Amount;
   /** Cost of the goods that left stock (−Σ SALE movement values). */
   cogs: Amount;
-  /** A tip given with the sale (session 25), in cash or by card/QR: owed to staff, not revenue or VAT. */
-  tip?: { amount: Amount; electronic: boolean };
-  /** Service packages sold, ex VAT (ADR-0022 §6): part of `salesExVat`, owed until used, not sales yet. */
-  packagesSold?: Amount;
-  /** Package sessions used: their value moves from what is owed into sales. */
-  packageSessions?: Amount;
 }
 
 /** Sale: money in, revenue and output tax out, cost of goods moved from inventory. */
 export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLine[] {
   return balanced([
-    dr('CASH_ON_HAND', toDec(String(a.cash)).plus(a.tip && !a.tip.electronic ? String(a.tip.amount) : 0), branchId),
-    dr('PAYMENT_CLEARING', toDec(String(a.electronic)).plus(a.tip?.electronic ? String(a.tip.amount) : 0), branchId),
-    cr('TIPS_PAYABLE', a.tip?.amount ?? 0, branchId),
+    dr('CASH_ON_HAND', a.cash, branchId),
+    dr('PAYMENT_CLEARING', a.electronic, branchId),
     dr('CUSTOMER_STORE_CREDIT', a.storeCredit ?? 0, branchId),
     dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
-    cr('SALES', toDec(String(a.salesExVat)).minus(String(a.packagesSold ?? 0)), branchId),
-    cr('PREPAID_SERVICES', a.packagesSold ?? 0, branchId),
-    dr('PREPAID_SERVICES', a.packageSessions ?? 0, branchId),
-    cr('SALES', a.packageSessions ?? 0, branchId),
+    cr('SALES', a.salesExVat, branchId),
     cr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     cr('OUTPUT_VAT', a.vatAmount, branchId),
     dr('COGS', a.cogs, branchId),
@@ -140,31 +126,20 @@ export interface SaleReturnAmounts {
   storeCredit?: Amount;
   /** Value brought back into stock (Σ RETURN movement values; damaged goods bring none). */
   restocked: Amount;
-  /** A void gives the sale's tip back in cash (session 25). */
-  tipRefund?: Amount;
-  /** Unused packages given back (ADR-0022 §6): their recorded value, owed no more; part of `salesExVat`. */
-  packagesRefunded?: Amount;
-  /** Package sessions given back: their value goes back from sales to what is owed. */
-  packageSessionsRestored?: Amount;
 }
 
 /** Return or void: the sale's revenue, tax and discount reversed into Sales returns; restocked goods back to inventory. */
 export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null): PostingLine[] {
   const toCredit = a.refundTo === 'STORE_CREDIT';
-  const tip = toDec(String(a.tipRefund ?? 0));
   const paid = toDec(String(a.refund));
   const credit = toCredit ? paid : toDec(String(a.storeCredit ?? 0));
   return balanced([
-    dr('SALES_RETURNS', toDec(String(a.salesExVat)).minus(String(a.packagesRefunded ?? 0)), branchId),
-    dr('PREPAID_SERVICES', a.packagesRefunded ?? 0, branchId),
-    dr('SALES_RETURNS', a.packageSessionsRestored ?? 0, branchId),
-    cr('PREPAID_SERVICES', a.packageSessionsRestored ?? 0, branchId),
+    dr('SALES_RETURNS', a.salesExVat, branchId),
     dr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     dr('OUTPUT_VAT', a.vatAmount, branchId),
     cr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('CUSTOMER_STORE_CREDIT', credit, branchId),
-    cr('CASH_ON_HAND', paid.minus(credit).plus(tip), branchId),
-    dr('TIPS_PAYABLE', tip, branchId),
+    cr('CASH_ON_HAND', paid.minus(credit), branchId),
     dr('INVENTORY', a.restocked, branchId),
     cr('COGS', a.restocked, branchId),
   ]);
@@ -317,16 +292,6 @@ export function transferReceiptPosting(lines: TransferReceiptLine[], fromBranchI
 /** Drawer pay-in (positive) or pay-out (negative). */
 export function cashMovementPosting(amount: Amount, branchId?: string | null): PostingLine[] {
   return balanced([dr('CASH_ON_HAND', amount, branchId), cr('CASH_TRANSFERS', amount, branchId)]);
-}
-
-/** Tips handed to staff from the drawer (session 25): the liability goes down with the cash. */
-export function tipPayoutPosting(amount: Amount, branchId?: string | null): PostingLine[] {
-  return balanced([dr('TIPS_PAYABLE', amount, branchId), cr('CASH_ON_HAND', amount, branchId)]);
-}
-
-/** A voided sale's card tip given back (session 25): its charge cancelled (card), or cash from the drawer. */
-export function tipRefundPosting(amount: Amount, via: 'CARD' | 'CASH', branchId?: string | null): PostingLine[] {
-  return balanced([dr('TIPS_PAYABLE', amount, branchId), cr(via === 'CARD' ? 'PAYMENT_CLEARING' : 'CASH_ON_HAND', amount, branchId)]);
 }
 
 /** Drawer count variance: counted − expected (negative = short). */

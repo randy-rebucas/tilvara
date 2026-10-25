@@ -13,8 +13,8 @@ import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('shifts.item');
 
-/** Cash movement types as the API names them (tips since session 25). */
-const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT'] as const;
+/** Cash movement types as the API names them. */
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND'] as const;
 
 /** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {
@@ -57,7 +57,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
         <Figure label={t('doc.expectedCash')}>{peso(rec?.expectedCash ?? shift.expectedCash)}</Figure>
       </Note>
 
-      {/* Every kind of cash in or out of the drawer, so tips taken, given back and paid out show beside sales. */}
+      {/* Every kind of cash in or out of the drawer (an older shift may also show tips taken, given back and paid out). */}
       {shift.movements.length > 0 && (
         <section>
           <h2 className="section-title mb-3">{t('doc.drawerMovements')}</h2>
@@ -115,7 +115,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
               {shift.payInOut.map((m) => (
                 <li key={m.id} id={`movement-${m.id}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-hair-soft px-4 py-3 last:border-b-0">
                   <div className="min-w-0">
-                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : m.type === 'TIP_PAYOUT' ? 'doc.tipPayout' : 'doc.payOut')}: {m.reason ?? ''}</p>
+                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : 'doc.payOut')}: {m.reason ?? ''}</p>
                     <Serial>{person(m.createdBy)} · {formatDateTime(m.createdAt, lang)}</Serial>
                   </div>
                   <div className="flex items-center gap-3">

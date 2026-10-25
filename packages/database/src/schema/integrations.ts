@@ -32,7 +32,7 @@ export const apiKeys = pgTable(
     unique('api_keys_tenant_id_id_unique').on(t.tenantId, t.id),
     uniqueIndex('api_keys_prefix_unique').on(t.prefix),
     check('api_keys_name_check', sql`length(trim(${t.name})) BETWEEN 1 AND 100`),
-    check('api_keys_scopes_check', sql`cardinality(${t.scopes}) > 0 AND ${t.scopes} <@ ARRAY['org.read','catalog.read','sales.read','inventory.read','reports.read','customers.read','appointments.read']::text[]`),
+    check('api_keys_scopes_check', sql`cardinality(${t.scopes}) > 0 AND ${t.scopes} <@ ARRAY['org.read','catalog.read','sales.read','inventory.read','reports.read','customers.read']::text[]`),
     check('api_keys_revoked_check', sql`(${t.revokedAt} IS NULL) = (${t.revokedBy} IS NULL)`),
   ],
 );

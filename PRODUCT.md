@@ -8,7 +8,7 @@ web
 
 ## Users
 
-- **Primary (admin web):** owners and managers of small-to-mid Philippine retail shops, groceries, salons, pharmacies and hybrid businesses, working mostly on a laptop or desktop to set up and review the business (confirmed 2026-10-15). Phone use of the admin is secondary.
+- **Primary (admin web):** owners and managers of small-to-mid Philippine retail shops (including sari-sari stores and groceries, which are retail shops), working mostly on a laptop or desktop to set up and review the business (confirmed 2026-10-15). Phone use of the admin is secondary.
 - Other roles that use the admin with narrower permissions: branch managers, inventory/purchasing officers, accountants.
 - Cashiers work in the separate POS terminal app, not the admin web.
 
@@ -18,7 +18,7 @@ Tilvara is a multi-tenant POS and business-operations SaaS for the Philippines. 
 
 ## Positioning
 
-Unified retail and service-business operations on one foundation (restaurants and lodging were dropped on 2026-10-25), with financial and inventory integrity as the product's core claim: every sale traceable, every stock movement explainable, every tenant isolated, nothing deleted from history. Designed for Philippine operating reality (VAT / non-VAT entities, BIR branch codes, SC/PWD rules) without claiming BIR accreditation.
+Retail operations on one foundation (retail only for now: restaurants, lodging, laundry, salons, pharmacies and the separate grocery type were removed on 2026-10-25), with financial and inventory integrity as the product's core claim: every sale traceable, every stock movement explainable, every tenant isolated, nothing deleted from history. Designed for Philippine operating reality (VAT / non-VAT entities, BIR branch codes, SC/PWD rules) without claiming BIR accreditation.
 
 ## Operating Context
 

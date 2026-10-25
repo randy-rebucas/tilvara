@@ -151,7 +151,7 @@ Engineering alone cannot meet the exit: it needs D1–D6.
 - **D1 Hosting provider and region.** "Cloud" was decided on 2026-10-15; the provider and region are still open (e.g. AWS ap-southeast-1 with RDS + S3 + Secrets Manager, GCP asia-southeast1, or a local PH provider). This decides PITR, encryption at rest, object storage, the secrets manager, the OTel and metrics backend, and the staging size for load targets.
 - **D2 Email provider** (e.g. Amazon SES, Postmark, Resend). Invitations, password reset and the welcome email, and the production boot itself, wait for it.
 - **D3 Git remote and CI.** On 2026-10-15 the user chose no remote yet, so CI is deferred until they ask; GitHub Actions is assumed when it comes. Until then the gates are run by hand and recorded in STATUS.
-- **D4 Pilot businesses**: how many, which kinds (retail, grocery, salon, pharmacy), which branches and devices, and the pilot length N.
+- **D4 Pilot businesses**: how many, which kinds (retail only since 2026-10-25; grocery, salon and pharmacy were removed), which branches and devices, and the pilot length N.
 - **D5 Invoicing during the pilot**: confirm with the tax adviser that pilots keep their current registered invoicing and that Tilvara receipts carry "not an invoice" (as built).
 - **D6 PayMongo**: sandbox keys for Phase 5 slice 6. The pilot is cash-only plus the existing dev provider (refused in production) until then.
 - ~~**D7 SMS provider and account**~~ (session 29, ADR-0024 §6): withdrawn with laundry on 2026-10-25 (session 32); nothing sends texts now, and the `SmsSender` port and `SMS_DRIVER` were removed.

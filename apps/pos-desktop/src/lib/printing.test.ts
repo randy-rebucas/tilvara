@@ -110,39 +110,23 @@ describe('tender labels (session 20)', () => {
   });
 });
 
-describe('medicines on the receipt (ADR-0025)', () => {
-  const pharmacy: Receipt = {
+describe('expiry lots on the receipt', () => {
+  const withLots: Receipt = {
     ...receipt,
     lines: [
-      { name: 'Biogesic', quantity: '2', unitPrice: '5.50', amount: '8.80', flag: 'E', generic: 'Paracetamol 500 mg tablet', lots: ['Lot NEW-1 · Exp 03/2027', 'Lot NEW-2 · Exp 05/2027'] },
+      { name: 'Yogurt 1L', quantity: '2', unitPrice: '5.50', amount: '11.00', flag: 'V', lots: ['Lot NEW-1 · Exp 03/2027', 'Lot NEW-2 · Exp 05/2027'] },
       { name: 'Cotton balls', quantity: '1', unitPrice: '20.00', amount: '20.00', flag: 'V' },
     ],
-    statutory: [{ label: 'Senior citizen', name: 'Lola Cruz', idNumber: 'OSCA-123', discount: '2.20', signatureLine: true, purchaseBooklet: true }],
   };
 
-  it('prints the generic and each lot under the medicine, and the booklet under the SC/PWD details', () => {
-    const text = toText(receiptToPrintable(pharmacy), 48);
+  it('prints each lot under the item that drew it', () => {
+    const text = toText(receiptToPrintable(withLots), 48);
     const lines = text.split('\n');
     const at = (s: string) => lines.findIndex((l) => l.includes(s));
-    // The detail wraps at the paper width (indented), one medicine's generic and batches together.
-    expect(text).toContain('  2 x 5.50 | Paracetamol 500 mg tablet | Lot\n  NEW-1 - Exp 03/2027 | Lot NEW-2 - Exp 05/2027');
-    expect(at('Paracetamol')).toBeGreaterThan(at('Biogesic'));
-    expect(at('Paracetamol')).toBeLessThan(at('Cotton balls'));
+    // The detail wraps at the paper width (indented).
+    expect(text).toContain('  2 x 5.50 | Lot NEW-1 - Exp 03/2027 | Lot NEW-2\n  - Exp 05/2027');
+    expect(at('Lot NEW-1')).toBeGreaterThan(at('Yogurt 1L'));
+    expect(at('Lot NEW-1')).toBeLessThan(at('Cotton balls'));
     expect(lines[at('Cotton balls') + 1]!.trim()).toBe('1 x 20.00');
-    expect(at('Purchase booklet presented')).toBe(at('ID OSCA-123') + 1);
-    // No booklet (false or not a medicine): nothing printed.
-    const without = toText(receiptToPrintable({ ...pharmacy, statutory: [{ ...pharmacy.statutory[0]!, purchaseBooklet: false }] }), 48);
-    expect(without).not.toContain('booklet');
-  });
-
-  it('prints the generic on an offline receipt (no lots offline)', () => {
-    const doc = offlineReceiptToPrintable({
-      localReference: 'R1-TAbCd-000043', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
-      seller: { name: 'Botika', registeredName: 'Botika Inc', tin: null, vatStatus: 'VAT' }, cashierName: 'Maria',
-      lines: [{ name: 'Amoxil 500', quantity: '7', unitPrice: '18.00', amount: '126.00', flag: 'E', generic: 'Amoxicillin 500 mg capsule' }],
-      totals: { gross: '126.00', vatableSales: '0.00', vatAmount: '0.00', vatExemptSales: '126.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', amountDue: '126.00' },
-      tendered: '200.00', change: '74.00', notice: 'OFFLINE',
-    }, '10/17/2026, 10:00:00');
-    expect(toText(doc, 48)).toContain('7 x 18.00 | Amoxicillin 500 mg capsule');
   });
 });

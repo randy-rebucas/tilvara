@@ -5,10 +5,10 @@ export const TENANT_STATUSES = ['PROVISIONING', 'ACTIVE', 'SUSPENDED', 'OFFBOARD
 export type TenantStatus = (typeof TENANT_STATUSES)[number];
 
 /**
- * What the business does: it decides which features its people see. SALON adds appointments
- * (ADR-0022), PHARMACY prescriptions (ADR-0025); HYBRID shows all.
+ * What the business does. Retail only for now: GROCERY, SALON, PHARMACY and HYBRID were removed on
+ * 2026-10-25 (migration 0112), after RESTAURANT, LODGING and LAUNDRY (0110–0111).
  */
-export const BUSINESS_TYPES = ['RETAIL', 'HYBRID', 'GROCERY', 'SALON', 'PHARMACY'] as const;
+export const BUSINESS_TYPES = ['RETAIL'] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 
 export const tenants = pgTable(
@@ -20,14 +20,14 @@ export const tenants = pgTable(
     status: text('status').$type<TenantStatus>().notNull().default('PROVISIONING'),
     defaultCurrency: char('default_currency', { length: 3 }).notNull().default('PHP'),
     timezone: text('timezone').notNull().default('Asia/Manila'),
-    businessType: text('business_type').$type<BusinessType>().notNull().default('HYBRID'),
+    businessType: text('business_type').$type<BusinessType>().notNull().default('RETAIL'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('tenants_status_check', sql`${t.status} IN ('PROVISIONING','ACTIVE','SUSPENDED','OFFBOARDING','CLOSED')`),
     check('tenants_slug_format', sql`${t.slug} ~ '^[a-z0-9][a-z0-9-]{1,62}$'`),
-    check('tenants_business_type_check', sql`${t.businessType} IN ('RETAIL','HYBRID','GROCERY','SALON','PHARMACY')`),
+    check('tenants_business_type_check', sql`${t.businessType} IN ('RETAIL')`),
   ],
 );
 

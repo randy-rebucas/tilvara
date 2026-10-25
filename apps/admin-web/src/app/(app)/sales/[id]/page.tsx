@@ -3,11 +3,10 @@ import { notFound } from 'next/navigation';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { apiOrNull, type Branch, type Member, type Register, type Sale, type SaleReturnDoc, type ServiceStaff } from '@/lib/api';
+import { apiOrNull, type Branch, type Member, type Register, type Sale, type SaleReturnDoc } from '@/lib/api';
 import { formatDateTime, peso, qty, signOf } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
-import { DrugBadge } from '../../products/drug-fields';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('sales.item');
@@ -31,27 +30,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
   const lineName = (lineId: string) => sale.lines.find((l) => l.id === lineId)?.name ?? '—';
   const journal = (sourceId: string) => (branch ? `/books?entity=${branch.legalEntityId}&source=${sourceId}` : null);
   const anyReturned = sale.lines.some((l) => signOf(l.returnedQuantity) > 0);
-  // Salons (ADR-0022): who did each service, and the sessions taken from a package.
-  const staffList = sale.lines.some((l) => l.serviceStaffId)
-    ? await apiOrNull<{ data: ServiceStaff[] }>(`/service-staff?branchId=${sale.branchId}&includeArchived=true`)
-    : null;
-  const staffName = (id: string | null | undefined) => (id ? (staffList?.data.find((s) => s.id === id)?.displayName ?? '—') : null);
-  const salonLine = (l: Sale['lines'][number]) =>
-    l.serviceStaffId || l.customerPackageId ? (
-      <span className="block text-[0.8125rem] text-muted" data-testid="line-staff">
-        {staffName(l.serviceStaffId) && t('doc.byStaff', { name: staffName(l.serviceStaffId)! })}
-        {l.serviceStaffId && l.customerPackageId && ' · '}
-        {l.customerPackageId && t('doc.fromPackage')}
-      </span>
-    ) : null;
-  // A medicine (ADR-0025): the generic, strength and form under the brand, and its class at the sale.
-  const drugLine = (l: Sale['lines'][number]) =>
-    l.drugClass || l.drugLabel ? (
-      <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[0.8125rem] text-muted" data-testid="line-drug">
-        {l.drugLabel}
-        <DrugBadge drugClass={l.drugClass} />
-      </span>
-    ) : null;
   const beneficiaries = sale.beneficiaries ?? [];
 
   return (
@@ -87,8 +65,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
               cell: (l) => (
                 <span className={l.parentLineId ? 'pl-4 text-muted' : ''}>
                   {l.name}
-                  {drugLine(l)}
-                  {salonLine(l)}
                   {/* The promotion that priced it (ADR-0021 §1), with the discount it gave. */}
                   {l.promotionName && (
                     <span className="block text-[0.8125rem] text-blue">
@@ -108,8 +84,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
             title: (l) => l.name,
             meta: (l) => (
               <>
-                {drugLine(l)}
-                {salonLine(l)}
                 <Serial>{qty(l.quantity)} × {peso(l.unitPrice)}{signOf(l.returnedQuantity) > 0 && ` · ${t('doc.returned')} ${qty(l.returnedQuantity)}`}</Serial>
                 {l.promotionName && <span className="block text-blue">{l.promotionName}{signOf(l.discount) > 0 && ` · ${peso(`-${l.discount}`)}`}</span>}
               </>
@@ -117,19 +91,12 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
             figure: (l) => <span className="money font-semibold">{peso(l.amountDue)}</span>,
           }}
         />
-        {(sale.tenders.length > 0 || sale.tip) && (
+        {sale.tenders.length > 0 && (
           <dl className="grid gap-1 border-t border-hair-soft px-4 py-3 text-[0.9375rem]">
             {sale.tenders.map((tn) => (
               <div key={tn.id} className="flex justify-between gap-3 text-muted"><dt>{tn.method}</dt><dd className="money">{peso(tn.amount)}</dd></div>
             ))}
             {signOf(sale.changeDue) > 0 && <div className="flex justify-between gap-3 text-muted"><dt>{t('doc.change')}</dt><dd className="money">{peso(sale.changeDue)}</dd></div>}
-            {/* The tip is outside the total: owed to staff (session 25). */}
-            {sale.tip && (
-              <div className="mt-1 flex justify-between gap-3 border-t border-hair-soft pt-2">
-                <dt>{t('doc.tip')} · {sale.tip.method}<span className="block text-[0.8125rem] text-muted">{t('doc.tipOutside')}</span></dt>
-                <dd className="money">{peso(sale.tip.amount)}</dd>
-              </div>
-            )}
           </dl>
         )}
       </Note>
@@ -142,7 +109,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
               {beneficiaries.map((b) => (
                 <li key={b.id} data-testid="beneficiary">
                   <b>{b.name}</b> <Serial>{b.schemeCode} · {b.idNumber}{b.tin ? ` · TIN ${b.tin}` : ''}</Serial>
-                  {b.purchaseBooklet != null && <span className="block text-[0.8125rem]">{b.purchaseBooklet ? t('doc.bookletShown') : t('doc.bookletNotShown')}</span>}
                 </li>
               ))}
             </ul>
@@ -174,19 +140,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
                       <span className="money">{peso(l.amountDue)}</span>
                     </li>
                   ))}
-                  {r.tipRefund && signOf(r.tipRefund) > 0 && (
-                    <li className="flex justify-between gap-3">
-                      <span>{t('doc.tipRefund')}</span>
-                      <span className="money">{peso(`-${r.tipRefund}`)}</span>
-                    </li>
-                  )}
-                  {r.cardTipRefund && (
-                    <li className="flex justify-between gap-3">
-                      <span>{t(r.cardTipRefund.method === 'CARD' ? 'doc.tipRefundCard' : 'doc.tipRefundCash')}</span>
-                      <span className="money">{peso(`-${r.cardTipRefund.amount}`)}</span>
-                    </li>
-                  )}
-                  {r.tipRefundPending && <li className="text-[0.875rem] text-[var(--red,#b42318)]">{t('doc.tipRefundPending')}</li>}
                 </ul>
               </Note>
             ))}

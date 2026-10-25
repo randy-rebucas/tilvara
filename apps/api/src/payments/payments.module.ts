@@ -7,7 +7,7 @@ import { DevPaymentProvider, PaymentProvider } from './provider.js';
 @Module({
   controllers: [PaymentsController],
   providers: [DevPaymentProvider, { provide: PaymentProvider, useExisting: DevPaymentProvider }, PaymentsService],
-  // A voided sale's card tip is cancelled with the provider (session 25): the same provider instance.
+  // The same provider instance for whoever needs it.
   exports: [PaymentProvider, DevPaymentProvider],
 })
 export class PaymentsModule {}

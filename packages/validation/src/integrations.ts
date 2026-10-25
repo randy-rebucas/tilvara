@@ -3,8 +3,7 @@ import { z } from 'zod';
 // ------------------------------------------------------------------ integrations (session 20, SPEC §6.11, ADR-0019)
 
 /** What an API key may read: always GET, always the whole business. */
-/** `appointments.read` (ADR-0022, audit 2026-10-21): the calendar, appointments, free times and service staff (never client service notes). */
-export const API_KEY_SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read', 'appointments.read'] as const;
+export const API_KEY_SCOPES = ['org.read', 'catalog.read', 'sales.read', 'inventory.read', 'reports.read', 'customers.read'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 /** Events a webhook may listen for (same list as `WEBHOOK_TOPICS` in @1pos/database; a unit test keeps them equal). */

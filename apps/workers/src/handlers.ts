@@ -1,4 +1,4 @@
-import { appointmentReminderMail, eq, expiredSoldMail, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
+import { eq, expiredSoldMail, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
@@ -51,7 +51,7 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
         await mailer.send({ to: k.email, template: 'stock.expiring', ...mail });
       }
     },
-    // A sale that took expired or held stock where it is blocked (ADR-0025 §4): an offline sale, a recipe.
+    // A sale that took expired or held stock where the branch blocks it: an offline sale.
     'stock.expired_sold': async (event, _db, { client }) => {
       const mail = await expiredSoldMail(client, event.payload);
       if (!mail) return;
@@ -59,12 +59,8 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
         await mailer.send({ to: k.email, template: 'stock.expired_sold', ...mail });
       }
     },
-    // A day-before reminder to the customer (ADR-0022 §10), flagged by the hourly pass. Ids only in the event.
-    'appointment.reminder': async (event, _db, { client }) => {
-      const mail = await appointmentReminderMail(client, event.payload);
-      if (!mail) return; // cancelled, moved, turned off or no address since: nothing to send
-      await mailer.send({ ...mail, template: 'appointment.reminder' });
-    },
+    // `appointment.reminder` events still queued from before 0112 removed appointments have no handler:
+    // like any topic without a consumer they are acknowledged and kept (nothing is sent).
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
   });
 }

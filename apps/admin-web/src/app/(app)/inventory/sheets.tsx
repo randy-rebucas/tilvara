@@ -217,7 +217,7 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
           negativeStockPolicy: f.get('negativeStockPolicy'),
           lowStockAlerts: f.get('lowStockAlerts') === 'on',
           ...(String(f.get('expiryAlertDays') ?? '').trim() !== '' ? { expiryAlertDays: Number(f.get('expiryAlertDays')) } : {}),
-          // ADR-0025 §4: '' = the business type's default (Never sell expired for a pharmacy).
+          // ADR-0025 §4: '' = no choice made, which allows selling expired stock.
           ...(settings.expiredStockRule ? { expiredStock: f.get('expiredStock') === 'BLOCK' ? 'BLOCK' : f.get('expiredStock') === 'ALLOW' ? 'ALLOW' : null } : {}),
         });
         if (r.ok) setDone(true);

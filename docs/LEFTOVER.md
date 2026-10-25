@@ -29,23 +29,20 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 ## Audit 2026-10-21 (session 31)
 Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) and every work item (§3) was fixed in session 31, and decisions A1–A6 were taken as recommended (§4, the user asked to fix them all). Migrations 0107–0109.
 - ✅ Moot since 2026-10-25: VOID kitchen slips, voided-check re-pay, overstays and machine cycles were removed with their industries. Every other suite passed after the audit (audit §7).
-- ⏳ DPO to confirm A1 (service notes refused to API keys and support sessions, appointment notes blanked for them) and the processing-register wording. Asked as question 8 in `compliance/privacy/README.md` §4.
+- ✅ A1 is moot: service notes and appointments were removed on 2026-10-25 (session 33; migration 0112); question 8 is marked moot.
 - ✅ A3 for laundry is moot: laundry was removed on 2026-10-25 (session 32), so `laundry.dispose` no longer exists and HYBRID branch managers need no two-step sign-in for it.
 - ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm: question 13 in `accounting/ACCOUNTANT_REVIEW_REQUEST.md`.
 - ⬜ The night audit still runs in the API process with a cross-tenant scan granted to `onepos_app` (A6, documented in ADR-0023). Move it into the worker if another scheduled posting needs the tax and ledger code there.
 
-## Session 30 — pharmacies and drugstores (ADR-0025)
-- ⏳ Pharmacist-in-charge and DPO: the prescription book and dangerous drugs register formats and retention, partial fills of yellow prescriptions, whether a pharmacy assistant may hand over Rx medicines under supervision (the till asks for the pharmacist's approval), retention of prescriptions (health data; privacy §15d, retention schedule). Compliance assumptions §10A, question 17.
-- ⏳ Tax adviser: the current SC/PWD purchase booklet rule for medicines (Tilvara requires it by default, `pharmacy_settings`), quantity limits if any, and the current VAT-exempt medicine lists (the business marks those items VAT-exempt by hand).
-- ⬜ Maximum drug retail prices (MDRP/EO 104): no price ceiling check. e-Prescriptions, FDA/DDB online reporting, compounding and repacking records: not built.
-- ⬜ Photos or scans of prescriptions (needs file storage, D1). Refill reminders to customers.
-- ⬜ Offline refills: the snapshot carries no patient data, so an offline till records only new prescriptions; a customer's earlier prescription is filled online only.
+## Session 33 — retail only (2026-10-25)
+The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migration 0112): salons, recipes, tips and prescriptions went with them; packs, expiry lots, lot codes, lot holds, the batch trace and the expired-stock rule stay for every shop.
+- ✅ Tips and prepaid packages still owed from before: the user chose to remove the history too (migration 0113): tip and package rows deleted, old journal entries rewritten without them, accounts 2210/2310 deleted.
+- ⬜ Drawer counts closed before 0113 on shifts with cash tips keep the expected cash and variance recorded at the time; their drawer movements no longer include the tips, so Σ movements no longer equals that recorded expected cash (dev data only).
+- ⬜ Held former Pharmacist / Pharmacy Assistant roles (8 on the dev DB) stay as each business's own roles with what they had left; nothing uses them.
+- ⬜ Docs still describing removed features (left by session 32 too): `docs/architecture/DOMAIN_MODEL.md` (restaurant invariants, consumption reconciliation), `docs/database/DATA_MODEL.md` (Phase 4 restaurant and recipe tables), the ADR table in `docs/architecture/ARCHITECTURE.md` (recipes; no rows after 0015), ADR-0016's "8 café items".
+- ⬜ A worker integration test for the `stock.expired_sold` mail (the builder `expiredSoldMail` is untested; the event is checked in `expiry-holds.test.ts`).
 - ⬜ Choosing the lot at the till; cost per lot. The expiry date is taken as entered (a month-only date is not read as its last day).
-- ⬜ A worker integration test for the `stock.expired_sold` mail (the mail builder `expiredSoldMail` is untested; the event itself is checked in `pharmacy.test.ts`). Offline pharmacy sales in a browser E2E (covered by pos-offline unit tests only).
-- ⬜ The till does not show a pack's chain ("1 box = 10 strips = 100 tablets"); the lookup does not return it. Thermal receipts put the generic and lots on one wrapped detail line, so a lot code can break across lines (`@1pos/escpos` has no separate small line).
-- ⬜ The dangerous drugs register counts stock brought in by a stock adjustment under "Adjusted", not "Received" (only goods receipts, transfers in and pack openings count as received).
-- ⬜ Online name search for medicines matches one word or the exact phrase (`/v1/products?q=` is a plain ILIKE); the offline engine matches several words in any order.
-- ⬜ Filipino copy for the pharmacy screens needs a native speaker's review.
+- ⬜ The till does not show a pack's chain ("1 box = 10 strips = 100 pieces"). Thermal receipts put the lots on one wrapped detail line, so a lot code can break across lines.
 
 ## Session 29 — laundromats and laundry shops (ADR-0024)
 - ✅ All items closed by removal: the user removed laundry on 2026-10-25 (session 32; ADR-0024 withdrawn, migration 0110). D7 (SMS provider), the down-payment accounts for the accountant, the claim policy, and the DPO rows for job orders, trips and notices are no longer needed.
@@ -53,17 +50,11 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 ## Session 28 — hotels, resorts and transient houses (ADR-0023)
 - ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111).
 
+## Session 30 — pharmacies and drugstores (ADR-0025)
+- ✅ All items closed by removal: the user removed pharmacies on 2026-10-25 (session 33; migration 0112). The kept parts (lot holds, the batch trace, the expired-stock rule, the pack chain) carry their open items in session 33 above.
+
 ## Session 27 — beauty salons, spas and barber shops (ADR-0022)
-- ⏳ Accountant: packages are owed until used (*2310 Prepaid service packages*, ex VAT; VAT due when paid); unused sessions of an expired package stay owed (breakage not recognised); commissions are a report only. Add to the accountant review request with store credit and tips.
-- ⏳ DPO: service notes may hold allergies (sensitive personal information); retention periods proposed for appointments, notes and staff records (processing register §15a, retention schedule). No purge jobs yet, like the others.
-- ⬜ Refunding part of a used package (only whole unused packages come back) and moving a package to another customer.
-- ⬜ Public booking page, deposits, SMS reminders (needs a provider), reminders in Filipino; rooms or chairs as booked resources.
-- ⬜ Paying out commissions and tips per staff member (the drawer pays tips out as one amount); payroll.
-- ⬜ Appointments and package sessions need the server (the offline till sells services and names staff, but refuses packages and has no calendar).
-- ⬜ A sale made only of package sessions sends one CASH tender of ₱0.00 (the tender list needs one entry); the API could accept no tenders when nothing is due.
-- ⬜ Time off older than 30 days is not shown on the staff page (kept in the table).
-- ⬜ Filipino copy for the salon screens (admin and till, ~150 keys) needs a native speaker's review.
-- ⬜ `backup.test.ts` and the desktop till (`cargo test`, `test:e2e:desktop`) were not re-run in session 27 (no Rust changed; the offline engine gained staff on lines and refuses packages).
+- ✅ All items closed by removal: the user removed salons on 2026-10-25 (session 33; migration 0112), with recipes and tips. What is still owed from before (prepaid packages, tips) is in session 33 above.
 
 ## Session 26 — retail stores and boutiques (ADR-0021)
 - ⏳ Tax adviser: SC/PWD always wins over a promotion on the same line (no double discount, RA 9994 IRR). Whether the beneficiary may instead choose the promotion when it is larger is for the adviser; today the statutory discount applies.
@@ -78,15 +69,15 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 - ⬜ `backup.test.ts` was not re-run in session 26 (the Docker CLI on this machine stopped answering); re-run it when Docker is back.
 
 ## Session 25 — restaurants, cafés and food trucks (ADR-0014 amendment)
-- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111). Tips stay (salons split them per staff).
+- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111), then tips (session 33; migration 0112).
 
 ## Session 24 — sari-sari stores: packs and pieces, expiry dates (ADR-0020)
 - ⏳ Opening packs posts a revaluation of pieces sold short (and rounding) to COGS, like receipts and transfers. Accountant to confirm with the next batch of questions (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`).
-- ⬜ A sale opens one level only: a pack for its pieces, never a case to get a pack. Manual openings work at any level.
+- ✅ A sale opens up to three levels (box → strip → piece, session 30; kept for every shop in 0112). Manual openings work at any level.
 - ⬜ A purchase-order line is received with one expiry date per receipt (the receipt takes each order line once). Two dates in one delivery of an ordered item need two receipts; items off the order can be repeated on one receipt.
 - ⬜ No dates on count sheets or supplier returns: a count surplus is undated, and a supplier return draws by the rule (undated first, then first-expiry-first). A damaged customer return goes back to its sale's lot, but its WASTE then draws undated stock first.
 - ⬜ The till shows nothing of either feature: no "Open a pack" at the counter, no warning when expired stock is sold, and the counter guide has no tingi line (sales open packs on the server, so the till needs none of this to work).
-- ⬜ Grocery sample items are untracked like every sample set, so a trial shows neither packs nor expiry until the owner adds real stock-counted items.
+- ⬜ Sample items are untracked, so a trial shows neither packs nor expiry until the owner adds real stock-counted items (the GROCERY type and its sample set were removed in 0112).
 - ⬜ Turning off "Keeps expiry dates" keeps the item's lots; they are drawn as stock goes out but no new dates come in.
 
 ## Session 23 — till quantities and stock movements

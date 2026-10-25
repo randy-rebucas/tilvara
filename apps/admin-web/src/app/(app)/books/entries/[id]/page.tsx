@@ -12,7 +12,7 @@ import { sourceHref } from '../../chrome';
 import { pageTitle } from '@/i18n/page-title';
 
 /** Undone through their document (cancel the invoice, void the payment, an opposite note), never by hand; the API refuses it too. */
-const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE', 'SALE_TIP_REFUND'];
+const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE'];
 
 export const generateMetadata = pageTitle('books.entries.item');
 

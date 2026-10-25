@@ -64,9 +64,6 @@ async function main(): Promise<void> {
         // Lots entering their branch's expiry window: one stock.expiring event per branch (ADR-0020 §3).
         const { rows: flagged } = await pool.query<{ n: number }>('SELECT platform_flag_expiring_lots() AS n');
         if (flagged[0]?.n) logger.info('flagged expiring lots', { count: flagged[0].n });
-        // Appointments starting within a day: one appointment.reminder event each (ADR-0022 §10).
-        const { rows: reminders } = await pool.query<{ n: number }>('SELECT platform_flag_appointment_reminders() AS n');
-        if (reminders[0]?.n) logger.info('flagged appointment reminders', { count: reminders[0].n });
         const expired = await expireDataExports(pool, storage, logger);
         if (expired) logger.info('expired data exports', { count: expired });
       }

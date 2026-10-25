@@ -28,15 +28,6 @@ period, counted from the end of the taxable year the record belongs to.
 | Customers: name, contact details, TIN, notes | `customers` | *Proposed:* 2 years after the last purchase, then anonymised (not while store credit is owed) | Purchase history, store credit, offers by consent | ◐ Manual "Remove personal details" ●; automatic anonymisation ○ |
 | Marketing consent history | `customer_consent_events` | As long as the customer row, plus the fiscal period (proof of consent) | Accountability for offers sent | ◐ Kept (append-only) |
 | Store credit entries | `customer_credit_entries` | Fiscal period (they post to the books) | Liability to the customer | ◐ Kept (append-only) |
-| Appointments: client or guest name, time, services, staff, notes, cancellation reason | `appointments`, `appointment_services` | *Proposed:* 2 years after the appointment, then guest name and notes cleared (session 27) | Bookings and the client's history | ○ Kept; cleared with the customer's anonymisation ◐ |
-| Service notes (may hold allergies: sensitive) | `customer_notes` | With the customer: deleted when the customer is anonymised; *proposed* 2 years after the last purchase | Serving the client safely | ◐ Deleted on "Remove personal details" ●; automatic ○ |
-| Packages and their sessions | `customer_packages`, `customer_package_items`, `customer_package_entries` | Fiscal period (they post to the books) | Liability to the client | ◐ Kept (append-only) |
-| Prescriptions: patient name and address, prescriber and licence numbers, yellow form, items (health data, ADR-0025) | `prescriptions`, `prescription_items` | *Proposed:* the period the pharmacy and dangerous drugs rules require (to confirm with the pharmacist-in-charge), at least the fiscal period, then patient name and address cleared (DPO to confirm) | Prescription book, dangerous drugs register | ◐ Customer link removed on "Remove personal details" ●; clearing ○ |
-| Dispensing records | `prescription_fills` | With the prescription | Prescription book, dangerous drugs register | ◐ Kept (append-only) |
-| Pharmacist's approvals at the till | `dispense_approvals` | Fiscal period | Who dispensed | ◐ Kept (staff ids only) |
-| Pharmacist licence numbers | `pharmacist_licenses` | While the member belongs to the business | Dangerous drugs may be dispensed | ○ Kept (edited in place) |
-| Service staff: name, hours, time off reasons, commission rates | `service_staff`, `service_staff_hours`, `service_staff_time_off`, `service_staff_services` | *Proposed:* while they work there, plus the fiscal period of the last sale naming them; time off 1 year after it ends | Calendars and commissions | ○ (archive only) |
-| Tip shares per staff member | `sale_tip_shares` | Fiscal period | Paying staff their tips | ◐ Kept (append-only) |
 | Held carts: lines and SC/PWD name and ID number while parked | `held_carts` | Until resumed or discarded (lines and details cleared then; the row keeps the label, count and who) | Serving the next customer | ● Cleared on resume/discard (DB trigger). *Proposed:* discard carts left open more than 7 days ○ |
 | API keys and webhook endpoints | `api_keys`, `webhook_endpoints` | Until the business is deleted (revoked keys kept as evidence) | Integrations the business set up | ● Kept; the key itself is a hash only |
 | Webhook deliveries (ids only) | `webhook_deliveries` | *Proposed:* 30 days after delivered or given up | Proof of delivery, sending again | ○ Purge not built |
@@ -62,6 +53,8 @@ period, counted from the end of the taxable year the record belongs to.
 | Edge / load-balancer logs (client IP addresses) | Host | *Proposed:* 30 days | Security investigations | ○ D1 |
 | Metrics | Metrics store | Host default; no personal data | Operations | — |
 | Email delivery records | Email provider | Provider default; set to the shortest offered | Delivery problems | ○ D2 |
+
+Removed on 2026-10-25 (retail only, migration 0112): the rows for salon appointments, service notes, customers' packages, service staff and tip shares, and for prescriptions, dispensing records, pharmacist approvals and licences. The migration dropped those tables and **deleted their data**; nothing of it is collected any more. Lodging and laundry rows went the same way earlier that day (migrations 0110–0111).
 
 ## When a business leaves
 

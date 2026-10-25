@@ -163,7 +163,6 @@ export class AccountingService extends TenantService {
       // The same for a payment (void it: the invoices it settled open again) and a note (record an opposite note).
       if (entry.sourceType === 'SUPPLIER_PAYMENT') throw unprocessable('CANCEL_THE_DOCUMENT', 'Void the supplier payment instead of reversing its entry');
       if (entry.sourceType === 'SUPPLIER_NOTE') throw unprocessable('CANCEL_THE_DOCUMENT', 'Record an opposite note instead of reversing this entry');
-      if (entry.sourceType === 'SALE_TIP_REFUND') throw unprocessable('NOT_REVERSIBLE', 'A tip given back is final: the card charge was cancelled or the cash left the drawer');
       const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, id));
       const posting: PostingLine[] = lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }));
       const reversal = await post(db, {

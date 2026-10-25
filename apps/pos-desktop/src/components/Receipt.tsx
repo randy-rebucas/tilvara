@@ -3,7 +3,7 @@ import { useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { ReceiptPrinter } from '../lib/devices';
 import { useTill } from '../lib/till';
-import { BOOKLET_PRESENTED, receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, tipLabel, TOTAL_LABELS } from '../lib/printing';
+import { receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
 
@@ -53,14 +53,9 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
                 <span>{l.name}</span>
                 <span className="money">{l.amount} {l.flag}</span>
               </p>
-              <p className="text-muted">
-                {l.quantity} × {l.unitPrice}
-                {l.packageSession && <> · {t('receipt.packageSession')}</>}
-                {l.staff && <> · {l.staff}</>}
-              </p>
+              <p className="text-muted">{l.quantity} × {l.unitPrice}</p>
               {l.promotion && l.discount && <p className="text-muted">{l.promotion} −{l.discount}</p>}
-              {/* A medicine (ADR-0025): its generic and the batches the sale drew, small, under the item. */}
-              {l.generic && <p className="text-[0.75rem] text-muted" data-testid="receipt-generic">{l.generic}</p>}
+              {/* An expiry item: the batches the sale drew, small, under the item. */}
               {l.lots?.map((lot) => <p key={lot} className="text-[0.75rem] text-muted" data-testid="receipt-lot">{lot}</p>)}
             </li>
           ))}
@@ -93,18 +88,11 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
               <Money value={v} />
             </p>
           ))}
-          {data.tip && (
-            <p className="flex justify-between" data-testid="receipt-tip">
-              <span>{tipLabel(data.tip.method)}</span>
-              <Money value={data.tip.amount} />
-            </p>
-          )}
         </div>
         {data.statutory.map((s, i) => (
           <div key={i} className="mt-3 border-t border-dashed border-hair pt-2">
             <p>{s.label}: {s.name}</p>
             <p className="serial">ID {s.idNumber}</p>
-            {s.purchaseBooklet && <p data-testid="receipt-booklet">{BOOKLET_PRESENTED}</p>}
             {perPersonDiscount && <p className="flex justify-between"><span>Discount</span><Money value={signedTotal('statutoryDiscount', s.discount)} /></p>}
             {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{t('receipt.signature')}</p>}
           </div>

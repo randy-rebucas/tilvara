@@ -208,3 +208,27 @@ export type ExpiringQuery = z.infer<typeof expiringQuerySchema>;
 
 export const lotQuerySchema = z.object({ branchId: z.uuid(), variantId: z.uuid() });
 export type LotQuery = z.infer<typeof lotQuerySchema>;
+
+// Lot holds (recalls) and the batch trace (ADR-0025 §5, kept for every shop when pharmacies were removed).
+const lotText = (max: number) => z.string().trim().min(1).max(max);
+
+export const createLotHoldSchema = z.object({
+  variantId: z.uuid(),
+  lotCode: lotText(64),
+  /** Omitted: every branch. */
+  branchId: z.uuid().optional(),
+  reason: lotText(200),
+  reference: z.string().trim().max(100).nullable().optional(),
+});
+export type CreateLotHoldInput = z.infer<typeof createLotHoldSchema>;
+export const releaseLotHoldSchema = z.object({ reason: lotText(200) });
+export type ReleaseLotHoldInput = z.infer<typeof releaseLotHoldSchema>;
+export const lotHoldListQuerySchema = z.object({
+  variantId: z.uuid().optional(),
+  branchId: z.uuid().optional(),
+  includeReleased: z.enum(['true', 'false']).optional().transform((v) => v === 'true'),
+});
+export type LotHoldListQuery = z.infer<typeof lotHoldListQuerySchema>;
+
+export const lotTraceQuerySchema = z.object({ variantId: z.uuid(), lotCode: lotText(64) });
+export type LotTraceQuery = z.infer<typeof lotTraceQuerySchema>;

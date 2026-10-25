@@ -1,13 +1,13 @@
 # Tilvara
 
-Multi-tenant point-of-sale SaaS for Philippine shops, groceries, salons and pharmacies. One codebase serves many
+Multi-tenant point-of-sale SaaS for Philippine retail shops. One codebase serves many
 businesses; each business's data is isolated by PostgreSQL row-level security.
 
 It is a modular monolith:
 
 | App | What it is | Tech |
 |---|---|---|
-| `apps/api` | The HTTP API (`/v1`): auth, catalog, prices, sales, inventory, purchasing, books, salons, pharmacies, offline sync | NestJS, Drizzle, PostgreSQL |
+| `apps/api` | The HTTP API (`/v1`): auth, catalog, prices, sales, inventory, purchasing, books, offline sync | NestJS, Drizzle, PostgreSQL |
 | `apps/workers` | Background worker: delivers outbox events (welcome mail, data exports), purges expired idempotency keys | Node |
 | `apps/admin-web` | The back office for owners and managers | Next.js 16 (App Router), Tailwind |
 | `apps/pos-desktop` | The till: in a browser, or as a Windows desktop app that keeps selling cash during an outage | React + Vite; Tauri 2 for desktop |
@@ -250,7 +250,7 @@ pnpm test:e2e:pos                    # till smoke
 ```
 
 Other suites: `test:e2e:web:security`, `web:backoffice`, `web:offline`, `web:onboarding` (needs the
-worker), `web:account`, `web:salon`, `web:pharmacy`, `test:e2e:pos:mfa`, `test:e2e:desktop`. Most accept
+worker), `web:account`, `web:retail`, `test:e2e:pos:retail`, `test:e2e:pos:mfa`, `test:e2e:desktop`. Most accept
 `[baseUrl] [screenshotDir] [apiUrl]`.
 
 ### Security gates

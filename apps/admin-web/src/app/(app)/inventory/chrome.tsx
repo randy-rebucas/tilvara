@@ -4,10 +4,12 @@ import { ScopePicker, SubNav } from '@/components/scope';
 import { apiOrNull, type Branch } from '@/lib/api';
 import { getT } from '@/i18n/server';
 
-export type InventoryTab = 'stock' | 'expiry' | 'packs' | 'reservations' | 'transfers' | 'counts' | 'movements' | 'settings';
+export type InventoryTab = 'stock' | 'expiry' | 'holds' | 'batches' | 'packs' | 'reservations' | 'transfers' | 'counts' | 'movements' | 'settings';
 const PATHS: Record<InventoryTab, string> = {
   stock: '/inventory',
   expiry: '/inventory/expiry',
+  holds: '/inventory/holds',
+  batches: '/inventory/batches',
   packs: '/inventory/packs',
   reservations: '/inventory/reservations',
   transfers: '/inventory/transfers',
@@ -15,6 +17,9 @@ const PATHS: Record<InventoryTab, string> = {
   movements: '/inventory/movements',
   settings: '/inventory/settings',
 };
+
+/** Tabs that cover every branch at once (holds on a lot, the batch trace): no branch picker. */
+const EVERY_BRANCH: readonly InventoryTab[] = ['holds', 'batches'];
 
 /** `?branch=all` on the stock page: every branch side by side. */
 export const ALL = 'all';
@@ -28,11 +33,13 @@ export async function inventoryBranch(param: string | undefined) {
 
 /**
  * Page header, section tabs and branch picker shared by the inventory pages. `all`: the stock page's
- * "All branches" view (ADR-0021 §5), offered there when there is more than one branch.
+ * "All branches" view (ADR-0021 §5), offered there when there is more than one branch. Holds and
+ * the batch trace cover every branch, so they show no picker.
  */
 export async function InventoryChrome({ tab, branches, branch, all = false, children }: { tab: InventoryTab; branches: Branch[]; branch: Branch | undefined; all?: boolean; children: ReactNode }) {
   const { t } = await getT();
   const q = branch ? `?branch=${branch.id}` : '';
+  const everyBranch = EVERY_BRANCH.includes(tab);
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('inv.title')} lede={t('inv.lede')} />
@@ -42,6 +49,8 @@ export async function InventoryChrome({ tab, branches, branch, all = false, chil
         items={[
           { key: 'stock', href: `${PATHS.stock}${q}`, label: t('inv.tab.stock') },
           { key: 'expiry', href: `${PATHS.expiry}${q}`, label: t('inv.tab.expiry') },
+          { key: 'holds', href: PATHS.holds, label: t('inv.tab.holds') },
+          { key: 'batches', href: PATHS.batches, label: t('inv.tab.batches') },
           { key: 'packs', href: `${PATHS.packs}${q}`, label: t('inv.tab.packs') },
           { key: 'reservations', href: `${PATHS.reservations}${q}`, label: t('inv.tab.reservations') },
           { key: 'transfers', href: `${PATHS.transfers}${q}`, label: t('inv.tab.transfers') },
@@ -50,13 +59,15 @@ export async function InventoryChrome({ tab, branches, branch, all = false, chil
           { key: 'settings', href: `${PATHS.settings}${q}`, label: t('inv.tab.settings') },
         ]}
       />
-      <ScopePicker
-        label={t('common.branch')}
-        items={tab === 'stock' && branches.length > 1 ? [{ id: ALL, name: t('rep.allBranches') }, ...branches] : branches}
-        selected={all ? ALL : branch?.id}
-        href={(id) => `${PATHS[tab]}?branch=${id}`}
-      />
-      {branch || all ? children : <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note>}
+      {!everyBranch && (
+        <ScopePicker
+          label={t('common.branch')}
+          items={tab === 'stock' && branches.length > 1 ? [{ id: ALL, name: t('rep.allBranches') }, ...branches] : branches}
+          selected={all ? ALL : branch?.id}
+          href={(id) => `${PATHS[tab]}?branch=${id}`}
+        />
+      )}
+      {branch || all || everyBranch ? children : <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note>}
     </div>
   );
 }

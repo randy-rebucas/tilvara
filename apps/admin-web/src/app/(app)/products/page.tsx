@@ -4,9 +4,6 @@ import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type Category, type CurrentPrice, type Me, type PriceList, type Product, type TaxCategory, type Uom } from '@/lib/api';
 import { categoryOptions } from '@/lib/categories';
 import { isUuid } from '@/lib/options';
-import { servesAppointments, servesPharmacy, usesPackages } from '@/lib/business-type';
-import { genericLabel } from '@/lib/pharmacy';
-import { DrugBadge } from './drug-fields';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { AddProduct } from './add-product';
@@ -55,7 +52,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
           {category && <input type="hidden" name="category" value={category} />}
         </form>
-        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} expiryFirst={me.activeTenant?.businessType === 'GROCERY'} pharmacy={servesPharmacy(me.activeTenant?.businessType)} salon={servesAppointments(me.activeTenant?.businessType)} packages={usesPackages(me.activeTenant?.businessType)} />}
+        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} />}
       </div>
 
       {category && (
@@ -87,7 +84,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                   <tr key={p.id} className={p.archivedAt ? 'text-muted' : ''}>
                     <td>
                       <Link href={`/products/${p.id}`} className="block font-semibold underline">{p.name}</Link>
-                      {p.drugClass && <span className="block text-[0.8125rem] text-muted" data-testid="generic">{genericLabel(t, p)}</span>}
                       {v.length > 1 && <span className="text-[0.8125rem] text-muted">{t('prod.variants', { n: v.length })}</span>}
                     </td>
                     <td><Serial className="text-ink">{first?.sku}</Serial></td>
@@ -97,8 +93,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
                     <td className="whitespace-nowrap">
                       {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}
-                      {(p.productType === 'SERVICE' || p.productType === 'PACKAGE') && <span className="tag ml-1.5">{t(`prod.kind.${p.productType}`)}</span>}
-                      {p.drugClass && <span className="ml-1.5"><DrugBadge drugClass={p.drugClass} /></span>}
+                      {p.productType === 'SERVICE' && <span className="tag ml-1.5">{t('prod.kind.SERVICE')}</span>}
                       {p.isSample && <span className="tag ml-1.5 border-blue/40 text-blue!">{t('sample.tag')}</span>}
                     </td>
                   </tr>

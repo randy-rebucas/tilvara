@@ -49,7 +49,7 @@ export class PaymentsService extends TenantService {
           existing.clientTransactionId === input.clientTransactionId &&
           existing.method === input.method &&
           toDec(existing.amount).equals(input.amount) &&
-          existing.purpose === input.purpose &&
+          existing.purpose === 'SALE' &&
           existing.createdBy === auth.userId;
         if (!same) {
           throw new AppError('IDEMPOTENCY_KEY_REUSED', 'This Idempotency-Key was already used for a different payment', HttpStatus.UNPROCESSABLE_ENTITY);
@@ -68,7 +68,7 @@ export class PaymentsService extends TenantService {
           registerId: session.registerId,
           cashierSessionId: session.id,
           clientTransactionId: input.clientTransactionId,
-          purpose: input.purpose,
+          purpose: 'SALE',
           requestKey,
           provider: this.provider.name,
           method: input.method,
@@ -120,7 +120,7 @@ export class PaymentsService extends TenantService {
       const row = await this.load(db, auth, id, 'operate');
       if (row.saleId) throw conflict('PAYMENT_CONSUMED', 'This payment is part of a completed sale; refund the sale instead');
       // A payment of a purpose no longer offered (a laundry down payment before 0110, a folio payment before 0111) was settled by its own document.
-      if (!(['SALE', 'TIP'] as string[]).includes(row.purpose)) throw conflict('PAYMENT_CONSUMED', 'This payment was settled by a document of a feature no longer offered');
+      if (row.purpose !== 'SALE') throw conflict('PAYMENT_CONSUMED', 'This payment was settled by a document of a feature no longer offered');
       if (row.status === 'PROCESSING' || row.status === 'UNKNOWN') throw conflict('RECONCILE_FIRST', 'Reconcile this payment before cancelling it');
       if (row.status === 'SUCCEEDED') await this.event(db, auth, id, 'CANCEL_REQUESTED', null);
       return row;

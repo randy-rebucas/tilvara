@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { drugDetailsSchema } from './pharmacy.js';
 
 /** Non-negative decimal string, up to 16 integer digits and 4 decimals (NUMERIC(20,4)). Never a JS number. */
 export const amountSchema = z
@@ -64,10 +63,6 @@ export const variantInputSchema = z.object({
   barcodes: z.array(barcodeSchema).max(20).default([]),
   /** Optional initial price in the tenant's default price list, effective now. */
   price: amountSchema.optional(),
-  /** A service's duration in minutes, needed to book it (ADR-0022 §3). */
-  serviceMinutes: z.number().int().min(5).max(720).nullable().optional(),
-  /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
-  packageValidDays: z.number().int().min(1).max(3650).nullable().optional(),
 });
 export type VariantInput = z.infer<typeof variantInputSchema>;
 
@@ -78,14 +73,11 @@ export const createProductSchema = z
     categoryId: z.uuid().nullable().optional(),
     taxCategoryId: z.uuid(),
     uomId: z.uuid(),
-    /** PACKAGE: prepaid sessions of services (ADR-0022 §6); never stock-tracked. */
-    productType: z.enum(['STANDARD', 'SERVICE', 'PACKAGE']).default('STANDARD'),
+    productType: z.enum(['STANDARD', 'SERVICE']).default('STANDARD'),
     soldBy: z.enum(['UNIT', 'WEIGHT']).default('UNIT'),
     trackInventory: z.boolean().optional(),
     /** Stock comes in with expiry dates (ADR-0020 §3); needs tracked stock. */
     tracksExpiry: z.boolean().default(false),
-    /** A medicine (ADR-0025 §2): its class, generic name, strength and form. */
-    drug: drugDetailsSchema.nullable().optional(),
     variants: z.array(variantInputSchema).min(1).max(100),
   })
   .superRefine((p, ctx) => {
@@ -93,17 +85,12 @@ export const createProductSchema = z
     if (new Set(skus).size !== skus.length) ctx.addIssue({ code: 'custom', path: ['variants'], message: 'Duplicate SKU' });
     const codes = p.variants.flatMap((v) => v.barcodes);
     if (new Set(codes).size !== codes.length) ctx.addIssue({ code: 'custom', path: ['variants'], message: 'Duplicate barcode' });
-    for (const [i, v] of p.variants.entries()) {
-      if (v.serviceMinutes != null && p.productType !== 'SERVICE') ctx.addIssue({ code: 'custom', path: ['variants', i, 'serviceMinutes'], message: 'Only a service has a duration' });
-      if (v.packageValidDays != null && p.productType !== 'PACKAGE') ctx.addIssue({ code: 'custom', path: ['variants', i, 'packageValidDays'], message: 'Only a package has a validity' });
-    }
     if (p.productType !== 'STANDARD' && p.trackInventory) {
-      ctx.addIssue({ code: 'custom', path: ['trackInventory'], message: 'Services and packages cannot track inventory' });
+      ctx.addIssue({ code: 'custom', path: ['trackInventory'], message: 'Services cannot track inventory' });
     }
     if (p.tracksExpiry && (p.productType !== 'STANDARD' || p.trackInventory === false)) {
       ctx.addIssue({ code: 'custom', path: ['tracksExpiry'], message: 'Expiry dates need stock that is counted' });
     }
-    if (p.drug && p.productType !== 'STANDARD') ctx.addIssue({ code: 'custom', path: ['drug'], message: 'Only a stocked item is a medicine' });
   });
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 
@@ -115,7 +102,6 @@ export const updateProductSchema = z
     taxCategoryId: z.uuid(),
     trackInventory: z.boolean(),
     tracksExpiry: z.boolean(),
-    drug: drugDetailsSchema.nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
@@ -129,8 +115,6 @@ export const updateVariantSchema = z
     referenceCost: amountSchema.nullable(),
     /** Its button on the till's quick keys (ADR-0021 §3); null takes it off. */
     quickKeyPosition: z.number().int().min(1).max(48).nullable(),
-    serviceMinutes: z.number().int().min(5).max(720).nullable(),
-    packageValidDays: z.number().int().min(1).max(3650).nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
@@ -141,8 +125,8 @@ export const addBarcodeSchema = z.object({ code: barcodeSchema });
 export const productListQuerySchema = z.object({
   q: z.string().trim().min(1).max(100).optional(),
   categoryId: z.uuid().optional(),
-  /** Only this kind of item (ADR-0022: the booking form lists services). */
-  productType: z.enum(['STANDARD', 'SERVICE', 'PACKAGE']).optional(),
+  /** Only this kind of item. */
+  productType: z.enum(['STANDARD', 'SERVICE']).optional(),
   includeArchived: z
     .enum(['true', 'false'])
     .default('false')

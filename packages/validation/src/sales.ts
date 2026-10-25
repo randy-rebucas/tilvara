@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { amountSchema } from './catalog.js';
-import { linePrescriptionSchema, salePrescriptionSchema } from './pharmacy.js';
-import { oneDiscountRefinement, packageSessionRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
+import { oneDiscountRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
@@ -32,8 +31,7 @@ export const openCashierSessionSchema = z.object({
 export type OpenCashierSessionInput = z.infer<typeof openCashierSessionSchema>;
 
 export const cashMovementSchema = z.object({
-  /** TIP_PAYOUT (session 25): tips handed to staff from the drawer; posts against TIPS_PAYABLE. */
-  type: z.enum(['PAY_IN', 'PAY_OUT', 'TIP_PAYOUT']),
+  type: z.enum(['PAY_IN', 'PAY_OUT']),
   /** Always positive; the type gives the direction. */
   amount: positiveAmount,
   reason: z.string().trim().min(1).max(200),
@@ -60,25 +58,6 @@ export type CashierSessionListQuery = z.infer<typeof cashierSessionListQuerySche
 // ------------------------------------------------------------------ sales
 
 
-/** A tip with the sale (session 25): in cash, or by its own card/QR payment of this checkout. Not part of the amount due. */
-export const tipSchema = z
-  .object({
-    amount: positiveAmount,
-    paymentIntentId: z.uuid().optional(),
-    /** How the tip is split among staff (ADR-0022 §7); adds up to the tip. Omitted: equally among the staff on the lines. */
-    shares: z.array(z.object({ staffId: z.uuid(), amount: positiveAmount })).min(1).max(20).optional(),
-  })
-  .refine((t) => !t.shares || new Set(t.shares.map((s) => s.staffId)).size === t.shares.length, { message: 'Each staff member once', path: ['shares'] });
-export type TipInput = z.infer<typeof tipSchema>;
-
-/**
- * Give a voided sale's card tip back again (session 25), when the first attempt after the void could
- * not reach the card provider. `cashierSessionId`: the open drawer to pay it from if the provider
- * refuses and the void's own shift has closed since.
- */
-export const tipRefundSchema = z.object({ cashierSessionId: z.uuid().optional() });
-export type TipRefundInput = z.infer<typeof tipRefundSchema>;
-
 export const saleLineSchema = taxQuoteLineObject
   .extend({
     statutory: z
@@ -89,11 +68,8 @@ export const saleLineSchema = taxQuoteLineObject
         beneficiary: ref,
       })
       .optional(),
-    /** A prescription medicine (ADR-0025 §6): the prescription item it fills. */
-    prescription: linePrescriptionSchema.optional(),
   })
-  .refine(...oneDiscountRefinement)
-  .refine(...packageSessionRefinement);
+  .refine(...oneDiscountRefinement);
 
 /** A counter sale line, with its statutory discount. */
 export const counterSaleLineSchema = taxQuoteLineObject
@@ -105,10 +81,8 @@ export const counterSaleLineSchema = taxQuoteLineObject
         beneficiary: ref,
       })
       .optional(),
-    prescription: linePrescriptionSchema.optional(),
   })
-  .refine(...oneDiscountRefinement)
-  .refine(...packageSessionRefinement);
+  .refine(...oneDiscountRefinement);
 
 export const saleBeneficiarySchema = z.object({
   ref,
@@ -117,23 +91,13 @@ export const saleBeneficiarySchema = z.object({
   /** OSCA / PWD ID number. Never capture disability type (data minimisation). */
   idNumber: z.string().trim().min(1).max(64),
   tin: z.string().trim().regex(/^\d{9}(\d{3}|\d{5})?$/, 'TIN is 9 digits (optionally with branch code)').nullable().optional(),
-  /** Medicines on the discount (ADR-0025 §8): the purchase booklet was presented and filled in. */
-  purchaseBooklet: z.boolean().optional(),
 });
 
 /** Beneficiary refs and line ids of a cart: unique, used, and matching their lines' scheme. */
 function checkSaleRefs(
-  v: { lines: z.infer<typeof saleLineSchema>[] | z.infer<typeof counterSaleLineSchema>[]; beneficiaries: z.infer<typeof saleBeneficiarySchema>[]; prescriptions?: z.infer<typeof salePrescriptionSchema>[] },
+  v: { lines: z.infer<typeof saleLineSchema>[] | z.infer<typeof counterSaleLineSchema>[]; beneficiaries: z.infer<typeof saleBeneficiarySchema>[] },
   ctx: z.RefinementCtx,
 ) {
-  const rx = v.prescriptions ?? [];
-  if (new Set(rx.map((p) => p.ref)).size !== rx.length) ctx.addIssue({ code: 'custom', path: ['prescriptions'], message: 'Duplicate prescription ref' });
-  for (const [i, l] of v.lines.entries()) {
-    const p = l.prescription;
-    if (!p || !('prescriptionRef' in p)) continue;
-    const found = rx.find((x) => x.ref === p.prescriptionRef);
-    if (!found || !found.items.some((it) => it.ref === p.itemRef)) ctx.addIssue({ code: 'custom', path: ['lines', i, 'prescription'], message: 'Unknown prescription ref' });
-  }
   const refs = new Set<string>();
   for (const [i, b] of v.beneficiaries.entries()) {
     if (refs.has(b.ref)) ctx.addIssue({ code: 'custom', path: ['beneficiaries', i, 'ref'], message: 'Duplicate beneficiary ref' });
@@ -171,13 +135,6 @@ export const createSaleSchema = z
     expectedAmountDue: amountSchema.optional(),
     /** The customer it is rung up for (ADR-0018); required to pay with their store credit. */
     customerId: z.uuid().optional(),
-    tip: tipSchema.optional(),
-    /** The appointment this sale rings up (ADR-0022 §4); it becomes COMPLETED with the sale. */
-    appointmentId: z.uuid().optional(),
-    /** Prescriptions recorded with this sale (ADR-0025 §6); lines point at their items by ref. */
-    prescriptions: z.array(salePrescriptionSchema).max(10).default([]),
-    /** A pharmacist's approval for a cashier who may not dispense (ADR-0025 §6); used once. */
-    dispenseApprovalId: z.uuid().optional(),
   })
   .superRefine(checkSaleRefs)
   .refine((v) => v.customerId !== undefined || !v.tenders.some((t) => t.method === 'STORE_CREDIT'), { message: 'Store credit needs the customer on the sale', path: ['customerId'] });
@@ -189,11 +146,6 @@ export const createPaymentIntentSchema = z.object({
   clientTransactionId: ref,
   method: z.enum(['CARD', 'QR', 'EWALLET']),
   amount: positiveAmount,
-  /**
-   * TIP (session 25): the charge of a tip given with the sale (`tip.paymentIntentId`), never one of its
-   * tenders.
-   */
-  purpose: z.enum(['SALE', 'TIP']).default('SALE'),
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
@@ -352,8 +304,6 @@ export const createExchangeSchema = z.object({
       .default([]),
     expectedAmountDue: amountSchema.optional(),
     customerId: z.uuid().optional(),
-    prescriptions: z.array(salePrescriptionSchema).max(10).default([]),
-    dispenseApprovalId: z.uuid().optional(),
   }).superRefine(checkSaleRefs),
 });
 export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;

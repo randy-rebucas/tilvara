@@ -43,11 +43,20 @@ import {
   type SetReorderPointsInput,
   type SetItemLocationsInput,
   type StockTransferListQuery,
+  createLotHoldSchema,
+  lotHoldListQuerySchema,
+  lotTraceQuerySchema,
+  releaseLotHoldSchema,
+  type CreateLotHoldInput,
+  type LotHoldListQuery,
+  type LotTraceQuery,
+  type ReleaseLotHoldInput,
 } from '@1pos/validation';
 import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { InventoryService } from './inventory.service.js';
+import { LotHoldsService } from './lot-holds.service.js';
 import { LotsService } from './lots.service.js';
 import { PacksService } from './packs.service.js';
 import { ReservationsService } from './reservations.service.js';
@@ -63,6 +72,7 @@ export class InventoryController {
     @Inject(ReservationsService) private readonly reservations: ReservationsService,
     @Inject(PacksService) private readonly packs: PacksService,
     @Inject(LotsService) private readonly lots: LotsService,
+    @Inject(LotHoldsService) private readonly holds: LotHoldsService,
   ) {}
 
   // expiry lots (ADR-0020 §3)
@@ -74,6 +84,29 @@ export class InventoryController {
   @Get('stock/lots')
   stockLots(@Auth() auth: AuthContext, @Query(new ZodPipe(lotQuerySchema)) q: LotQuery) {
     return this.lots.forItem(auth, q);
+  }
+
+  // lot holds (a recall) and the batch trace (ADR-0025 §5, kept for every shop)
+  @Get('stock/lot-holds')
+  listLotHolds(@Auth() auth: AuthContext, @Query(new ZodPipe(lotHoldListQuerySchema)) q: LotHoldListQuery) {
+    return this.holds.listHolds(auth, q);
+  }
+
+  @Idempotent()
+  @Post('stock/lot-holds')
+  createLotHold(@Auth() auth: AuthContext, @Body(new ZodPipe(createLotHoldSchema)) input: CreateLotHoldInput) {
+    return this.holds.createHold(auth, input);
+  }
+
+  @HttpCode(200)
+  @Post('stock/lot-holds/:id/release')
+  releaseLotHold(@Auth() auth: AuthContext, @Param('id', id) holdId: string, @Body(new ZodPipe(releaseLotHoldSchema)) input: ReleaseLotHoldInput) {
+    return this.holds.releaseHold(auth, holdId, input);
+  }
+
+  @Get('stock/lots/trace')
+  traceLot(@Auth() auth: AuthContext, @Query(new ZodPipe(lotTraceQuerySchema)) q: LotTraceQuery) {
+    return this.holds.trace(auth, q);
   }
 
   // packs and pieces (ADR-0020)

@@ -1,11 +1,12 @@
 # ADR-0020: Sari-sari stores and groceries — packs and pieces (tingi), expiry dates
 
-- Status: Accepted (2026-10-20, session 24). The user chose a fourth business type, automatic pack opening at the sale, and expiry lots drawn first-expiry-first without picking (the recommended option of each question).
+- Status: Accepted (2026-10-20, session 24); **§1 withdrawn (2026-10-25)**: the GROCERY business type was removed (retail only, migration 0112 made every business RETAIL). Packs and pieces, expiry lots, alerts and write-offs (§2–§4) stay for every shop. Originally: The user chose a fourth business type, automatic pack opening at the sale, and expiry lots drawn first-expiry-first without picking (the recommended option of each question).
 - SPEC §6.2 (batch and expiry tracking, units of measure), §6.6 (damaged and expired stock, units and conversions, low-stock alerts). `docs/INDUSTRIES.md`. Builds on ADR-0009 (checkout), ADR-0012 (costing), ADR-0013 (ledger), session 17 (business types).
 
 ## Decision
 
 ### 1. A fourth business type, GROCERY ("Sari-sari store or grocery")
+*Withdrawn 2026-10-25 (migration 0112): former GROCERY businesses are RETAIL.*
 - `tenants.business_type` takes `GROCERY`. It gates like RETAIL: no tables, menus or kitchen (the server refuses restaurant writes with `BUSINESS_TYPE_EXCLUDES_FEATURE`), no restaurant roles, selling by weight on. One rule replaces the RETAIL checks everywhere: a business **serves tables** when its type is RESTAURANT or HYBRID.
 - Packs and expiry dates (below) work for every type. For GROCERY a new product starts with “Keeps expiry dates” ticked, its trial gets sari-sari sample items (untracked like every sample set, so trying them never touches stock), and the guide has the part "Tingi and expiry dates".
 

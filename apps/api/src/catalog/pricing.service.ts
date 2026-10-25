@@ -1,4 +1,4 @@
-import { expiredStockRule, sellableAt, tillDrugs } from '../pharmacy/drugs.js';
+import { expiredStockRule, sellableAt } from '../inventory/expiry.js';
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import {
   and,
@@ -267,11 +267,9 @@ export class PricingService extends TenantService {
         uom: { code: item.uomCode, allowsFraction: item.allowsFraction },
         tax: { categoryCode: item.taxCategoryCode, vatTreatment: item.vatTreatment },
         trackInventory: item.product.trackInventory,
-        /** STANDARD, SERVICE or PACKAGE (ADR-0022): a package needs the customer on the sale. */
+        /** STANDARD or SERVICE. */
         productType: item.product.productType,
-        /** A medicine (ADR-0025 §3): class, generic name, strength, form; null for an ordinary item. */
-        drug: (await tillDrugs(db, [variantId])).get(variantId) ?? null,
-        /** Where expired or held lots may not be sold (ADR-0025 §4): what of it is sellable here now. */
+        /** Where expired or held lots may not be sold: what of it is sellable here now. */
         ...(item.product.tracksExpiry && (await expiredStockRule(db, branchId)) === 'BLOCK' && { sellable: await sellableAt(db, branchId, variantId) }),
         price,
         /** From a scale label: the weighed quantity (kg) to sell, as printed. */

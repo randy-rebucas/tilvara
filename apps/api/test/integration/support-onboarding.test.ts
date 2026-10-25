@@ -172,12 +172,8 @@ describe('support access (ADR-0016 slice 6)', () => {
     expect(products.some((p) => p.id === bProductId)).toBe(false);
     await http().get(`/v1/products/${bProductId}`).set(bearer(supportToken)).expect(404);
     await http().get('/v1/audit-logs').set(bearer(supportToken)).expect(200);
-    // Service notes may hold health details: never shown to support, whatever customers.read says (decision A1).
     const customer = (await http().post('/v1/customers').set(bearer(a.access)).send({ displayName: 'Liza' }).expect(201)).body.id as string;
     await http().get(`/v1/customers/${customer}`).set(bearer(supportToken)).expect(200);
-    const notes = (await http().get(`/v1/customers/${customer}/notes`).set(bearer(supportToken)).expect(403)).body.error;
-    expect([notes.code, notes.details.session]).toEqual(['SERVICE_NOTES_RESTRICTED', 'SUPPORT']);
-    await http().get(`/v1/customers/${customer}/notes`).set(bearer(a.access)).expect(200);
 
     // Every write is refused, even ones its read permissions would never reach.
     const write = await http().post('/v1/categories').set(bearer(supportToken)).send({ name: 'Support was here' }).expect(403);
@@ -214,7 +210,7 @@ describe('support access (ADR-0016 slice 6)', () => {
     );
     const listed = (await http().get('/v1/support-access').set(bearer(a.access)).expect(200)).body.data as { id: string; activity: Record<string, unknown> }[];
     expect(listed.find((g) => g.id === grantId)?.activity).toMatchObject({ sessions: 1, refusedWrites: 5, staff: ['Sam Support'] });
-    expect(listed.find((g) => g.id === grantId)!.activity.requests).toBe(8); // me, products, products/:id, audit-logs, customers/:id, customers/:id/notes, support-access, subscription
+    expect(listed.find((g) => g.id === grantId)!.activity.requests).toBe(7); // me, products, products/:id, audit-logs, customers/:id, support-access, subscription
     // And at platform level, outside every business.
     const platform = await asPlatform<{ action: string }>(`SELECT action FROM audit_logs WHERE tenant_id IS NULL AND actor_user_id = $1`, [staff.userId]);
     expect(platform.map((r) => r.action)).toContain('platform.support.opened');
@@ -496,16 +492,6 @@ describe('sample items for a trial (ADR-0016 slice 6)', () => {
     expect((await http().get('/v1/sample-data').set(auth).expect(200)).body).toMatchObject({ canLoad: false, reason: 'HAS_SALES' });
     expect((await http().post('/v1/sample-data').set(auth).expect(409)).body.error.code).toBe('HAS_SALES');
     expect((await tenantAudit(t.tenantId, 'sample_data.loaded')).length + (await tenantAudit(t.tenantId, 'sample_data.removed')).length).toBe(2);
-  });
-
-  it('a salon gets its own set, not the shop set (ADR-0022)', async () => {
-    const t = await signup(app, 'sample-salon');
-    const auth = bearer(t.access);
-    await http().patch('/v1/business').set(auth).send({ businessType: 'SALON' }).expect(200);
-    await http().post('/v1/sample-data').set(auth).expect(201);
-    const names = ((await http().get('/v1/products').query({ limit: 50 }).set(auth).expect(200)).body.data as { name: string }[]).map((p) => p.name);
-    expect(names).not.toContain('Rice 5 kg (sample)');
-    expect(names.length).toBeGreaterThan(0);
   });
 
   it('is for trials only', async () => {

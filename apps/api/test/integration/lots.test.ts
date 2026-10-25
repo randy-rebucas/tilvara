@@ -182,14 +182,20 @@ describe('expiry lots', () => {
     expect(brief(await lots(s, tie))).toEqual([[[day(60), '1']], '0']);
   });
 
-  it('outside pharmacy, a branch set to BLOCK refuses an online sale of expired stock; an offline one is recorded and flagged EXPIRED_STOCK (audit 2026-10-21)', async () => {
-    for (const type of ['GROCERY', 'RETAIL']) {
-      const s = await store(`lot-off-${type.toLowerCase()}`, type);
+  it('no setting means ALLOW (0112); a branch set to BLOCK refuses an online sale of expired stock; an offline one is recorded and flagged EXPIRED_STOCK (audit 2026-10-21)', async () => {
+    {
+      const s = await store('lot-off-retail');
       const milk = (await s.product('Milk 1L', '95.00', { tracksExpiry: true })).variants[0]!.id;
       expect(await settings(s)).toMatchObject({ expiredStock: null, expiredStockRule: 'ALLOW' });
+      await adjust(s, 'ADJUSTMENT', [{ variantId: milk, quantity: '4', unitCost: '70.00', expiresOn: day(-2), lotCode: 'M1' }], 'Delivery').expect(201);
+      // No setting: expired stock sells online like any other (the draw is marked expired, nothing is mailed).
+      const allowed = (await sell(s, [{ variantId: milk, quantity: '1' }]).expect(201)).body;
+      const marked = await asOwnerInTenant(owner, s.tenantId, async (c) =>
+        (await c.query(`SELECT bool_or(lm.expired) AS e FROM stock_lot_movements lm JOIN stock_movements m ON m.id = lm.movement_id WHERE m.sale_id = $1`, [allowed.id])).rows[0].e);
+      expect(marked).toBe(true);
+      expect(await asOwnerInTenant(owner, s.tenantId, async (c) => (await c.query(`SELECT 1 FROM outbox_events WHERE topic = 'stock.expired_sold'`)).rows)).toEqual([]);
       await http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy: 'ALLOW', lowStockAlerts: true, expiredStock: 'BLOCK' }).expect(200);
       expect(await settings(s)).toMatchObject({ expiredStock: 'BLOCK', expiredStockRule: 'BLOCK' });
-      await adjust(s, 'ADJUSTMENT', [{ variantId: milk, quantity: '3', unitCost: '70.00', expiresOn: day(-2), lotCode: 'M1' }], 'Delivery').expect(201);
       expect((await sell(s, [{ variantId: milk, quantity: '1' }]).expect(409)).body.error.code).toBe('EXPIRED_STOCK');
 
       // The till sold it while offline: the milk was handed over, so the sale is recorded and the draw flagged.
@@ -207,9 +213,10 @@ describe('expiry lots', () => {
     }
   });
 
-  it('a HYBRID business blocks expired stock by default, in the API and the lot trigger (migration 0108)', async () => {
-    const s = await store('lot-hybrid', 'HYBRID');
-    expect(await settings(s)).toMatchObject({ expiredStock: null, expiredStockRule: 'BLOCK' });
+  it('a branch set to BLOCK draws the sellable lot first, in the API and the lot trigger (migrations 0108, 0112)', async () => {
+    const s = await store('lot-block');
+    await http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy: 'ALLOW', lowStockAlerts: true, expiredStock: 'BLOCK' }).expect(200);
+    expect(await settings(s)).toMatchObject({ expiredStock: 'BLOCK', expiredStockRule: 'BLOCK' });
     const milk = (await s.product('Milk 1L', '95.00', { tracksExpiry: true })).variants[0]!.id;
     await adjust(s, 'ADJUSTMENT', [
       { variantId: milk, quantity: '2', unitCost: '70.00', expiresOn: day(-2) },

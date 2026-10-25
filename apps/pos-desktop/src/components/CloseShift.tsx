@@ -12,7 +12,7 @@ interface SessionView {
   status: string;
   expectedCash: string;
   reconciliation: { expectedCash: string; countedCash: string; variance: string } | null;
-  payInOut?: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'TIP_PAYOUT'; amount: string; reason: string | null }[];
+  payInOut?: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null }[];
 }
 
 /**
@@ -51,7 +51,7 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
         <ul className="grid gap-1 text-[0.9375rem]">
           {items.map((m) => (
             <li key={m.id} className="flex items-baseline justify-between gap-3">
-              <span>{t(m.type === 'PAY_IN' ? 'payio.in' : m.type === 'TIP_PAYOUT' ? 'payio.tips' : 'payio.out')} · <span className="text-muted">{m.reason}</span></span>
+              <span>{t(m.type === 'PAY_IN' ? 'payio.in' : 'payio.out')} · <span className="text-muted">{m.reason}</span></span>
               <Money value={m.amount} />
             </li>
           ))}
@@ -63,7 +63,6 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
           <select id="pioType" name="pioType" className="input">
             <option value="PAY_IN">{t('payio.in')}</option>
             <option value="PAY_OUT">{t('payio.out')}</option>
-            <option value="TIP_PAYOUT">{t('payio.tips')}</option>
           </select>
         </div>
         <Field id="pioAmount" name="pioAmount" inputMode="decimal" className="input-money" label={t('payio.amount')} error={fieldError} placeholder="0.00" />

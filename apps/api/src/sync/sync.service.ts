@@ -1,5 +1,4 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { tillDrugs } from '../pharmacy/drugs.js';
 import type { ServerEnv } from '@1pos/config';
 import {
   and,
@@ -8,11 +7,9 @@ import {
   cashierSessions,
   desc,
   eq,
-  isNull,
   legalEntities,
   registers,
   sales,
-  serviceStaff,
   sql,
   terminals,
   terminalSnapshots,
@@ -180,11 +177,6 @@ export class SyncService extends TenantService {
           (await db.execute<{ n: string }>(sql`SELECT coalesce(max(device_seq), 0)::text AS n FROM terminal_transactions WHERE terminal_id = ${t.terminalId}`)).rows[0]!.n,
         ),
         promotions: await promotionsInForce(db, row.branch.id, asOf),
-        staff: await db
-          .select({ id: serviceStaff.id, displayName: serviceStaff.displayName, color: serviceStaff.color })
-          .from(serviceStaff)
-          .where(and(eq(serviceStaff.branchId, row.branch.id), isNull(serviceStaff.archivedAt)))
-          .orderBy(asc(serviceStaff.displayName)),
       };
     });
   }
@@ -289,13 +281,10 @@ export class SyncService extends TenantService {
        ${after ? sql`WHERE (v.sku, v.id) > (${after.sku}, ${after.variantId}::uuid)` : sql``}
        ORDER BY v.sku, v.id
        ${limit ? sql`LIMIT ${limit}` : sql``}`);
-    // Medicines by the same rule as the server's dispensing check (a box takes its pieces' class), with pieces per unit.
-    const drugs = await tillDrugs(db, rows.map((r) => r.variant_id));
     return rows.map((r) => ({
       variantId: r.variant_id, sku: r.sku, name: r.name, barcodes: r.barcodes ?? [], priceId: r.price_id, priceListId: r.price_list_id,
       unitPrice: r.amount, priceIncludesTax: r.prices_include_tax, vatTreatment: r.vat_treatment, taxCategoryCode: r.tax_category_code,
       wholeUnits: r.whole_units, trackInventory: r.track_inventory, quickKey: r.quick_key_position, productType: r.product_type, currency: r.currency,
-      ...(drugs.has(r.variant_id) && { drug: drugs.get(r.variant_id)! }),
     }));
   }
 
@@ -584,7 +573,7 @@ export class SyncService extends TenantService {
   }
 
   /**
-   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED, PRESCRIPTION_REVIEW, and
+   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED, PRESCRIPTION_REVIEW on sales before 0112, and
    * EXPIRED_STOCK when it drew expired or held lots); [] otherwise.
    * `recordedAt`: when the sale counts as having happened (the device time, clamped into the shift); `occurredAt` is
    * what the till's clock said.

@@ -1,8 +1,8 @@
-import { Callout, Note, PageHeader, Serial } from '@/components/note';
+import { Note, PageHeader, Serial } from '@/components/note';
 import { getT } from '@/i18n/server';
 import { api, type Business, type Me } from '@/lib/api';
 import { SubscriptionTabs } from '../tabs';
-import { BusinessNameForm, BusinessTypeForm } from './business-form';
+import { BusinessNameForm } from './business-form';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('subscription.business');
@@ -19,10 +19,6 @@ export default async function BusinessPage() {
         {canEdit ? <BusinessNameForm name={business.name} /> : <p className="font-semibold">{business.name}</p>}
         <Serial className="mt-2 block">{business.slug}</Serial>
       </Note>
-      <Note className="px-5 py-5" as="div">
-        <BusinessTypeForm businessType={business.businessType} canEdit={canEdit} />
-      </Note>
-      <Callout tone="info">{t('biz.keepsRecords')}</Callout>
     </div>
   );
 }

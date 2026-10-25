@@ -785,6 +785,20 @@
       "when": 1792932167428,
       "tag": "0111_remove_restaurant_lodging",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792935306036,
+      "tag": "0112_remove_salon_pharmacy_grocery",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1792939309179,
+      "tag": "0113_remove_tip_and_package_history",
+      "breakpoints": true
     }
   ]
 }

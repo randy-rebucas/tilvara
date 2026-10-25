@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { API_URL } from './config';
 import { ACCESS_COOKIE } from './cookies';
-import type { BusinessType } from './business-type';
+import type { BusinessType } from '@1pos/validation';
 
 export class ApiError extends Error {
   /**
@@ -229,14 +229,8 @@ export interface Product {
   uomId?: string;
   /** One of the trial's sample items (ADR-0016 slice 6). */
   isSample?: boolean;
-  /** A medicine (ADR-0025 §2): its class is set; null for ordinary items. */
-  drugClass?: DrugClass | null;
-  genericName?: string | null;
-  strength?: string | null;
-  dosageForm?: DosageForm | null;
-  fdaRegistrationNo?: string | null;
   archivedAt: string | null;
-  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null }[];
+  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null }[];
 }
 /** One product as GET /products/:id returns it (the editor's view). */
 export interface ProductDetail extends Omit<Product, 'variants'> {
@@ -255,10 +249,6 @@ export interface ProductDetail extends Omit<Product, 'variants'> {
     attributes?: Record<string, string> | null;
     /** Its button on the till's quick keys, 1–48 (ADR-0021 §3). */
     quickKeyPosition?: number | null;
-    /** A service's duration in minutes (ADR-0022 §3). */
-    serviceMinutes?: number | null;
-    /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
-    packageValidDays?: number | null;
   }[];
 }
 /** A promotion (ADR-0021 §1): terms never change once made; only the name, or ending it. */
@@ -556,22 +546,12 @@ export interface Sale extends Buckets {
     /** The promotion that priced the line (ADR-0021 §1); its discount is the line's `discount`. */
     promotionId?: string | null;
     promotionName?: string | null;
-    /** Salon (ADR-0022): who did it, their rate at the sale, and a package session's package and value. */
-    serviceStaffId?: string | null;
-    commissionRate?: string | null;
-    customerPackageId?: string | null;
-    packageValue?: string | null;
-    /** A medicine line (ADR-0025): its class at the sale and "Paracetamol 500 mg tablet". */
-    drugClass?: DrugClass | null;
-    drugLabel?: string | null;
   })[];
-  /** SC/PWD beneficiaries; `purchaseBooklet` is set when the discount covered a medicine (ADR-0025 §8). */
-  beneficiaries?: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
+  /** SC/PWD beneficiaries. */
+  beneficiaries?: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
   /** The customer it was rung up for (ADR-0018). */
   customerId?: string | null;
-  /** A tip taken with the sale (session 25): owed to staff, outside the total. */
-  tip?: { method: string; amount: string } | null;
 }
 export interface SaleReturnDoc extends Buckets {
   id: string;
@@ -583,11 +563,6 @@ export interface SaleReturnDoc extends Buckets {
   processedBy: string;
   amountDue: string;
   refundMethod: string | null;
-  /** The tip a void gave back (session 25), "0.00" when none. */
-  tipRefund?: string;
-  /** A voided sale's card tip (session 25): given back on the card, or in cash when the card refused; or still pending. */
-  cardTipRefund?: { method: 'CARD' | 'CASH'; amount: string } | null;
-  tipRefundPending?: boolean;
   createdAt: string;
   lines: { id: string; saleLineId: string; quantity: string; disposition: string; amountDue: string }[];
 }
@@ -603,7 +578,7 @@ export interface CashierSession {
   closedAt: string | null;
   expectedCash: string;
   movements: { type: string; total: string; count: number }[];
-  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'TIP_PAYOUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
+  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
   sales: { count: number; total: string };
   /** Names travel with the shift (a branch manager may not read /members). */
   openedByName: string | null;
@@ -792,7 +767,7 @@ export interface InventorySettings {
   lowStockAlerts: boolean;
   /** Mail about lots expiring within this many days; 0 = off (ADR-0020). */
   expiryAlertDays?: number;
-  /** ADR-0025 §4: as set (null = the business type's default) and the rule in force. */
+  /** ADR-0025 §4: as set (null = no choice, which allows) and the rule in force. */
   expiredStock?: 'ALLOW' | 'BLOCK' | null;
   expiredStockRule?: 'ALLOW' | 'BLOCK';
   updatedAt: string | null;
@@ -881,16 +856,6 @@ export interface MovementSummary {
   }[];
 }
 
-/** A salon service's supplies used (its recipe, ADR-0022 §9), one version. */
-export interface RecipeVersion {
-  id: string;
-  version: number;
-  effectiveFrom: string;
-  note: string | null;
-  state: 'IN_FORCE' | 'SCHEDULED' | 'SUPERSEDED';
-  ingredients: { variantId: string; sku: string; name: string; unit: string; quantity: string }[];
-}
-
 // ---- retail reports (Phase 2 slice 5) ----
 export type SaleBuckets = Record<'gross' | 'discount' | 'statutoryDiscount' | 'vatExemptionAmount' | 'vatableSales' | 'vatAmount' | 'vatExemptSales' | 'zeroRatedSales' | 'percentageTaxSales' | 'amountDue', string>;
 export interface SalesSummary {
@@ -936,14 +901,9 @@ export interface TaxSummary {
   data: (Omit<SaleBuckets, 'gross' | 'discount'> & { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string })[];
 }
 export interface StatutoryBook {
-  data: { document: 'SALE' | 'RETURN'; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string; purchaseBooklet?: boolean | null }[];
+  data: { document: 'SALE' | 'RETURN'; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[];
 }
 
-type UsageSide = Record<'recipe' | 'sold' | 'expected' | 'waste' | 'countVariance' | 'actual' | 'variance', string>;
-export interface IngredientUsage {
-  data: { variantId: string; sku: string; name: string; unit: string; quantity: UsageSide; value: UsageSide; variancePct: string | null }[];
-  totals: { expectedValue: string; wasteValue: string; countVarianceValue: string; actualValue: string; varianceValue: string };
-}
 /** A register's Z-reading (session 16; not BIR-accredited). Money as 2-dp strings. */
 export interface ZReading {
   id: string;
@@ -992,15 +952,6 @@ export interface RefundWatch {
   }[];
   branch: { sales: string; refunded: string; refundRate: string | null };
 }
-type TipFigures = { tips: number; cash: string; electronic: string; taken: string; refunded: string; paidOut: string; owed: string };
-/** Tips (session 25): owed to staff, not sales. Owed = taken − given back on voids − paid out; ledger = TIPS_PAYABLE movement. */
-export interface TipsReport {
-  days: (TipFigures & { day: string })[];
-  byCashier: { userId: string; name: string | null; tips: number; amount: string }[];
-  totals: TipFigures;
-  ledger: string;
-}
-
 // ---- books (Phase 3) ----
 export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
 export interface Account {
@@ -1083,157 +1034,7 @@ export interface TillHealth {
   silent: boolean;
 }
 
-// ---- salons, spas and barber shops (ADR-0022) ----
-/** A person who performs services (whether or not they sign in). Rates only for those who may manage staff. */
-export interface ServiceStaff {
-  id: string;
-  branchId: string;
-  displayName: string;
-  membershipId: string | null;
-  memberName: string | null;
-  color: string | null;
-  archivedAt: string | null;
-  /** Default commission as a fraction ("0.15"); absent when the caller may not manage staff. */
-  commissionRate?: string;
-  /** No rows = does every service. */
-  services: { variantId: string; commissionRate?: string | null }[];
-  /** Weekday 0 = Sunday; times in the branch's calendar. */
-  hours: { weekday: number; startsAt: string; endsAt: string }[];
-  canManage: boolean;
-}
-export interface ServiceStaffDetail extends ServiceStaff {
-  timeOff: { id: string; startsAt: string; endsAt: string; reason: string | null }[];
-}
-export type AppointmentStatus = 'BOOKED' | 'ARRIVED' | 'COMPLETED' | 'NO_SHOW' | 'CANCELLED';
-export interface Appointment {
-  id: string;
-  branchId: string;
-  status: AppointmentStatus;
-  startsAt: string;
-  endsAt: string;
-  customerId: string | null;
-  customerName: string | null;
-  customerPhone: string | null;
-  hasEmail: boolean;
-  guestName: string | null;
-  notes: string | null;
-  remind: boolean;
-  remindedAt: string | null;
-  saleId: string | null;
-  cancelReason: string | null;
-  createdAt: string;
-  services: { id: string; variantId: string; name: string; staffId: string; staffName: string; staffColor: string | null; startsAt: string; endsAt: string }[];
-}
-export interface Availability {
-  date: string;
-  minutes: number;
-  staff: { staffId: string; displayName: string; color: string | null; slots: string[] }[];
-}
-export interface PackageItems {
-  variantId: string;
-  validDays: number | null;
-  items: { serviceVariantId: string; sku: string; name: string; sessions: number }[];
-}
-export interface CustomerPackage {
-  id: string;
-  name: string;
-  legalEntityId: string;
-  branchId: string;
-  saleId: string;
-  boughtAt: string;
-  expiresOn: string | null;
-  expired: boolean;
-  value: string;
-  valueLeft: string;
-  services: { itemId: string; variantId: string; name: string; sessions: number; sessionsLeft: number }[];
-}
-export interface CustomerVisits {
-  appointments: { id: string; branchId: string; branchName: string; status: AppointmentStatus; startsAt: string; endsAt: string; saleId: string | null; notes: string | null; services: { name: string; staffName: string; startsAt: string }[] }[];
-  services: { saleId: string; saleNumber: number; completedAt: string; name: string; kind: string; quantity: string; amountDue: string; staffName: string | null; fromPackage: boolean }[];
-}
-export interface CustomerNote {
-  id: string;
-  body: string;
-  pinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-  updatedByName: string | null;
-}
-export interface CommissionsReport {
-  staff: { staffId: string; name: string; lines: number; sales: string; returns: string; netBase: string; commission: string }[];
-  totals: { lines: number; sales: string; returns: string; netBase: string; commission: string };
-}
-export interface ServicePackagesReport {
-  sold: string;
-  used: string;
-  refunded: string;
-  restored: string;
-  packagesSold: number;
-  sessionsSold: number;
-  sessionsUsed: number;
-  owed: string;
-  ledger: string;
-  open: { id: string; name: string; customerId: string; customer: string; expiresOn: string | null; sessionsLeft: number; valueLeft: string }[];
-}
-export interface TipsByStaffReport {
-  /** `staffId`/`name` null: tips on sales without staff (unassigned). */
-  staff: { staffId: string | null; name: string | null; tips: number; amount: string; voided: string }[];
-  total: string;
-}
-
-// ---- pharmacies and drugstores (ADR-0025) ----
-export type DrugClass = 'OTC' | 'RX' | 'ANTIBIOTIC' | 'DANGEROUS';
-export type DosageForm = 'TABLET' | 'CAPSULE' | 'SYRUP' | 'SUSPENSION' | 'DROPS' | 'CREAM' | 'OINTMENT' | 'INJECTION' | 'INHALER' | 'SACHET' | 'OTHER';
-export type PrescriptionStatus = 'OPEN' | 'PARTLY_FILLED' | 'FILLED' | 'VOIDED';
-export interface PrescriptionRow {
-  id: string;
-  branchId: string;
-  customerId: string | null;
-  patientName: string;
-  prescriberName: string;
-  issuedOn: string;
-  yellowFormNo: string | null;
-  createdAt: string;
-  status: PrescriptionStatus;
-  prescribed: string;
-  dispensed: string;
-}
-export interface PrescriptionItem {
-  id: string;
-  lineNo: number;
-  genericName: string;
-  strength: string | null;
-  dosageForm: DosageForm;
-  drugClass: DrugClass;
-  directions: string | null;
-  quantity: string;
-  dispensed: string;
-  left: string;
-}
-export interface Prescription {
-  id: string;
-  branchId: string;
-  branchName: string;
-  legalEntityId: string;
-  customerId: string | null;
-  customerName: string | null;
-  patientName: string;
-  patientAddress: string | null;
-  prescriberName: string;
-  prescriberLicenseNo: string;
-  prescriberS2No: string | null;
-  yellowFormNo: string | null;
-  issuedOn: string;
-  notes: string | null;
-  source: 'COUNTER' | 'ADMIN' | 'OFFLINE';
-  createdAt: string;
-  voidedAt: string | null;
-  voidReason: string | null;
-  status: PrescriptionStatus;
-  editable: boolean;
-  items: PrescriptionItem[];
-  fills: { id: string; itemId: string; saleId: string; saleNumber: number; reference: string; quantity: string; dispensedBy: string | null; needsReview: boolean; returned: boolean; at: string }[];
-}
+// ---- lots: holds (recalls) and the batch trace (ADR-0025 §5, every shop) ----
 export interface LotHold {
   id: string;
   variantId: string;
@@ -1265,7 +1066,6 @@ export interface LotTrace {
     expiresOn: string | null;
     sale: { id: string; saleNumber: number; reference: string } | null;
     customer: { id: string; name: string | null } | null;
-    prescriptionIds: string[] | null;
     goodsReceiptId: string | null;
     supplier: string | null;
     stockAdjustmentId: string | null;
@@ -1274,65 +1074,4 @@ export interface LotTrace {
     reason: string | null;
   }[];
   onHand: { branchId: string; branch: string; variantId: string; sku: string; name: string; expiresOn: string | null; quantity: string }[];
-}
-export interface PrescriptionBook {
-  branchId: string;
-  timezone: string;
-  from: string;
-  to: string;
-  data: {
-    day: string;
-    saleReference: string;
-    saleId: string;
-    prescriptionId: string;
-    patientName: string;
-    prescriberName: string;
-    prescriberLicenseNo: string;
-    prescriberS2No: string | null;
-    yellowFormNo: string | null;
-    issuedOn: string;
-    genericName: string;
-    strength: string | null;
-    dosageForm: DosageForm;
-    drugClass: DrugClass;
-    brand: string;
-    quantity: string;
-    returned: boolean;
-    needsReview: boolean;
-    pharmacist: string | null;
-  }[];
-}
-export interface DangerousDrugsBook {
-  branchId: string;
-  timezone: string;
-  from: string;
-  to: string;
-  data: {
-    variantId: string;
-    sku: string;
-    name: string;
-    genericName: string;
-    strength: string | null;
-    dosageForm: DosageForm;
-    opening: string;
-    received: string;
-    dispensed: string;
-    returned: string;
-    writtenOff: string;
-    adjusted: string;
-    otherOut: string;
-    closing: string;
-    dispensings: { day: string; saleReference: string; quantity: string; yellowFormNo: string | null; patientName: string; patientAddress: string | null; prescriberName: string; prescriberLicenseNo: string; prescriberS2No: string | null; pharmacist: string | null }[];
-  }[];
-}
-export interface Pharmacist {
-  membershipId: string;
-  name: string;
-  licenseNo: string | null;
-  validUntil: string | null;
-  dispensesDangerousDrugs: boolean;
-}
-export interface PharmacySettings {
-  requirePurchaseBooklet: boolean;
-  updatedAt: string | null;
 }

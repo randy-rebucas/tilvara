@@ -1,7 +1,6 @@
 import { HttpStatus } from '@nestjs/common';
-import { sql, type BusinessType, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
+import { sql, type Database, type PlanFeature, type PlanLimits } from '@1pos/database';
 import { AppError } from '../infrastructure/http-error.filter.js';
-import { servesAppointments, servesPharmacy, usesPackages, usesRecipes } from '@1pos/validation';
 
 export const TRIAL_PLAN = 'growth';
 export const TRIAL_DAYS = 14;
@@ -75,70 +74,6 @@ export async function assertWithinLimit(db: Database, limit: keyof PlanLimits, a
       used,
       plan: plan.planCode,
     });
-  }
-}
-
-/** The business's type (`tenants.business_type`), inside its tenant transaction. */
-export async function businessType(db: Database): Promise<BusinessType> {
-  const { rows } = await db.execute<{ business_type: BusinessType }>(sql`SELECT business_type FROM tenants`);
-  return rows[0]?.business_type ?? 'HYBRID';
-}
-
-/**
- * Appointments, service staff and packages (ADR-0022): only for a salon, spa or barber shop (or HYBRID).
- * Writes are refused for other types; reads stay open, so records made before a change of type remain visible.
- */
-export async function assertAppointments(db: Database): Promise<void> {
-  const type = await businessType(db);
-  if (!servesAppointments(type)) {
-    throw new AppError(
-      'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      'This business is not set up as a salon, spa or barber shop. Change its type to take appointments and sell packages.',
-      HttpStatus.FORBIDDEN,
-      { feature: 'appointments', businessType: type },
-    );
-  }
-}
-
-/**
- * Prescriptions and the prescription classes of medicine (ADR-0025 §1): only for a pharmacy or drugstore
- * (or HYBRID). Over-the-counter medicines and lot tracing work for every type; reads stay open.
- */
-export async function assertPharmacy(db: Database): Promise<void> {
-  const type = await businessType(db);
-  if (!servesPharmacy(type)) {
-    throw new AppError(
-      'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      'This business is not set up as a pharmacy or drugstore. Change its type to dispense prescription medicines.',
-      HttpStatus.FORBIDDEN,
-      { feature: 'pharmacy', businessType: type },
-    );
-  }
-}
-
-/** Prepaid packages (ADR-0022 §6): a salon's services, or HYBRID. */
-export async function assertPackages(db: Database): Promise<void> {
-  const type = await businessType(db);
-  if (!usesPackages(type)) {
-    throw new AppError(
-      'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      'This business is not set up as a salon. Change its type to sell packages.',
-      HttpStatus.FORBIDDEN,
-      { feature: 'packages', businessType: type },
-    );
-  }
-}
-
-/** Recipes ("supplies used", ADR-0022 §9): a salon's services, or HYBRID. */
-export async function assertRecipes(db: Database): Promise<void> {
-  const type = await businessType(db);
-  if (!usesRecipes(type)) {
-    throw new AppError(
-      'BUSINESS_TYPE_EXCLUDES_FEATURE',
-      'This business is not set up as a salon. Change its type to record the supplies a service uses.',
-      HttpStatus.FORBIDDEN,
-      { feature: 'recipes', businessType: type },
-    );
   }
 }
 

@@ -1,30 +1,20 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
 import { FormError, SelectField, TextField } from '@/components/fields';
 import { useSubmit, type ValidationIssue } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { TaxCategory, Uom } from '@/lib/api';
-import { drugBody } from '@/lib/pharmacy';
-import { DrugFields } from './drug-fields';
 import { MAX_COMBINATIONS } from '@/lib/variant-grid';
 import { GridPreview, OptionsEditor, useGrid, type OptionRow } from './variant-grid';
 
-type Kind = 'STANDARD' | 'SERVICE' | 'PACKAGE';
-
 type CategoryOption = { id: string; label: string };
 
-function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, pharmacy }: { close: () => void; uoms: Uom[]; taxes: TaxCategory[]; categories: CategoryOption[]; expiryFirst: boolean; salon: boolean; packages: boolean; pharmacy: boolean }) {
+function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: Uom[]; taxes: TaxCategory[]; categories: CategoryOption[] }) {
   const { t } = useT();
-  const router = useRouter();
   const { pending, submit, fieldError, error } = useSubmit();
-  // Salons (ADR-0022): a service is booked by its duration; a package is prepaid sessions of services.
-  const [kind, setKind] = useState<Kind>('STANDARD');
-  // Pharmacies (ADR-0025 §1): a new product starts as a medicine that keeps expiry dates.
-  const [drug, setDrug] = useState(pharmacy);
-  const [expiry, setExpiry] = useState(expiryFirst || pharmacy);
+  const [expiry, setExpiry] = useState(false);
   // Sizes and colours (ADR-0021 §2): every combination becomes a variant of this product.
   const [sized, setSized] = useState(false);
   const [sku, setSku] = useState('');
@@ -37,28 +27,20 @@ function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, 
     const price = String(f.get('price') ?? '').trim();
     const cost = String(f.get('referenceCost') ?? '').trim();
     const soldBy = String(f.get('soldBy') ?? 'UNIT');
-    const isSized = sized && kind !== 'PACKAGE';
-    if (isSized && (grid.tooMany || grid.list.length === 0)) return;
-    const minutes = String(f.get('serviceMinutes') ?? '').trim();
-    const validDays = String(f.get('packageValidDays') ?? '').trim();
-    const typeFields = kind === 'SERVICE' && minutes ? { serviceMinutes: Number(minutes) } : kind === 'PACKAGE' && validDays ? { packageValidDays: Number(validDays) } : {};
-    const variants = isSized
-      ? grid.list.map((c) => ({ sku: c.sku, name: c.name, attributes: c.attributes, barcodes: [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}), ...typeFields }))
-      : [{ sku: f.get('sku'), barcodes: barcode ? [barcode] : [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}), ...typeFields }];
-    const r = await submit<{ id: string }>('POST', '/api/v1/products', {
+    if (sized && (grid.tooMany || grid.list.length === 0)) return;
+    const variants = sized
+      ? grid.list.map((c) => ({ sku: c.sku, name: c.name, attributes: c.attributes, barcodes: [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}) }))
+      : [{ sku: f.get('sku'), barcodes: barcode ? [barcode] : [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}) }];
+    const r = await submit('POST', '/api/v1/products', {
       name: f.get('name'),
       taxCategoryId: f.get('taxCategoryId'),
       uomId: f.get('uomId'),
       ...(String(f.get('categoryId') ?? '') ? { categoryId: f.get('categoryId') } : {}),
-      soldBy: kind === 'STANDARD' ? soldBy : 'UNIT',
-      ...(salon ? { productType: kind } : {}),
-      tracksExpiry: kind === 'STANDARD' && (expiry || drug),
-      ...(kind === 'STANDARD' && drug ? { drug: drugBody(f, true) } : {}),
+      soldBy,
+      tracksExpiry: expiry,
       variants,
-    }, { idempotent: true, refresh: kind !== 'PACKAGE' });
-    // A package's contents are set on its page, so go there.
-    if (r.ok && kind === 'PACKAGE') router.push(`/products/${r.data.id}`);
-    else if (r.ok) close();
+    }, { idempotent: true });
+    if (r.ok) close();
   }
   // A refused grid row (e.g. an SKU already used by another product) names its row in the issues.
   const rowIssues = ((error?.details?.issues as ValidationIssue[] | undefined) ?? []).filter((i) => /^variants\.\d+\./.test(i.path));
@@ -67,16 +49,7 @@ function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, 
     : null;
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      {salon && (
-        <SelectField label={t('prod.kind')} name="productType" value={kind} onChange={(e) => { const k = e.target.value as Kind; setKind(k); if (k === 'PACKAGE') setSized(false); }} hint={t(`prod.kindHint.${kind}`)}>
-          <option value="STANDARD">{t('prod.kind.STANDARD')}</option>
-          <option value="SERVICE">{t('prod.kind.SERVICE')}</option>
-          {packages && <option value="PACKAGE">{t('prod.kind.PACKAGE')}</option>}
-        </SelectField>
-      )}
       <div className="sm:col-span-2"><TextField label={t('prod.name')} name="name" required autoFocus error={fieldError('name')} /></div>
-      {kind === 'SERVICE' && salon && <TextField label={t('prod.serviceMinutes')} name="serviceMinutes" type="number" min={5} max={720} step={5} inputMode="numeric" hint={t('prod.serviceMinutesHint')} error={fieldError('variants.0.serviceMinutes')} />}
-      {kind === 'PACKAGE' && <TextField label={`${t('prod.packageValidDays')} (${t('common.optional')})`} name="packageValidDays" type="number" min={1} max={3650} inputMode="numeric" hint={t('prod.packageValidDaysHint')} error={fieldError('variants.0.packageValidDays')} />}
       <TextField
         label={sized ? t('vgrid.baseSku') : t('prod.sku')}
         name="sku"
@@ -92,12 +65,10 @@ function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, 
       <SelectField label={t('prod.unit')} name="uomId" defaultValue={uoms.find((u) => u.code === 'PC')?.id}>
         {uoms.map((u) => <option key={u.id} value={u.id}>{u.code} · {u.name}</option>)}
       </SelectField>
-      {kind === 'STANDARD' && (
-        <SelectField label={t('prod.soldBy')} name="soldBy" defaultValue="UNIT">
-          <option value="UNIT">{t('prod.byUnit')}</option>
-          <option value="WEIGHT">{t('prod.byWeight')}</option>
-        </SelectField>
-      )}
+      <SelectField label={t('prod.soldBy')} name="soldBy" defaultValue="UNIT">
+        <option value="UNIT">{t('prod.byUnit')}</option>
+        <option value="WEIGHT">{t('prod.byWeight')}</option>
+      </SelectField>
       <SelectField label={t('prod.tax')} name="taxCategoryId" defaultValue={taxes.find((x) => x.code === 'VAT')?.id}>
         {taxes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </SelectField>
@@ -108,20 +79,16 @@ function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, 
           {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </SelectField>
       )}
-      {/* ADR-0020: a sari-sari store starts with the box ticked; anyone may keep dates. */}
-      {kind === 'STANDARD' && (
-        <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
-          <input type="checkbox" name="tracksExpiry" checked={expiry || drug} disabled={drug} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
-          <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{drug ? t('drug.expiryNote') : t('prod.tracksExpiryHint')}</span></span>
-        </label>
-      )}
-      {kind === 'STANDARD' && <DrugFields on={drug} onToggle={setDrug} pharmacy={pharmacy} fieldError={fieldError} />}
-      {kind === 'PACKAGE' && <p className="col-span-full text-[0.875rem] text-muted">{t('prod.packageNext')}</p>}
-      {kind !== 'PACKAGE' && <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
+      {/* ADR-0020: dated stock (expiry lots) for any item. */}
+      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
+        <input type="checkbox" name="tracksExpiry" checked={expiry} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
+        <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
+      </label>
+      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
         <input type="checkbox" checked={sized} onChange={(e) => setSized(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
         <span>{t('vgrid.toggle')}<span className="block text-[0.8125rem] text-muted">{t('vgrid.toggleHint')}</span></span>
-      </label>}
-      {sized && kind !== 'PACKAGE' && (
+      </label>
+      {sized && (
         <div className="col-span-full flex flex-col gap-3 rounded-[5px] border border-hair-soft p-3">
           <p className="font-semibold">{t('vgrid.title')}</p>
           <OptionsEditor rows={rows} onChange={setRows} />
@@ -143,7 +110,7 @@ function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, 
   );
 }
 
-export function AddProduct({ uoms, taxes, categories = [], expiryFirst = false, salon = false, packages = salon, pharmacy = false }: { uoms: Uom[]; taxes: TaxCategory[]; categories?: CategoryOption[]; expiryFirst?: boolean; salon?: boolean; packages?: boolean; pharmacy?: boolean }) {
+export function AddProduct({ uoms, taxes, categories = [] }: { uoms: Uom[]; taxes: TaxCategory[]; categories?: CategoryOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} expiryFirst={expiryFirst} salon={salon} packages={packages} pharmacy={pharmacy} />}</Disclosure>;
+  return <Disclosure label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} />}</Disclosure>;
 }

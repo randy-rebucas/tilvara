@@ -57,7 +57,7 @@ describe('chart of accounts', () => {
     const s = await shop('gl-chart');
     const accounts = (await http().get('/v1/accounts').query({ legalEntityId: s.le }).set(s.accountant).expect(200)).body.data as { systemKey: string; code: string; name: string; type: string }[];
     expect(accounts.map((a) => [a.systemKey, a.code, a.name, a.type]).sort()).toEqual(DEFAULT_CHART.map((a) => [a.key, a.code, a.name, a.type]).sort());
-    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql', '0069_supplier_invoices_rls.sql', '0075_customers_rls.sql', '0092_counter_service_tips_rls.sql', '0099_salons_appointments_packages_rls.sql']
+    const sql = ['0029_ledger_rls.sql', '0040_bills_checks_rls.sql', '0069_supplier_invoices_rls.sql', '0075_customers_rls.sql']
       .map((f) => readFileSync(new URL(`../../../../packages/database/drizzle/${f}`, import.meta.url), 'utf8'))
       .join('\n');
     const seeded = [...sql.matchAll(/\('([A-Z_]+)', '(\d{4})', '([^']+)', '([A-Z]+)'\)/g)].map((m) => [m[1], m[2], m[3], m[4]]);
@@ -127,16 +127,9 @@ describe('a day in the books', () => {
     expect(cents(await gl(s, 'CASH_ON_HAND'))).toBe(
       cents(await ev(`SELECT sum(amount) FILTER (WHERE type <> 'OPENING_FLOAT') + (SELECT sum(variance) FROM cash_reconciliations) AS v FROM cash_movements`)),
     );
-    expect(cents(await gl(s, 'PAYMENT_CLEARING'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(amount), 0) FROM sale_tenders WHERE method IN ('CARD', 'QR', 'EWALLET'))
-      + (SELECT coalesce(sum(amount), 0) FROM sale_tips WHERE method <> 'CASH') - (SELECT coalesce(sum(amount), 0) FROM sale_tip_refunds WHERE method = 'CARD') AS v`)));
-    // Tips (session 25) are owed to staff: taken − given back on voids − paid out from drawers.
-    expect(0 - cents(await gl(s, 'TIPS_PAYABLE'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(amount), 0) FROM sale_tips) - (SELECT coalesce(sum(tip_refund), 0) FROM sale_returns)
-      - (SELECT coalesce(sum(amount), 0) FROM sale_tip_refunds)
-      + (SELECT coalesce(sum(amount), 0) FROM cash_movements WHERE type = 'TIP_PAYOUT') AS v`)));
+    expect(cents(await gl(s, 'PAYMENT_CLEARING'))).toBe(cents(await ev(`SELECT (SELECT coalesce(sum(amount), 0) FROM sale_tenders WHERE method IN ('CARD', 'QR', 'EWALLET')) AS v`)));
     // Store credit (ADR-0018) is owed to customers: the liability is what the credit ledger says they hold.
     expect(cents(await gl(s, 'CUSTOMER_STORE_CREDIT')) + cents(await ev(`SELECT coalesce(sum(amount), 0) AS v FROM customer_credit_entries`))).toBe(0);
-    // Service packages (ADR-0022) are owed until used: the liability is what the package ledger says is left.
-    expect(cents(await gl(s, 'PREPAID_SERVICES')) + cents(await ev(`SELECT coalesce(sum(value), 0) AS v FROM customer_package_entries`))).toBe(0);
     expect(-cents(await gl(s, 'OUTPUT_VAT'))).toBe(cents(await ev(`SELECT (SELECT sum(vat_amount) FROM sales) - (SELECT coalesce(sum(vat_amount), 0) FROM sale_returns) AS v`)));
     const revenue = -(cents(await gl(s, 'SALES')) + cents(await gl(s, 'SALES_RETURNS')) + cents(await gl(s, 'STATUTORY_DISCOUNTS')));
     const byProduct = (await http().get('/v1/reports/by-product').query({ branchId: s.b1, from: localToday, to: localToday }).set(s.auth).expect(200)).body.data as { revenueExVat: string; cogs: string }[];

@@ -2,7 +2,7 @@
  * Permission catalog. MUST match the rows seeded in
  * packages/database/drizzle/0003_identity_rls_auth.sql (checked by an integration test).
  */
-import { servesAppointments, servesPharmacy, type BusinessType } from './auth.js';
+import type { BusinessType } from './auth.js';
 
 export const PERMISSIONS = [
   'tenant.manage',
@@ -33,13 +33,6 @@ export const PERMISSIONS = [
   'purchasing.manage',
   'customers.read',
   'customers.manage',
-  'appointments.read',
-  'appointments.manage',
-  'staff.manage',
-  'pharmacy.read',
-  'pharmacy.dispense',
-  'pharmacy.dangerous_drugs',
-  'pharmacy.setup',
   'reports.read',
   'accounting.read',
   'accounting.post',
@@ -66,10 +59,6 @@ export const PRIVILEGED_PERMISSIONS: readonly PermissionCode[] = [
   'tax.manage',
   'accounting.post',
   'integrations.manage',
-  /** Dispensing dangerous drugs (ADR-0025 §9). */
-  'pharmacy.dangerous_drugs',
-  /** Recording pharmacist licences (ADR-0025 §9; audit decision A3, 2026-10-21). */
-  'pharmacy.setup',
 ];
 
 /**
@@ -84,44 +73,16 @@ export const SUPPORT_PERMISSIONS: readonly PermissionCode[] = [
   'sales.read',
   'inventory.read',
   'customers.read',
-  'appointments.read',
   'reports.read',
   'accounting.read',
   'audit.read',
 ];
 
-/**
- * Privileged codes that only count where the business has that industry (decision A3): recording
- * pharmacist licences is only possible in a pharmacy, so holding the code elsewhere makes no one privileged.
- */
-const PRIVILEGED_ONLY_FOR: Partial<Record<PermissionCode, (type: BusinessType) => boolean>> = {
-  'pharmacy.setup': servesPharmacy,
-};
-
-/** Whether these codes make a member privileged; with `businessType`, industry codes count only where that industry is served. */
-export const isPrivilegedSet = (codes: Iterable<string>, businessType?: BusinessType): boolean => {
-  for (const c of codes) {
-    if (!(PRIVILEGED_PERMISSIONS as readonly string[]).includes(c)) continue;
-    const only = PRIVILEGED_ONLY_FOR[c as PermissionCode];
-    if (businessType === undefined || !only || only(businessType)) return true;
-  }
-  return false;
-};
-
 export interface RoleTemplate {
   key: string;
   name: string;
   permissions: readonly PermissionCode[];
-  /** Appointments only (ADR-0022): left out for a business without them, added when it changes type. */
-  salon?: true;
-  /** Prescriptions only (ADR-0025): left out for a business without them, added when it changes type. */
-  pharmacy?: true;
 }
-
-/** The appointment codes (ADR-0022). */
-export const APPOINTMENT_CODES: readonly PermissionCode[] = ['appointments.read', 'appointments.manage', 'staff.manage'];
-/** The pharmacy codes (ADR-0025 §9). */
-export const PHARMACY_CODES: readonly PermissionCode[] = ['pharmacy.read', 'pharmacy.dispense', 'pharmacy.dangerous_drugs', 'pharmacy.setup'];
 
 const all = PERMISSIONS;
 
@@ -129,8 +90,7 @@ const BRANCH_MANAGER: readonly PermissionCode[] = [
   'members.read', 'org.read', 'catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void',
   'sales.price_override', 'sales.discount', 'cash.session', 'cash.reconcile', 'inventory.read',
   'inventory.adjust', 'inventory.transfer', 'customers.read',
-  'customers.manage', 'reports.read', 'appointments.read', 'appointments.manage', 'staff.manage',
-  'pharmacy.read', 'pharmacy.dispense',
+  'customers.manage', 'reports.read',
 ];
 
 /** System roles seeded into every new tenant. Tenants may add custom roles later. */
@@ -141,41 +101,7 @@ export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   {
     key: 'cashier',
     name: 'Cashier',
-    permissions: ['catalog.read', 'sales.create', 'sales.read', 'cash.session', 'customers.read', 'appointments.read', 'appointments.manage'],
-  },
-  /**
-   * The front desk of a salon, spa or barber shop (ADR-0022 §4): books, checks in and rings up; adds
-   * clients.
-   */
-  {
-    key: 'front_desk',
-    name: 'Front Desk',
-    permissions: [
-      'catalog.read', 'sales.create', 'sales.read', 'cash.session', 'customers.read', 'customers.manage', 'appointments.read', 'appointments.manage',
-    ],
-    salon: true,
-  },
-  /** A stylist, therapist or barber who signs in to see the calendar (ADR-0022 §4). */
-  { key: 'stylist', name: 'Stylist', permissions: ['catalog.read', 'appointments.read', 'customers.read'], salon: true },
-  /**
-   * A pharmacy's pharmacist (ADR-0025 §9): dispenses prescription medicines and dangerous drugs (with a
-   * licence on record), takes returns, keeps the stock counted. Privileged (two-step sign-in).
-   */
-  {
-    key: 'pharmacist',
-    name: 'Pharmacist',
-    permissions: [
-      'catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'cash.session', 'customers.read', 'customers.manage',
-      'inventory.read', 'inventory.adjust', 'inventory.count', 'pharmacy.read', 'pharmacy.dispense', 'pharmacy.dangerous_drugs',
-    ],
-    pharmacy: true,
-  },
-  /** Sells over the counter; prescription medicines need a pharmacist's approval at the till (ADR-0025 §6). */
-  {
-    key: 'pharmacy_assistant',
-    name: 'Pharmacy Assistant',
-    permissions: ['catalog.read', 'sales.create', 'sales.read', 'cash.session', 'customers.read', 'inventory.read', 'inventory.count', 'pharmacy.read'],
-    pharmacy: true,
+    permissions: ['catalog.read', 'sales.create', 'sales.read', 'cash.session', 'customers.read'],
   },
   /**
    * A cashier trusted with refunds, voids and discounts, and with adding customers (SPEC §4; session 22,
@@ -184,7 +110,7 @@ export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   {
     key: 'senior_cashier',
     name: 'Senior Cashier',
-    permissions: ['catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void', 'sales.discount', 'cash.session', 'customers.read', 'customers.manage', 'appointments.read', 'appointments.manage'],
+    permissions: ['catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void', 'sales.discount', 'cash.session', 'customers.read', 'customers.manage'],
   },
   {
     key: 'inventory_officer',
@@ -204,13 +130,11 @@ export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   },
 ];
 
-/**
- * The built-in roles a business of this type is given: salon roles (front desk, stylist) only when it
- * takes appointments (ADR-0022), pharmacy roles only when it dispenses (ADR-0025).
- */
-export const roleTemplatesFor = (businessType: BusinessType): readonly RoleTemplate[] =>
-  ROLE_TEMPLATES.filter((t) => {
-    if (t.pharmacy) return servesPharmacy(businessType);
-    if (t.salon) return servesAppointments(businessType);
-    return true;
-  });
+/** Whether these codes make a member privileged (ADR-0016). */
+export const isPrivilegedSet = (codes: Iterable<string>): boolean => {
+  for (const c of codes) if ((PRIVILEGED_PERMISSIONS as readonly string[]).includes(c)) return true;
+  return false;
+};
+
+/** The built-in roles a business of this type is given (all of them since migration 0112). */
+export const roleTemplatesFor = (_businessType: BusinessType): readonly RoleTemplate[] => ROLE_TEMPLATES;

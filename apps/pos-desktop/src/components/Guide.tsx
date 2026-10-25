@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useT } from '../i18n';
-import { guideSections, type GuideTopic } from '../lib/guide';
+import { GUIDE_SECTIONS as sections, type GuideTopic } from '../lib/guide';
 import { Note } from './ui';
 
 const scrollTo = (id: GuideTopic) => document.getElementById(`guide-${id}`)?.scrollIntoView({ block: 'start' });
@@ -9,9 +9,8 @@ const scrollTo = (id: GuideTopic) => document.getElementById(`guide-${id}`)?.scr
  * The counter's user guide. It opens over the current screen (which stays mounted, so a cart
  * survives a look) at the part the person is on; Esc or Back returns.
  */
-export function Guide({ topic, salon = true, pharmacy = true, onBack }: { topic: GuideTopic; salon?: boolean; pharmacy?: boolean; onBack: () => void }) {
+export function Guide({ topic, onBack }: { topic: GuideTopic; onBack: () => void }) {
   const { t } = useT();
-  const sections = guideSections(salon, pharmacy);
 
   // A block body: newer browsers return a Promise from scrollIntoView, which React would call as the cleanup.
   useEffect(() => {

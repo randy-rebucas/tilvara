@@ -250,7 +250,7 @@ export class AnalysisReportsService extends ReportsService {
           FROM payment_intents p JOIN cashier_sessions cs ON cs.id = p.cashier_session_id
           JOIN registers rg ON rg.id = p.register_id LEFT JOIN users u ON u.id = cs.opened_by
          WHERE p.branch_id = ${w.branchId}
-           AND (p.status IN ('UNKNOWN', 'PROCESSING') OR (p.status = 'SUCCEEDED' AND p.sale_id IS NULL AND p.purpose IN ('SALE', 'TIP')))
+           AND (p.status IN ('UNKNOWN', 'PROCESSING') OR (p.status = 'SUCCEEDED' AND p.sale_id IS NULL AND p.purpose = 'SALE'))
          ORDER BY p.created_at`);
       return {
         branchId: branch.id,

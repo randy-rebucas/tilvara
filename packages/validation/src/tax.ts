@@ -63,18 +63,8 @@ export const taxQuoteLineObject = z.object({
       share: rateSchema.or(z.literal('1')).optional(),
     })
     .optional(),
-  /** Who performed or sold it (ADR-0022 §5): a service staff member of the branch. */
-  staffId: z.uuid().optional(),
-  /** A session of the customer's package (ADR-0022 §6): priced at zero, no discount. */
-  packageId: z.uuid().optional(),
 });
-/** A package session is already paid for: no discount, approved price or SC/PWD on it. */
-export const packageSessionRefinement = [
-  (l: { packageId?: string | undefined; discount?: string | undefined; discountRate?: string | undefined; priceOverrideId?: string | undefined; statutory?: unknown }) =>
-    !l.packageId || (l.discount === undefined && l.discountRate === undefined && l.priceOverrideId === undefined && l.statutory === undefined),
-  { message: 'A package session takes no discount, approved price or SC/PWD', path: ['packageId'] as PropertyKey[] },
-] as const;
-export const taxQuoteLineSchema = taxQuoteLineObject.refine(oneDiscountForm, oneDiscountMessage).refine(...packageSessionRefinement);
+export const taxQuoteLineSchema = taxQuoteLineObject.refine(oneDiscountForm, oneDiscountMessage);
 export const oneDiscountRefinement = [oneDiscountForm, oneDiscountMessage] as const;
 
 

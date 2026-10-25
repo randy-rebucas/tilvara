@@ -13,7 +13,7 @@ agreement can be a schedule to the subscription terms, accepted at sign-up.
 | Clause | Content | What the system supports today |
 |---|---|---|
 | Subject, duration | The Tilvara service, for the subscription's term and the retention hold after it | Read-only after cancellation, data kept for the fiscal period (tenant-offboarding.md) |
-| Nature and purpose | Recording sales, stock, purchasing, books, appointments and dispensing for the business | — |
+| Nature and purpose | Recording sales, stock, purchasing and books for the business | — |
 | Data and people | Processing register activities 2–9, 11, 13 | processing-register.md |
 | Instructions | Tilvara processes the business's records only on its documented instructions: the service as configured by the business, and support access the business grants | No Tilvara access without a grant (support-access.md); grants are purpose-bound, ≤ 72 h, read-only |
 | Confidentiality | Every Tilvara person who can reach business records is bound to confidentiality | Staff marked only by ops; production access runbook |

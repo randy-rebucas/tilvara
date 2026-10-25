@@ -118,7 +118,7 @@ export default async function TeamPage() {
         <div className="min-w-0">
           <div className="mb-3 flex min-h-9 flex-wrap items-center justify-between gap-3">
             <h2 className="section-title">{t('team.roles')}</h2>
-            {canManageRoles && <NewRoleForm businessType={me.activeTenant?.businessType} />}
+            {canManageRoles && <NewRoleForm />}
           </div>
           <Note className="overflow-x-auto">
             {roles ? (

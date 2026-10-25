@@ -16,18 +16,13 @@ export const tenantSlugSchema = z
   .toLowerCase()
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use 2–63 lowercase letters, digits or hyphens');
 
-/** What the business does; it decides which features its people see (`tenants.business_type`). */
-export const BUSINESS_TYPES = ['RETAIL', 'HYBRID', 'GROCERY', 'SALON', 'PHARMACY'] as const;
+/**
+ * What the business does (`tenants.business_type`). Retail only for now: GROCERY, SALON, PHARMACY and
+ * HYBRID were removed on 2026-10-25 (migration 0112), after RESTAURANT, LODGING and LAUNDRY (0110–0111).
+ */
+export const BUSINESS_TYPES = ['RETAIL'] as const;
 export type BusinessType = (typeof BUSINESS_TYPES)[number];
 export const businessTypeSchema = z.enum(BUSINESS_TYPES);
-/** Appointments, service staff and packages (ADR-0022) are for salons, spas and barber shops, and HYBRID. */
-export const servesAppointments = (t: BusinessType): boolean => t === 'SALON' || t === 'HYBRID';
-/** Prescriptions, the pharmacy roles and books, expired stock blocked by default (ADR-0025) are for pharmacies and drugstores, and HYBRID. */
-export const servesPharmacy = (t: BusinessType): boolean => t === 'PHARMACY' || t === 'HYBRID';
-/** Prepaid packages (ADR-0022 §6): a salon's services, and HYBRID. */
-export const usesPackages = (t: BusinessType): boolean => t === 'SALON' || t === 'HYBRID';
-/** Recipes ("supplies used"): a salon's services (ADR-0022 §9), and HYBRID. */
-export const usesRecipes = (t: BusinessType): boolean => t === 'SALON' || t === 'HYBRID';
 
 export const signupSchema = z.object({
   email: emailSchema,
@@ -35,8 +30,7 @@ export const signupSchema = z.object({
   displayName: z.string().trim().min(1).max(200),
   businessName: z.string().trim().min(1).max(200),
   tenantSlug: tenantSlugSchema,
-  /** Omitted by older clients: every feature, as before business types. */
-  businessType: businessTypeSchema.default('HYBRID'),
+  businessType: businessTypeSchema.default('RETAIL'),
 });
 
 /** The business's name (as people see it; receipts print the legal entity's names) and/or its type. */

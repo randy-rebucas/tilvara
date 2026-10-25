@@ -76,15 +76,14 @@ async function day() {
 const manila = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(Date.now() + days * 86_400_000));
 
 /**
- * A HYBRID business's day with every sub-ledger kept beside the books (audit 2026-10-21 §3): store credit
- * given back and spent, a service package sold and one session used, cash tips taken, given back by a
- * void and paid out, and an item that keeps expiry dates sold and returned.
+ * A day with the sub-ledger kept beside the books (audit 2026-10-21 §3): store credit given back and
+ * spent, and an item that keeps expiry dates sold and returned. (Packages and tips, the other two
+ * sub-ledgers, were removed in 0112; their history is audited by the same checks.)
  */
 async function serviceDay() {
   const t = await signup(app, 'trace-svc');
   const auth = bearer(t.access);
   const idem = (path: string, body: unknown) => http().post(path).set(auth).set('Idempotency-Key', randomUUID()).send(body as object);
-  await http().patch('/v1/business').set(auth).send({ businessType: 'HYBRID' }).expect(200);
   const le = (await http().post('/v1/legal-entities').set(auth).send({ registeredName: 'Trace Services Corp', vatStatus: 'VAT' }).expect(201)).body.id as string;
   const b1 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le, code: 'B1', name: 'One' }).expect(201)).body.id as string;
   const reg = (await http().post('/v1/registers').set(auth).send({ branchId: b1, code: 'R1', name: 'Front' }).expect(201)).body.id as string;
@@ -95,9 +94,6 @@ async function serviceDay() {
   const product = async (body: Record<string, unknown>, variant: Record<string, unknown>) =>
     (await http().post('/v1/products').set(auth).send({ uomId: pc, taxCategoryId: vat, ...body, variants: [{ sku: uniq('SKU'), ...variant }] }).expect(201)).body.variants[0].id as string;
   const cola = await product({ name: 'Cola', tracksExpiry: true }, { price: '22.40' });
-  const cut = await product({ name: 'Haircut', productType: 'SERVICE' }, { price: '560.00', serviceMinutes: 30 });
-  const bundle = await product({ name: 'Five cuts', productType: 'PACKAGE' }, { price: '2800.00', packageValidDays: 90 });
-  await http().put(`/v1/variants/${bundle}/package-items`).set(auth).send({ items: [{ serviceVariantId: cut, sessions: 5 }] }).expect(200);
   await idem('/v1/stock/adjustments', { branchId: b1, reason: 'Opening', items: [{ variantId: cola, quantity: '10', unitCost: '11.00', expiresOn: manila(60) }] }).expect(201);
   const customer = (await http().post('/v1/customers').set(auth).send({ displayName: 'Liza Reyes' }).expect(201)).body.id as string;
   const sell = (body: Record<string, unknown>) =>
@@ -108,16 +104,6 @@ async function serviceDay() {
   const a = await sell({ customerId: customer, lines: [{ variantId: cola, quantity: '2' }] });
   await giveBack(a.id, { kind: 'RETURN', refundTo: 'STORE_CREDIT', lines: [{ saleLineId: a.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] });
   await sell({ customerId: customer, lines: [{ variantId: cola, quantity: '1' }], tenders: [{ method: 'STORE_CREDIT', amount: '10.00' }, { method: 'CASH', tendered: '20.00' }] });
-  // A package of five cuts (₱2,500 ex VAT), one session used.
-  await sell({ customerId: customer, lines: [{ variantId: bundle, quantity: '1' }] });
-  const [pkg] = (await http().get(`/v1/customers/${customer}/packages`).query({ open: 'true' }).set(auth).expect(200)).body.data;
-  await sell({ customerId: customer, lines: [{ variantId: cut, quantity: '1', packageId: pkg.id }], tenders: [{ method: 'CASH', tendered: '0.00' }] });
-  // Tips: ₱50 kept, ₱10 given back by a void, ₱20 paid out.
-  await sell({ lines: [{ variantId: cola, quantity: '1' }], tip: { amount: '50.00' } });
-  const tipped = await sell({ lines: [{ variantId: cut, quantity: '1' }], tip: { amount: '10.00' } });
-  await giveBack(tipped.id, { kind: 'VOID' });
-  await http().post(`/v1/cashier-sessions/${session}/movements`).set(auth).send({ type: 'TIP_PAYOUT', amount: '20.00', reason: 'Tips to staff' }).expect(201);
-
   return { tenantId: t.tenantId, auth, le, b1 };
 }
 
@@ -175,20 +161,18 @@ describe('traceability (Phase 3 exit criterion)', () => {
     expect(shift.payInOut).toMatchObject([{ id: pay.id, type: 'PAY_IN', amount: '100.00' }]);
   });
 
-  it('the balance-sheet sub-ledgers (store credit, packages, tips) and the expiry lots tie to the books', async () => {
+  it('the balance-sheet sub-ledger (store credit) and the expiry lots tie to the books', async () => {
     const d = await serviceDay();
     expect(await asOwnerInTenant(owner, d.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
     // Not vacuous: every account carries a balance, and the lots moved.
     const balances = await asOwnerInTenant(owner, d.tenantId, async (c) => Object.fromEntries((await c.query(`
       SELECT a.system_key, sum(l.credit - l.debit)::text AS v FROM journal_lines l JOIN accounts a ON a.id = l.account_id
-       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'TIPS_PAYABLE') GROUP BY 1`)).rows.map((r) => [r.system_key, Number(r.v)])));
+       WHERE a.system_key = 'CUSTOMER_STORE_CREDIT' GROUP BY 1`)).rows.map((r) => [r.system_key, Number(r.v)])));
     expect(balances).toEqual({
       CUSTOMER_STORE_CREDIT: 12.4, // 22.40 back as credit − 10.00 spent
-      PREPAID_SERVICES: 2000, // 2,500 sold − one 500 session
-      TIPS_PAYABLE: 30, // 50 + 10 taken − 10 given back by the void − 20 paid out
     });
     const lots = await asOwnerInTenant(owner, d.tenantId, async (c) => (await c.query(`SELECT trim_scale(l.quantity)::text AS q, (SELECT count(*)::int FROM stock_lot_movements m WHERE m.lot_id = l.id) AS n FROM stock_lots l`)).rows);
-    expect(lots).toEqual([{ q: '7', n: 5 }]); // 10 in, 2 + 1 + 1 sold, 1 back
+    expect(lots).toEqual([{ q: '8', n: 4 }]); // 10 in, 2 + 1 sold, 1 back
   });
 
   it('the audit is not vacuous: an entry pointing nowhere, or one whose inventory differs from its movements, is reported', async () => {

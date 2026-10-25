@@ -21,7 +21,6 @@ import {
 import type {
   CreateCategoryInput,
   CreateProductInput,
-  DrugDetailsInput,
   CreateTaxCategoryInput,
   CreateUomInput,
   ProductListQuery,
@@ -32,7 +31,6 @@ import type {
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
-import { assertPackages, assertPharmacy, businessType } from '../billing/entitlements.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
@@ -47,10 +45,10 @@ export interface ProductView extends ProductRow {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
- * The trial's sample sets (ADR-0016 slice 6), VAT-inclusive prices on the default list: a neighbourhood
- * shop for retail or a business that does several things (session 22), and one set per other type.
+ * The trial's sample set (ADR-0016 slice 6), VAT-inclusive prices on the default list: a neighbourhood
+ * shop.
  */
-const SHOP_ITEMS: readonly { name: string; price: string }[] = [
+const SAMPLE_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Rice 5 kg', price: '275.00' },
   { name: 'Instant noodles', price: '16.00' },
   { name: 'Canned sardines 155g', price: '28.00' },
@@ -60,51 +58,6 @@ const SHOP_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Ballpen (blue)', price: '12.00' },
   { name: 'AA batteries (2 pcs)', price: '70.00' },
 ];
-/** A sari-sari store's shelf (ADR-0020): sachets and pieces next to the packs they come from. */
-const GROCERY_ITEMS: readonly { name: string; price: string }[] = [
-  { name: '3-in-1 coffee sachet', price: '9.00' },
-  { name: '3-in-1 coffee (tie of 10)', price: '85.00' },
-  { name: 'Shampoo sachet', price: '8.00' },
-  { name: 'Instant noodles', price: '16.00' },
-  { name: 'Canned sardines 155g', price: '28.00' },
-  { name: 'Rice per kilo', price: '55.00' },
-  { name: 'Cooking oil (small bottle)', price: '25.00' },
-  { name: 'Softdrink 290ml', price: '20.00' },
-];
-/** A salon's list (ADR-0022): services with their durations, and two retail items. */
-const SALON_ITEMS: readonly { name: string; price: string; minutes?: number }[] = [
-  { name: 'Haircut', price: '250.00', minutes: 30 },
-  { name: 'Hair colour', price: '1200.00', minutes: 90 },
-  { name: 'Manicure', price: '200.00', minutes: 45 },
-  { name: 'Foot spa', price: '350.00', minutes: 60 },
-  { name: 'Full body massage', price: '600.00', minutes: 60 },
-  { name: 'Shampoo 250ml', price: '180.00' },
-  { name: 'Hair wax', price: '220.00' },
-];
-type SampleItem = {
-  name: string;
-  price: string;
-  minutes?: number;
-  /** A pharmacy's medicine (ADR-0025 §1): its class, generic name, strength and form. */
-  drug?: DrugDetailsInput;
-};
-/**
- * A drugstore's list (ADR-0025 §1): over-the-counter and prescription medicines named by their generic,
- * one antibiotic, a syrup and a supply. Untracked like every sample set, so no box and strip links (a pack
- * link needs counted stock); selling the prescription ones shows the prescription panel.
- */
-const PHARMACY_ITEMS: readonly SampleItem[] = [
-  { name: 'Paracetamol 500 mg tablet', price: '5.50', drug: { drugClass: 'OTC', genericName: 'Paracetamol', strength: '500 mg', dosageForm: 'TABLET' } },
-  { name: 'Cetirizine 10 mg tablet', price: '8.00', drug: { drugClass: 'OTC', genericName: 'Cetirizine', strength: '10 mg', dosageForm: 'TABLET' } },
-  { name: 'Ascorbic acid 100 mg/5 mL syrup 120 mL', price: '95.00', drug: { drugClass: 'OTC', genericName: 'Ascorbic acid', strength: '100 mg/5 mL', dosageForm: 'SYRUP' } },
-  { name: 'Amoxicillin 500 mg capsule', price: '9.00', drug: { drugClass: 'ANTIBIOTIC', genericName: 'Amoxicillin', strength: '500 mg', dosageForm: 'CAPSULE' } },
-  { name: 'Losartan 50 mg tablet', price: '12.00', drug: { drugClass: 'RX', genericName: 'Losartan', strength: '50 mg', dosageForm: 'TABLET' } },
-  { name: 'Metformin 500 mg tablet', price: '4.50', drug: { drugClass: 'RX', genericName: 'Metformin', strength: '500 mg', dosageForm: 'TABLET' } },
-  { name: 'Face mask (box of 50)', price: '150.00' },
-];
-const sampleItems = (type: Awaited<ReturnType<typeof businessType>>): readonly SampleItem[] =>
-  type === 'GROCERY' ? GROCERY_ITEMS : type === 'SALON' ? SALON_ITEMS : type === 'PHARMACY' ? PHARMACY_ITEMS : SHOP_ITEMS;
-
 const SAMPLE_REFUSALS = {
   SAMPLE_DATA_LOADED: 'The sample items are already on your list',
   NOT_TRIAL: 'Sample items are for businesses on a trial',
@@ -122,17 +75,6 @@ export function inStoreEan13(n: number): string {
 export function storeEan13(n: number): string {
   const body = `29${String(n).padStart(10, '0')}`;
   return body + ean13CheckDigit(body);
-}
-
-/** A product's medicine columns from its details (ADR-0025 §2); null clears them. */
-function drugColumns(d: DrugDetailsInput | null) {
-  return {
-    drugClass: d?.drugClass ?? null,
-    genericName: d?.genericName ?? null,
-    strength: d?.strength ?? null,
-    dosageForm: d?.dosageForm ?? null,
-    fdaRegistrationNo: d?.fdaRegistrationNo ?? null,
-  };
 }
 
 @Injectable()
@@ -245,10 +187,6 @@ export class CatalogService extends TenantService {
         throw new AppError('UOM_NOT_FRACTIONAL', 'Weighted products need a unit that allows fractions (e.g. KG)', HttpStatus.UNPROCESSABLE_ENTITY);
       }
       if (input.categoryId) await this.activeCategory(db, input.categoryId);
-      // Prepaid packages are a salon's (ADR-0022 §6).
-      if (input.productType === 'PACKAGE') await assertPackages(db);
-      // Prescription medicines are a pharmacy's (ADR-0025 §1); an OTC medicine may be sold anywhere.
-      if (input.drug && input.drug.drugClass !== 'OTC') await assertPharmacy(db);
 
       const [product] = await db
         .insert(products)
@@ -263,13 +201,9 @@ export class CatalogService extends TenantService {
           soldBy: input.soldBy,
           trackInventory: input.trackInventory ?? input.productType === 'STANDARD',
           tracksExpiry: input.tracksExpiry,
-          ...drugColumns(input.drug ?? null),
         })
         .returning();
-      for (const v of input.variants) {
-        await this.assertTypeFields(db, product!.id, v);
-        await this.insertVariant(db, auth, product!.id, v);
-      }
+      for (const v of input.variants) await this.insertVariant(db, auth, product!.id, v);
       await this.audit(db, auth, 'product.created', 'product', product!.id, { variants: input.variants.length });
       await emitEvent(db, {
         tenantId: tenantOf(auth).tenantId,
@@ -298,7 +232,6 @@ export class CatalogService extends TenantService {
         const like = `%${escapeLike(q.q)}%`;
         conds.push(sql`(
           ${products.name} ILIKE ${like}
-          OR ${products.genericName} ILIKE ${like}
           OR ${products.id} IN (SELECT product_id FROM product_variants WHERE sku ILIKE ${like} AND archived_at IS NULL)
           OR ${products.id} IN (SELECT v.product_id FROM barcodes b JOIN product_variants v ON v.tenant_id = b.tenant_id AND v.id = b.variant_id
                                WHERE b.code = ${q.q} AND b.archived_at IS NULL)
@@ -347,35 +280,14 @@ export class CatalogService extends TenantService {
       if (input.taxCategoryId) await this.activeTaxCategory(db, input.taxCategoryId);
       if (input.categoryId) await this.activeCategory(db, input.categoryId);
       if (input.trackInventory && current.productType !== 'STANDARD') {
-        throw new AppError('INVALID_STATE', 'Services and packages cannot track inventory', HttpStatus.UNPROCESSABLE_ENTITY);
+        throw new AppError('INVALID_STATE', 'Services cannot track inventory', HttpStatus.UNPROCESSABLE_ENTITY);
       }
       // Expiry dates are kept on counted stock only (ADR-0020 §3).
       if ((input.tracksExpiry ?? current.tracksExpiry) && !(input.trackInventory ?? current.trackInventory)) {
         throw new AppError('EXPIRY_NEEDS_STOCK', 'Expiry dates need stock that is counted', HttpStatus.UNPROCESSABLE_ENTITY);
       }
-      const { drug, ...fields } = input;
-      if (drug && drug.drugClass !== 'OTC') await assertPharmacy(db);
-      // Pack links are checked under the lock that creating one takes (packs.service createConversion).
-      if (drug !== undefined) await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(app_current_tenant_id()::text || ':pack-links'))`);
-      await db.update(products).set({ ...fields, ...(drug !== undefined && drugColumns(drug)) }).where(eq(products.id, id));
-      if (drug !== undefined) {
-        // A box and its strips stay the same medicine (ADR-0025 §6): a change here may not leave a linked pack or piece apart.
-        const { rows: [apart] } = await db.execute<{ id: string }>(sql`
-          SELECT pc.id FROM pack_conversions pc
-            JOIN product_variants pv ON pv.id = pc.pack_variant_id JOIN products pp ON pp.id = pv.product_id
-            JOIN product_variants sv ON sv.id = pc.piece_variant_id JOIN products sp ON sp.id = sv.product_id
-           WHERE pc.archived_at IS NULL AND (pp.id = ${id} OR sp.id = ${id})
-             AND (pp.drug_class IS DISTINCT FROM sp.drug_class OR (pp.drug_class IS NOT NULL AND pp.generic_key IS DISTINCT FROM sp.generic_key))
-           LIMIT 1`);
-        if (apart) {
-          throw new AppError('PACK_DRUG_MISMATCH', 'This item is a pack or piece of another with other medicine details; remove the pack link, change both items, then link them again', HttpStatus.UNPROCESSABLE_ENTITY, { packLinkId: apart.id });
-        }
-      }
-      await this.audit(db, auth, 'product.updated', 'product', id, {
-        fields: Object.keys(input),
-        // A change of class changes what a sale needs from then on (ADR-0025 §2).
-        ...(drug !== undefined && (drug?.drugClass ?? null) !== current.drugClass && { drugClass: { from: current.drugClass, to: drug?.drugClass ?? null } }),
-      });
+      await db.update(products).set(input).where(eq(products.id, id));
+      await this.audit(db, auth, 'product.updated', 'product', id, { fields: Object.keys(input) });
       return this.productView(db, id);
     });
   }
@@ -414,7 +326,6 @@ export class CatalogService extends TenantService {
     return this.mutate(auth, async (db) => {
       const product = await this.productRow(db, productId);
       if (product.archivedAt) throw archived('Product');
-      await this.assertTypeFields(db, productId, input);
       const variantId = await this.insertVariant(db, auth, productId, input);
       await this.audit(db, auth, 'variant.created', 'variant', variantId, { productId, sku: input.sku });
       return this.productView(db, productId);
@@ -426,7 +337,6 @@ export class CatalogService extends TenantService {
     return this.mutate(auth, async (db) => {
       const v = await this.variantRow(db, id);
       if (v.archivedAt) throw archived('Variant');
-      await this.assertTypeFields(db, v.productId, input);
       if (input.quickKeyPosition) {
         // One item per quick key (ADR-0021 §3).
         const [taken] = await db
@@ -513,7 +423,7 @@ export class CatalogService extends TenantService {
     this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const s = await this.sampleState(db);
-      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: sampleItems(await businessType(db)).length };
+      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: SAMPLE_ITEMS.length };
     });
   }
 
@@ -537,14 +447,11 @@ export class CatalogService extends TenantService {
       if (!vat || !pc) throw new AppError('SAMPLE_DATA_UNAVAILABLE', 'The default VAT category or the piece unit is missing', HttpStatus.UNPROCESSABLE_ENTITY);
       const [category] = await db.insert(categories).values({ tenantId, name: 'Sample items', isSample: true, sortOrder: 999 }).returning();
       const ids: string[] = [];
-      for (const [i, item] of sampleItems(await businessType(db)).entries()) {
+      for (const [i, item] of SAMPLE_ITEMS.entries()) {
         const [product] = await db
           .insert(products)
           .values({
             tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true,
-            // A salon's samples are bookable services (ADR-0022 §3).
-            ...(item.minutes && { productType: 'SERVICE' as const }),
-            ...(item.drug && drugColumns(item.drug)),
           })
           .returning({ id: products.id });
         await this.insertVariant(db, auth, product!.id, {
@@ -552,7 +459,6 @@ export class CatalogService extends TenantService {
           price: item.price,
           barcodes: [inStoreEan13(i + 1)],
           attributes: {},
-          ...(item.minutes && { serviceMinutes: item.minutes }),
         } as VariantInput);
         ids.push(product!.id);
       }
@@ -599,14 +505,6 @@ export class CatalogService extends TenantService {
   }
 
   // ---------------------------------------------------------------- helpers
-  /** A duration belongs to a service, a validity to a package (ADR-0022 §3, §6). */
-  private async assertTypeFields(db: Database, productId: string, v: Partial<Pick<VariantInput, 'serviceMinutes' | 'packageValidDays'>>) {
-    if (v.serviceMinutes == null && v.packageValidDays == null) return;
-    const { productType } = await this.productRow(db, productId);
-    if (v.serviceMinutes != null && productType !== 'SERVICE') throw new AppError('INVALID_STATE', 'Only a service has a duration', HttpStatus.UNPROCESSABLE_ENTITY);
-    if (v.packageValidDays != null && productType !== 'PACKAGE') throw new AppError('INVALID_STATE', 'Only a package has a validity', HttpStatus.UNPROCESSABLE_ENTITY);
-  }
-
   private async insertVariant(db: Database, auth: AuthContext, productId: string, v: VariantInput): Promise<string> {
     const tenantId = tenantOf(auth).tenantId;
     const [variant] = await db
@@ -618,8 +516,6 @@ export class CatalogService extends TenantService {
         name: v.name ?? null,
         attributes: v.attributes,
         referenceCost: v.referenceCost ?? null,
-        serviceMinutes: v.serviceMinutes ?? null,
-        packageValidDays: v.packageValidDays ?? null,
       })
       .returning({ id: productVariants.id });
     if (v.barcodes.length) {

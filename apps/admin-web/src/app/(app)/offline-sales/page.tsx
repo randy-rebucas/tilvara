@@ -14,7 +14,7 @@ export const generateMetadata = pageTitle('offline-sales');
 type Tab = 'review' | 'recorded' | 'dismissed';
 const STATUS: Record<Tab, OfflineSale['status']> = { review: 'QUARANTINED', recorded: 'RECORDED', dismissed: 'DISMISSED' };
 const KNOWN = new Set(['TOTAL_MISMATCH', 'SESSION_NOT_OPEN', 'NOT_SESSION_OWNER', 'CASHIER_NOT_AUTHORIZED', 'WRONG_REGISTER', 'UNKNOWN_SNAPSHOT', 'PERIOD_CLOSED', 'FORBIDDEN', 'NOT_FOUND', 'DUPLICATE_TRANSACTION', 'SUBSCRIPTION_READ_ONLY', 'TENANT_SUSPENDED', 'VALIDATION_FAILED']);
-// ADR-0025: a prescription check that failed offline, and stock sold from an expired or held lot.
+// ADR-0025: stock sold from an expired or held lot; PRESCRIPTION_REVIEW only on envelopes from before pharmacies were removed.
 const FLAGS = new Set(['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'PRESCRIPTION_REVIEW', 'EXPIRED_STOCK']);
 
 /**

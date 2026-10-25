@@ -10,8 +10,6 @@ import {
   heldCartListQuerySchema,
   resumeHeldCartSchema,
   createSaleReturnSchema,
-  tipRefundSchema,
-  type TipRefundInput,
   createSaleSchema,
   idParamSchema,
   openCashierSessionSchema,
@@ -181,13 +179,6 @@ export class SalesController {
   @Get('sale-returns/:id')
   getReturn(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
     return this.returns.get(auth, returnId);
-  }
-
-  /** Give a voided sale's card tip back when the first attempt could not (session 25). */
-  @HttpCode(200)
-  @Post('sale-returns/:id/tip-refund')
-  refundTip(@Auth() auth: AuthContext, @Param('id', id) returnId: string, @Body(new ZodPipe(tipRefundSchema)) body: TipRefundInput) {
-    return this.returns.refundTip(auth, returnId, body);
   }
 
   @Get('sale-returns/:id/receipt')

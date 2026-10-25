@@ -57,7 +57,7 @@ try {
   await waitFor(`location.pathname === '/'`);
 
   await go(`/reports/sales?${q}`);
-  check('a retail shop now has report groups: Sales and Analysis, no Salon', await shown('Analysis') && !(await text()).includes('Commissions'));
+  check('the report groups are Sales and Analysis (no Salon)', await shown('Analysis') && !(await text()).includes('Commissions'));
   await clickText('Analysis');
   await waitFor(`location.pathname === '/reports/categories'`, 10000);
   // Section titles are upper-cased by CSS: compare without case.

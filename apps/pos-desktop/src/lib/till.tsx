@@ -34,8 +34,6 @@ export interface Till {
   reportUnreachable(): void;
   /** Fetch a fresh snapshot now (e.g. the counter opened on a shift the till has not seen yet). */
   refreshSnapshot(): Promise<void>;
-  /** The branch's service staff from the stored snapshot (ADR-0022 §5), for naming who did a line offline. */
-  snapshotStaff(): Promise<{ id: string; displayName: string; color: string | null }[]>;
 }
 
 const TillContext = createContext<Till | null>(null);
@@ -180,7 +178,6 @@ export function TillProvider({ children }: { children: ReactNode }) {
       printer: channel ? escposPrinter(channel) : browserPrinter,
       drawer: channel ? escposDrawer(channel) : noDrawer,
       setUp, forget, setPrinter, refresh,
-      snapshotStaff: async () => (store ? ((await store.snapshot())?.body.staff ?? []) : []),
       reportUnreachable: () => { if (engineRef.current) setOnline(false); },
       refreshSnapshot: async () => {
         const e = engineRef.current;

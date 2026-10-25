@@ -50,19 +50,12 @@ export interface ReceiptInput {
     isChoice?: boolean;
     /** The promotion that priced the line (ADR-0021): printed with its discount. */
     promotion?: string | null;
-    /** Who did it (ADR-0022): the staff member's first name. */
-    staff?: string | null;
-    /** A session of a prepaid package (ADR-0022 §6): printed as such at ₱0.00. */
-    packageSession?: boolean;
-    /** A medicine (ADR-0025 §3, §5): "generic strength form" under the brand, and the lots it came from. */
-    drugLabel?: string | null;
+    /** The expiry lots the line was drawn from (ADR-0020 §3, ADR-0025 §5): printed under it. */
     lots?: { lotCode: string | null; expiresOn: string }[];
   }[];
-  /** A tip given with the sale (session 25): printed below the payment, never in the totals. */
-  tip?: { method: string; amount: string } | null;
   /** `exchangeReturnNumber`: this cash is the refund of that return, put towards this sale (an exchange). */
   tenders: { method: string; amount: string; tendered: string; change: string; exchangeReturnNumber?: number | null }[];
-  /** `purchaseBooklet` (ADR-0025 §8): set when the discount covered a medicine. */
+  /** `purchaseBooklet`: set when the discount covered a medicine (sales before 0112 removed pharmacies). */
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
   /** Charges that are not items (a service charge on sales rung up before 0111); included in the sale totals. */
   /** `gross` is the charge ex VAT (its sales); `amountDue` adds its VAT. */
@@ -245,9 +238,6 @@ export function buildReceipt(r: ReceiptInput) {
       amount: toDec(l.gross).minus(l.discount).toFixed(2),
       ...(positive(l.discount) && { discount: m(l.discount) }),
       ...(l.promotion && positive(l.discount) && { promotion: l.promotion }),
-      ...(l.staff && { staff: l.staff }),
-      ...(l.packageSession && { packageSession: true }),
-      ...(l.drugLabel && { generic: l.drugLabel }),
       // "Lot A123 · Exp 03/2027" per lot the line was drawn from.
       ...(l.lots?.length && { lots: l.lots.map((x) => [x.lotCode ? `Lot ${x.lotCode}` : null, `Exp ${x.expiresOn.slice(5, 7)}/${x.expiresOn.slice(0, 4)}`].filter(Boolean).join(' · ')) }),
       flag: flag(l),
@@ -282,7 +272,6 @@ export function buildReceipt(r: ReceiptInput) {
     tenders: r.tenders.map((t) => ({ method: t.method, amount: t.amount, ...(t.method === 'CASH' && { tendered: t.tendered, change: t.change }), ...(t.exchangeReturnNumber && { exchangeReturnNumber: t.exchangeReturnNumber }) })),
     statutory,
     ...(r.customer && { customer: { name: r.customer.name, ...(r.customer.tin && { tin: r.customer.tin }) } }),
-    ...(r.tip && { tip: { method: r.tip.method, amount: m(r.tip.amount) } }),
     legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
   };
 }

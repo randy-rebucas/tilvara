@@ -91,7 +91,7 @@ export const categories = pgTable(
 );
 
 /** PACKAGE: prepaid sessions of services (ADR-0022 §6). */
-export const PRODUCT_TYPES = ['STANDARD', 'SERVICE', 'PACKAGE'] as const;
+export const PRODUCT_TYPES = ['STANDARD', 'SERVICE'] as const;
 export type ProductType = (typeof PRODUCT_TYPES)[number];
 export const SOLD_BY = ['UNIT', 'WEIGHT'] as const;
 export type SoldBy = (typeof SOLD_BY)[number];
@@ -115,17 +115,6 @@ export const products = pgTable(
     tracksExpiry: boolean('tracks_expiry').notNull().default(false),
     /** Part of the trial's sample set (ADR-0016 slice 6): labelled, and archived together by "remove sample items". */
     isSample: boolean('is_sample').notNull().default(false),
-    /**
-     * A medicine (ADR-0025 §2): its class (OTC, RX, ANTIBIOTIC, DANGEROUS), generic name, strength, dosage
-     * form and FDA registration; null class = not a drug. The brand is the product's name. `generic_key`
-     * (generated) finds equivalents and fills prescriptions.
-     */
-    drugClass: text('drug_class'),
-    genericName: text('generic_name'),
-    strength: text('strength'),
-    dosageForm: text('dosage_form'),
-    fdaRegistrationNo: text('fda_registration_no'),
-    genericKey: text('generic_key').generatedAlwaysAs(sql.raw(String.raw`CASE WHEN generic_name IS NULL THEN NULL ELSE lower(regexp_replace(btrim(generic_name), '\s+', ' ', 'g')) || '|' || lower(regexp_replace(coalesce(strength, ''), '\s+', '', 'g')) || '|' || coalesce(dosage_form, '') END`)),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -137,12 +126,10 @@ export const products = pgTable(
     foreignKey({ columns: [t.tenantId, t.uomId], foreignColumns: [unitsOfMeasure.tenantId, unitsOfMeasure.id] }),
     index('products_tenant_name_idx').on(t.tenantId, sql`lower(${t.name})`),
     index('products_tenant_category_idx').on(t.tenantId, t.categoryId),
-    check('products_type_check', sql`${t.productType} IN ('STANDARD','SERVICE','PACKAGE')`),
+    // PACKAGE (prepaid service packages, ADR-0022) was removed in 0112; 0113 made the archived ones SERVICE.
+    check('products_type_check', sql`${t.productType} IN ('STANDARD','SERVICE')`),
     check('products_sold_by_check', sql`${t.soldBy} IN ('UNIT','WEIGHT')`),
     check('products_service_untracked', sql`${t.productType} = 'STANDARD' OR NOT ${t.trackInventory}`),
-    check('products_drug_class_check', sql`${t.drugClass} IS NULL OR (${t.drugClass} IN ('OTC','RX','ANTIBIOTIC','DANGEROUS') AND ${t.productType} = 'STANDARD' AND length(btrim(coalesce(${t.genericName}, ''))) BETWEEN 1 AND 200)`),
-    check('products_dosage_form_check', sql`${t.dosageForm} IS NULL OR ${t.dosageForm} IN ('TABLET','CAPSULE','SYRUP','SUSPENSION','DROPS','CREAM','OINTMENT','INJECTION','INHALER','SACHET','OTHER')`),
-    index('products_generic_key_idx').on(t.tenantId, t.genericKey).where(sql`${t.genericKey} IS NOT NULL`),
   ],
 );
 
@@ -160,18 +147,12 @@ export const productVariants = pgTable(
     referenceCost: money('reference_cost'),
     /** Its button on the till's quick keys (1–48), or null (ADR-0021 §3). */
     quickKeyPosition: integer('quick_key_position'),
-    /** A service's duration, needed to book it (ADR-0022 §3). */
-    serviceMinutes: integer('service_minutes'),
-    /** A package's validity from the day it is sold; null = no expiry (ADR-0022 §6). */
-    packageValidDays: integer('package_valid_days'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     unique('product_variants_tenant_id_id_unique').on(t.tenantId, t.id),
-    check('product_variants_service_minutes_range', sql`${t.serviceMinutes} IS NULL OR ${t.serviceMinutes} BETWEEN 5 AND 720`),
-    check('product_variants_package_days_range', sql`${t.packageValidDays} IS NULL OR ${t.packageValidDays} BETWEEN 1 AND 3650`),
     check('product_variants_quick_key_range', sql`${t.quickKeyPosition} IS NULL OR ${t.quickKeyPosition} BETWEEN 1 AND 48`),
     foreignKey({ columns: [t.tenantId, t.productId], foreignColumns: [products.tenantId, products.id] }),
     uniqueIndex('product_variants_tenant_sku_unique').on(t.tenantId, sql`lower(${t.sku})`).where(sql`${t.archivedAt} IS NULL`),
