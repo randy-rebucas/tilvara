@@ -78,7 +78,7 @@ export const journalEntries = pgTable(
     index('journal_entries_date_idx').on(t.tenantId, t.legalEntityId, t.entryDate),
     check(
       'journal_entries_source_check',
-      sql`${t.sourceType} IN ('SALE','SALE_RETURN','GOODS_RECEIPT','SUPPLIER_RETURN','STOCK_ADJUSTMENT','STOCK_COUNT','TRANSFER_DISPATCH','TRANSFER_RECEIPT','CASH_MOVEMENT','CASH_VARIANCE','SUPPLIER_INVOICE','SUPPLIER_PAYMENT','SUPPLIER_NOTE','PACK_OPENING','SALE_TIP_REFUND','FOLIO_ENTRY','FOLIO_PAYMENT','STAY_DEPOSIT','JOB_ORDER_DEPOSIT','MANUAL','REVERSAL')`,
+      sql`${t.sourceType} IN ('SALE','SALE_RETURN','GOODS_RECEIPT','SUPPLIER_RETURN','STOCK_ADJUSTMENT','STOCK_COUNT','TRANSFER_DISPATCH','TRANSFER_RECEIPT','CASH_MOVEMENT','CASH_VARIANCE','SUPPLIER_INVOICE','SUPPLIER_PAYMENT','SUPPLIER_NOTE','PACK_OPENING','SALE_TIP_REFUND','MANUAL','REVERSAL')`,
     ),
     check('journal_entries_manual_memo', sql`${t.sourceType} NOT IN ('MANUAL','REVERSAL') OR length(trim(coalesce(${t.memo}, ''))) > 0`),
     check('journal_entries_reversal_link', sql`(${t.sourceType} = 'REVERSAL') = (${t.reversesEntryId} IS NOT NULL)`),

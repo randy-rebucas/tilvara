@@ -9,7 +9,6 @@ import { useT } from '@/i18n/client';
 import type { TaxCategory, Uom } from '@/lib/api';
 import { drugBody } from '@/lib/pharmacy';
 import { DrugFields } from './drug-fields';
-import { LaundryFields, laundryBody, type LaundryDraft } from './laundry-fields';
 import { MAX_COMBINATIONS } from '@/lib/variant-grid';
 import { GridPreview, OptionsEditor, useGrid, type OptionRow } from './variant-grid';
 
@@ -17,14 +16,12 @@ type Kind = 'STANDARD' | 'SERVICE' | 'PACKAGE';
 
 type CategoryOption = { id: string; label: string };
 
-function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, laundry, packages, pharmacy }: { close: () => void; uoms: Uom[]; taxes: TaxCategory[]; categories: CategoryOption[]; byWeight: boolean; expiryFirst: boolean; salon: boolean; laundry: boolean; packages: boolean; pharmacy: boolean }) {
+function Fields({ close, uoms, taxes, categories, expiryFirst, salon, packages, pharmacy }: { close: () => void; uoms: Uom[]; taxes: TaxCategory[]; categories: CategoryOption[]; expiryFirst: boolean; salon: boolean; packages: boolean; pharmacy: boolean }) {
   const { t } = useT();
   const router = useRouter();
   const { pending, submit, fieldError, error } = useSubmit();
   // Salons (ADR-0022): a service is booked by its duration; a package is prepaid sessions of services.
   const [kind, setKind] = useState<Kind>('STANDARD');
-  // Laundries (ADR-0024 §2, §7): how a job line counts a service, add-ons, self-service cycles.
-  const [wash, setWash] = useState<LaundryDraft>({ unit: '', addon: false, machineKind: '' });
   // Pharmacies (ADR-0025 §1): a new product starts as a medicine that keeps expiry dates.
   const [drug, setDrug] = useState(pharmacy);
   const [expiry, setExpiry] = useState(expiryFirst || pharmacy);
@@ -39,15 +36,12 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
     const barcode = String(f.get('barcode') ?? '').trim();
     const price = String(f.get('price') ?? '').trim();
     const cost = String(f.get('referenceCost') ?? '').trim();
-    const soldBy = laundry && kind === 'SERVICE' && wash.unit === 'KG' ? 'WEIGHT' : byWeight ? String(f.get('soldBy')) : 'UNIT';
+    const soldBy = String(f.get('soldBy') ?? 'UNIT');
     const isSized = sized && kind !== 'PACKAGE';
     if (isSized && (grid.tooMany || grid.list.length === 0)) return;
     const minutes = String(f.get('serviceMinutes') ?? '').trim();
     const validDays = String(f.get('packageValidDays') ?? '').trim();
-    const typeFields = {
-      ...(kind === 'SERVICE' && minutes ? { serviceMinutes: Number(minutes) } : kind === 'PACKAGE' && validDays ? { packageValidDays: Number(validDays) } : {}),
-      ...(laundry && kind !== 'PACKAGE' ? laundryBody(f, wash, kind === 'SERVICE') : {}),
-    };
+    const typeFields = kind === 'SERVICE' && minutes ? { serviceMinutes: Number(minutes) } : kind === 'PACKAGE' && validDays ? { packageValidDays: Number(validDays) } : {};
     const variants = isSized
       ? grid.list.map((c) => ({ sku: c.sku, name: c.name, attributes: c.attributes, barcodes: [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}), ...typeFields }))
       : [{ sku: f.get('sku'), barcodes: barcode ? [barcode] : [], ...(price ? { price } : {}), ...(cost ? { referenceCost: cost } : {}), ...typeFields }];
@@ -56,8 +50,8 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
       taxCategoryId: f.get('taxCategoryId'),
       uomId: f.get('uomId'),
       ...(String(f.get('categoryId') ?? '') ? { categoryId: f.get('categoryId') } : {}),
-      soldBy: kind === 'STANDARD' || (kind === 'SERVICE' && soldBy === 'WEIGHT') ? soldBy : 'UNIT',
-      ...(salon || laundry ? { productType: kind } : {}),
+      soldBy: kind === 'STANDARD' ? soldBy : 'UNIT',
+      ...(salon ? { productType: kind } : {}),
       tracksExpiry: kind === 'STANDARD' && (expiry || drug),
       ...(kind === 'STANDARD' && drug ? { drug: drugBody(f, true) } : {}),
       variants,
@@ -73,7 +67,7 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
     : null;
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      {(salon || laundry) && (
+      {salon && (
         <SelectField label={t('prod.kind')} name="productType" value={kind} onChange={(e) => { const k = e.target.value as Kind; setKind(k); if (k === 'PACKAGE') setSized(false); }} hint={t(`prod.kindHint.${kind}`)}>
           <option value="STANDARD">{t('prod.kind.STANDARD')}</option>
           <option value="SERVICE">{t('prod.kind.SERVICE')}</option>
@@ -98,8 +92,7 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
       <SelectField label={t('prod.unit')} name="uomId" defaultValue={uoms.find((u) => u.code === 'PC')?.id}>
         {uoms.map((u) => <option key={u.id} value={u.id}>{u.code} · {u.name}</option>)}
       </SelectField>
-      {/* A restaurant does not sell by weight (business type): its items go by the unit. */}
-      {byWeight && kind === 'STANDARD' && (
+      {kind === 'STANDARD' && (
         <SelectField label={t('prod.soldBy')} name="soldBy" defaultValue="UNIT">
           <option value="UNIT">{t('prod.byUnit')}</option>
           <option value="WEIGHT">{t('prod.byWeight')}</option>
@@ -123,7 +116,6 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
         </label>
       )}
       {kind === 'STANDARD' && <DrugFields on={drug} onToggle={setDrug} pharmacy={pharmacy} fieldError={fieldError} />}
-      {laundry && kind !== 'PACKAGE' && <LaundryFields draft={wash} onChange={setWash} service={kind === 'SERVICE'} fieldError={(k) => fieldError(`variants.0.${k}`)} />}
       {kind === 'PACKAGE' && <p className="col-span-full text-[0.875rem] text-muted">{t('prod.packageNext')}</p>}
       {kind !== 'PACKAGE' && <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
         <input type="checkbox" checked={sized} onChange={(e) => setSized(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
@@ -151,7 +143,7 @@ function Fields({ close, uoms, taxes, categories, byWeight, expiryFirst, salon, 
   );
 }
 
-export function AddProduct({ uoms, taxes, categories = [], byWeight, expiryFirst = false, salon = false, laundry = false, packages = salon, pharmacy = false }: { uoms: Uom[]; taxes: TaxCategory[]; categories?: CategoryOption[]; byWeight: boolean; expiryFirst?: boolean; salon?: boolean; laundry?: boolean; packages?: boolean; pharmacy?: boolean }) {
+export function AddProduct({ uoms, taxes, categories = [], expiryFirst = false, salon = false, packages = salon, pharmacy = false }: { uoms: Uom[]; taxes: TaxCategory[]; categories?: CategoryOption[]; expiryFirst?: boolean; salon?: boolean; packages?: boolean; pharmacy?: boolean }) {
   const { t } = useT();
-  return <Disclosure label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} byWeight={byWeight} expiryFirst={expiryFirst} salon={salon} laundry={laundry} packages={packages} pharmacy={pharmacy} />}</Disclosure>;
+  return <Disclosure label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} expiryFirst={expiryFirst} salon={salon} packages={packages} pharmacy={pharmacy} />}</Disclosure>;
 }

@@ -56,25 +56,6 @@ const attributes = z.record(z.string().trim().min(1).max(50), z.string().trim().
   'At most 10 attributes',
 );
 
-/** How a laundry job line counts a service (ADR-0024 §2) and the machines a self-service cycle runs on (§7). */
-export const LAUNDRY_UNITS = ['KG', 'LOAD', 'PIECE'] as const;
-export const MACHINE_KINDS = ['WASHER', 'DRYER'] as const;
-const laundryQuantity = z.string().trim().regex(/^\d{1,6}(\.\d{1,3})?$/, 'Use a quantity such as "3" or "7.5"').refine((v) => Number(v) > 0, 'Must be above zero');
-/** A variant's laundry fields (ADR-0024 §2, §7). */
-const laundryVariantFields = {
-  /** How a job line counts it: per kilo, per load or per piece; null = an ordinary item. */
-  laundryUnit: z.enum(LAUNDRY_UNITS).nullable(),
-  /** The least a job is charged for it (e.g. "3" kg). */
-  laundryMinQuantity: laundryQuantity.nullable(),
-  /** A per-load service: kilos per load, so the till can suggest loads from a weight. */
-  laundryKgPerLoad: laundryQuantity.nullable(),
-  /** On the job form's quick buttons (detergent, fabric conditioner, ironing, folding). */
-  laundryAddon: z.boolean(),
-  /** A self-service cycle: the kind of machine and how long it runs. */
-  machineKind: z.enum(MACHINE_KINDS).nullable(),
-  machineMinutes: z.number().int().min(1).max(240).nullable(),
-};
-
 export const variantInputSchema = z.object({
   sku: skuSchema,
   name: z.string().trim().min(1).max(200).nullable().optional(),
@@ -87,12 +68,6 @@ export const variantInputSchema = z.object({
   serviceMinutes: z.number().int().min(5).max(720).nullable().optional(),
   /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
   packageValidDays: z.number().int().min(1).max(3650).nullable().optional(),
-  laundryUnit: laundryVariantFields.laundryUnit.optional(),
-  laundryMinQuantity: laundryVariantFields.laundryMinQuantity.optional(),
-  laundryKgPerLoad: laundryVariantFields.laundryKgPerLoad.optional(),
-  laundryAddon: laundryVariantFields.laundryAddon.optional(),
-  machineKind: laundryVariantFields.machineKind.optional(),
-  machineMinutes: laundryVariantFields.machineMinutes.optional(),
 });
 export type VariantInput = z.infer<typeof variantInputSchema>;
 
@@ -156,7 +131,6 @@ export const updateVariantSchema = z
     quickKeyPosition: z.number().int().min(1).max(48).nullable(),
     serviceMinutes: z.number().int().min(5).max(720).nullable(),
     packageValidDays: z.number().int().min(1).max(3650).nullable(),
-    ...laundryVariantFields,
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');

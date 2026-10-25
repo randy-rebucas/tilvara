@@ -3,7 +3,7 @@
 // not give, one naming a person who is not a member. A manager reviews them in the admin.
 // Usage: node e2e/offline.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser, sleep } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';

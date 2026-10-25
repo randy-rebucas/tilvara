@@ -4,32 +4,24 @@ import { Appointments } from './components/Appointments';
 import { BusinessPicker, SignIn } from './components/Auth';
 import { CloseShift } from './components/CloseShift';
 import { History } from './components/History';
-import { KitchenBoard, KitchenPicker, type KitchenPlace } from './components/Kitchen';
-import { Laundry } from './components/Laundry';
 import { RegisterPicker, type Shift } from './components/Registers';
-import { Rooms } from './components/Rooms';
 import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
-import { FloorPicker, Tables } from './components/Tables';
 import { TillSetup } from './components/Till';
 import { useT } from './i18n';
 import type { GuideTopic } from './lib/guide';
 import { useTill } from './lib/till';
 import { api, session, signOut, uuid } from './lib/api';
-import { restaurantOnPlan, servesAppointments, servesLaundry, servesLodging, servesPharmacy, servesTables, type AppointmentRingUp, type Me } from './types';
+import { servesAppointments, servesPharmacy, type AppointmentRingUp, type Me } from './types';
 
 type Stage =
   | { name: 'signin' }
   | { name: 'business'; me: Me }
   | { name: 'register'; me: Me }
-  | { name: 'counter'; me: Me; shift: Shift }
-  | { name: 'kitchen-pick'; me: Me }
-  | { name: 'kitchen'; me: Me; place: KitchenPlace }
-  | { name: 'floor-pick'; me: Me }
-  | { name: 'floor'; me: Me; branch: Shift['branch'] };
-type Tab = 'sell' | 'appointments' | 'rooms' | 'laundry' | 'tables' | 'history' | 'close';
+  | { name: 'counter'; me: Me; shift: Shift };
+type Tab = 'sell' | 'appointments' | 'history' | 'close';
 /** The part of the user guide each counter tab opens. */
-const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', appointments: 'appointments', rooms: 'rooms', laundry: 'laundry', tables: 'tables', history: 'shift', close: 'close' };
+const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', appointments: 'appointments', history: 'shift', close: 'close' };
 
 export function App() {
   const till = useTill();
@@ -82,105 +74,33 @@ function Counter() {
     );
   }
   if (stage.name === 'register') {
-    // A retail business, or a plan without it, has no restaurant service, whatever the person may do.
-    const kitchen = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('kitchen.operate');
-    const floor = restaurantOnPlan(stage.me) && stage.me.activeTenant?.permissions.includes('restaurant.orders');
     return (
-      <Shell onSignOut={leave} help={{ topic: 'start', restaurant: servesTables(stage.me), salon: servesAppointments(stage.me), lodging: servesLodging(stage.me), laundry: servesLaundry(stage.me), pharmacy: servesPharmacy(stage.me) }}>
+      <Shell onSignOut={leave} help={{ topic: 'start', salon: servesAppointments(stage.me), pharmacy: servesPharmacy(stage.me) }}>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.
             setTab('sell');
             setStage({ name: 'counter', me: stage.me, shift });
           }}
-          onKitchen={kitchen ? () => setStage({ name: 'kitchen-pick', me: stage.me }) : undefined}
-          onFloor={floor ? () => setStage({ name: 'floor-pick', me: stage.me }) : undefined}
         />
-      </Shell>
-    );
-  }
-  if (stage.name === 'kitchen-pick') {
-    return (
-      <Shell onSignOut={leave} help={{ topic: 'kitchen' }}>
-        <KitchenPicker onReady={(place) => setStage({ name: 'kitchen', me: stage.me, place })} onBack={() => setStage({ name: 'register', me: stage.me })} />
-      </Shell>
-    );
-  }
-  if (stage.name === 'kitchen') {
-    const { place } = stage;
-    return (
-      <Shell
-        onSignOut={leave}
-        help={{ topic: 'kitchen' }}
-        context={
-          <span className="serial text-[0.8125rem]">
-            {t('kds.entryTitle')} · {place.branch.name} · <span className="text-white">{place.station?.code ?? t('kds.allStations')}</span>
-          </span>
-        }
-        nav={
-          <button type="button" className="h-10 whitespace-nowrap rounded px-3 text-[0.9375rem] text-blue-ink hover:bg-white/10" onClick={() => setStage({ name: 'kitchen-pick', me: stage.me })}>
-            {t('kds.changeStation')}
-          </button>
-        }
-      >
-        <KitchenBoard key={`${place.branch.id}:${place.station?.id ?? 'all'}`} place={place} />
-      </Shell>
-    );
-  }
-
-  if (stage.name === 'floor-pick') {
-    return (
-      <Shell onSignOut={leave} help={{ topic: 'tables' }}>
-        <FloorPicker onReady={(branch) => setStage({ name: 'floor', me: stage.me, branch })} onBack={() => setStage({ name: 'register', me: stage.me })} />
-      </Shell>
-    );
-  }
-  if (stage.name === 'floor') {
-    const { branch, me: who } = stage;
-    return (
-      <Shell
-        onSignOut={leave}
-        help={{ topic: 'tables' }}
-        context={
-          <span className="serial text-[0.8125rem]">
-            {t('floor.entryTitle')} · {branch.name} · <span className="text-white">{who.user.displayName}</span>
-          </span>
-        }
-        nav={
-          <button type="button" className="h-10 whitespace-nowrap rounded px-3 text-[0.9375rem] text-blue-ink hover:bg-white/10" onClick={() => setStage({ name: 'register', me: who })}>
-            {t('floor.toRegisters')}
-          </button>
-        }
-      >
-        <Tables place={{ branch, shift: null }} permissions={who.activeTenant?.permissions ?? []} active />
       </Shell>
     );
   }
 
   const { me, shift } = stage;
   const permissions = me.activeTenant?.permissions ?? [];
-  const tableService = servesTables(me) && permissions.includes('restaurant.orders');
   const salon = servesAppointments(me);
   const appointments = salon && permissions.includes('appointments.read');
-  // A hotel, resort or hybrid business (ADR-0023): the front desk's Rooms tab, and Charge to room at payment.
-  const lodging = servesLodging(me);
-  const rooms = lodging && permissions.includes('lodging.read');
-  // A laundry shop or hybrid business (ADR-0024): job orders, machines and deliveries; a rider sees the trips.
-  const laundryShop = servesLaundry(me);
-  const laundry = laundryShop && (permissions.includes('laundry.read') || permissions.includes('laundry.deliver'));
   const tabs: [Tab, string][] = [
     ['sell', t('nav.sell')],
     ...(appointments ? ([['appointments', t('nav.appointments')]] as [Tab, string][]) : []),
-    ...(rooms ? ([['rooms', t('nav.rooms')]] as [Tab, string][]) : []),
-    ...(laundry ? ([['laundry', t('nav.laundry')]] as [Tab, string][]) : []),
-    ...(tableService ? ([['tables', t('nav.tables')]] as [Tab, string][]) : []),
     ['history', t('nav.history')],
     ['close', t('nav.close')],
   ];
   return (
     <Shell
       onSignOut={leave}
-      help={{ topic: TAB_TOPIC[tab], restaurant: servesTables(me), salon, lodging, laundry: laundryShop, pharmacy: servesPharmacy(me) }}
+      help={{ topic: TAB_TOPIC[tab], salon, pharmacy: servesPharmacy(me) }}
       context={
         <span className="serial text-[0.8125rem]">
           {shift.branch.name} · <span className="text-white">{shift.register.code}</span> · {me.user.displayName}
@@ -206,7 +126,7 @@ function Counter() {
       <div hidden={tab !== 'sell'}>
         <Sell
           shift={shift} cashierUserId={me.userId} active={tab === 'sell'} permissions={permissions} exchange={exchange} onExchangeEnd={() => setExchange(null)}
-          salon={salon} ringUp={ringUp} onRingUpTaken={() => setRingUp(null)} lodging={lodging} laundry={laundryShop}
+          salon={salon} ringUp={ringUp} onRingUpTaken={() => setRingUp(null)}
         />
       </div>
       {/* Kept mounted too: the booking form being filled survives a look at Sell. */}
@@ -215,26 +135,8 @@ function Counter() {
           <Appointments shift={shift} permissions={permissions} active={tab === 'appointments'} onRingUp={(appointment) => { setRingUp({ appointment, nonce: uuid() }); setTab('sell'); }} />
         </div>
       )}
-      {/* Kept mounted as well: a check-out whose card payment was taken survives a look at Sell. */}
-      {rooms && (
-        <div hidden={tab !== 'rooms'}>
-          <Rooms shift={shift} permissions={permissions} active={tab === 'rooms'} />
-        </div>
-      )}
-      {/* Kept mounted too: a claim whose card payment was taken survives a look at Sell. */}
-      {laundry && (
-        <div hidden={tab !== 'laundry'}>
-          <Laundry shift={shift} permissions={permissions} active={tab === 'laundry'} />
-        </div>
-      )}
-      {/* Also kept mounted: a check whose card payment was taken must not lose it on a tab switch. */}
-      {tableService && (
-        <div hidden={tab !== 'tables'}>
-          <Tables place={{ branch: shift.branch, shift }} permissions={permissions} active={tab === 'tables'} lodging={lodging} />
-        </div>
-      )}
       {tab === 'history' && <History shift={shift} permissions={permissions} onExchange={(x) => { setExchange(x); setTab('sell'); }} />}
-      {tab === 'close' && <CloseShift shift={shift} canOverride={permissions.includes('cash.reconcile')} onClosed={() => setStage({ name: 'register', me })} />}
+      {tab === 'close' && <CloseShift shift={shift} onClosed={() => setStage({ name: 'register', me })} />}
     </Shell>
   );
 }

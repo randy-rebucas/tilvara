@@ -5,7 +5,7 @@
 // the real admin screens.
 // Usage: node e2e/backoffice.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser, sleep } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -299,8 +299,6 @@ try {
   await shot('bo-z-reading.png');
   await clickText('This month');
   check('quick range "This month" starts on the 1st', await waitFor(`/from=\\d{4}-\\d{2}-01/.test(location.search)`).then(() => true, () => false));
-  await clickHref('/reports?'); // the Restaurant group (the band also has a Restaurant tab)
-  check('the restaurant group keeps its tabs', await waitFor(`location.pathname === '/reports'`).then(() => true, () => false) && (await shown('Item performance')));
 
   // 11. Phone width and Filipino.
   await viewport(390, 844, true);

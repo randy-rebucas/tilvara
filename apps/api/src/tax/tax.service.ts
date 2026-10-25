@@ -17,7 +17,7 @@ import {
   unitsOfMeasure,
   type Database,
 } from '@1pos/database';
-import { Dec, isCurrencyCode, minorUnits, toDec } from '@1pos/money';
+import { isCurrencyCode, minorUnits, toDec } from '@1pos/money';
 import { applyPromotions, PromotionError } from '@1pos/pricing';
 import { promotionsInForce } from '../catalog/promotions.service.js';
 import { calculateTax, TaxError, type DiscountScheme, type TaxLineInput } from '@1pos/tax';
@@ -134,11 +134,10 @@ export class TaxService extends TenantService {
   /**
    * Server-authoritative prices and taxes for a cart at a branch, right now: the branch's price
    * in force, each item's VAT treatment, the seller's tax profile in force and statutory schemes.
-   * Read-only; checkout persists the same computation with its snapshot. `promotions: false` prices
-   * as a restaurant bill does (no promotions, ADR-0021 §1).
+   * Read-only; checkout persists the same computation with its snapshot.
    */
   quote(auth: AuthContext, input: TaxQuoteInput) {
-    return this.read(auth, (db) => this.computeCart(db, auth, input, undefined, { promotions: input.promotions !== false }));
+    return this.read(auth, (db) => this.computeCart(db, auth, input));
   }
 
   /**
@@ -146,12 +145,11 @@ export class TaxService extends TenantService {
    * transaction; `branch` may be pre-loaded (and locked) by the caller. `asOf` re-prices a cart as it
    * stood at an earlier instant (an offline sale at its snapshot, ADR-0015 §5); prices and tax profiles
    * are append-only and effective-dated, so the result is what was in force then.
-   * `promotions` (ADR-0021 §1): counter sales, their quote and offline sales are promoted; restaurant
-   * bills are not (they keep their own order discount).
+   * Promotions in force are applied (ADR-0021 §1), the same for the quote, counter and offline sales.
    * `knownAt` (an offline sale at its snapshot): price rows and promotions created after this instant
    * are ignored, even back-dated ones, so the server sees what the till's snapshot could hold.
    */
-  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date, opts: { promotions?: boolean; knownAt?: Date } = {}) {
+  async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date, opts: { knownAt?: Date } = {}) {
     const at = asOf ?? (await effectiveNow(db));
     const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
     if (!branch) throw notFound('Branch');
@@ -258,32 +256,30 @@ export class TaxService extends TenantService {
     }
     if (!currency || !isCurrencyCode(currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${currency} is not supported`);
 
-    if (opts.promotions) {
-      // A line with its own discount, an approved price or SC/PWD takes no promotion (ADR-0021 §1).
-      const inForce = await promotionsInForce(db, branch.id, at, variantIds, opts.knownAt);
-      if (inForce.length) {
-        try {
-          const applied = applyPromotions(
-            lines.map((l, i) => ({
-              id: l.id,
-              variantId: meta[i]!.variantId,
-              unitPrice: l.unitPrice,
-              quantity: l.quantity,
-              eligible: l.discount === undefined && l.discountRate === undefined && !l.statutory && !meta[i]!.priceOverrideId && !meta[i]!.packageId,
-            })),
-            inForce,
-            { scale: minorUnits(currency), mode: profile.roundingMode },
-          );
-          for (const [i, r] of applied.entries()) {
-            if (!r.promotionId) continue;
-            lines[i]!.discount = r.discount!;
-            meta[i]!.promotionId = r.promotionId;
-            meta[i]!.promotionName = inForce.find((p) => p.id === r.promotionId)!.name;
-          }
-        } catch (e) {
-          if (e instanceof PromotionError) throw unprocessable('PROMOTION_INVALID', e.message, { promotionId: e.promotionId });
-          throw e;
+    // A line with its own discount, an approved price or SC/PWD takes no promotion (ADR-0021 §1).
+    const inForce = await promotionsInForce(db, branch.id, at, variantIds, opts.knownAt);
+    if (inForce.length) {
+      try {
+        const applied = applyPromotions(
+          lines.map((l, i) => ({
+            id: l.id,
+            variantId: meta[i]!.variantId,
+            unitPrice: l.unitPrice,
+            quantity: l.quantity,
+            eligible: l.discount === undefined && l.discountRate === undefined && !l.statutory && !meta[i]!.priceOverrideId && !meta[i]!.packageId,
+          })),
+          inForce,
+          { scale: minorUnits(currency), mode: profile.roundingMode },
+        );
+        for (const [i, r] of applied.entries()) {
+          if (!r.promotionId) continue;
+          lines[i]!.discount = r.discount!;
+          meta[i]!.promotionId = r.promotionId;
+          meta[i]!.promotionName = inForce.find((p) => p.id === r.promotionId)!.name;
         }
+      } catch (e) {
+        if (e instanceof PromotionError) throw unprocessable('PROMOTION_INVALID', e.message, { promotionId: e.promotionId });
+        throw e;
       }
     }
 
@@ -299,96 +295,6 @@ export class TaxService extends TenantService {
       };
     } catch (e) {
       if (e instanceof TaxError) throw unprocessable(e.code, e.message, e.lineId ? { line: e.lineId } : undefined);
-      throw e;
-    }
-  }
-
-  /**
-   * A room night, a folio adjustment or a forfeited deposit (ADR-0023 §5, §6, §7), priced on the same
-   * engine and tax profile as the quote path: the room-night item's tax category at the branch, the
-   * branch price in force at `at` (or `unitPrice`, an agreed rate, like an approved price), SC/PWD for the
-   * beneficiaries' shares as for a sale line. `inclusive`: the amount already includes VAT whatever the
-   * price list says (an adjustment or a deposit is an amount of money). Caller checks permissions.
-   * A night whose start precedes the item's first price or the entity's first tax profile is priced at
-   * the first ones in force (`fallbackAt`), so a stay booked on the day its business set up still prices.
-   */
-  async computeRoomCharge(
-    db: Database,
-    input: {
-      branchId: string;
-      variantId: string;
-      at: Date;
-      fallbackAt?: Date;
-      unitPrice?: string | null;
-      inclusive?: boolean;
-      /** SC/PWD guests and their share of the room (each in (0, 1]). */
-      beneficiaries?: { schemeCode: string; share: string }[];
-    },
-  ) {
-    const [branch] = await db.select().from(branches).where(eq(branches.id, input.branchId));
-    if (!branch) throw notFound('Branch');
-    const [item] = await db
-      .select({ sku: productVariants.sku, productName: products.name, variantName: productVariants.name, vatTreatment: taxCategories.vatTreatment, taxCategoryCode: taxCategories.code })
-      .from(productVariants)
-      .innerJoin(products, eq(products.id, productVariants.productId))
-      .innerJoin(taxCategories, eq(taxCategories.id, products.taxCategoryId))
-      .where(eq(productVariants.id, input.variantId));
-    if (!item) throw notFound('Room night item');
-    let at = input.at;
-    let profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
-    let price = (await this.pricing.effectivePrices(db, branch.id, [input.variantId], at)).get(input.variantId);
-    if ((!profile || !price) && input.fallbackAt && input.fallbackAt > at) {
-      at = input.fallbackAt;
-      profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
-      price = (await this.pricing.effectivePrices(db, branch.id, [input.variantId], at)).get(input.variantId);
-    }
-    if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
-    if (!price) throw new AppError('ITEM_NOT_PRICED', 'The room night has no price at this branch', HttpStatus.CONFLICT, { variantId: input.variantId });
-    if (!isCurrencyCode(price.currency)) throw unprocessable('UNSUPPORTED_CURRENCY', `Currency ${price.currency} is not supported`);
-    const unitPrice = input.unitPrice ?? price.amount;
-    const priceIncludesTax = input.inclusive ? true : price.pricesIncludeTax;
-
-    // One line per scheme for its guests' share of the room (several schemes: the night is split by
-    // quantity), the rest of the room on its own line; a single scheme takes its share on one line.
-    const groups = new Map<string, Dec>();
-    for (const b of input.beneficiaries ?? []) groups.set(b.schemeCode, (groups.get(b.schemeCode) ?? new Dec(0)).plus(b.share));
-    const schemes = await this.schemesInForce(db, [...groups.keys()], at);
-    const base = { unitPrice, priceIncludesTax, vatTreatment: item.vatTreatment };
-    const lines: TaxLineInput[] = [];
-    const scheme = (code: string) => {
-      const found = schemes.get(code);
-      if (!found) throw unprocessable('UNKNOWN_SCHEME', `No discount scheme ${code} is in force`);
-      return found;
-    };
-    if (groups.size === 1) {
-      const [code, share] = [...groups.entries()][0]!;
-      lines.push({ id: '1', ...base, quantity: '1', statutory: { scheme: scheme(code), share: Dec.min(share, 1).toDecimalPlaces(6).toString() } });
-    } else {
-      let left = new Dec(1);
-      for (const [code, share] of groups) {
-        const q = Dec.min(share, left).toDecimalPlaces(4);
-        if (q.lte(0)) continue;
-        lines.push({ id: String(lines.length + 1), ...base, quantity: q.toString(), statutory: { scheme: scheme(code) } });
-        left = left.minus(q);
-      }
-      if (left.gt(0) || !lines.length) lines.push({ id: String(lines.length + 1), ...base, quantity: left.gt(0) ? left.toString() : '1' });
-    }
-    try {
-      const result = calculateTax({ currency: price.currency, profile: engineProfile(profile) }, lines);
-      return {
-        legalEntityId: branch.legalEntityId,
-        at: at.toISOString(),
-        taxProfile: profile,
-        priceId: price.priceId,
-        unitPrice: toDec(unitPrice).toString(),
-        priceIncludesTax,
-        name: item.variantName ? `${item.productName} — ${item.variantName}` : item.productName,
-        vatTreatment: item.vatTreatment,
-        taxCategoryCode: item.taxCategoryCode,
-        ...result,
-      };
-    } catch (e) {
-      if (e instanceof TaxError) throw unprocessable(e.code, e.message);
       throw e;
     }
   }

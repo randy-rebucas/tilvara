@@ -61,40 +61,6 @@ export async function expectedCash(db: Database, sessionId: string): Promise<str
   return rows[0]!.total ?? '0';
 }
 
-/**
- * Live restaurant orders (OPEN or BILLED) that stop this shift from closing:
- * - every live order at the branch when this is its last open shift, since nobody would be left to take
- *   their money;
- * - with other shifts still open, only bills this shift already took a check on and that are not yet
- *   fully paid (part-paid at this drawer).
- * Bills are branch documents, so other registers' shifts are what make the first case safe.
- */
-export async function openBillsBlockingClose(db: Database, session: { id: string; branchId: string }) {
-  const { rows } = await db.execute<{
-    order_id: string; order_number: number; order_type: string; table_code: string | null; customer_name: string | null; status: string;
-    bill_id: string | null; amount_due: string | null; paid: string; paid_here: boolean;
-  }>(sql`
-    SELECT o.id AS order_id, o.order_number::int AS order_number, o.order_type, t.code AS table_code, o.customer_name, o.status,
-           b.id AS bill_id, b.amount_due::text AS amount_due,
-           coalesce((SELECT sum(s.amount_due) FROM sales s WHERE s.order_bill_id = b.id), 0)::text AS paid,
-           EXISTS (SELECT 1 FROM sales s WHERE s.order_bill_id = b.id AND s.cashier_session_id = ${session.id}) AS paid_here
-      FROM restaurant_orders o
-      LEFT JOIN restaurant_tables t ON t.id = o.table_id
-      LEFT JOIN order_bills b ON b.order_id = o.id AND b.status = 'ACTIVE'
-     WHERE o.branch_id = ${session.branchId} AND o.status IN ('OPEN', 'BILLED')
-     ORDER BY o.order_number`);
-  if (!rows.length) return [];
-  const { rows: [shifts] } = await db.execute<{ last: boolean }>(sql`
-    SELECT NOT EXISTS (SELECT 1 FROM cashier_sessions c WHERE c.branch_id = ${session.branchId} AND c.status = 'OPEN' AND c.id <> ${session.id}) AS last`);
-  const last = shifts!.last;
-  return rows
-    .filter((r) => last || r.paid_here)
-    .map((r) => ({
-      orderId: r.order_id, orderNumber: Number(r.order_number), orderType: r.order_type, tableCode: r.table_code, customerName: r.customer_name, status: r.status,
-      billId: r.bill_id, amountDue: r.amount_due === null ? null : money(r.amount_due), paid: money(r.paid), paidOnThisShift: r.paid_here,
-    }));
-}
-
 @Injectable()
 export class CashService extends TenantService {
   protected readonly conflicts: ConflictMap = {
@@ -266,12 +232,13 @@ export class CashService extends TenantService {
         .where(
           and(
             eq(paymentIntents.cashierSessionId, id),
-            // A FOLIO payment (ADR-0023) is settled by the folio payment or deposit that consumed it, a JOB_ORDER one (ADR-0024) by its down payment.
-            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), isNull(paymentIntents.folioId), isNull(paymentIntents.jobOrderId))),
+            // Only a sale's or a tip's payment waits for a sale; one of a purpose no longer offered (a laundry
+            // down payment before 0110, a folio payment before 0111) was settled by its own document (same rule as the trigger).
+            or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), inArray(paymentIntents.purpose, ['SALE', 'TIP']))),
           ),
         );
       if (outstanding.length) {
-        throw new AppError('PAYMENTS_OUTSTANDING', 'Card/QR payments on this shift are not settled; complete the sale, check or cancel them first', HttpStatus.CONFLICT, {
+        throw new AppError('PAYMENTS_OUTSTANDING', 'Card/QR payments on this shift are not settled; complete the sale or cancel them first', HttpStatus.CONFLICT, {
           payments: outstanding.map((p) => ({ ...p, amount: money(p.amount) })),
         });
       }
@@ -282,17 +249,6 @@ export class CashService extends TenantService {
         .where(and(eq(terminalTransactions.cashierSessionId, id), eq(terminalTransactions.status, 'QUARANTINED')));
       if (unresolved.length) {
         throw new AppError('OFFLINE_SALES_UNRESOLVED', 'Offline sales of this shift could not be recorded; a manager must retry or dismiss them first', HttpStatus.CONFLICT, { offlineSales: unresolved });
-      }
-      // Restaurant bills still to be paid (session 21 decision: refuse, a manager may override with a reason).
-      const openBills = await openBillsBlockingClose(db, session);
-      if (openBills.length) {
-        if (!input.openBillsReason) {
-          throw new AppError('OPEN_BILLS', 'Tables or takeaway orders are still to be paid; settle, move or cancel them, or have a manager close anyway', HttpStatus.CONFLICT, { orders: openBills });
-        }
-        this.assertCan(auth, 'cash.reconcile', scope);
-        await this.audit(db, auth, 'cashier_session.closed_with_open_bills', 'cashier_session', id, {
-          reason: input.openBillsReason, orders: openBills.map((o) => ({ orderId: o.orderId, orderNumber: o.orderNumber, paidOnThisShift: o.paidOnThisShift })),
-        });
       }
       const expected = await expectedCash(db, id);
       const variance = toDec(input.countedCash).minus(expected).toString();

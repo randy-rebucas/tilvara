@@ -33,10 +33,9 @@ describe('report CSV', () => {
     expect(rows[3]!.at(-1)).toBe('38.40');
   });
 
-  it('builds the API path for each report (open orders by day)', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-17', day: '2026-10-17' };
+  it('builds the API path for each report', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-17' };
     expect(reportPath('statutory', q)).toBe('/reports/statutory-book?branchId=b&from=2026-10-01&to=2026-10-17');
-    expect(reportPath('open', q)).toBe('/reports/open-orders?branchId=b&day=2026-10-17');
     expect(reportPath('refunds', q)).toBe('/reports/refund-watch?branchId=b&from=2026-10-01&to=2026-10-17');
   });
 
@@ -50,7 +49,7 @@ describe('report CSV', () => {
   });
 
   it('session 20 reports: the consolidated report has no branch in its path; discounts keep who approved', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20' };
     expect(reportPath('branches', q)).toBe('/reports/by-branch?from=2026-10-01&to=2026-10-20');
     expect(reportPath('payments', q)).toBe('/reports/payment-exceptions?branchId=b');
     const rows = reportRows('discounts', {
@@ -66,8 +65,8 @@ describe('report CSV', () => {
     expect(branches.at(-1)).toEqual(['All branches', 2, '10.00', 0, '0.00', '10.00', '1.07', '8.93', '0.00', '0.00']);
   });
 
-  it('session 25: tips per day with the books line and each cashier; free choices under their item', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+  it('session 25: tips per day with the books line and each cashier', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20' };
     expect(reportPath('tips', q)).toBe('/reports/tips?branchId=b&from=2026-10-01&to=2026-10-20');
     const day = { tips: 2, cash: '20.00', electronic: '15.00', taken: '35.00', refunded: '0.00', paidOut: '5.00', owed: '30.00' };
     const tips = reportRows('tips', { days: [{ day: '2026-10-20', ...day }], byCashier: [{ userId: 'u', name: 'Ana', tips: 2, amount: '35.00' }], totals: day, ledger: '30.00' }, t);
@@ -75,16 +74,10 @@ describe('report CSV', () => {
     expect(tips[2]![0]).toBe('Total');
     expect(tips[3]).toEqual(['Tips payable in the books', '', '', '', '', '', '', '30.00']);
     expect(tips.at(-1)).toEqual(['Ana', 2, '35.00']);
-    const f = { netQuantity: '2', netSales: '300.00', revenueExVat: '267.86', cogs: '6.00', grossProfit: '261.86', marginPct: '97.8' };
-    const items = reportRows('items', {
-      data: [{ variantId: 'v', sku: 'BRG', name: 'Burger', checks: 1, ...f, modifiers: [], withModifiers: f, freeChoices: [{ modifierOptionId: 'o', name: 'No onions', quantity: '2', orders: 1 }] }],
-      totals: f,
-    }, t);
-    expect(items[2]).toEqual(['', 'No onions', 'Burger', '2', '', '', '', '', '', 1]);
   });
 
   it('session 26: promotions with their kind in words; sizes and colours by the chosen attribute', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20', day: '2026-10-20' };
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-20' };
     expect(reportPath('promotions', q)).toBe('/reports/promotions?branchId=b&from=2026-10-01&to=2026-10-20');
     expect(reportPath('attributes', { ...q, attribute: 'Size & fit' })).toBe('/reports/by-attribute?branchId=b&from=2026-10-01&to=2026-10-20&attribute=Size%20%26%20fit');
     expect(reportPath('attributes', q)).toBe('/reports/by-attribute?branchId=b&from=2026-10-01&to=2026-10-20');
@@ -103,8 +96,17 @@ describe('report CSV', () => {
     expect(sizes[2]![0]).toBe('No Size');
   });
 
+  it('supplies used (ADR-0022 §9): one waste column per side, quantities then values', () => {
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21' };
+    expect(reportPath('usage', q)).toBe('/reports/ingredient-usage?branchId=b&from=2026-10-01&to=2026-10-21');
+    const side = (n: string) => ({ recipe: n, sold: '0', expected: n, waste: '1', countVariance: '0', actual: '3', variance: '1' });
+    const rows = reportRows('usage', { data: [{ variantId: 'v', sku: 'SHP', name: 'Shampoo', unit: 'ML', quantity: side('2'), value: side('20.00'), variancePct: '50.0' }], totals: { expectedValue: '20.00', wasteValue: '1', countVarianceValue: '0', actualValue: '3', varianceValue: '1' } }, t);
+    expect(rows[0]).toEqual(['SKU', 'Item', 'Unit', 'Expected (Quantity)', 'Waste (Quantity)', 'Count variance (Quantity)', 'Actual (Quantity)', 'Over-use (Quantity)', 'Expected (Value)', 'Waste (Value)', 'Count variance (Value)', 'Actual (Value)', 'Over-use (Value)', expect.any(String)]);
+    expect(rows[1]).toEqual(['SHP', 'Shampoo', 'ML', '2', '1', '0', '3', '1', '20.00', '1', '0', '3', '1', '50.0']);
+  });
+
   it('salon reports (ADR-0022): commissions with a total row, tips with unassigned named', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21' };
+    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21' };
     expect(reportPath('commissions', q)).toBe('/reports/commissions?branchId=b&from=2026-10-01&to=2026-10-21');
     expect(reportPath('staffTips', q)).toBe('/reports/tips-by-staff?branchId=b&from=2026-10-01&to=2026-10-21');
     const rows = reportRows('commissions', {
@@ -117,31 +119,10 @@ describe('report CSV', () => {
     expect(tips[1]).toEqual(['Unassigned', 1, '20.00', '0.00']);
   });
 
-  it('laundry reports (ADR-0024): down payments per legal entity, kilos kept as decimal strings', () => {
-    const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21', legalEntityId: 'e' };
-    expect(reportPath('jobDeposits', q)).toBe('/reports/job-order-deposits?legalEntityId=e');
-    expect(reportPath('machineUsage', q)).toBe('/reports/machine-usage?branchId=b&from=2026-10-01&to=2026-10-21');
-    const jobs = reportRows('jobOrders', {
-      days: [{ day: '2026-10-21', received: 2, ready: 1, claimed: 1, cancelled: 0, disposed: 0, averageTurnaroundHours: '5.5', onTimePercent: '100.0' }],
-      services: [{ variantId: 'v', name: 'Wash-dry-fold', unit: 'KG', measured: '2.4', billed: '3', jobs: 1, amount: '105.00' }],
-      totals: { received: 2, ready: 1, claimed: 1, cancelled: 0, disposed: 0, averageTurnaroundHours: '5.5', onTimePercent: '100.0', kilos: '2.4', loads: '0', overdueNow: 0, openNow: 1 },
-    }, t);
-    expect(jobs[1]).toEqual(['2026-10-21', 2, 1, 1, 0, 0, '5.5', '100.0']);
-    expect(jobs[5]).toEqual(['Wash-dry-fold', 'KG', '2.4', '3', 1, '105.00']);
-    const held = reportRows('jobDeposits', {
-      legalEntityId: 'e',
-      held: [{ jobOrderId: 'j', reference: 'J-000001', branchId: 'b', status: 'READY', customer: 'Ana', amountDue: '105.00', held: '50.00' }],
-      unclaimed: [],
-      forfeited: { amount: '0.00', entries: 0 },
-      totals: { held: '50.00', customerDownPaymentsGl: '50.00', difference: '0.00', unclaimedValue: '0.00' },
-    }, t);
-    expect(held[1]).toEqual(['Down payments held', '50.00']);
-    expect(held[8]).toEqual(['J-000001', 'Ana', 'READY', '105.00', '50.00']);
-  });
 });
 
 describe('pharmacy books CSV (ADR-0025)', () => {
-  const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21', day: '2026-10-21' };
+  const q = { branchId: 'b', from: '2026-10-01', to: '2026-10-21' };
   it('reads the two books from their own routes', () => {
     expect(reportPath('prescriptionBook', q)).toBe('/reports/prescription-book?branchId=b&from=2026-10-01&to=2026-10-21');
     expect(reportPath('dangerousDrugs', q)).toBe('/reports/dangerous-drugs?branchId=b&from=2026-10-01&to=2026-10-21');

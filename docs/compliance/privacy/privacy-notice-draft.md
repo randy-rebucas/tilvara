@@ -15,7 +15,7 @@ processor). A Filipino version of each is needed before publication.
 **Who we are.** Tilvara is a point-of-sale and back-office service operated by [legal name], [address]
 ("Tilvara", "we"). Our Data Protection Officer is [name], reachable at [email] and [phone].
 
-**Whom this covers.** Anyone with a Tilvara account: business owners, managers, cashiers, kitchen staff,
+**Whom this covers.** Anyone with a Tilvara account: business owners, managers, cashiers,
 accountants, and Tilvara support staff. Customers of a business are covered by that business's own notice
 (see Part B).
 

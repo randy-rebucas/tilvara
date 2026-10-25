@@ -1,7 +1,7 @@
 import { Dec, isCurrencyCode, minorUnits, toDec } from '@1pos/money';
 import { applyPromotions, PromotionError, type PromotionLineResult } from '@1pos/pricing';
-import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type SnapshotDrug, type Snapshot, type SnapshotCounter, type SyncResult } from '@1pos/sync-protocol';
-import { CounterCartError, expandCounterCart, type CounterCartLine, type LocalKitchenTicket } from './counter.js';
+import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type SnapshotDrug, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
+import type { CounterCartLine } from './counter.js';
 import { calculateTax, TaxError, type TaxResult } from '@1pos/tax';
 import { LocalStore, type OfflineReceipt, type QueuedSale } from './store.js';
 import { TransportError, type Transport } from './transport.js';
@@ -125,28 +125,20 @@ export class OfflineEngine {
 
   /**
    * Price a cart offline exactly as the server will re-price it (no discounts offline, ADR-0015 §1).
-   * Counter service (session 25): a menu item's priced choices are priced as lines after it; `parentIndex`
-   * says which line each priced line belongs to (null for the cart's own lines).
    */
-  async quote(lines: CounterCartLine[]): Promise<TaxResult & { items: Snapshot['items']; taxProfile: Snapshot['taxProfile']; parentIndex: (number | null)[]; promotions: PromotionLineResult[]; promotionNames: (string | null)[] }> {
+  async quote(lines: CounterCartLine[]): Promise<TaxResult & { items: Snapshot['items']; taxProfile: Snapshot['taxProfile']; promotions: PromotionLineResult[]; promotionNames: (string | null)[] }> {
     const stored = await this.store.snapshot();
     if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
-    const expanded = expand(stored.body, lines);
-    const priced = price(stored.body, expanded.lines);
+    const priced = price(stored.body, lines);
     // The promotion that priced each line, by name (ADR-0021), for the cart as the server will show it.
     const promotionNames = priced.promotions.map((p) => (p.promotionId ? (stored.body.promotions?.find((x) => x.id === p.promotionId)?.name ?? null) : null));
-    return { ...priced, taxProfile: stored.body.taxProfile, parentIndex: expanded.parentIndex, promotionNames };
+    return { ...priced, taxProfile: stored.body.taxProfile, promotionNames };
   }
 
   /** The till's quick keys from the stored snapshot (ADR-0021 §3), in key order. */
   async quickKeys(): Promise<{ position: number; variantId: string; sku: string; name: string; price: string }[]> {
     const items = (await this.store.snapshot())?.body.items ?? [];
     return items.flatMap((i) => (i.quickKey ? [{ position: i.quickKey, variantId: i.variantId, sku: i.sku, name: i.name, price: i.unitPrice }] : [])).sort((a, b) => a.position - b.position);
-  }
-
-  /** Counter service in the stored snapshot (the takeaway menu, its choices and the stations), or null. */
-  async counterMenu(): Promise<SnapshotCounter | null> {
-    return (await this.store.snapshot())?.body.counter ?? null;
   }
 
   /** Find an item in the stored snapshot by SKU or barcode (case-insensitive SKU, exact barcode). */
@@ -197,12 +189,12 @@ export class OfflineEngine {
    * `terminalTxnId`: the counter passes the id of the checkout it was trying online. If that attempt
    * did reach the server, the delivery is refused as a duplicate (quarantined), never recorded twice.
    */
-  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string; pickupName?: string; tip?: string; prescriptions?: OfflinePrescription[] }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt; kitchen: LocalKitchenTicket[] }> {
+  ringUp(input: { cashierUserId: string; lines: CounterCartLine[]; tendered: string; terminalTxnId?: string; tip?: string; prescriptions?: OfflinePrescription[] }): Promise<{ sale: QueuedSale; receipt: OfflineReceipt }> {
     return this.serial(async () => {
       if ((await this.store.meta('auth_state')) === 'REVOKED') throw new OfflineSaleError('TERMINAL_REVOKED', 'This till was revoked; it cannot record sales');
       // The same checkout submitted again (double tap, retry after a crash): the sale already queued.
       const already = input.terminalTxnId ? await this.store.byTxnId(input.terminalTxnId) : null;
-      if (already) return { sale: already, receipt: already.receipt, kitchen: [] };
+      if (already) return { sale: already, receipt: already.receipt };
       const stored = await this.store.snapshot();
       if (!stored) throw new OfflineSaleError('NO_SNAPSHOT', 'This till has no price list yet; connect once to download it');
       const snap = stored.body;
@@ -218,10 +210,7 @@ export class OfflineEngine {
         if (item?.drug?.drugClass === 'DANGEROUS') throw new OfflineSaleError('DANGEROUS_DRUG_OFFLINE', `${item.name} is a dangerous drug: sell it while online`);
       }
       const prescriptions = checkPrescriptions(input.prescriptions ?? [], input.lines);
-      const expanded = expand(snap, input.lines);
-      const priced = price(snap, expanded.lines);
-      const counter = expanded.kitchen.length > 0 || input.lines.some((l) => snap.counter?.items.some((m) => m.variantId === l.variantId));
-      const pickupName = input.pickupName?.trim() || undefined;
+      const priced = price(snap, input.lines);
       const due = toDec(priced.totals.amountDue);
       const tendered = toDec(input.tendered);
       // A cash tip (session 25) comes on top: the cash must cover both; the server records it the same way.
@@ -236,12 +225,11 @@ export class OfflineEngine {
           terminalTxnId: input.terminalTxnId ?? this.uuid(), deviceSeq: seq, snapshotId: snap.snapshotId, cashierSessionId: shift.id, cashierUserId: input.cashierUserId,
           occurredAt, localReference,
           lines: input.lines.map((l) => ({
-            variantId: l.variantId, quantity: l.quantity, ...(l.choices?.length && { choices: l.choices }), ...(l.kitchenNote && { kitchenNote: l.kitchenNote }), ...(l.staffId && { staffId: l.staffId }),
+            variantId: l.variantId, quantity: l.quantity, ...(l.staffId && { staffId: l.staffId }),
             ...(l.prescription && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
           })),
           ...(prescriptions.length > 0 && { prescriptions }),
           tenders: [{ method: 'CASH', tendered: tendered.toFixed(2) }], amountDue: due.toFixed(2),
-          ...(counter && snap.counter && { menuVersionId: snap.counter.menuVersionId, ...(pickupName && { pickupName }) }),
           ...(tip && { tip: { amount: tip.toFixed(2) } }),
         };
         // Checked as the server checks it, before it is queued: a sale it cannot read would only be
@@ -262,11 +250,11 @@ export class OfflineEngine {
           lines: priced.lines.map((l, i) => {
             const item = priced.items[i]!;
             return {
-              name: expanded.parentIndex[i] === null ? item.name : `+ ${item.name}`,
-              quantity: expanded.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.amountDue).toFixed(2),
+              name: item.name,
+              quantity: input.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.amountDue).toFixed(2),
               flag: !isVat ? '' : item.vatTreatment === 'ZERO_RATED' ? 'Z' : item.vatTreatment === 'VAT_EXEMPT' ? 'E' : 'V',
               ...promotionOf(snap, priced.promotions[i]!),
-              ...(expanded.parentIndex[i] === null && item.drug && { generic: drugLabel(item.drug) }),
+              ...(item.drug && { generic: drugLabel(item.drug) }),
             };
           }),
           totals: {
@@ -274,12 +262,11 @@ export class OfflineEngine {
             zeroRatedSales: priced.totals.zeroRatedSales, percentageTaxSales: priced.totals.percentageTaxSales, amountDue: due.toFixed(2),
           },
           tendered: tendered.toFixed(2), change: tendered.minus(cashDue).toFixed(2), notice: NOT_AN_INVOICE,
-          ...(counter && { callNumber: seq, ...(pickupName && { pickupName }) }),
           ...(tip && { tip: tip.toFixed(2) }),
         };
         return { envelope, receipt };
       }, this.now());
-      return { sale: queued, receipt: queued.receipt, kitchen: counter ? expanded.kitchen : [] };
+      return { sale: queued, receipt: queued.receipt };
     });
   }
 
@@ -411,16 +398,6 @@ function checkPrescriptions(given: OfflinePrescription[], lines: CounterCartLine
     if (!lines.some((l) => l.prescription?.prescriptionRef === p.ref)) throw new OfflineSaleError('INVALID_PRESCRIPTION', `The prescription for ${p.patientName} is not used by any line`);
   }
   return rx;
-}
-
-/** A counter cart's lines as the server prices them; a choice the till cannot honour is a refusal. */
-function expand(snap: Snapshot, lines: CounterCartLine[]) {
-  try {
-    return expandCounterCart(snap.counter, lines);
-  } catch (e) {
-    if (e instanceof CounterCartError) throw new OfflineSaleError('UNKNOWN_ITEM', e.message);
-    throw e;
-  }
 }
 
 /** A receipt line's promotion: its name and the discount it gave (none when it took part for nothing). */

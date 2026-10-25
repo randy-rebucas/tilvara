@@ -2,7 +2,7 @@ import type { Branch, Product } from './api';
 
 /**
  * Selectable items for document lines; `stocked` keeps only items that track inventory; `units`
- * (uom id → code) adds the unit a quantity is counted in, e.g. "(KG)" for a recipe ingredient.
+ * (uom id → code) adds the unit a quantity is counted in, e.g. "(ML)" for a service's supply.
  */
 export function variantOptions(products: Product[] | undefined, { stocked = false, units }: { stocked?: boolean; units?: Map<string, string> } = {}) {
   return (products ?? [])

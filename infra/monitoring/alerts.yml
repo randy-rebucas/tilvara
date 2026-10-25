@@ -161,13 +161,6 @@ groups:
         annotations:
           summary: A business's webhook endpoint gave up after its retries (DEAD deliveries); the business sends them again once fixed.
           runbook_url: docs/operations/monitoring.md#oneposwebhookdeliveriesdead
-      - alert: OneposLaundryNoticesFailing
-        expr: sum(increase(onepos_worker_laundry_notices_total{outcome="failed"}[1h])) > 0
-        labels:
-          severity: warning
-        annotations:
-          summary: Laundry notices (ready, reminder, final) could not be sent by email or SMS.
-          runbook_url: docs/operations/monitoring.md#oneposlaundrynoticesfailing
 
   - name: onepos-operations
     rules:
@@ -199,24 +192,6 @@ groups:
         annotations:
           summary: Business sign-ups failed with a server error.
           runbook_url: docs/operations/monitoring.md#oneposprovisioningfailures
-
-  - name: onepos-lodging
-    rules:
-      - alert: OneposNightAuditFailing
-        expr: sum(increase(onepos_night_audit_total{outcome="failed"}[1h])) > 0
-        labels:
-          severity: warning
-        annotations:
-          summary: The scheduled night audit could not post some stays' room nights (they stay due and are retried).
-          runbook_url: docs/operations/monitoring.md#oneposnightauditfailing
-      - alert: OneposNightsOverdue
-        expr: max(onepos_lodging_stays_nights_overdue) > 0
-        for: 30m
-        labels:
-          severity: warning
-        annotations:
-          summary: In-house stays have room nights that fell due more than a day ago and are still not posted.
-          runbook_url: docs/operations/monitoring.md#oneposnightsoverdue
 
   - name: onepos-platform
     rules:

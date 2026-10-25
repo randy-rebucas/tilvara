@@ -73,7 +73,7 @@ export function qty(value: string | null | undefined): string {
 
 /**
  * A rate ("0.1", "0.125") as a percentage ("10", "12.5"), and back, by moving the decimal point in
- * the string itself — a service charge never goes through a float.
+ * the string itself — a rate never goes through a float.
  */
 export function percentFromRate(rate: string): string {
   const m = /^(\d+)(?:\.(\d*))?$/.exec(rate.trim());
@@ -91,16 +91,6 @@ export function rateFromPercent(percent: string): string | null {
   const whole = m[1]!.padStart(3, '0');
   const rate = `${whole.slice(0, 1)}.${whole.slice(1)}${m[2] ?? ''}`.replace(/0+$/, '').replace(/\.$/, '');
   return rate.replace(/^0(?=\d)/, '') || '0';
-}
-
-/** Whole seconds as m:ss (or h:mm:ss from an hour), for kitchen times; "—" when not measured. */
-export function duration(seconds: number | null | undefined): string {
-  if (seconds == null) return '—';
-  const s = Math.max(0, Math.round(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, '0');
-  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
 /** A plain YYYY-MM-DD (a local business date, no time zone) for display. */

@@ -5,12 +5,7 @@ import {
   and,
   asc,
   barcodes,
-  branches,
   categories,
-  rooms,
-  roomTypes,
-  laundryMachines,
-  laundrySettings,
   eq,
   inArray,
   isNull,
@@ -52,20 +47,9 @@ export interface ProductView extends ProductRow {
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
- * The trial's sample sets (ADR-0016 slice 6), VAT-inclusive prices on the default list: a small café
- * counter for a restaurant or a business that does both, a neighbourhood shop for retail (session 22).
- * Both sets have the same length, so the trial card reads the same.
+ * The trial's sample sets (ADR-0016 slice 6), VAT-inclusive prices on the default list: a neighbourhood
+ * shop for retail or a business that does several things (session 22), and one set per other type.
  */
-const CAFE_ITEMS: readonly { name: string; price: string }[] = [
-  { name: 'Iced coffee 16oz', price: '120.00' },
-  { name: 'Hot chocolate', price: '95.00' },
-  { name: 'Ensaymada', price: '45.00' },
-  { name: 'Pandesal (6 pcs)', price: '30.00' },
-  { name: 'Ham and cheese sandwich', price: '135.00' },
-  { name: 'Bottled water 500ml', price: '25.00' },
-  { name: 'Banana cake slice', price: '60.00' },
-  { name: 'Tote bag', price: '250.00' },
-];
 const SHOP_ITEMS: readonly { name: string; price: string }[] = [
   { name: 'Rice 5 kg', price: '275.00' },
   { name: 'Instant noodles', price: '16.00' },
@@ -97,42 +81,13 @@ const SALON_ITEMS: readonly { name: string; price: string; minutes?: number }[] 
   { name: 'Shampoo 250ml', price: '180.00' },
   { name: 'Hair wax', price: '220.00' },
 ];
-/** A hotel's or resort's list (ADR-0023 §1): two room nights (their room types come with them), a minibar item, laundry and breakfast. */
 type SampleItem = {
   name: string;
   price: string;
   minutes?: number;
-  service?: true;
-  roomType?: { code: string; base: number; max: number; rooms: string[] };
-  /** A laundry's service (ADR-0024 §2): by the kilo (sold by weight), per load or piece, an add-on, a machine cycle. */
-  laundry?: { unit?: 'KG' | 'LOAD' | 'PIECE'; min?: string; kgPerLoad?: string; addon?: true; machine?: { kind: 'WASHER' | 'DRYER'; minutes: number }; role?: 'express' | 'delivery' };
   /** A pharmacy's medicine (ADR-0025 §1): its class, generic name, strength and form. */
   drug?: DrugDetailsInput;
 };
-const LODGING_ITEMS: readonly SampleItem[] = [
-  { name: 'Standard room night', price: '2500.00', service: true, roomType: { code: 'STD', base: 2, max: 3, rooms: ['101', '102', '103'] } },
-  { name: 'Family room night', price: '4200.00', service: true, roomType: { code: 'FAM', base: 4, max: 6, rooms: ['201', '202'] } },
-  { name: 'Minibar soft drink', price: '80.00' },
-  { name: 'Laundry (per kilo)', price: '150.00', service: true },
-  { name: 'Breakfast buffet', price: '450.00', service: true },
-];
-/**
- * A laundry's list (ADR-0024 §1): wash-dry-fold by the kilo, washing and drying per load, ironing per
- * piece, the express and delivery charges, two add-on sachets and the self-service cycles; two washers
- * and two dryers come with them. The sachets are untracked like every sample (trying them never touches stock).
- */
-const LAUNDRY_ITEMS: readonly SampleItem[] = [
-  { name: 'Wash-dry-fold (per kilo)', price: '35.00', service: true, laundry: { unit: 'KG', min: '3' } },
-  { name: 'Wash only (per load)', price: '70.00', service: true, laundry: { unit: 'LOAD', kgPerLoad: '8' } },
-  { name: 'Dry only (per load)', price: '70.00', service: true, laundry: { unit: 'LOAD', kgPerLoad: '8' } },
-  { name: 'Ironing (per piece)', price: '20.00', service: true, laundry: { unit: 'PIECE' } },
-  { name: 'Express service', price: '50.00', service: true, laundry: { role: 'express' } },
-  { name: 'Pickup and delivery', price: '60.00', service: true, laundry: { role: 'delivery' } },
-  { name: 'Detergent sachet', price: '15.00', laundry: { addon: true } },
-  { name: 'Fabric conditioner sachet', price: '12.00', laundry: { addon: true } },
-  { name: 'Self-service wash (30 min)', price: '60.00', service: true, laundry: { machine: { kind: 'WASHER', minutes: 30 } } },
-  { name: 'Self-service dry (10 min)', price: '20.00', service: true, laundry: { machine: { kind: 'DRYER', minutes: 10 } } },
-];
 /**
  * A drugstore's list (ADR-0025 §1): over-the-counter and prescription medicines named by their generic,
  * one antibiotic, a syrup and a supply. Untracked like every sample set, so no box and strip links (a pack
@@ -148,8 +103,7 @@ const PHARMACY_ITEMS: readonly SampleItem[] = [
   { name: 'Face mask (box of 50)', price: '150.00' },
 ];
 const sampleItems = (type: Awaited<ReturnType<typeof businessType>>): readonly SampleItem[] =>
-  type === 'GROCERY' ? GROCERY_ITEMS : type === 'RETAIL' ? SHOP_ITEMS : type === 'SALON' ? SALON_ITEMS : type === 'LODGING' ? LODGING_ITEMS : type === 'LAUNDRY' ? LAUNDRY_ITEMS
-    : type === 'PHARMACY' ? PHARMACY_ITEMS : CAFE_ITEMS;
+  type === 'GROCERY' ? GROCERY_ITEMS : type === 'SALON' ? SALON_ITEMS : type === 'PHARMACY' ? PHARMACY_ITEMS : SHOP_ITEMS;
 
 const SAMPLE_REFUSALS = {
   SAMPLE_DATA_LOADED: 'The sample items are already on your list',
@@ -289,10 +243,6 @@ export class CatalogService extends TenantService {
       const uom = await this.activeUom(db, input.uomId);
       if (input.soldBy === 'WEIGHT' && !uom.allowsFraction) {
         throw new AppError('UOM_NOT_FRACTIONAL', 'Weighted products need a unit that allows fractions (e.g. KG)', HttpStatus.UNPROCESSABLE_ENTITY);
-      }
-      // A restaurant sells dishes, not goods off a scale (the screens hide it; session 25 closes the API).
-      if (input.soldBy === 'WEIGHT' && (await businessType(db)) === 'RESTAURANT') {
-        throw new AppError('BUSINESS_TYPE_EXCLUDES_FEATURE', 'A restaurant does not sell by weight. Change the business type to Both (a shop and a restaurant) to sell by weight.', HttpStatus.UNPROCESSABLE_ENTITY, { feature: 'sold_by_weight', businessType: 'RESTAURANT' });
       }
       if (input.categoryId) await this.activeCategory(db, input.categoryId);
       // Prepaid packages are a salon's (ADR-0022 §6).
@@ -476,7 +426,7 @@ export class CatalogService extends TenantService {
     return this.mutate(auth, async (db) => {
       const v = await this.variantRow(db, id);
       if (v.archivedAt) throw archived('Variant');
-      await this.assertTypeFields(db, v.productId, input, v);
+      await this.assertTypeFields(db, v.productId, input);
       if (input.quickKeyPosition) {
         // One item per quick key (ADR-0021 §3).
         const [taken] = await db
@@ -584,57 +534,27 @@ export class CatalogService extends TenantService {
       if (s.refusal) throw new AppError(s.refusal, SAMPLE_REFUSALS[s.refusal], HttpStatus.CONFLICT);
       const [vat] = await db.select({ id: taxCategories.id }).from(taxCategories).where(and(eq(taxCategories.code, 'VAT'), isNull(taxCategories.archivedAt)));
       const [pc] = await db.select({ id: unitsOfMeasure.id }).from(unitsOfMeasure).where(and(eq(unitsOfMeasure.code, 'PC'), isNull(unitsOfMeasure.archivedAt)));
-      const [kg] = await db.select({ id: unitsOfMeasure.id }).from(unitsOfMeasure).where(and(eq(unitsOfMeasure.code, 'KG'), isNull(unitsOfMeasure.archivedAt)));
       if (!vat || !pc) throw new AppError('SAMPLE_DATA_UNAVAILABLE', 'The default VAT category or the piece unit is missing', HttpStatus.UNPROCESSABLE_ENTITY);
       const [category] = await db.insert(categories).values({ tenantId, name: 'Sample items', isSample: true, sortOrder: 999 }).returning();
       const ids: string[] = [];
-      const [firstBranch] = await db.select({ id: branches.id }).from(branches).where(isNull(branches.archivedAt)).orderBy(asc(branches.createdAt)).limit(1);
       for (const [i, item] of sampleItems(await businessType(db)).entries()) {
         const [product] = await db
           .insert(products)
           .values({
-            tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: item.laundry?.unit === 'KG' && kg ? kg.id : pc.id, trackInventory: false, isSample: true,
+            tenantId, name: `${item.name} (sample)`, categoryId: category!.id, taxCategoryId: vat.id, uomId: pc.id, trackInventory: false, isSample: true,
             // A salon's samples are bookable services (ADR-0022 §3).
-            ...((item.minutes || item.service) && { productType: 'SERVICE' as const }),
-            ...(item.laundry?.unit === 'KG' && { soldBy: 'WEIGHT' as const }),
+            ...(item.minutes && { productType: 'SERVICE' as const }),
             ...(item.drug && drugColumns(item.drug)),
           })
           .returning({ id: products.id });
-        const variantId = await this.insertVariant(db, auth, product!.id, {
+        await this.insertVariant(db, auth, product!.id, {
           sku: `SAMPLE-${String(i + 1).padStart(2, '0')}`,
           price: item.price,
           barcodes: [inStoreEan13(i + 1)],
           attributes: {},
           ...(item.minutes && { serviceMinutes: item.minutes }),
-          ...(item.laundry && {
-            laundryUnit: item.laundry.unit ?? null, laundryMinQuantity: item.laundry.min ?? null, laundryKgPerLoad: item.laundry.kgPerLoad ?? null,
-            laundryAddon: item.laundry.addon ?? false, machineKind: item.laundry.machine?.kind ?? null, machineMinutes: item.laundry.machine?.minutes ?? null,
-          }),
         } as VariantInput);
-        // The express and delivery charges become the first branch's (ADR-0024 §3, §8).
-        if (item.laundry?.role && firstBranch) {
-          const set = item.laundry.role === 'express' ? { expressVariantId: variantId } : { deliveryVariantId: variantId };
-          await db.insert(laundrySettings).values({ tenantId, branchId: firstBranch.id, ...set, updatedBy: auth.userId }).onConflictDoUpdate({ target: [laundrySettings.tenantId, laundrySettings.branchId], set });
-        }
         ids.push(product!.id);
-        // A room night brings its room type, and a few rooms at the first branch (ADR-0023 §1).
-        if (item.roomType) {
-          const [type] = await db.insert(roomTypes).values({
-            tenantId, code: item.roomType.code, name: item.name.replace(/ room night$/, ''), baseOccupancy: item.roomType.base, maxOccupancy: item.roomType.max, nightVariantId: variantId, isSample: true,
-          }).onConflictDoNothing().returning({ id: roomTypes.id });
-          if (type && firstBranch) {
-            await db.insert(rooms).values(item.roomType.rooms.map((number) => ({ tenantId, branchId: firstBranch.id, roomTypeId: type.id, number, isSample: true }))).onConflictDoNothing();
-          }
-        }
-      }
-      // A laundry's washers and dryers come with its samples (ADR-0024 §1).
-      if ((await businessType(db)) === 'LAUNDRY' && firstBranch) {
-        await db.insert(laundryMachines).values([
-          { tenantId, branchId: firstBranch.id, kind: 'WASHER', label: 'Washer 1', capacityKg: '8', cycleMinutes: 30, isSample: true },
-          { tenantId, branchId: firstBranch.id, kind: 'WASHER', label: 'Washer 2', capacityKg: '8', cycleMinutes: 30, isSample: true },
-          { tenantId, branchId: firstBranch.id, kind: 'DRYER', label: 'Dryer 1', capacityKg: '8', cycleMinutes: 10, isSample: true },
-          { tenantId, branchId: firstBranch.id, kind: 'DRYER', label: 'Dryer 2', capacityKg: '8', cycleMinutes: 10, isSample: true },
-        ]).onConflictDoNothing();
       }
       await this.audit(db, auth, 'sample_data.loaded', 'category', category!.id, { products: ids.length });
       return { loaded: ids.length, categoryId: category!.id, productIds: ids };
@@ -659,10 +579,6 @@ export class CatalogService extends TenantService {
           await db.update(barcodes).set({ archivedAt: now }).where(and(inArray(barcodes.variantId, variants.map((v) => v.id)), isNull(barcodes.archivedAt)));
         }
       }
-      // Sample rooms and room types go with them (stays that used them keep their history).
-      await db.update(rooms).set({ archivedAt: now }).where(and(eq(rooms.isSample, true), isNull(rooms.archivedAt)));
-      await db.update(roomTypes).set({ archivedAt: now }).where(and(eq(roomTypes.isSample, true), isNull(roomTypes.archivedAt)));
-      await db.update(laundryMachines).set({ archivedAt: now }).where(and(eq(laundryMachines.isSample, true), isNull(laundryMachines.archivedAt)));
       const cats = await db
         .update(categories)
         .set({ archivedAt: now })
@@ -683,30 +599,12 @@ export class CatalogService extends TenantService {
   }
 
   // ---------------------------------------------------------------- helpers
-  /**
-   * A duration belongs to a service, a validity to a package (ADR-0022 §3, §6); a laundry unit to an item
-   * sold by the kilo when it is KG, a machine cycle to a service, with both kind and minutes (ADR-0024 §2, §7).
-   */
-  private async assertTypeFields(
-    db: Database,
-    productId: string,
-    v: Partial<Pick<VariantInput, 'serviceMinutes' | 'packageValidDays' | 'laundryUnit' | 'laundryMinQuantity' | 'laundryKgPerLoad' | 'machineKind' | 'machineMinutes'>>,
-    current?: { laundryUnit: string | null; machineKind: string | null; machineMinutes: number | null },
-  ) {
-    const laundry = v.laundryUnit != null || v.laundryMinQuantity != null || v.laundryKgPerLoad != null || v.machineKind != null || v.machineMinutes != null;
-    if (v.serviceMinutes == null && v.packageValidDays == null && !laundry) return;
-    const { productType, soldBy } = await this.productRow(db, productId);
+  /** A duration belongs to a service, a validity to a package (ADR-0022 §3, §6). */
+  private async assertTypeFields(db: Database, productId: string, v: Partial<Pick<VariantInput, 'serviceMinutes' | 'packageValidDays'>>) {
+    if (v.serviceMinutes == null && v.packageValidDays == null) return;
+    const { productType } = await this.productRow(db, productId);
     if (v.serviceMinutes != null && productType !== 'SERVICE') throw new AppError('INVALID_STATE', 'Only a service has a duration', HttpStatus.UNPROCESSABLE_ENTITY);
     if (v.packageValidDays != null && productType !== 'PACKAGE') throw new AppError('INVALID_STATE', 'Only a package has a validity', HttpStatus.UNPROCESSABLE_ENTITY);
-    const unit = v.laundryUnit !== undefined ? v.laundryUnit : (current?.laundryUnit ?? null);
-    if (unit === 'KG' && soldBy !== 'WEIGHT') throw new AppError('INVALID_STATE', 'A per-kilo laundry service is sold by weight', HttpStatus.UNPROCESSABLE_ENTITY);
-    if (unit !== null && productType === 'PACKAGE') throw new AppError('INVALID_STATE', 'A package is not a laundry service', HttpStatus.UNPROCESSABLE_ENTITY);
-    if ((v.laundryMinQuantity != null || v.laundryKgPerLoad != null) && unit === null) throw new AppError('INVALID_STATE', 'Give the laundry unit first', HttpStatus.UNPROCESSABLE_ENTITY);
-    if (v.laundryKgPerLoad != null && unit !== 'LOAD') throw new AppError('INVALID_STATE', 'Kilos per load are for a per-load service', HttpStatus.UNPROCESSABLE_ENTITY);
-    const kind = v.machineKind !== undefined ? v.machineKind : (current?.machineKind ?? null);
-    const minutes = v.machineMinutes !== undefined ? v.machineMinutes : (current?.machineMinutes ?? null);
-    if ((kind === null) !== (minutes === null)) throw new AppError('INVALID_STATE', 'A machine cycle needs both the machine kind and its minutes', HttpStatus.UNPROCESSABLE_ENTITY);
-    if (kind !== null && productType !== 'SERVICE') throw new AppError('INVALID_STATE', 'Only a service runs on a machine', HttpStatus.UNPROCESSABLE_ENTITY);
   }
 
   private async insertVariant(db: Database, auth: AuthContext, productId: string, v: VariantInput): Promise<string> {
@@ -722,12 +620,6 @@ export class CatalogService extends TenantService {
         referenceCost: v.referenceCost ?? null,
         serviceMinutes: v.serviceMinutes ?? null,
         packageValidDays: v.packageValidDays ?? null,
-        laundryUnit: v.laundryUnit ?? null,
-        laundryMinQuantity: v.laundryMinQuantity ?? null,
-        laundryKgPerLoad: v.laundryKgPerLoad ?? null,
-        laundryAddon: v.laundryAddon ?? false,
-        machineKind: v.machineKind ?? null,
-        machineMinutes: v.machineMinutes ?? null,
       })
       .returning({ id: productVariants.id });
     if (v.barcodes.length) {

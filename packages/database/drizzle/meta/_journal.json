@@ -771,6 +771,20 @@
       "when": 1792574022567,
       "tag": "0109_audit_2026_10_21_part3",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1792929715938,
+      "tag": "0110_remove_laundry",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792932167428,
+      "tag": "0111_remove_restaurant_lodging",
+      "breakpoints": true
     }
   ]
 }

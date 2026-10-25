@@ -164,17 +164,6 @@ export const productVariants = pgTable(
     serviceMinutes: integer('service_minutes'),
     /** A package's validity from the day it is sold; null = no expiry (ADR-0022 §6). */
     packageValidDays: integer('package_valid_days'),
-    /**
-     * A laundry service (ADR-0024 §2): how a job line counts it (KG, LOAD, PIECE), the least charged, and
-     * kilos per load (to suggest loads from a weight); add-ons sit on the job form's quick buttons.
-     */
-    laundryUnit: text('laundry_unit'),
-    laundryMinQuantity: numeric('laundry_min_quantity', { precision: 12, scale: 3 }),
-    laundryKgPerLoad: numeric('laundry_kg_per_load', { precision: 12, scale: 3 }),
-    laundryAddon: boolean('laundry_addon').notNull().default(false),
-    /** A self-service cycle (ADR-0024 §7): the machine kind it runs on and for how long. */
-    machineKind: text('machine_kind'),
-    machineMinutes: integer('machine_minutes'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -184,17 +173,6 @@ export const productVariants = pgTable(
     check('product_variants_service_minutes_range', sql`${t.serviceMinutes} IS NULL OR ${t.serviceMinutes} BETWEEN 5 AND 720`),
     check('product_variants_package_days_range', sql`${t.packageValidDays} IS NULL OR ${t.packageValidDays} BETWEEN 1 AND 3650`),
     check('product_variants_quick_key_range', sql`${t.quickKeyPosition} IS NULL OR ${t.quickKeyPosition} BETWEEN 1 AND 48`),
-    check(
-      'product_variants_laundry_check',
-      sql`(${t.laundryUnit} IS NULL OR ${t.laundryUnit} IN ('KG','LOAD','PIECE')) AND coalesce(${t.laundryMinQuantity}, 1) > 0
-          AND (${t.laundryKgPerLoad} IS NULL OR (${t.laundryUnit} = 'LOAD' AND ${t.laundryKgPerLoad} > 0))
-          AND (${t.laundryMinQuantity} IS NULL OR ${t.laundryUnit} IS NOT NULL)`,
-    ),
-    check(
-      'product_variants_machine_check',
-      sql`(${t.machineKind} IS NULL) = (${t.machineMinutes} IS NULL) AND (${t.machineKind} IS NULL OR ${t.machineKind} IN ('WASHER','DRYER'))
-          AND (${t.machineMinutes} IS NULL OR ${t.machineMinutes} BETWEEN 1 AND 240)`,
-    ),
     foreignKey({ columns: [t.tenantId, t.productId], foreignColumns: [products.tenantId, products.id] }),
     uniqueIndex('product_variants_tenant_sku_unique').on(t.tenantId, sql`lower(${t.sku})`).where(sql`${t.archivedAt} IS NULL`),
     index('product_variants_product_idx').on(t.tenantId, t.productId),

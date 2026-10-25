@@ -18,11 +18,7 @@ export default async function StatutoryBookPage({ searchParams }: { searchParams
   const label = (s: string) => (s === 'SC' ? 'SC' : s === 'PWD' ? 'PWD' : s);
   const booklet = (b: boolean | null | undefined) => (b == null ? '—' : b ? t('rep.bookletYes') : t('rep.bookletNo'));
 
-  // Room nights (ADR-0023 §7) have no register or number: the night is the document.
-  const doc = (x: (typeof rows)[number]) =>
-    x.document === 'ROOM_NIGHT' || x.document === 'NIGHT_REVERSAL'
-      ? t(x.document === 'ROOM_NIGHT' ? 'rep.docROOM_NIGHT' : 'rep.docNIGHT_REVERSAL')
-      : `${t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN')} ${x.register ?? ''}-${docNo(x.number ?? 0)}`;
+  const doc = (x: (typeof rows)[number]) => `${t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN')} ${x.register}-${docNo(x.number)}`;
   return (
     <ReportsChrome tab="statutory" scope={scope} error={r?.error}>
       <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('rep.statutoryNote')}</p>

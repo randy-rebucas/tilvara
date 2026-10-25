@@ -21,6 +21,7 @@ import {
   paymentEvents,
   sales,
   sql,
+  stockAdjustments,
   stockMovements,
   customerCreditEntries,
   users,
@@ -40,17 +41,13 @@ import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { expectedCash, loadSession } from './cash.service.js';
-import { saleReturnPosting, tipRefundPosting } from '@1pos/accounting';
+import { saleReturnPosting, stockChangePosting, tipRefundPosting } from '@1pos/accounting';
 import { PaymentProvider } from '../payments/provider.js';
 import { activeCustomer } from '../customers/customers.service.js';
 import { post } from '../accounting/ledger.js';
-import { recordPreparedWaste } from '../restaurant/consumption.js';
-import { reopenForVoidedCheck } from '../restaurant/bills.service.js';
-import { recallCounterOrder } from '../restaurant/counter.js';
-import { endReturnedCycleRuns } from '../laundry/job.js';
 import { packageReturnValue, returnPackages, splitByWeight } from '../salon/packages.js';
 import { returnFills } from '../pharmacy/dispensing.js';
-import { folioRefundPlan, insertEntry } from '../lodging/folio.js';
+import { assertTendersCurrent } from './retired-tenders.js';
 
 const BUCKETS = [
   'gross', 'discount', 'statutoryDiscount', 'vatExemptionAmount', 'vatableSales', 'vatAmount',
@@ -70,16 +67,41 @@ const notNamed = (): never => {
 
 /**
  * An exchange turns the whole refund into cash towards the new items, and any difference into change:
- * store credit (ADR-0018) and room charges (ADR-0023) must go back where they came from, so those sales
- * are returned first (to the credit or the room) and the new items rung up as a sale.
+ * store credit (ADR-0018) must go back where it came from, so such a sale is returned first (to the
+ * credit) and the new items rung up as a sale.
  */
 function assertExchangeable(tenders: { method: string }[]) {
+  assertTendersCurrent(tenders);
   if (tenders.some((t) => t.method === 'STORE_CREDIT')) {
     throw new AppError('EXCHANGE_STORE_CREDIT', 'This sale was paid with store credit: return it to the customer\'s credit, then ring up the new items', HttpStatus.CONFLICT);
   }
-  if (tenders.some((t) => t.method === 'ROOM_CHARGE')) {
-    throw new AppError('EXCHANGE_ROOM_CHARGE', 'This sale was charged to a room: return it to the room, then ring up the new items', HttpStatus.CONFLICT);
-  }
+}
+
+/**
+ * Damaged goods given back (ADR-0011 amendment): they came back into stock with the return and leave
+ * again in one WASTE stock adjustment (costed by the ledger trigger), posted to Spoilage and waste in
+ * the caller's transaction. Items in variant order (lock order, ADR-0012 §7).
+ */
+async function recordDamagedWaste(
+  db: Database,
+  p: { tenantId: string; branchId: string; legalEntityId: string; reason: string; userId: string; items: { variantId: string; quantity: Dec }[] },
+): Promise<string> {
+  const [doc] = await db.insert(stockAdjustments).values({ tenantId: p.tenantId, branchId: p.branchId, kind: 'WASTE', reason: p.reason, createdBy: p.userId }).returning({ id: stockAdjustments.id });
+  const rows = await db
+    .insert(stockMovements)
+    .values(p.items.map((i) => ({ tenantId: p.tenantId, branchId: p.branchId, variantId: i.variantId, quantity: i.quantity.negated().toString(), type: 'WASTE', reason: p.reason, stockAdjustmentId: doc!.id, createdBy: p.userId })))
+    .returning({ value: stockMovements.value });
+  await post(db, {
+    tenantId: p.tenantId,
+    legalEntityId: p.legalEntityId,
+    branchId: p.branchId,
+    sourceType: 'STOCK_ADJUSTMENT',
+    sourceId: doc!.id,
+    memo: `Waste: ${p.reason}`,
+    lines: stockChangePosting('WASTE', rows.reduce((a, r) => a.plus(r.value), new Dec(0)), p.branchId),
+    createdBy: p.userId,
+  });
+  return doc!.id;
 }
 
 /**
@@ -188,10 +210,6 @@ export class ReturnsService extends TenantService {
     if (!sale) throw notFound('Sale');
     const saleScope = { legalEntityId: sale.legalEntityId, branchId: sale.branchId, registerId: sale.registerId };
     this.assertCan(auth, input.kind === 'VOID' ? 'sales.void' : 'sales.refund', saleScope);
-    // A laundry claim released the customer's things (ADR-0024 §5): a mistake is a return, never a void.
-    if (input.kind === 'VOID' && sale.jobOrderId) {
-      throw new AppError('CLAIM_SALE_NOT_VOIDABLE', 'A laundry claim cannot be voided; record a return instead', HttpStatus.CONFLICT, { jobOrderId: sale.jobOrderId });
-    }
     // One return at a time per sale, so "remaining quantity" cannot be raced.
     await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${saleId}, 0))`);
 
@@ -216,23 +234,18 @@ export class ReturnsService extends TenantService {
     // by cancelling its charge once this commits (`refundTip`). A return keeps the tip.
     const [tip] = input.kind === 'VOID' ? await db.select({ amount: saleTips.amount, method: saleTips.method }).from(saleTips).where(eq(saleTips.saleId, saleId)) : [];
     const tipRefund = toDec(tip?.method === 'CASH' ? tip.amount : '0');
-    const tenders = await db.select({ method: saleTenders.method, amount: saleTenders.amount, stayId: saleTenders.stayId }).from(saleTenders).where(eq(saleTenders.saleId, saleId));
+    const tenders = await db.select({ method: saleTenders.method, amount: saleTenders.amount }).from(saleTenders).where(eq(saleTenders.saleId, saleId));
+    assertTendersCurrent(tenders);
     const creditUsed = tenders.filter((t) => t.method === 'STORE_CREDIT').reduce((a, t) => a.plus(t.amount), new Dec(0));
-    const roomTender = tenders.find((t) => t.method === 'ROOM_CHARGE');
     if (options.exchange) assertExchangeable(tenders);
-    // A room-charged sale returned while the guest's folio is open goes back onto the folio (ADR-0023 §5.1),
-    // as far as it was charged there and the folio still owes; the rest is refunded as usual.
-    const toFolio = roomTender?.stayId ? await folioRefundPlan(db, { saleId, stayId: roomTender.stayId, refund }) : null;
-    const folioRefund = toFolio?.amount ?? new Dec(0);
-    const rest = refund.minus(folioRefund);
     // Store credit never turns into drawer cash (ADR-0018): the share of the refund the sale paid with
     // credit goes back to the sale's customer as credit. Several returns never give back more than was
     // used; the one that completes the sale gives back exactly what is left of it.
-    const creditBack = creditUsed.gt(0) && !toCredit ? await this.creditShare(db, sale, refund, rest, creditUsed) : new Dec(0);
+    const creditBack = creditUsed.gt(0) && !toCredit ? await this.creditShare(db, sale, refund, creditUsed) : new Dec(0);
     if (toCredit && creditUsed.gt(0) && creditCustomer!.id !== sale.customerId) {
       throw unprocessable('CREDIT_GOES_TO_PAYER', 'This sale was paid with store credit: the refund goes back to the same customer');
     }
-    const cashBack = toCredit ? new Dec(0) : rest.minus(creditBack);
+    const cashBack = toCredit ? new Dec(0) : refund.minus(creditBack);
     if (!options.exchange) {
       const cashOut = cashBack.plus(tipRefund);
       const drawer = toDec(await expectedCash(db, session.id));
@@ -255,7 +268,7 @@ export class ReturnsService extends TenantService {
         processedBy: auth.userId,
         currency: sale.currency,
         ...out(totals),
-        refundMethod: folioRefund.gt(0) && rest.isZero() ? 'ROOM_CHARGE' : toCredit || (rest.gt(0) && cashBack.isZero()) ? 'STORE_CREDIT' : 'CASH',
+        refundMethod: toCredit || (refund.gt(0) && cashBack.isZero()) ? 'STORE_CREDIT' : 'CASH',
         tipRefund: tipRefund.toString(),
       })
       .returning();
@@ -301,13 +314,13 @@ export class ReturnsService extends TenantService {
     }
     const damaged = restock.filter((p) => p.req.disposition === 'DAMAGED');
     const wasteAdjustmentId = damaged.length
-      ? await recordPreparedWaste(db, {
+      ? await recordDamagedWaste(db, {
           tenantId,
           branchId: sale.branchId,
           legalEntityId: sale.legalEntityId,
           reason: `Damaged on ${input.kind === 'VOID' ? 'void' : 'return'} #${returnNumber} of sale #${sale.saleNumber}`,
           userId: auth.userId,
-          items: damaged.map((p) => ({ variantId: p.line.variantId, quantity: p.quantity.toString(), tracked: true })),
+          items: damaged.map((p) => ({ variantId: p.line.variantId, quantity: p.quantity })),
         })
       : null;
     await post(db, {
@@ -325,7 +338,6 @@ export class ReturnsService extends TenantService {
         refund,
         refundTo: toCredit ? 'STORE_CREDIT' : 'CASH',
         storeCredit: creditBack,
-        folioRefund,
         restocked: restockedValue,
         tipRefund,
         packagesRefunded: packages.prepaid,
@@ -333,13 +345,7 @@ export class ReturnsService extends TenantService {
       }, sale.branchId),
       createdBy: auth.userId,
     });
-    if (toFolio) {
-      await insertEntry(db, {
-        tenantId, folioId: toFolio.folio.id, stayId: toFolio.folio.stayId, kind: 'CHARGE_RETURN', amount: folioRefund.negated().toString(), saleId, saleReturnId: doc!.id,
-        description: `${input.kind === 'VOID' ? 'Void' : 'Return'} #${returnNumber} of sale #${sale.saleNumber}`, createdBy: auth.userId,
-      }, auth.correlationId);
-    }
-    const creditIn = toCredit ? rest : creditBack;
+    const creditIn = toCredit ? refund : creditBack;
     if (creditIn.gt(0)) {
       await db.insert(customerCreditEntries).values({
         tenantId, legalEntityId: sale.legalEntityId, branchId: sale.branchId, customerId: creditCustomer?.id ?? sale.customerId!, kind: 'RETURN',
@@ -364,27 +370,16 @@ export class ReturnsService extends TenantService {
         reason: `Tip of void #${returnNumber}`, createdBy: auth.userId,
       });
     }
-    // A voided restaurant check gives its share of the bill back (ADR-0014 §8, audit 2026-10-21): the bill
-    // (and its order) is payable again. A return of part of a check leaves the bill as it is.
-    const reopened = input.kind === 'VOID' && sale.orderBillId ? await reopenForVoidedCheck(db, sale.orderBillId) : null;
-    // Counter service: a voided sale's food the kitchen has not handed over yet comes off its screen.
-    const recalled = input.kind === 'VOID' ? await recallCounterOrder(db, saleId, auth.userId, `Sale #${sale.saleNumber} voided`) : 0;
-    // Self-service laundry cycles given back: their machine runs end (ADR-0024 §7).
-    const runsEnded = await endReturnedCycleRuns(db, planned.map((p) => p.line.id), auth.userId);
     await this.audit(db, auth, input.kind === 'VOID' ? 'sale.voided' : 'sale.returned', 'sale', saleId, {
       saleReturnId: doc!.id,
       returnNumber,
       refund: refund.toFixed(2),
       ...(tipRefund.gt(0) && { tipRefund: tipRefund.toFixed(2) }),
-      ...(recalled > 0 && { kitchenItemsRecalled: recalled }),
-      ...(runsEnded.length > 0 && { machineRunsEnded: runsEnded }),
-      ...(sale.orderBillId && input.kind === 'VOID' && { orderBillId: sale.orderBillId, billReopened: reopened?.billReopened ?? false }),
       reason: input.reason,
       ...(wasteAdjustmentId && { wasteAdjustmentId }),
       ...(options.exchange && { exchange: true }),
       ...(creditCustomer && { refundTo: 'STORE_CREDIT', customerId: creditCustomer.id }),
       ...(creditBack.gt(0) && { storeCreditBack: creditBack.toFixed(2), customerId: sale.customerId }),
-      ...(toFolio && { folioRefund: folioRefund.toFixed(2), folioId: toFolio.folio.id }),
     });
     await emitEvent(db, {
       tenantId,
@@ -398,10 +393,10 @@ export class ReturnsService extends TenantService {
   /**
    * The part of a refund that goes back to store credit (ADR-0018): the refund × (credit tendered ÷
    * amount paid), never more than the credit not given back yet by earlier returns of the sale (a return
-   * refunded wholly as credit counts in full) nor more than what is refunded outside the folio. The
-   * return that completes the sale gives back exactly the rest of the credit.
+   * refunded wholly as credit counts in full) nor more than the refund. The return that completes the
+   * sale gives back exactly the rest of the credit.
    */
-  private async creditShare(db: Database, sale: typeof sales.$inferSelect, refund: Dec, rest: Dec, creditUsed: Dec) {
+  private async creditShare(db: Database, sale: typeof sales.$inferSelect, refund: Dec, creditUsed: Dec) {
     const { rows: [before] } = await db.execute<{ refunded: string; credited: string }>(sql`
       SELECT coalesce(sum(r.amount_due), 0)::text AS refunded,
              coalesce((SELECT sum(c.amount) FROM customer_credit_entries c JOIN sale_returns x ON x.id = c.sale_return_id
@@ -411,7 +406,7 @@ export class ReturnsService extends TenantService {
     const paid = toDec(sale.amountDue);
     const completes = toDec(before!.refunded).plus(refund).gte(paid);
     const share = completes || paid.isZero() ? left : Dec.min(left, roundTo(refund.times(creditUsed).dividedBy(paid), 2, 'HALF_UP'));
-    return Dec.max(Dec.min(share, rest), new Dec(0));
+    return Dec.max(Dec.min(share, refund), new Dec(0));
   }
 
   /** The refund of a return of these lines, as recording it now would give (the exchange screen shows it first). */
@@ -461,7 +456,7 @@ export class ReturnsService extends TenantService {
       priorBy.set(p.saleLineId, acc);
     }
 
-    // Lines made from a recipe consumed their ingredients; cooked food never goes back on the shelf (ADR-0014 §4).
+    // Lines made from a recipe consumed their supplies, which never go back on the shelf (ADR-0014 §4).
     // What left stock with the sale decides what goes back, not whether the item is tracked now:
     // a line with a SALE movement is restocked, one that consumed a recipe never is (ADR-0014 §4).
     const movedRows = await db
@@ -480,9 +475,9 @@ export class ReturnsService extends TenantService {
       requested = lines.map((l) => ({ saleLineId: l.line.id, quantity: l.line.quantity, disposition: consumed.has(l.line.id) ? 'DAMAGED' : 'RESTOCK' }));
     } else {
       requested = inputLines!;
-      const cooked = requested.find((r) => r.disposition === 'RESTOCK' && consumed.has(r.saleLineId));
-      if (cooked) {
-        throw unprocessable('NOT_RESTOCKABLE', 'This item was made from ingredients and cannot go back into stock; return it as damaged', { saleLineId: cooked.saleLineId });
+      const used = requested.find((r) => r.disposition === 'RESTOCK' && consumed.has(r.saleLineId));
+      if (used) {
+        throw unprocessable('NOT_RESTOCKABLE', 'This item used up supplies and cannot go back into stock; return it as damaged', { saleLineId: used.saleLineId });
       }
     }
 
@@ -500,7 +495,7 @@ export class ReturnsService extends TenantService {
       if ((found.productType === 'PACKAGE' || found.line.customerPackageId) && !q.isInteger()) {
         throw unprocessable('QUANTITY_NOT_ALLOWED', found.line.customerPackageId ? 'Package sessions are returned in whole sessions' : 'A package is returned in whole units', { saleLineId: req.saleLineId });
       }
-      // Whole-unit items come back in whole units; a check's share of one (0.3333) comes back whole.
+      // Whole-unit items come back in whole units; a fractional rest of one (a share of a split restaurant check before 0111) comes back whole.
       if (found.soldBy === 'UNIT' && !found.allowsFraction && !q.isInteger() && !q.equals(remaining)) {
         throw unprocessable('QUANTITY_NOT_ALLOWED', 'This item is returned in whole units', { saleLineId: req.saleLineId });
       }
@@ -526,8 +521,9 @@ export class ReturnsService extends TenantService {
       return { req, line: found.line, trackInventory: tookStock.has(found.line.id), quantity: q, amounts };
     });
 
-    // A charge (service charge) goes back in proportion to the items returned; the return that
-    // empties the sale takes the exact remainder, so returns never give back more than was paid.
+    // A charge (a service charge on a sale rung up before 0111) goes back in proportion to the items
+    // returned; the return that empties the sale takes the exact remainder, so returns never give back
+    // more than was paid.
     const charges = await db.select().from(saleCharges).where(eq(saleCharges.saleId, sale.id));
     const chargeParts: { chargeId: string; amounts: Amounts }[] = [];
     if (charges.length) {
@@ -610,18 +606,18 @@ export class ReturnsService extends TenantService {
 
   /**
    * How a refund was given back when it went more than one way: store credit (the sale's credit share,
-   * ADR-0018), the guest's folio (ADR-0023) and cash for the rest. Empty when it went one way only.
+   * ADR-0018) and cash. What neither covers went back to a guest's folio, on a return recorded before
+   * 0111 removed lodging. Empty when it went one way only.
    */
   private async refundParts(db: Database, doc: typeof saleReturns.$inferSelect) {
-    const { rows: [r] } = await db.execute<{ credit: string; folio: string }>(sql`
+    const { rows: [r] } = await db.execute<{ credit: string; cash: string }>(sql`
       SELECT coalesce((SELECT sum(amount) FROM customer_credit_entries WHERE sale_return_id = ${doc.id} AND kind = 'RETURN'), 0)::text AS credit,
-             coalesce((SELECT -sum(amount) FROM folio_entries WHERE sale_return_id = ${doc.id} AND kind = 'CHARGE_RETURN'), 0)::text AS folio`);
+             coalesce((SELECT -sum(amount) FROM cash_movements WHERE sale_return_id = ${doc.id} AND type = 'REFUND'), 0)::text AS cash`);
     const credit = toDec(r!.credit);
-    const folio = toDec(r!.folio);
-    const cash = toDec(doc.amountDue).minus(credit).minus(folio);
+    const cash = toDec(r!.cash);
     const parts = [
       { method: 'STORE_CREDIT', amount: credit },
-      { method: 'ROOM_CHARGE', amount: folio },
+      { method: 'ROOM_CHARGE', amount: toDec(doc.amountDue).minus(credit).minus(cash) },
       { method: 'CASH', amount: cash },
     ].filter((p) => p.amount.gt(0));
     return parts.length > 1 ? parts.map((p) => ({ method: p.method, amount: p.amount.toFixed(2) })) : [];

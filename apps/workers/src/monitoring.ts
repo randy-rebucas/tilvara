@@ -23,12 +23,6 @@ export class WorkerMonitor {
     help: 'Webhook deliveries attempted by this worker, by outcome: delivered, retried, dead.',
     labelNames: ['outcome'],
   });
-  /** Laundry notices (ADR-0024 §6), per channel as settled on the notice row: sent, skipped, failed. */
-  readonly laundryNotices = this.registry.counter({
-    name: 'onepos_worker_laundry_notices_total',
-    help: 'Laundry notice channels settled by this worker, by channel (email, sms) and outcome: sent, skipped, failed.',
-    labelNames: ['channel', 'outcome'],
-  });
   readonly loopErrors = this.registry.counter({
     name: 'onepos_worker_loop_errors_total',
     help: 'Worker loop iterations that failed (database unreachable, claim failed…).',
@@ -70,12 +64,6 @@ export class WorkerMonitor {
     if (r.delivered) this.webhooks.inc({ outcome: 'delivered' }, r.delivered);
     if (r.retried) this.webhooks.inc({ outcome: 'retried' }, r.retried);
     if (r.dead) this.webhooks.inc({ outcome: 'dead' }, r.dead);
-  }
-
-  /** Labels from fixed sets only: the channel and the settled status, lower-cased. */
-  recordLaundryNotice(channel: 'email' | 'sms', outcome: 'SENT' | 'SKIPPED' | 'FAILED'): void {
-    const o = ({ SENT: 'sent', SKIPPED: 'skipped', FAILED: 'failed' } as const)[outcome] ?? 'failed';
-    this.laundryNotices.inc({ channel: channel === 'sms' ? 'sms' : 'email', outcome: o });
   }
 
   recordBatch(r: RunResult): void {

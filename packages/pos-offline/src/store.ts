@@ -33,9 +33,6 @@ export interface OfflineReceipt {
   tendered: string;
   change: string;
   notice: string;
-  /** Counter service (session 25): the number the kitchen calls (the sale's device number), and the name. */
-  callNumber?: number;
-  pickupName?: string;
   /** A cash tip on top of the sale (session 25), outside its total. */
   tip?: string;
 }

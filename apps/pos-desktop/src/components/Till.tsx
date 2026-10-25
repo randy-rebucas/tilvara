@@ -1,12 +1,11 @@
 import type { OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
-import { ChefHat, Printer, Wifi, WifiOff } from 'lucide-react';
+import { Printer, Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
 import { offlineReceiptToPrintable, tipLabel } from '../lib/printing';
 import { useTill } from '../lib/till';
 import { AuthStub } from './AuthNote';
-import { CallNumber } from './Receipt';
 import { Callout, Field, Money, Note } from './ui';
 
 const when = (ms: number | string) => new Date(ms).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
@@ -161,124 +160,8 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
         </form>
       </Note>
 
-      <KitchenPrinting />
-
       <button className="btn btn-danger justify-self-start" onClick={() => void till.forget().then(onBack)}>{t('till.forget')}</button>
     </div>
-  );
-}
-
-/**
- * Kitchen printing (session 25): which of the branch's kitchen stations this till prints for, and on
- * which printer. While online, the till prints their new tickets (and reprints asked for on the kitchen
- * display); offline, it prints the tickets of the counter sales it rings up itself.
- */
-function KitchenPrinting() {
-  const { t } = useT();
-  const till = useTill();
-  const [stations, setStations] = useState<{ id: string; code: string; name: string; isDefault: boolean }[] | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [kind, setKind] = useState<PrinterTarget['kind']>('network');
-  const [printers, setPrinters] = useState<string[]>([]);
-  const [note, setNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
-
-  useEffect(() => {
-    till.kitchenStations().then(setStations, () => setStations([]));
-  }, [till.terminalId]);
-  useEffect(() => {
-    if (editing && kind === 'windows') windowsPrinters().then(setPrinters, () => setPrinters([]));
-  }, [editing, kind]);
-
-  // Saved stations stay listed when offline (the server cannot list them then).
-  const known = stations ?? Object.entries(till.kitchenPrinters).map(([id, p]) => ({ id, code: '', name: p.stationName, isDefault: false }));
-
-  async function save(e: FormEvent<HTMLFormElement>, station: { id: string; name: string }) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const target: PrinterTarget = kind === 'network'
-      ? { kind, host: String(f.get('kHost') ?? '').trim(), port: Number(f.get('kPort') || 9100) }
-      : { kind, name: String(f.get('kPrinter') ?? '') };
-    await till.setKitchenPrinter(station.id, { stationName: station.name, target });
-    setEditing(null);
-    setNote({ kind: 'info', text: t('kprint.saved', { station: station.name }) });
-  }
-
-  async function test(station: { id: string; name: string }) {
-    setNote(null);
-    try {
-      await till.printKitchenSlip(station.id, {
-        station: station.name, where: t('kprint.testWhere'), ticket: null, dateTime: when(Date.now()),
-        items: [{ name: 'Test print', quantity: '1', choices: [], note: null }],
-      });
-      setNote({ kind: 'info', text: t('kprint.tested', { station: station.name }) });
-    } catch (err) {
-      setNote({ kind: 'error', text: `${t('receipt.printFailed')} (${(err as Error).message})` });
-    }
-  }
-
-  const describe = (target: PrinterTarget) => (target.kind === 'network' ? `${target.host}:${target.port}` : target.name);
-  return (
-    <Note className="grid gap-3 p-5" aria-label={t('kprint.title')}>
-      <h2 className="section-title flex items-center gap-2"><ChefHat className="size-4" aria-hidden /> {t('kprint.title')}</h2>
-      <p className="text-[0.875rem] text-muted">{t('kprint.hint')}</p>
-      {till.kitchenPrintError && <Callout kind="warn">{t('kprint.failed', { detail: till.kitchenPrintError })}</Callout>}
-      {known.length === 0 ? (
-        <p className="text-[0.9375rem]">{stations === null ? t('floor.loading') : t('kprint.none')}</p>
-      ) : (
-        <ul className="grid gap-2">
-          {known.map((st) => {
-            const current = till.kitchenPrinters[st.id];
-            return (
-              <li key={st.id} className="row-rule grid gap-2 py-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    <span className="font-semibold">{st.name}</span>
-                    {st.code && <span className="serial ml-2 text-[0.8125rem] text-muted">{st.code}</span>}
-                    <span className="ml-2 text-[0.875rem] text-muted">{current ? describe(current.target) : t('kprint.notHere')}</span>
-                  </span>
-                  <span className="flex gap-2">
-                    <button type="button" className="btn btn-sm" onClick={() => { setEditing(editing === st.id ? null : st.id); setKind(current?.target.kind ?? 'network'); }}>
-                      {current ? t('kprint.change') : t('kprint.set')}
-                    </button>
-                    {current && <button type="button" className="btn btn-sm" onClick={() => void test(st)}><Printer className="size-4" aria-hidden /> {t('till.printerTest')}</button>}
-                    {current && <button type="button" className="btn btn-sm btn-danger" onClick={() => void till.setKitchenPrinter(st.id, null)}>{t('kprint.stop')}</button>}
-                  </span>
-                </div>
-                {editing === st.id && (
-                  <form className="grid gap-3 rounded-[5px] border border-hair bg-white p-3" onSubmit={(e) => void save(e, st)}>
-                    <div className="field">
-                      <label htmlFor={`kKind-${st.id}`}>{t('till.printer')}</label>
-                      <select id={`kKind-${st.id}`} className="input" value={kind} onChange={(e) => setKind(e.target.value as PrinterTarget['kind'])}>
-                        <option value="network">{t('till.printerNetwork')}</option>
-                        <option value="windows">{t('till.printerWindows')}</option>
-                      </select>
-                    </div>
-                    {kind === 'network' ? (
-                      <div className="grid gap-3 sm:grid-cols-[1fr_120px]">
-                        <Field id={`kHost-${st.id}`} name="kHost" required label={t('till.printerHost')} placeholder="192.168.1.60" defaultValue={current?.target.kind === 'network' ? current.target.host : ''} />
-                        <Field id={`kPort-${st.id}`} name="kPort" type="number" min={1} max={65535} label={t('till.printerPort')} defaultValue={current?.target.kind === 'network' ? String(current.target.port) : '9100'} />
-                      </div>
-                    ) : (
-                      <div className="field">
-                        <label htmlFor={`kPrinter-${st.id}`}>{t('till.printerName')}</label>
-                        <select id={`kPrinter-${st.id}`} name="kPrinter" className="input" required defaultValue={current?.target.kind === 'windows' ? current.target.name : ''}>
-                          {printers.map((n) => <option key={n} value={n}>{n}</option>)}
-                        </select>
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <button className="btn btn-primary">{t('till.printerSave')}</button>
-                      <button type="button" className="btn" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
-                    </div>
-                  </form>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {note && <Callout kind={note.kind}>{note.text}</Callout>}
-    </Note>
   );
 }
 
@@ -314,7 +197,6 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
           {data.seller.tin && <p className="serial">{isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} {data.seller.tin}</p>}
           <p className="serial mt-2 font-semibold">{data.notice}</p>
         </header>
-        {data.callNumber !== undefined && <CallNumber n={data.callNumber} name={data.pickupName} />}
         <p className="serial mt-3 flex justify-between border-y border-dashed border-hair py-1">
           <span>{data.localReference}</span>
           <span>{dateTime}</span>

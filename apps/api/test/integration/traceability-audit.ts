@@ -10,11 +10,9 @@ import type pg from 'pg';
  *   entry → document:    every non-manual entry names a document that exists, in its own entity;
  *   value ties:          per document and branch, the entry's inventory lines equal the value of
  *                        that document's movements, and goods in transit clear when received;
- *   restaurant:          a settled bill's checks add up to it, no bill line is paid beyond the whole,
- *                        and an order's state follows its bill (Phase 4);
  *   payables:            per supplier invoice, the books owe what it still owes and cleared the GRNI its receipts held;
- *   sub-ledgers:         per legal entity, store credit 2300, packages 2310, guest ledger 1150, guest deposits 2320,
- *                        down payments 2330 and tips 2210 hold what their sub-ledger rows add up to;
+ *   sub-ledgers:         per legal entity, store credit 2300, packages 2310 and tips 2210 hold what their
+ *                        sub-ledger rows add up to;
  *   expiry lots:         a lot = Σ its lot movements, and an item's lots ≤ max(on hand, 0) per branch.
  *
  * Also used against the dev database after migrations (scripts in the exit review).
@@ -55,21 +53,11 @@ const DOCS = `
     UNION ALL SELECT 'SUPPLIER_INVOICE', id, branch_id, total_amount FROM supplier_invoices
     UNION ALL SELECT 'SUPPLIER_PAYMENT', id, branch_id, amount FROM supplier_payments
     UNION ALL SELECT 'SUPPLIER_NOTE', id, branch_id, total_amount FROM supplier_notes
-    UNION ALL SELECT 'SALE_TIP_REFUND', f.id, r.branch_id, f.amount FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id
-    -- Lodging (ADR-0023): a night, an adjustment or a night's reversal posts its own entry; payments and deposits too.
-    UNION ALL SELECT 'FOLIO_ENTRY', e.id, f.branch_id, e.amount FROM folio_entries e JOIN folios f ON f.id = e.folio_id
-     WHERE e.kind IN ('ROOM_NIGHT', 'ADJUSTMENT') OR (e.kind = 'NIGHT_REVERSAL' AND e.vatable_sales IS NOT NULL)
-    UNION ALL SELECT 'FOLIO_PAYMENT', p.id, p.branch_id, p.amount FROM folio_payments p
-    UNION ALL SELECT 'STAY_DEPOSIT', d.id, d.branch_id, d.amount FROM stay_deposits d
-    -- Laundry (ADR-0024 §5): a down payment taken, given back or kept posts its own entry; one applied is part of its claim sale.
-    UNION ALL SELECT 'JOB_ORDER_DEPOSIT', d.id, d.branch_id, d.amount FROM job_order_deposits d WHERE d.kind <> 'APPLIED'),
+    UNION ALL SELECT 'SALE_TIP_REFUND', f.id, r.branch_id, f.amount FROM sale_tip_refunds f JOIN sale_returns r ON r.id = f.sale_return_id),
   inv AS (
     SELECT e.source_type AS doc_type, e.source_id AS doc_id, l.branch_id, sum(l.debit - l.credit) AS amount
       FROM journal_entries e JOIN journal_lines l ON l.journal_entry_id = e.id JOIN accounts a ON a.id = l.account_id
      WHERE a.system_key = 'INVENTORY' AND e.source_id IS NOT NULL GROUP BY 1, 2, 3)`;
-
-/** A check not voided since (a VOID return): only these paid their share of a bill. */
-const NOT_VOIDED = `AND NOT EXISTS (SELECT 1 FROM sale_returns x WHERE x.sale_id = s.id AND x.kind = 'VOID')`;
 
 export const TRACEABILITY_CHECKS: Record<string, string> = {
   'movement without a document': `${DOCS} SELECT id, doc_type FROM mv WHERE doc_type IS NULL OR doc_id IS NULL`,
@@ -81,7 +69,9 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
      GROUP BY 1, 2 HAVING count(e.id) <> 1`,
   'entry whose document does not exist': `${DOCS}
     SELECT e.id, e.source_type, e.source_id FROM journal_entries e LEFT JOIN docs d ON d.doc_type = e.source_type AND d.doc_id = e.source_id
-     WHERE e.source_type NOT IN ('MANUAL', 'REVERSAL') AND d.doc_id IS NULL`,
+     -- JOB_ORDER_DEPOSIT: laundry down payments, whose documents migration 0110 dropped; FOLIO_ENTRY, FOLIO_PAYMENT
+     -- and STAY_DEPOSIT: guest folios and deposits, whose documents migration 0111 dropped (the entries stay).
+     WHERE e.source_type NOT IN ('MANUAL', 'REVERSAL', 'JOB_ORDER_DEPOSIT', 'FOLIO_ENTRY', 'FOLIO_PAYMENT', 'STAY_DEPOSIT') AND d.doc_id IS NULL`,
   'entry booked in another legal entity than its document': `${DOCS}
     SELECT e.id, e.source_type FROM journal_entries e JOIN docs d ON d.doc_type = e.source_type AND d.doc_id = e.source_id
       JOIN branches b ON b.id = d.branch_id WHERE b.legal_entity_id <> e.legal_entity_id`,
@@ -136,38 +126,6 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
     SELECT i.id, i.total_amount::text, 'overpaid' FROM supplier_invoices i
      WHERE i.total_amount + (SELECT coalesce(sum(CASE n.kind WHEN 'DEBIT' THEN n.total_amount ELSE -n.total_amount END), 0) FROM supplier_notes n WHERE n.supplier_invoice_id = i.id)
          < (SELECT coalesce(sum(a.amount), 0) FROM supplier_payment_allocations a JOIN supplier_payments p ON p.id = a.supplier_payment_id WHERE a.supplier_invoice_id = i.id AND p.voided_at IS NULL)`,
-  // Restaurant (ADR-0014 §8): a bill's checks add up to it, and the order follows its bill.
-  // A voided check (a VOID return) paid nothing: its share was owed again (audit 2026-10-21).
-  'settled bill whose checks ≠ the bill': `
-    SELECT b.id, b.amount_due::text AS bill, (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id ${NOT_VOIDED})::text AS checks
-      FROM order_bills b
-     WHERE b.status = 'SETTLED' AND b.amount_due <> (SELECT coalesce(sum(s.amount_due), 0) FROM sales s WHERE s.order_bill_id = b.id ${NOT_VOIDED})`,
-  'bill line paid beyond the whole, or a check not paying its bill': `
-    SELECT bill_line_id AS id, 'overpaid' AS problem FROM order_bill_allocations a
-     WHERE NOT EXISTS (SELECT 1 FROM sale_returns x WHERE x.sale_id = a.sale_id AND x.kind = 'VOID')
-     GROUP BY 1 HAVING sum(share_num::numeric / share_den) > 1.0000001
-    UNION ALL SELECT s.id, 'check on an unpaid-for bill' FROM sales s JOIN order_bills b ON b.id = s.order_bill_id WHERE b.status = 'VOIDED' OR b.branch_id <> s.branch_id`,
-  'order and bill states disagree': `
-    SELECT o.id, o.status, b.status AS bill FROM restaurant_orders o
-      LEFT JOIN order_bills b ON b.order_id = o.id AND b.status <> 'VOIDED'
-     WHERE o.order_type <> 'COUNTER' AND ((o.status = 'SETTLED') <> coalesce(b.status = 'SETTLED', false) OR (o.status = 'BILLED' AND b.status IS DISTINCT FROM 'ACTIVE')
-        OR (o.status IN ('OPEN', 'CANCELLED', 'MERGED') AND b.id IS NOT NULL))
-       -- A bill reopened by a voided check after its table was seated again: the order stays settled.
-       AND NOT (o.status = 'SETTLED' AND b.status = 'ACTIVE'
-                AND EXISTS (SELECT 1 FROM sales s JOIN sale_returns x ON x.sale_id = s.id AND x.kind = 'VOID' WHERE s.order_bill_id = b.id))`,
-  // Counter service (session 25): a counter order is its sale's kitchen copy, settled with it, never billed.
-  'counter order without its sale, unsettled or billed': `
-    SELECT o.id, o.status FROM restaurant_orders o LEFT JOIN sales s ON s.id = o.sale_id
-     WHERE o.order_type = 'COUNTER' AND (s.id IS NULL OR s.branch_id <> o.branch_id OR o.status <> 'SETTLED'
-        OR EXISTS (SELECT 1 FROM order_bills b WHERE b.order_id = o.id))`,
-  // Lodging (ADR-0023 §5): a settled folio is at zero; a checked-out stay's folio is settled; a room charge
-  // is on the folio of the stay its tender names, for the same amount.
-  'folio or room charge that disagrees with its stay or sale': `
-    SELECT f.id, 'settled folio not at zero' AS problem FROM folios f
-     WHERE f.status = 'SETTLED' AND (SELECT coalesce(sum(e.amount), 0) FROM folio_entries e WHERE e.folio_id = f.id) <> 0
-    UNION ALL SELECT s.id, 'checked out with an open folio' FROM stays s JOIN folios f ON f.stay_id = s.id WHERE s.status = 'CHECKED_OUT' AND f.status <> 'SETTLED'
-    UNION ALL SELECT t.id, 'room charge not on the folio' FROM sale_tenders t
-     WHERE t.method = 'ROOM_CHARGE' AND NOT EXISTS (SELECT 1 FROM folio_entries e WHERE e.sale_id = t.sale_id AND e.kind = 'CHARGE' AND e.stay_id = t.stay_id AND e.amount = t.amount)`,
   // Tips (session 25): each one's money moved exactly as recorded, and a void gave back exactly the tip.
   'tip whose money did not move as recorded': `
     SELECT t.id, t.method FROM sale_tips t
@@ -186,20 +144,17 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
      WHERE r.kind <> 'VOID' OR r.sale_id <> t.sale_id OR f.amount <> t.amount OR t.method = 'CASH'
         OR (f.method = 'CARD' AND NOT EXISTS (SELECT 1 FROM payment_intents p WHERE p.id = f.payment_intent_id AND p.id = t.payment_intent_id AND p.status = 'CANCELED'))`,
   // Balance-sheet accounts kept by a sub-ledger (audit 2026-10-21 §3): per legal entity, the books hold
-  // exactly what the sub-ledger rows add up to. Balances as credit − debit (the guest ledger, an asset,
-  // is owed by guests: −Σ folio entries).
+  // exactly what the sub-ledger rows add up to. Balances as credit − debit. (The guest ledger 1150 and guest
+  // deposits 2320 lost their sub-ledgers with lodging in 0111: their balances stay in the books, unchecked.)
   'balance-sheet account ≠ its sub-ledger (per legal entity)': `
     WITH gl AS (
       SELECT a.system_key, a.legal_entity_id, sum(l.credit - l.debit) AS balance
         FROM journal_lines l JOIN accounts a ON a.id = l.account_id
-       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'GUEST_LEDGER', 'GUEST_DEPOSITS', 'CUSTOMER_DOWN_PAYMENTS', 'TIPS_PAYABLE')
+       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'TIPS_PAYABLE')
        GROUP BY 1, 2),
     sub AS (
       SELECT 'CUSTOMER_STORE_CREDIT' AS system_key, legal_entity_id, sum(amount) AS balance FROM customer_credit_entries GROUP BY 2
       UNION ALL SELECT 'PREPAID_SERVICES', p.legal_entity_id, sum(e.value) FROM customer_package_entries e JOIN customer_packages p ON p.id = e.customer_package_id GROUP BY 2
-      UNION ALL SELECT 'GUEST_LEDGER', f.legal_entity_id, -sum(e.amount) FROM folio_entries e JOIN folios f ON f.id = e.folio_id GROUP BY 2
-      UNION ALL SELECT 'GUEST_DEPOSITS', legal_entity_id, sum(amount) FROM stay_deposits GROUP BY 2
-      UNION ALL SELECT 'CUSTOMER_DOWN_PAYMENTS', legal_entity_id, sum(amount) FROM job_order_deposits GROUP BY 2
       -- Tips: taken with sales − given back by voids (cash tip_refund, card tips' sale_tip_refunds) − paid out from drawers.
       UNION ALL SELECT 'TIPS_PAYABLE', le, sum(v) FROM (
         SELECT s.legal_entity_id AS le, t.amount AS v FROM sale_tips t JOIN sales s ON s.id = t.sale_id

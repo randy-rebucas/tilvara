@@ -58,36 +58,6 @@ export default async function SalesSummaryPage({ searchParams }: { searchParams:
         )}
       </Note>
       {s && days.length > 0 && <p className="text-[0.8125rem] text-muted">{t('rep.countHint')}</p>}
-      {/* ADR-0023: room nights are not sales (they are charged on the folio), so they are their own source. */}
-      {s?.rooms && s.rooms.days.length > 0 && (
-        <section aria-labelledby="rooms-source" className="flex flex-col gap-3">
-          <h2 id="rooms-source" className="section-title">{t('rep.roomsSource')}</h2>
-          <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('rep.roomsSourceHint')}</p>
-          <Note denom="violet" className="pr-2">
-            <RecordTable
-              rows={s.rooms.days}
-              rowKey={(d) => d.day}
-              columns={[
-                { header: t('common.date'), cell: (d) => <b>{formatDate(d.day, lang)}</b> },
-                { header: t('rep.nights'), num: true, cell: (d) => <Serial className="text-ink">{d.nights}</Serial> },
-                { header: t('rep.statutoryDiscount'), num: true, cell: (d) => <span className="money">{peso(d.statutoryDiscount)}</span> },
-                { header: t('rep.vatAmount'), num: true, cell: (d) => <span className="money">{peso(d.vatAmount)}</span> },
-                { header: t('rep.net'), num: true, cell: (d) => <span className="money font-semibold">{peso(d.amountDue)}</span> },
-              ]}
-              stacked={{
-                title: (d) => formatDate(d.day, lang),
-                meta: (d) => <Serial>{t('rep.nights')} {d.nights} · {t('rep.vatAmount')} {peso(d.vatAmount)}</Serial>,
-                figure: (d) => <span className="money font-semibold">{peso(d.amountDue)}</span>,
-              }}
-              foot={{
-                cells: [t('common.total'), s.rooms.totals.nights, <span key="sd" className="money">{peso(s.rooms.totals.statutoryDiscount)}</span>, <span key="v" className="money">{peso(s.rooms.totals.vatAmount)}</span>, <span key="a" className="money">{peso(s.rooms.totals.amountDue)}</span>],
-                title: t('rep.roomsSource'),
-                figure: <span className="money">{peso(s.rooms.totals.amountDue)}</span>,
-              }}
-            />
-          </Note>
-        </section>
-      )}
     </ReportsChrome>
   );
 }

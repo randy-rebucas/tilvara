@@ -165,7 +165,7 @@ export function buildOpenApi(version = '0.1.0'): Json {
       title: 'Tilvara API',
       version,
       description:
-        'Multi-tenant retail + restaurant POS API. Generated from route metadata and @1pos/validation schemas; ' +
+        'Multi-tenant retail POS API. Generated from route metadata and @1pos/validation schemas; ' +
         'money and quantities are decimal strings. See docs/api/CONVENTIONS.md.',
     },
     servers: [{ url: 'http://127.0.0.1:4320', description: 'Local development' }],

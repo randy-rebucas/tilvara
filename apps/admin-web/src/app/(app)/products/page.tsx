@@ -4,7 +4,7 @@ import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { api, apiOrNull, type Category, type CurrentPrice, type Me, type PriceList, type Product, type TaxCategory, type Uom } from '@/lib/api';
 import { categoryOptions } from '@/lib/categories';
 import { isUuid } from '@/lib/options';
-import { sellsByWeight, servesAppointments, servesLaundry, servesPharmacy, usesPackages } from '@/lib/business-type';
+import { servesAppointments, servesPharmacy, usesPackages } from '@/lib/business-type';
 import { genericLabel } from '@/lib/pharmacy';
 import { DrugBadge } from './drug-fields';
 import { peso } from '@/lib/format';
@@ -42,8 +42,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   const prices = defaultList ? await apiOrNull<{ data: CurrentPrice[] }>(`/price-lists/${defaultList.id}/prices`) : null;
   const priceOf = new Map(prices?.data.map((p) => [p.variantId, p.amount]));
   const canManage = me.activeTenant?.permissions.includes('catalog.manage') ?? false;
-  // A restaurant does not sell by weight (business type): no "Sold by" unless an item already does.
-  const byWeight = sellsByWeight(me.activeTenant?.businessType) || (products?.data.some((p) => p.soldBy === 'WEIGHT') ?? false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -57,7 +55,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
           <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
           {category && <input type="hidden" name="category" value={category} />}
         </form>
-        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} byWeight={sellsByWeight(me.activeTenant?.businessType)} expiryFirst={me.activeTenant?.businessType === 'GROCERY'} pharmacy={servesPharmacy(me.activeTenant?.businessType)} salon={servesAppointments(me.activeTenant?.businessType)} laundry={servesLaundry(me.activeTenant?.businessType)} packages={usesPackages(me.activeTenant?.businessType)} />}
+        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} expiryFirst={me.activeTenant?.businessType === 'GROCERY'} pharmacy={servesPharmacy(me.activeTenant?.businessType)} salon={servesAppointments(me.activeTenant?.businessType)} packages={usesPackages(me.activeTenant?.businessType)} />}
       </div>
 
       {category && (
@@ -76,7 +74,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                 <th>{t('prod.sku')}</th>
                 <th>{t('prod.barcodeCol')}</th>
                 <th>{t('prod.category')}</th>
-                {byWeight && <th>{t('prod.soldBy')}</th>}
+                <th>{t('prod.soldBy')}</th>
                 <th className="num">{t('price.current')}</th>
                 <th>{t('common.status')}</th>
               </tr>
@@ -95,7 +93,7 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
                     <td><Serial className="text-ink">{first?.sku}</Serial></td>
                     <td><Serial>{first?.barcodes[0] ?? '—'}</Serial></td>
                     <td className="text-[0.875rem]">{p.categoryId ? (catName.get(p.categoryId) ?? '—') : <span className="text-muted">—</span>}</td>
-                    {byWeight && <td>{p.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}</td>}
+                    <td>{p.soldBy === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}</td>
                     <td className="num money font-semibold">{first ? peso(priceOf.get(first.id)) : '—'}</td>
                     <td className="whitespace-nowrap">
                       {p.archivedAt ? <span className="tag">{t('prod.archived')}</span> : <span className="tag">{t('common.active')}</span>}

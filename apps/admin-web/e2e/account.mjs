@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser, sleep } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -30,7 +30,7 @@ const signup = async (prefix, name, business) => {
   return { email, userId: r.user.id, tenantId: r.activeTenantId };
 };
 // A long business name on purpose: the band must still fit every tab at 1440px.
-const BUSINESS = `Sari-sari Store at Karinderya ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
+const BUSINESS = `Sari-sari Store at Botika ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
 const owner = await signup('acct', 'Lorna Reyes', BUSINESS);
 // Arrange: Ramon has an account but belongs to no business (as after an owner removed him; a
 // business itself can never lose its last owner). Hashed by the API's own PasswordService.

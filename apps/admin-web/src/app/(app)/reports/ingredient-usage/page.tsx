@@ -2,7 +2,7 @@ import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
 import type { IngredientUsage } from '@/lib/api';
-import { peso, qty, signed, signOf, sumDecimal } from '@/lib/format';
+import { peso, qty, signed, signOf } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
 import { pageTitle } from '@/i18n/page-title';
@@ -10,10 +10,10 @@ import { pageTitle } from '@/i18n/page-title';
 export const generateMetadata = pageTitle('reports.ingredient-usage');
 
 /**
- * Theoretical vs actual use per ingredient (ADR-0014 §10): expected = recipes + sold as itself;
+ * Theoretical vs actual use per supply (a salon's supplies used, ADR-0022 §9): expected = recipes + sold as itself;
  * actual adds what was thrown away and what the counts found missing.
  */
-export default async function IngredientUsagePage({ searchParams }: { searchParams: Promise<ReportQuery> }) {
+export default async function SuppliesUsedPage({ searchParams }: { searchParams: Promise<ReportQuery> }) {
   const { t } = await getT();
   const scope = await reportScope(await searchParams);
   const r = scope.branch ? await loadReport<IngredientUsage>(`/reports/ingredient-usage?branchId=${scope.branch.id}&from=${scope.from}&to=${scope.to}`) : null;
@@ -38,9 +38,9 @@ export default async function IngredientUsagePage({ searchParams }: { searchPara
               rows={d.data}
               rowKey={(x) => x.variantId}
               columns={[
-                { header: t('rest.ingredient'), cell: (x) => <>{x.name} <Serial className="text-gold">{x.sku}</Serial></> },
+                { header: t('rep.supply'), cell: (x) => <>{x.name} <Serial className="text-gold">{x.sku}</Serial></> },
                 { header: t('rep.expected'), num: true, cell: (x) => `${qty(x.quantity.expected)} ${x.unit}` },
-                { header: t('rep.waste'), num: true, cell: (x) => `${qty(sumDecimal([x.quantity.preparedWaste, x.quantity.otherWaste]))} ${x.unit}` },
+                { header: t('rep.waste'), num: true, cell: (x) => `${qty(x.quantity.waste)} ${x.unit}` },
                 { header: t('rep.countVariance'), num: true, cell: (x) => `${signed(x.quantity.countVariance)} ${x.unit}` },
                 { header: t('rep.actual'), num: true, cell: (x) => <b>{qty(x.quantity.actual)} {x.unit}</b> },
                 { header: t('rep.variance'), num: true, cell: (x) => <span className={over(x.quantity.variance)}>{signed(x.quantity.variance)}{x.variancePct !== null ? ` (${x.variancePct}%)` : ''}</span> },

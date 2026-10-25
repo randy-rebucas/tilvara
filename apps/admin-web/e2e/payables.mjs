@@ -4,7 +4,7 @@
 // details receipts print (entity trade name/address/RDO, branch address, register name).
 // Usage: node apps/admin-web/e2e/payables.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';

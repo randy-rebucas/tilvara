@@ -24,7 +24,7 @@ try {
   const { rows: [ledger] } = await c.query(`SELECT min(created_at) AS start FROM journal_entries`);
   const { rows: [counts] } = await c.query(`
     SELECT (SELECT count(*) FROM tenants)::int AS tenants, (SELECT count(*) FROM sales)::int AS sales,
-           (SELECT count(*) FROM order_bills)::int AS bills, (SELECT count(*) FROM stock_movements)::int AS movements,
+           (SELECT count(*) FROM stock_movements)::int AS movements,
            (SELECT count(*) FROM journal_entries)::int AS entries,
            (SELECT count(*) FROM drizzle.__drizzle_migrations)::int AS migrations`);
   const when: Record<string, string> = {

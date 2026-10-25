@@ -4,7 +4,7 @@
 // Requires the API (RATE_LIMITS_ENABLED=false) and the POS (vite preview) running.
 import { createHmac } from 'node:crypto';
 import { checklist, openBrowser } from '../../admin-web/e2e/cdp.mjs';
-import { client, PASSWORD } from './restaurant.mjs';
+import { client, PASSWORD } from './api.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';

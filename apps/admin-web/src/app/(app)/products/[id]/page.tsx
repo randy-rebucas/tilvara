@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Callout, Note, Serial } from '@/components/note';
 import { allProducts, api, apiOrNull, type Category, type CurrentPrice, type Me, type PackageItems, type PackLink, type PriceList, type ProductDetail, type TaxCategory, type Uom } from '@/lib/api';
-import { servesAppointments, servesLaundry, servesPharmacy } from '@/lib/business-type';
+import { servesAppointments, servesPharmacy } from '@/lib/business-type';
 import { genericLabel } from '@/lib/pharmacy';
 import { DrugBadge } from '../drug-fields';
 import { peso } from '@/lib/format';
@@ -46,9 +46,6 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const stocked = product.trackInventory && canManage ? variantOptions((await allProducts())?.data, { stocked: true }) : [];
   // Salons (ADR-0022): a service's duration and supplies used; a package's validity and contents.
   const salon = servesAppointments(me.activeTenant?.businessType);
-  // Laundries (ADR-0024 §2, §7, §11): how a job counts a service, add-ons, machine cycles, supplies used per load.
-  const laundry = servesLaundry(me.activeTenant?.businessType);
-  const supplies = salon || laundry;
   const isPackage = product.productType === 'PACKAGE';
   const contents = isPackage ? await Promise.all(live.map((v) => apiOrNull<PackageItems>(`/variants/${v.id}/package-items`))) : [];
   const serviceOptions = isPackage && canManage
@@ -98,12 +95,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="min-w-0">
                   <p className="font-semibold">{v.name ?? product.name}{v.archivedAt && <span className="tag ml-2">{t('prod.archived')}</span>}</p>
                   <Serial className="text-ink">{v.sku}</Serial>
-                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage || v.laundryAddon || v.laundryUnit) && (
+                  {(Object.keys(v.attributes ?? {}).length > 0 || v.quickKeyPosition || product.productType === 'SERVICE' || isPackage) && (
                     <div className="mt-1.5 flex flex-wrap gap-1.5">
-                      {product.productType === 'SERVICE' && (salon || !laundry) && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
-                      {v.laundryUnit && <span className="tag border-blue/40 text-blue!" data-testid="laundry-unit">{t(`prod.laundryTag.${v.laundryUnit}`)}{v.laundryMinQuantity && ` · ${t('prod.laundryMinTag', { n: v.laundryMinQuantity })}`}{v.laundryKgPerLoad && ` · ${t('prod.laundryLoadTag', { n: v.laundryKgPerLoad })}`}</span>}
-                      {v.laundryAddon && <span className="tag">{t('prod.laundryAddonTag')}</span>}
-                      {v.machineKind && <span className="tag" data-testid="machine-cycle">{t(`lau.kind.${v.machineKind}`)} · {t('lau.minutesN', { n: v.machineMinutes ?? 0 })}</span>}
+                      {product.productType === 'SERVICE' && <span className="tag" data-testid="duration">{v.serviceMinutes ? t('prod.durationTag', { n: v.serviceMinutes }) : t('prod.noDuration')}</span>}
                       {isPackage && <span className="tag">{v.packageValidDays ? t('prod.validTag', { n: v.packageValidDays }) : t('prod.noExpiry')}</span>}
                       {Object.entries(v.attributes ?? {}).map(([k, val]) => <span key={k} className="tag">{k}: {val}</span>)}
                       {v.quickKeyPosition && <span className="tag border-blue/40 text-blue!">{t('qk.keyN', { n: v.quickKeyPosition })}</span>}
@@ -130,8 +124,8 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 <div className="flex flex-wrap items-end gap-3">
                   <AddBarcode variantId={v.id} />
                   {v.barcodeIds.length === 0 && <MakeBarcode variantId={v.id} />}
-                  <EditVariant variant={v} productType={product.productType} laundry={laundry} />
-                  {product.productType === 'SERVICE' && supplies && (
+                  <EditVariant variant={v} productType={product.productType} />
+                  {product.productType === 'SERVICE' && salon && (
                     <Link href={`/products/${product.id}/supplies/${v.id}`} className="btn">{t('prod.suppliesUsed')}</Link>
                   )}
                   {live.length > 1 && (

@@ -46,7 +46,7 @@ export interface ReceiptInput {
     vatableSales: string;
     vatExemptSales: string;
     beneficiaryId: string | null;
-    /** A priced choice of the line above it (ADR-0014 §3): printed indented with a "+". */
+    /** A priced choice of the line above it (`parent_line_id`, kept on sales rung up before 0111): printed indented with a "+". */
     isChoice?: boolean;
     /** The promotion that priced the line (ADR-0021): printed with its discount. */
     promotion?: string | null;
@@ -60,15 +60,11 @@ export interface ReceiptInput {
   }[];
   /** A tip given with the sale (session 25): printed below the payment, never in the totals. */
   tip?: { method: string; amount: string } | null;
-  /** Counter service (session 25): the number (and name) the kitchen calls when the order is ready. */
-  counterOrder?: { orderNumber: number; pickupName: string | null } | null;
-  /** Charge to room (ADR-0023 §5.1): "Charged to room 204 — Reyes", with a line for the guest to sign. */
-  roomCharge?: { roomNumber: string; guestSurname: string | null; amount: string } | null;
   /** `exchangeReturnNumber`: this cash is the refund of that return, put towards this sale (an exchange). */
   tenders: { method: string; amount: string; tendered: string; change: string; exchangeReturnNumber?: number | null }[];
   /** `purchaseBooklet` (ADR-0025 §8): set when the discount covered a medicine. */
   beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
-  /** Charges that are not items (service charge, ADR-0014 §9); included in the sale totals. */
+  /** Charges that are not items (a service charge on sales rung up before 0111); included in the sale totals. */
   /** `gross` is the charge ex VAT (its sales); `amountDue` adds its VAT. */
   charges?: { kind: string; rate: string; gross: string; amountDue: string; vatTreatment: string }[];
   /** The customer the sale was rung up for (ADR-0018): printed with their TIN when they gave one. */
@@ -113,7 +109,7 @@ export interface ReturnReceiptInput extends Pick<ReceiptInput, 'invoicingMode' |
     amountDue: string;
   };
   lines: { name: string; quantity: string; unitPrice: string; amountDue: string; vatTreatment: string; vatableSales: string; vatExemptSales: string; disposition: string }[];
-  /** How a refund split between methods was given back (store credit, folio, cash); omitted when it went one way. */
+  /** How a refund split between methods was given back (store credit, cash); omitted when it went one way. */
   refunds?: { method: string; amount: string }[];
 }
 
@@ -287,14 +283,6 @@ export function buildReceipt(r: ReceiptInput) {
     statutory,
     ...(r.customer && { customer: { name: r.customer.name, ...(r.customer.tin && { tin: r.customer.tin }) } }),
     ...(r.tip && { tip: { method: r.tip.method, amount: m(r.tip.amount) } }),
-    ...(r.counterOrder && { callNumber: r.counterOrder.orderNumber, ...(r.counterOrder.pickupName && { pickupName: r.counterOrder.pickupName }) }),
-    ...(r.roomCharge && {
-      roomCharge: {
-        roomNumber: r.roomCharge.roomNumber, guestSurname: r.roomCharge.guestSurname, amount: m(r.roomCharge.amount),
-        line: `Charged to room ${r.roomCharge.roomNumber}${r.roomCharge.guestSurname ? ` — ${r.roomCharge.guestSurname}` : ''}`,
-        signatureLine: 'Guest signature',
-      },
-    }),
     legend: isVat ? 'V = VATable, E = VAT-exempt, Z = zero-rated' : null,
   };
 }

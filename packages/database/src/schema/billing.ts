@@ -9,7 +9,7 @@ export interface PlanLimits {
   maxUsers: number;
 }
 
-export const PLAN_FEATURES = ['restaurant', 'multi_entity', 'api_access', 'advanced_reports'] as const;
+export const PLAN_FEATURES = ['multi_entity', 'api_access', 'advanced_reports'] as const;
 export type PlanFeature = (typeof PLAN_FEATURES)[number];
 
 /** Global plan catalog (platform-managed, seeded by migration). */

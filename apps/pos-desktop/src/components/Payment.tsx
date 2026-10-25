@@ -1,16 +1,14 @@
-import { BedDouble, CreditCard, QrCode } from 'lucide-react';
-import { useRef, useState, type FormEvent } from 'react';
+import { CreditCard, QrCode } from 'lucide-react';
+import { useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
-import { dateLabel } from '../lib/calendar';
-import { add, gte, isPositive, isZero, parseAmount, peso, quickTenders, splitEqually, sub, sumAmounts } from '../lib/money';
-import type { InHouseGuest, PaymentIntent } from '../types';
+import { add, gte, isPositive, isZero, parseAmount, quickTenders, splitEqually, sub, sumAmounts } from '../lib/money';
+import type { PaymentIntent } from '../types';
 import type { Shift } from './Registers';
 import { Callout, methodLabel, Money, Note, PaymentTag } from './ui';
 
 export type Notice = { kind: 'error' | 'warn' | 'info'; text: string } | null;
-/** ROOM_CHARGE (ADR-0023 §5.1): what is left after card/QR goes on an in-house guest's folio (no amount = the rest). */
-export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: 'CASH'; tendered: string } | { method: 'ROOM_CHARGE'; stayId: string };
+export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: 'CASH'; tendered: string };
 /** A tip (session 25): cash on top of what is due, or its own card payment. Never part of the sale's total. */
 export type TipBody = { amount: string; paymentIntentId?: string; shares?: { staffId: string; amount: string }[] };
 /** Someone a tip can be shared with (ADR-0022 §7): a staff member named on the cart's lines. */
@@ -22,34 +20,19 @@ export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.er
 export const errorText = (err: unknown, fallback: string, network: string) =>
   err instanceof ApiFailure ? (unanswered(err) ? withReference(network, err) : err.error.message) : fallback;
 
-/** The server's refusals of a charge to a room (ADR-0023 §5.1), in the cashier's words. */
-const ROOM_CHARGE_ERRORS: Record<string, MessageKey> = {
-  ROOM_CHARGE_LIMIT: 'room.err.limit',
-  GUEST_NOT_IN_HOUSE: 'room.err.notInHouse',
-  ROOM_CHARGES_NOT_ALLOWED: 'room.err.notAllowed',
-  ROOM_CHARGE_WRONG_ENTITY: 'room.err.wrongEntity',
-  ROOM_CHARGE_OFFLINE: 'room.err.offline',
-  FOLIO_SETTLED: 'room.err.notInHouse',
-};
-
-/** Whether a guest's room may take this amount (charges allowed, and no limit or enough left under it). */
-export const roomTakes = (g: InHouseGuest, amount: string) => g.allowCharges && (g.available === null || gte(g.available, amount));
-
 /**
- * Taking payment for one sale or check (ADR-0009/0010): card/QR intents first, cash for the rest.
+ * Taking payment for one sale (ADR-0009/0010): card/QR intents first, cash for the rest.
  * One payment = one terminal transaction id; its sale key is kept when an answer is lost, so a retry
- * can never record twice. Shared by the counter and table checks, which both end in `record()`.
+ * can never record twice.
  * `allowTip` (session 25): the cashier may add a tip, in cash (added to the cash due, outside the
  * sale) or by its own card payment of the same checkout.
  */
-export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff = [], allowRoomCharge = false }: {
+export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff = [] }: {
   shift: Shift;
   due: string;
   setNotice: (n: Notice | ((n: Notice) => Notice)) => void;
   allowTip?: boolean;
   tipStaff?: TipStaff[];
-  /** Charge to room (ADR-0023 §5.1): a lodging business, online, not an exchange. */
-  allowRoomCharge?: boolean;
 }) {
   const { t } = useT();
   const [txId, setTxId] = useState(uuid);
@@ -62,8 +45,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
   // A tip split by hand between the staff on the cart (ADR-0022 §7); left alone, the server splits it equally.
   const [splitting, setSplitting] = useState(false);
   const [shareText, setShareText] = useState<Record<string, string>>({});
-  // The in-house guest whose room takes what is left (the cashier checked the name with the guest).
-  const [roomGuest, setRoomGuest] = useState<InHouseGuest | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Synchronous guards: a double click lands before React re-renders the disabled button.
   const busy = useRef(false);
@@ -76,12 +57,8 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
   const cashTip = tip && isPositive(tip) && tipMethod === 'CASH' ? tip : '0.00';
   const paidElectronic = intents.filter((i) => i.status === 'SUCCEEDED').reduce((a, i) => add(a, i.amount), '0.00');
   const remaining = gte(paidElectronic, due) ? '0.00' : sub(due, paidElectronic);
-  // Offline (or an exchange) the room charge drops out by itself: the server would refuse it.
-  const room = allowRoomCharge ? roomGuest : null;
-  const roomAmount = room && isPositive(remaining) ? remaining : '0.00';
-  const roomOverLimit = room !== null && isPositive(roomAmount) && !roomTakes(room, roomAmount);
-  // What the cash must cover: the rest of the sale (unless it goes on the room), plus a cash tip.
-  const cashDue = add(room ? '0.00' : remaining, cashTip);
+  // What the cash must cover: the rest of the sale, plus a cash tip.
+  const cashDue = add(remaining, cashTip);
   const cashAmount = parseAmount(cash);
   const covered = isZero(cashDue) || (cashAmount !== null && gte(cashAmount, cashDue));
   const pendingIntent = intents.some((i) => i.status === 'UNKNOWN' || i.status === 'PROCESSING') || tipIntent?.status === 'UNKNOWN' || tipIntent?.status === 'PROCESSING';
@@ -91,7 +68,7 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
   const shareAmounts = tipStaff.map((s) => ({ staffId: s.id, amount: (shareText[s.id] ?? '').trim() === '' ? '0.00' : parseAmount(shareText[s.id]!) }));
   const sharesValid = !split || (shareAmounts.every((x) => x.amount !== null) && sumAmounts(shareAmounts.map((x) => x.amount!)) === tip);
   // Why the submit button is disabled, in words (only for things the cashier can act on).
-  const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : roomOverLimit ? 'room.overLimit' : !tipValid ? 'tip.invalid' : !sharesValid ? 'tip.sharesMismatch' : cardTipNeeded ? 'tip.needCard' : !covered ? 'pay.needCash' : null;
+  const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : !tipValid ? 'tip.invalid' : !sharesValid ? 'tip.sharesMismatch' : cardTipNeeded ? 'tip.needCard' : !covered ? 'pay.needCash' : null;
 
   /** Turn the split on (equal shares to start from) or off (the server splits equally). */
   function setSplit(on: boolean) {
@@ -203,7 +180,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
     setSubmitting(true);
     const tenders: Tender[] = [
       ...intents.filter((i) => i.status === 'SUCCEEDED').map((i) => ({ method: 'INTENT' as const, paymentIntentId: i.id })),
-      ...(room && isPositive(roomAmount) ? [{ method: 'ROOM_CHARGE' as const, stayId: room.stayId }] : []),
       ...(isPositive(cashDue) && cashAmount ? [{ method: 'CASH' as const, tendered: cashAmount }] : []),
     ];
     // Shares of nothing are left out (each share is positive); they still add up to the tip.
@@ -227,14 +203,9 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
         return recorded;
       } else {
         setSaleKey(uuid());
-        const roomError = err instanceof ApiFailure ? ROOM_CHARGE_ERRORS[err.error.code] : undefined;
         if (err instanceof ApiFailure && err.error.code === 'TOTAL_CHANGED') {
           setNotice({ kind: 'warn', text: t('pay.totalChanged', { amount: String(err.error.details?.amountDue ?? '') }) });
           onTotalChanged?.();
-        } else if (roomError) {
-          // The guest's room cannot take it: the cashier picks another way to pay.
-          setNotice({ kind: 'error', text: t(roomError, { available: peso(String((err as ApiFailure).error.details?.available ?? '0')) }) });
-          setRoomGuest(null);
         } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
         onRefused?.(err);
       }
@@ -253,7 +224,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
     setTipIntent(null);
     setSplitting(false);
     setShareText({});
-    setRoomGuest(null);
     unansweredTip.current = null;
     setTxId(uuid());
     setSaleKey(uuid());
@@ -264,7 +234,6 @@ export function usePayment({ shift, due, setNotice, allowTip = false, tipStaff =
     txId, intents, cash, setCash, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, takeElectronic, settleIntent, submit, reset,
     allowTip, tipText, setTip, tipMethod, setTipMethod, tip, cashTip, tipIntent, takeTipByCard, cancelTipIntent,
     tipStaff, canSplit, splitting: split, setSplit, shareText, setShare: (staffId: string, v: string) => setShareText((x) => ({ ...x, [staffId]: v })),
-    allowRoomCharge, room, roomAmount, setRoomGuest, branchId: shift.branch.id,
   };
 }
 
@@ -306,7 +275,6 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
           <Money value={remaining} />
         </p>
       )}
-      {pay.allowRoomCharge && !cashOnly && (pay.room || isPositive(remaining)) && <RoomChargeField pay={pay} />}
       {isPositive(cashDue) && (
         <>
           {isPositive(pay.cashTip) && (
@@ -441,123 +409,6 @@ function TipSplit({ pay }: { pay: Payment }) {
             <span>{t('tip.sharesTotal')}</span>
             <span><Money value={total} /> / <Money value={pay.tip} /></span>
           </p>
-        </>
-      )}
-    </div>
-  );
-}
-
-/**
- * Charge to room (ADR-0023 §5.1): find the in-house guest by room number or name, read the name back
- * to the guest, and put what is left of the sale on their folio. Shows what the stay may still charge.
- * Not offered offline: the till cannot check the stay.
- */
-function RoomChargeField({ pay }: { pay: Payment }) {
-  const { t } = useT();
-  const [open, setOpen] = useState(false);
-  const [q, setQ] = useState('');
-  const [hits, setHits] = useState<InHouseGuest[] | null>(null);
-  const [picked, setPicked] = useState<InHouseGuest | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const branchId = pay.branchId;
-
-  async function find(e?: FormEvent) {
-    e?.preventDefault();
-    setBusy(true);
-    try {
-      const r = await api<{ data: InHouseGuest[] }>('GET', `/v1/stays/in-house?branchId=${branchId}${q.trim() ? `&q=${encodeURIComponent(q.trim())}` : ''}`);
-      setHits(r.data);
-      setError(null);
-    } catch (err) {
-      setError(errorText(err, t('common.error'), t('common.network')));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function close() {
-    setOpen(false);
-    setPicked(null);
-    setHits(null);
-    setQ('');
-    setError(null);
-  }
-
-  if (pay.room) {
-    const g = pay.room;
-    return (
-      <div className="grid gap-2 rounded-[5px] border border-hair bg-white p-3" data-testid="room-charge">
-        <p className="flex flex-wrap items-baseline justify-between gap-2">
-          <span className="font-semibold">{t('room.chargedTo', { room: g.roomNumber, name: g.guestName ?? '' })}</span>
-          <Money value={pay.roomAmount} />
-        </p>
-        <p className="text-[0.8125rem] text-muted">
-          {g.available === null ? t('room.noLimit') : t('room.available', { amount: peso(g.available) })} · {t('room.signHint')}
-        </p>
-        <button type="button" className="btn btn-sm justify-self-start" onClick={() => { pay.setRoomGuest(null); close(); }}>{t('room.remove')}</button>
-      </div>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button type="button" className="btn" data-testid="room-charge-open" onClick={() => { setOpen(true); void find(); }}>
-        <BedDouble className="size-4" aria-hidden /> {t('room.charge')}
-      </button>
-    );
-  }
-
-  return (
-    <div className="grid gap-3 rounded-[5px] border border-hair bg-white p-3" data-testid="room-charge-find">
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="font-semibold">{t('room.charge')}</p>
-        <button type="button" className="btn btn-sm" onClick={close}>{t('common.cancel')}</button>
-      </div>
-      {picked ? (
-        <div className="grid gap-2" data-testid="room-charge-confirm">
-          <p>{t('room.askName')}</p>
-          <p className="text-[1.125rem] font-semibold">{picked.guestName} · {t('room.roomN', { room: picked.roomNumber })}</p>
-          <p className="text-[0.8125rem] text-muted">
-            {picked.available === null ? t('room.noLimit') : t('room.available', { amount: peso(picked.available) })}
-            {picked.branchId !== branchId && <> · {picked.branchName}</>}
-          </p>
-          {!roomTakes(picked, pay.remaining) && (
-            <Callout kind="warn">{picked.allowCharges ? t('room.err.limit', { available: peso(picked.available) }) : t('room.err.notAllowed')}</Callout>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn btn-primary" disabled={!roomTakes(picked, pay.remaining)} onClick={() => { pay.setRoomGuest(picked); close(); }}>{t('room.confirm')}</button>
-            <button type="button" className="btn" onClick={() => setPicked(null)}>{t('common.back')}</button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <form className="grid grid-cols-[1fr_auto] items-end gap-2" onSubmit={(e) => void find(e)}>
-            <div className="field">
-              <label htmlFor="roomSearch">{t('room.search')}</label>
-              <input id="roomSearch" className="input" value={q} maxLength={60} autoComplete="off" onChange={(e) => setQ(e.target.value)} />
-            </div>
-            <button className="btn" disabled={busy}>{t('room.find')}</button>
-          </form>
-          {error && <Callout kind="error">{error}</Callout>}
-          {hits && hits.length === 0 && <p className="text-[0.875rem] text-muted">{t('room.noneInHouse')}</p>}
-          {hits && hits.length > 0 && (
-            <ul className="grid gap-1" data-testid="room-hits">
-              {hits.map((g) => (
-                <li key={g.stayId}>
-                  <button type="button" className="btn h-auto min-h-11 w-full justify-between gap-3 py-2 text-left" data-room={g.roomNumber} disabled={!g.allowCharges} onClick={() => setPicked(g)}>
-                    <span className="min-w-0">
-                      <span className="block font-semibold">{t('room.roomN', { room: g.roomNumber })} · {g.guestName}</span>
-                      <span className="block text-[0.8125rem] text-muted">{t('room.departs', { date: dateLabel(g.departureDate) })}{g.branchId !== branchId ? ` · ${g.branchName}` : ''}</span>
-                    </span>
-                    <span className="shrink-0 text-[0.8125rem] text-muted">
-                      {!g.allowCharges ? t('room.noCharges') : g.available === null ? t('room.noLimitShort') : <>{t('room.left')} <Money value={g.available} /></>}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
         </>
       )}
     </div>

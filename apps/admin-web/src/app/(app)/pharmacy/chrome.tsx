@@ -82,7 +82,7 @@ export async function PharmacyChrome({
         <PageHeader title={t('pha.title')} lede={t('pha.lede')} />
         <Callout>
           {t('biz.pharmacyOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
+          <a href="/subscription/business" className="font-semibold underline">{t('biz.changeTypeLink')}</a>
         </Callout>
       </div>
     );

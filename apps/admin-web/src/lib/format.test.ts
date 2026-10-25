@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { datePresets, duration, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
+import { datePresets, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
 
 describe('datePresets', () => {
   const at = (today: string) => Object.fromEntries(datePresets(today).map((p) => [p.key, `${p.from}..${p.to}`]));
@@ -24,12 +24,6 @@ describe('datePresets', () => {
     expect(jan.lastMonth).toBe('2026-12-01..2026-12-31');
     expect(jan.lastPayPeriod).toBe('2026-12-16..2026-12-31');
     expect(at('2028-03-10').lastMonth).toBe('2028-02-01..2028-02-29'); // leap year
-  });
-});
-
-describe('duration', () => {
-  it('prints m:ss, h:mm:ss from an hour, and a dash when not measured', () => {
-    expect([0, 59, 90, 600, 3599, 3600, 3725, null].map(duration)).toEqual(['0:00', '0:59', '1:30', '10:00', '59:59', '1:00:00', '1:02:05', '—']);
   });
 });
 

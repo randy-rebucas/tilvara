@@ -1,5 +1,5 @@
 // End-to-end test of a pharmacy at the counter (ADR-0025, session 30):
-// - a PHARMACY business has no Tables tab;
+// - a PHARMACY business has no Appointments tab;
 // - search by generic name: a medicine hit shows its generic label and class badge (DD for a dangerous drug,
 //   nothing for OTC); an OTC sale prints the generic and the lot (batch, expiry) on the receipt;
 // - an antibiotic cannot be paid for without its prescription; "Equivalents" lists the cheaper brand of the
@@ -20,7 +20,7 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { checklist, openBrowser, sleep } from '../../admin-web/e2e/cdp.mjs';
-import { client, PASSWORD } from './restaurant.mjs';
+import { client, PASSWORD } from './api.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';
@@ -149,7 +149,7 @@ try {
   await viewport(1440, 900);
   await signInAt(assistantEmail, 'Counter');
   const tabs = await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].map((x) => x.textContent.trim())`);
-  check('a pharmacy has no Tables tab', !tabs.includes('Tables'));
+  check('a pharmacy has no Appointments tab', tabs.includes('Sell') && !tabs.includes('Appointments'));
 
   // ---- search by generic name; an OTC sale with the generic and the lot on the receipt ----
   await scan('paracetamol');

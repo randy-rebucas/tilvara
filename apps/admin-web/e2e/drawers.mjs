@@ -9,7 +9,7 @@
 // Usage: node apps/admin-web/e2e/drawers.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';

@@ -1,5 +1,5 @@
 // End-to-end test of a pharmacy or drugstore (ADR-0025) in the back office: the sign-up offers
-// "Pharmacy or drugstore"; the band has Pharmacy (and no Restaurant); a new product starts as a
+// "Pharmacy or drugstore"; the band has Pharmacy (and no Appointments); a new product starts as a
 // medicine that keeps expiry dates, and the Medicine section saves its class, generic name, strength
 // and form (badge and generic on the list, search by generic name); a box → strip → piece chain is
 // linked; a stock adjustment of the medicine with an expiry date is refused without its lot code and
@@ -13,7 +13,7 @@
 // Usage: node apps/admin-web/e2e/pharmacy.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -85,7 +85,7 @@ try {
   await evaluate(`[...document.querySelectorAll('form button.btn-primary')].filter((x) => x.getClientRects().length).at(-1).click()`);
   await waitFor(`location.pathname === '/'`);
   const tabs = await evaluate(`[...document.querySelectorAll('header nav a')].map((a) => a.textContent.trim())`);
-  check('a pharmacy has the Pharmacy tab and no Restaurant, Laundry or Appointments', tabs.includes('Pharmacy') && !tabs.includes('Restaurant') && !tabs.includes('Laundry') && !tabs.includes('Appointments'));
+  check('a pharmacy has the Pharmacy tab and no Appointments', tabs.includes('Pharmacy') && !tabs.includes('Appointments'));
   check('the band fits at 1440px', await evaluate(`(() => { const n = document.querySelector('nav[data-testid=main-nav]'); return n.scrollWidth <= n.clientWidth + 1; })()`) && (await noHorizontalScroll()));
   await go('/subscription/business');
   check('the business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=PHARMACY]').checked`));

@@ -1,9 +1,9 @@
-import { CalendarClock, ChefHat, FileText, MonitorUp, Minus, PauseCircle, Pill, Pin, Plus, ScanLine, ShieldCheck, Ticket, Trash2, UserRound } from 'lucide-react';
+import { CalendarClock, FileText, MonitorUp, Minus, PauseCircle, Pill, Pin, Plus, ScanLine, ShieldCheck, Ticket, Trash2, UserRound } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { toDec } from '@1pos/money';
-import { add, gte, isPositive, isZero, peso, sub } from '../lib/money';
+import { gte, isPositive, isZero, peso, sub } from '../lib/money';
 import { clockTime, zonedDay } from '../lib/calendar';
 import { pressIfEnabled, useShortcuts } from '../lib/shortcuts';
 import { useTill } from '../lib/till';
@@ -17,8 +17,6 @@ import { OfflineReceipt } from './Till';
 import { Callout, Empty, Field, Money, Note } from './ui';
 import { QuickKeys } from './QuickKeys';
 import { CartDiscountPanel, CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
-import { CounterChoicesPanel, useCounterMenu, type CounterItem } from './Choices';
-import { MachinePicker } from './Laundry';
 import { ApprovalPanel, DrugLine, EquivalentsPanel, linePrescriptionBody, needsRx, pharmacyErrorText, PrescriptionPanel, type DispenseApproval, type LinePrescription, type NewPrescription } from './Pharmacy';
 
 interface CartLine {
@@ -32,16 +30,10 @@ interface CartLine {
   /** Session 20: an ordinary discount (needs `sales.discount`) and a manager-approved price. */
   discount?: LineDiscount;
   override?: LineOverride;
-  /** Counter service (session 25): a menu item's choices and a note for the kitchen. */
-  choices?: { id: string; name: string; variantId: string | null }[];
-  kitchenNote?: string;
   /** ADR-0022: who did or sold it (a service staff member), and the customer's package paying for it. */
   staffId?: string;
   packageId?: string;
   packageName?: string;
-  /** ADR-0024 §7: the washer or dryer a self-service cycle runs on (online only). */
-  machineId?: string;
-  machineLabel?: string;
   /** ADR-0025: a medicine (generic label, class badge, equivalents) and the prescription the line fills. */
   drug?: DrugInfo;
   prescription?: LinePrescription;
@@ -68,30 +60,12 @@ function lineBody(l: CartLine, forQuote = false) {
     ...(l.discount?.kind === 'RATE' && { discountRate: rateOf(l.discount.percent) }),
     ...(l.discount?.kind === 'AMOUNT' && { discount: l.discount.amount }),
     ...(l.override && { priceOverrideId: l.override.id }),
-    ...(!forQuote && l.choices?.length && { choices: l.choices.map((c) => c.id) }),
-    ...(!forQuote && l.kitchenNote && { kitchenNote: l.kitchenNote }),
     ...(l.staffId && { staffId: l.staffId }),
     ...(l.packageId && { packageId: l.packageId }),
-    ...(!forQuote && l.machineId && { machineId: l.machineId }),
     ...(!forQuote && l.prescription && { prescription: linePrescriptionBody(l.prescription) }),
   };
 }
 
-/** Id of a priced choice's own line in the quote: under its item (the server prices it the same way). */
-const choiceLineId = (lineId: string, n: number) => `${lineId}.c${n + 1}`;
-
-/**
- * The cart as the server prices it (counter service): each item followed by its priced choices as
- * lines of their own, at the item's quantity, with the item's SC/PWD scheme. Free choices cost nothing.
- */
-function quoteLines(cart: CartLine[]) {
-  return cart.flatMap((l) => [
-    lineBody(l, true),
-    ...(l.choices ?? []).flatMap((c, n) => (c.variantId
-      ? [{ id: choiceLineId(l.id, n), variantId: c.variantId, quantity: l.quantity, ...(l.statutory && { statutory: { scheme: l.statutory.scheme } }) }]
-      : [])),
-  ]);
-}
 interface Beneficiary {
   ref: string;
   scheme: 'SC' | 'PWD';
@@ -130,7 +104,7 @@ const hitsOf = (ps: ProductHit[]): Hit[] =>
  * Items and prices come from the till's snapshot, priced by the same tax engine the server re-runs
  * at sync; the sale is kept on the till under this checkout's transaction id.
  */
-export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd, salon = false, ringUp = null, onRingUpTaken, lodging = false, laundry = false }: {
+export function Sell({ shift, cashierUserId, active = true, permissions = [], exchange = null, onExchangeEnd, salon = false, ringUp = null, onRingUpTaken }: {
   shift: Shift;
   cashierUserId: string;
   active?: boolean;
@@ -144,10 +118,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   /** An appointment to ring up, handed over from the Appointments tab; `onRingUpTaken` once it is read. */
   ringUp?: AppointmentRingUp | null;
   onRingUpTaken?: () => void;
-  /** A hotel, resort or hybrid business (ADR-0023): the "Charge to room" tender, online only. */
-  lodging?: boolean;
-  /** A laundry shop or hybrid business (ADR-0024): a self-service cycle asks for its machine, online only. */
-  laundry?: boolean;
 }) {
   const { t } = useT();
   const till = useTill();
@@ -174,13 +144,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   const canDangerous = canDispense && permissions.includes('pharmacy.dangerous_drugs');
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [held, setHeld] = useState<HeldCart[]>([]);
-  // Counter service (session 25): the takeaway menu's choices, the item being chosen for, the pickup name.
-  const counter = useCounterMenu(shift, offline);
-  const [choosing, setChoosing] = useState<{ item: LookupItem; menuItem: CounterItem; lineId?: string } | null>(null);
-  const [pickupName, setPickupName] = useState('');
-  // A self-service cycle waiting for its washer or dryer (ADR-0024 §7).
-  const [machineFor, setMachineFor] = useState<{ item: LookupItem; times?: string } | null>(null);
-  const hasKitchen = Boolean(counter && cart.some((l) => counter.items.has(l.variantId)));
   const [showHeld, setShowHeld] = useState(false);
   const [discountingCart, setDiscountingCart] = useState(false);
   const [holding, setHolding] = useState(false);
@@ -207,7 +170,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     () => [...new Set(cart.flatMap((l) => (l.staffId ? [l.staffId] : [])))].map((id) => ({ id, name: staffName(id) })),
     [staffKey, staff],
   );
-  const pay = usePayment({ shift, due: payable, setNotice, allowTip: !exchange, tipStaff, allowRoomCharge: lodging && !offline && !exchange });
+  const pay = usePayment({ shift, due: payable, setNotice, allowTip: !exchange, tipStaff });
 
   const loadHeld = () =>
     api<{ data: HeldCart[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`)
@@ -299,7 +262,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           if (cart.some((l) => l.statutory)) throw new OfflineRefusal(t('till.offlineSc'));
           if (cart.some((l) => l.discount || l.override)) throw new OfflineRefusal(t('till.offlineDiscount'));
           if (cart.some((l) => l.packageId)) throw new OfflineRefusal(t('pkg.onlineOnly'));
-          const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity, choices: l.choices?.map((c) => c.id), kitchenNote: l.kitchenNote, staffId: l.staffId })));
+          const r = await till.engine!.quote(cart.map((l) => ({ variantId: l.variantId, quantity: l.quantity, staffId: l.staffId })));
           if (live) {
             setQuote(offlineQuote(r, cart));
             setNotice((n) => (n?.kind === 'error' ? null : n));
@@ -308,7 +271,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         }
         const q = await api<Quote>('POST', '/v1/tax/quote', {
           branchId: shift.branch.id,
-          lines: quoteLines(cart),
+          lines: cart.map((l) => lineBody(l, true)),
         });
         if (live) {
           setQuote(q);
@@ -348,15 +311,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   }
 
   /** Add an item; `times` is a quantity typed before the scan ("5*", ADR-0021 §3). */
-  function addItem(item: LookupItem, times?: string, noMachine = false) {
+  function addItem(item: LookupItem, times?: string) {
     if (!item.price) {
       setNotice({ kind: 'warn', text: t('sell.unpriced', { name: item.name }) });
-      return;
-    }
-    // A self-service cycle online: which washer or dryer it runs on (offline it is sold without one).
-    if (laundry && !offline && !noMachine && item.laundry?.machineKind) {
-      setNotice(null);
-      setMachineFor({ item, ...(times && { times }) });
       return;
     }
     // A dangerous drug needs the pharmacist and the yellow form checked online (ADR-0025 §6): never offline.
@@ -367,17 +324,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     // A package needs the server (the customer's balance, ADR-0022 §6): the till refuses it offline.
     if (offline && item.productType === 'PACKAGE') {
       setNotice({ kind: 'warn', text: t('pkg.onlineOnlyItem', { name: item.name }) });
-      return;
-    }
-    // Counter service: a menu item the kitchen cannot make now is refused here; one with choices asks for them.
-    const menuItem = counter?.items.get(item.variantId);
-    if (menuItem && !menuItem.available) {
-      setNotice({ kind: 'warn', text: t(menuItem.soldOut ? 'counter.soldOut' : 'sell.unpriced', { name: menuItem.name }) });
-      return;
-    }
-    if (menuItem && menuItem.modifierGroups.length > 0 && !item.quantity) {
-      setNotice(null);
-      setChoosing({ item, menuItem });
       return;
     }
     setNotice(null);
@@ -399,18 +345,10 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     const med = { ...(item.drug && { drug: item.drug }), ...(sellable !== undefined && { sellable }) };
     setCart((c) => {
       // Never into a discounted or manager-priced line: the approval was for what was on it then.
-      const existing = c.find((l) => l.variantId === item.variantId && !l.machineId && !l.statutory && !l.discount && !l.override && l.wholeUnits && !l.choices?.length && !l.kitchenNote);
+      const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && !l.discount && !l.override && l.wholeUnits);
       if (existing) return c.map((l) => (l === existing ? { ...l, ...med, quantity: toDec(l.quantity).plus(n).toString() } : l));
       return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: toDec(n).toString(), wholeUnits, ...med }];
     });
-  }
-
-  /** A cycle on its machine: always its own line (one run per line), as many cycles as asked for. */
-  function addCycle(item: LookupItem, machine: { id: string; label: string }, times?: string) {
-    setMachineFor(null);
-    const n = times && toDec(times).isInteger() && toDec(times).gt(0) ? toDec(times).toString() : '1';
-    setCart((c) => [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: n, wholeUnits: true, machineId: machine.id, machineLabel: machine.label }]);
-    focusScan();
   }
 
   async function scan(e: FormEvent<HTMLFormElement>) {
@@ -481,29 +419,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     } catch (err) {
       setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
     }
-    focusScan();
-  }
-
-  /** The choices panel was applied: a new line (never merged), or the line being changed. */
-  function applyChoices(ids: string[], note: string) {
-    if (!choosing) return;
-    const options = choosing.menuItem.modifierGroups.flatMap((g) => g.options);
-    const choices = ids.map((id) => {
-      const o = options.find((x) => x.id === id)!;
-      return { id: o.id, name: o.name, variantId: o.variantId };
-    });
-    const extra = { choices, ...(note && { kitchenNote: note }) };
-    if (choosing.lineId) {
-      patchLine(choosing.lineId, (l) => {
-        const { choices: _c, kitchenNote: _n, ...rest } = l;
-        return { ...rest, ...extra };
-      });
-    } else {
-      const { item } = choosing;
-      const wholeUnits = item.soldBy === 'UNIT' && !item.uom.allowsFraction;
-      setCart((c) => [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: '1', wholeUnits, ...extra }]);
-    }
-    setChoosing(null);
     focusScan();
   }
 
@@ -582,7 +497,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         label,
         // A package session needs the customer, who is not held with the cart: the line is held without it.
         lines: cart.map((l) => {
-          const { packageId: _p, machineId: _m, prescription: _rx, ...body } = lineBody(l);
+          const { packageId: _p, prescription: _rx, ...body } = lineBody(l);
           return { ...body, name: l.name, sku: l.sku || (quote?.lines.find((q) => q.id === l.id)?.sku ?? l.variantId.slice(0, 8)), wholeUnits: l.wholeUnits };
         }),
         beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)).map(({ purchaseBooklet: _b, ...b }) => b),
@@ -597,14 +512,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     }
   }
 
-  function heldChoices(l: HeldLine) {
-    const options = counter?.items.get(l.variantId)?.modifierGroups.flatMap((g) => g.options) ?? [];
-    return (l.choices ?? []).flatMap((id) => {
-      const o = options.find((x) => x.id === id);
-      return o ? [{ id: o.id, name: o.name, variantId: o.variantId }] : [];
-    });
-  }
-
   async function resume(id: string) {
     try {
       const r = await api<{ lines: HeldLine[]; beneficiaries: Beneficiary[] }>('POST', `/v1/held-carts/${id}/resume`, { cashierSessionId: shift.sessionId });
@@ -615,10 +522,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         ...(l.discount && { discount: { kind: 'AMOUNT' as const, amount: l.discount } }),
         // The approval travels with the line; once it has expired the quote says so and it can be removed.
         ...(l.priceOverrideId && { override: { id: l.priceOverrideId, unitPrice: '', approvedByName: null } }),
-        // Counter service: the held choices (ids) get their names back from the menu served now; one
-        // no longer offered is dropped, and the quote or the server then asks for the item's choices again.
-        ...(l.choices?.length && { choices: heldChoices(l) }),
-        ...(l.kitchenNote && { kitchenNote: l.kitchenNote }),
         ...(l.staffId && { staffId: l.staffId }),
       })));
       setBeneficiaries(r.beneficiaries);
@@ -647,24 +550,18 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   async function completeOffline() {
     if (!pay.cashAmount || pay.intents.length > 0) return;
     try {
-      const { receipt: kept, kitchen } = await till.engine!.ringUp({
+      const { receipt: kept } = await till.engine!.ringUp({
         cashierUserId, terminalTxnId: pay.txId, tendered: pay.cashAmount,
         lines: cart.map((l) => ({
-          variantId: l.variantId, quantity: l.quantity, choices: l.choices?.map((c) => c.id), kitchenNote: l.kitchenNote, staffId: l.staffId,
+          variantId: l.variantId, quantity: l.quantity, staffId: l.staffId,
           ...(l.prescription?.kind === 'new' && { prescription: { prescriptionRef: l.prescription.prescriptionRef, itemRef: l.prescription.itemRef } }),
         })),
         ...(usedPrescriptions.length > 0 && { prescriptions: usedPrescriptions }),
-        ...(pickupName.trim() && { pickupName: pickupName.trim() }),
         ...(isPositive(pay.cashTip) && { tip: pay.cashTip }),
       });
       setNotice(null);
       setOfflineReceipt(kept);
       void till.refresh();
-      // Counter service offline: the kitchen gets its tickets from this till's printers.
-      if (kitchen.length && kept.callNumber) {
-        const failed = await till.printLocalKitchen(kitchen, { callNumber: kept.callNumber, pickupName: kept.pickupName }, new Date(kept.occurredAt).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: false }));
-        if (failed.length) setNotice({ kind: 'warn', text: t('counter.kitchenNotPrinted', { stations: failed.join(', '), n: String(kept.callNumber) }) });
-      }
     } catch (err) {
       setNotice({ kind: 'error', text: offlineText(err) ?? errorText(err, t('common.error'), t('common.network')) });
     }
@@ -705,7 +602,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                 // Nothing to pay (package sessions only): the sale still names a tender, cash of nothing.
                 cashierSessionId: shift.sessionId, ...body, tenders: creditTender.length || body.tenders.length ? [...creditTender, ...body.tenders] : [{ method: 'CASH' as const, tendered: '0.00' }],
                 lines, beneficiaries: used, expectedAmountDue: due, ...withCustomer,
-                ...(hasKitchen && pickupName.trim() && { pickupName: pickupName.trim() }),
                 ...(appointment && { appointmentId: appointment.id }),
               },
               { 'idempotency-key': key },
@@ -753,8 +649,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     setCart([]);
     setBeneficiaries([]);
     setPanel(null);
-    setChoosing(null);
-    setPickupName('');
     setPrescriptions([]);
     setApproval(null);
     setApproving(false);
@@ -804,12 +698,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   }
 
   const quoteLine = (id: string) => quote?.lines.find((l) => l.id === id);
-  /** What a cart line costs with its priced choices (each its own line in the quote). */
-  const lineDue = (l: CartLine) => {
-    const own = quoteLine(l.id)?.amountDue;
-    if (own === undefined) return undefined;
-    return (l.choices ?? []).reduce((a, c, n) => (c.variantId ? add(a, quoteLine(choiceLineId(l.id, n))?.amountDue ?? '0.00') : a), own);
-  };
   /** Take the customer off the sale: package sessions on the cart were theirs, so the lines go back to full price. */
   const removeCustomer = () => {
     setCustomer(null);
@@ -1000,29 +888,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         {discountingCart && !offline && <CartDiscountPanel eligible={cartDiscountLines.length} onApply={discountCart} onCancel={() => setDiscountingCart(false)} />}
         {showHeld && held.length > 0 && <HeldCartsPanel carts={held} cartEmpty={cart.length === 0} timezone={shift.branch.timezone} onResume={resume} onDiscard={discard} />}
 
-        {machineFor && (
-          <MachinePicker
-            branchId={shift.branch.id}
-            kind={machineFor.item.laundry!.machineKind!}
-            name={machineFor.item.name}
-            onPick={(m) => addCycle(machineFor.item, m, machineFor.times)}
-            onNone={() => { const f = machineFor; setMachineFor(null); addItem(f.item, f.times, true); focusScan(); }}
-            onCancel={() => { setMachineFor(null); focusScan(); }}
-          />
-        )}
-
-        {choosing && (
-          <CounterChoicesPanel
-            key={choosing.lineId ?? choosing.item.variantId}
-            item={choosing.menuItem}
-            editing={Boolean(choosing.lineId)}
-            initial={choosing.lineId ? cart.find((l) => l.id === choosing.lineId)?.choices?.map((c) => c.id) : undefined}
-            initialNote={choosing.lineId ? cart.find((l) => l.id === choosing.lineId)?.kitchenNote : undefined}
-            onApply={applyChoices}
-            onCancel={() => { setChoosing(null); focusScan(); }}
-          />
-        )}
-
         {hits && (
           <Note className="p-4">
             <h2 className="section-title mb-2">{t('sell.results')}</h2>
@@ -1042,7 +907,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           </Note>
         )}
 
-        {!choosing && <QuickKeys branchId={shift.branch.id} offline={offline} onPick={(sku) => { void addByCode(sku).then(focusScan); }} />}
+        <QuickKeys branchId={shift.branch.id} offline={offline} onPick={(sku) => { void addByCode(sku).then(focusScan); }} />
 
         <Note denom="blue" className="min-h-[240px] p-2">
           {cart.length === 0 ? (
@@ -1075,22 +940,10 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                             </span>
                           </p>
                         )}
-                        {l.machineId && (
-                          <p className="mt-1 text-[0.8125rem]" data-testid="line-machine"><span className="chip bg-blue">{t('laundry.onMachineLabel', { machine: l.machineLabel ?? '' })}</span></p>
-                        )}
                         {l.packageId && (
                           <p className="mt-1 flex flex-wrap items-center gap-2 text-[0.8125rem]" data-testid="line-package">
                             <span className="chip bg-green">{t('pkg.fromPackage', { name: l.packageName ?? '' })}</span>
                             <button type="button" className="btn btn-sm" onClick={() => dropPackage(l.id)}>{t('pkg.stop')}</button>
-                          </p>
-                        )}
-                        {(l.choices?.length || l.kitchenNote) && (
-                          <p className="mt-1 text-[0.875rem]" data-testid="line-choices">
-                            {l.choices?.map((c, n) => {
-                              const cq = c.variantId ? quoteLine(choiceLineId(l.id, n)) : undefined;
-                              return <span key={c.id} className="mr-2">{c.name}{cq && <span className="money text-muted"> +<Money value={cq.amountDue} /></span>}</span>;
-                            })}
-                            {l.kitchenNote && <span className="italic text-muted">“{l.kitchenNote}”</span>}
                           </p>
                         )}
                         {q?.promotionName && q.discount && isPositive(q.discount) && (
@@ -1202,21 +1055,13 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
                             {l.override ? t('price.undo') : t('price.button')}
                           </button>
                         )}
-                        {counter?.items.get(l.variantId) && (
-                          <button className="btn btn-sm" aria-label={t('counter.changeChoices', { name: l.name })} onClick={() => {
-                            const menuItem = counter.items.get(l.variantId)!;
-                            setChoosing({ item: { variantId: l.variantId, sku: l.sku, name: l.name, soldBy: 'UNIT', uom: { code: '', allowsFraction: !l.wholeUnits }, price: { amount: q?.unitPrice ?? '0' } }, menuItem, lineId: l.id });
-                          }}>
-                            <ChefHat className="size-4" aria-hidden /> {t('counter.choices')}
-                          </button>
-                        )}
                         {/* Kept apart from the other row controls: one mis-tap must not drop a line. */}
                         <button className="btn btn-sm btn-danger ml-3" aria-label={t('sell.remove')} onClick={() => remove(l.id)}>
                           <Trash2 className="size-4" aria-hidden />
                         </button>
                       </div>
                       <div className="text-right">
-                        <Money value={lineDue(l)} className="text-[1.0625rem] font-semibold" />
+                        <Money value={q?.amountDue} className="text-[1.0625rem] font-semibold" />
                         {q && (isPositive(q.statutoryDiscount) || (q.discount !== undefined && isPositive(q.discount))) && (
                           <p className="money text-[0.75rem] text-muted line-through">
                             <Money value={q.gross} />
@@ -1316,12 +1161,6 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           {quote?.requiresProfessionalReview && <div className="mt-3"><Callout kind="warn">{t('sell.pendingReview')}</Callout></div>}
         </Note>
 
-        {hasKitchen && (
-          <Note className="no-print grid gap-1 p-4">
-            <Field id="pickupName" label={t('counter.pickupName')} hint={t('counter.pickupHint')} value={pickupName} maxLength={60} autoComplete="off" onChange={(e) => setPickupName(e.target.value)} />
-          </Note>
-        )}
-
         {packageNeedsCustomer && <Callout kind="warn">{t('pkg.needsCustomer')}</Callout>}
         {rxMissing.length > 0 && <div data-testid="rx-missing"><Callout kind="warn">{t('rx.needed', { names: rxMissing.map((l) => l.name).join(', ') })}</Callout></div>}
         {approval && rxLines.length > 0 && (
@@ -1385,39 +1224,21 @@ interface HeldLine {
   discountRate?: string;
   discount?: string;
   priceOverrideId?: string;
-  choices?: string[];
-  kitchenNote?: string;
   staffId?: string;
 }
 
 /** A refusal the till makes itself, before pricing (e.g. a discount while offline). */
 class OfflineRefusal extends Error {}
 
-/**
- * The till's offline pricing in the shape of the server's quote. Lines come back in cart order, each
- * item followed by its priced choices (`parentIndex`), which take the ids the online quote gives them.
- */
+/** The till's offline pricing in the shape of the server's quote; lines come back in cart order. */
 function offlineQuote(r: Awaited<ReturnType<OfflineEngine['quote']>>, cart: CartLine[]): Quote {
-  // Walk the priced lines: an item moves to the next cart line, a priced choice to that line's next one.
-  let k = -1;
-  let m = 0;
-  const owners = r.lines.map((_, i) => {
-    if (r.parentIndex[i] === null) {
-      k += 1;
-      m = 0;
-      return { line: cart[k]!, id: cart[k]!.id };
-    }
-    const line = cart[k]!;
-    const priced = (line.choices ?? []).flatMap((c, n) => (c.variantId ? [n] : []));
-    return { line, id: choiceLineId(line.id, priced[m++]!) };
-  });
   return {
     taxProfile: { vatStatus: r.taxProfile.vatStatus, vatRate: r.taxProfile.vatRate },
     totals: r.totals,
     requiresProfessionalReview: false,
     lines: r.lines.map((l, i) => ({
-      id: owners[i]!.id, variantId: r.items[i]!.variantId, sku: r.items[i]!.sku, name: r.items[i]!.name, unitPrice: r.items[i]!.unitPrice,
-      quantity: owners[i]!.line.quantity, gross: l.gross, statutoryDiscount: l.statutoryDiscount, amountDue: l.amountDue, vatTreatment: r.items[i]!.vatTreatment,
+      id: cart[i]!.id, variantId: r.items[i]!.variantId, sku: r.items[i]!.sku, name: r.items[i]!.name, unitPrice: r.items[i]!.unitPrice,
+      quantity: cart[i]!.quantity, gross: l.gross, statutoryDiscount: l.statutoryDiscount, amountDue: l.amountDue, vatTreatment: r.items[i]!.vatTreatment,
       // Promotions run offline too, from the snapshot (ADR-0021).
       discount: l.discount, promotionId: r.promotions[i]!.promotionId, ...(r.promotionNames[i] && { promotionName: r.promotionNames[i]! }),
     })),

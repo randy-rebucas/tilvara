@@ -178,7 +178,7 @@ export type NegativeStockPolicy = (typeof NEGATIVE_STOCK_POLICIES)[number];
 /**
  * Per branch (a missing row = the defaults). Negative stock: ALLOW (sell below zero, visible on the
  * balance), ALLOW_WITH_FLAG (also mark it and alert), BLOCK (a counter sale that would go below zero
- * is refused; restaurant checks and offline sales cannot be refused, so they are flagged).
+ * is refused; offline sales cannot be refused, so they are flagged).
  */
 export const inventorySettings = pgTable(
   'inventory_settings',

@@ -10,7 +10,7 @@
 // Usage: node apps/pos-desktop/e2e/salon.mjs [posUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
 import { checklist, openBrowser, sleep } from '../../admin-web/e2e/cdp.mjs';
-import { client, PASSWORD } from './restaurant.mjs';
+import { client, PASSWORD } from './api.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';
@@ -97,7 +97,7 @@ try {
   await waitFor(`document.getElementById('scan')`);
 
   // ---- the appointment book ----
-  check('a salon has an Appointments tab and no Tables tab', await ok(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Appointments')`) && !(await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Tables')`)));
+  check('a salon has an Appointments tab', await ok(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent.trim() === 'Appointments')`));
   await tab('Appointments');
   check('the day shows a column per staff member', await ok(`document.querySelector('[data-testid=day-view]')?.innerText.includes('Ana Reyes') && document.querySelector('[data-testid=day-view]').innerText.includes('Ben Lim')`));
   // Tomorrow, so every working hour is still ahead whatever the time of the run.

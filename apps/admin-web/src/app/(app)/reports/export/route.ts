@@ -4,7 +4,7 @@ import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
 import { reportPath, reportRows, toCsv, type CsvReport } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
 
-const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'items', 'usage', 'voids', 'prep', 'open', 'charge', 'tips', 'category', 'branches', 'discounts', 'purchases', 'payments', 'promotions', 'attributes', 'commissions', 'servicePackages', 'staffTips', 'occupancy', 'guestLedger', 'accommodationTax', 'jobOrders', 'machineUsage', 'jobDeposits', 'deliveries', 'prescriptionBook', 'dangerousDrugs'];
+const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'usage', 'tips', 'category', 'branches', 'discounts', 'purchases', 'payments', 'promotions', 'attributes', 'commissions', 'servicePackages', 'staffTips', 'prescriptionBook', 'dangerousDrugs'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -24,11 +24,7 @@ export async function GET(request: NextRequest) {
 
   // Sales by size and colour: the attribute ("Size") the report totals by; the API checks it.
   const attribute = (q.get('attribute') ?? '').trim().slice(0, 50) || undefined;
-  // The guest ledger and the job order down payments are per legal entity (the branch's, sent by its page); the API checks access to it.
-  const entity = q.get('entity') ?? '';
-  const perEntity = report === 'guestLedger' || report === 'jobDeposits';
-  if (perEntity && !UUID.test(entity)) return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Unknown report' } }, { status: 404 });
-  const range = { branchId, from: pick('from'), to: pick('to'), day: pick('day'), attribute, ...(perEntity && { legalEntityId: entity }) };
+  const range = { branchId, from: pick('from'), to: pick('to'), attribute };
   const res = await fetch(`${API_URL}${reportPath(report, range)}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -37,7 +33,7 @@ export async function GET(request: NextRequest) {
   const lang = request.cookies.get(LANG_COOKIE)?.value === 'fil' ? 'fil' : 'en';
   const t = (key: MessageKey, vars?: Record<string, string | number>) => translate(lang, key, vars);
   const csv = toCsv(reportRows(report, await res.json(), t));
-  const span = perEntity ? today : report === 'open' ? range.day : range.from === range.to ? range.from : `${range.from}_${range.to}`;
+  const span = range.from === range.to ? range.from : `${range.from}_${range.to}`;
   return new NextResponse(csv, {
     headers: {
       'content-type': 'text/csv; charset=utf-8',

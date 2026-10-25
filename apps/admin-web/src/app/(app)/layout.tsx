@@ -32,12 +32,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </a>
           {/* Below lg the tabs move to their own scrollable row under the band's first line. */}
           <div className="nav-fade order-last -mx-4 w-[calc(100%+2rem)] border-t border-white/15 px-3 py-1.5 sm:-mx-7 sm:w-[calc(100%+3.5rem)] sm:px-6 lg:order-none lg:mx-0 lg:w-auto lg:min-w-0 lg:border-0 lg:p-0">
-            <AppNav permissions={me.activeTenant.permissions} businessType={me.activeTenant.businessType} features={me.activeTenant.features} />
+            <AppNav permissions={me.activeTenant.permissions} businessType={me.activeTenant.businessType} />
           </div>
           {/* Below lg it shares the wordmark's line and shrinks (the names truncate) rather than wrapping. */}
           <div className="ml-auto flex min-w-0 flex-1 basis-0 items-center justify-end gap-3 sm:gap-4 lg:flex-none lg:basis-auto">
             <LangSwitch onBand />
-            <UserMenu tenantName={tenantName} userName={me.user.displayName} multiple={me.memberships.length > 1} businessType={me.activeTenant.businessType} features={me.activeTenant.features} />
+            <UserMenu tenantName={tenantName} userName={me.user.displayName} multiple={me.memberships.length > 1} businessType={me.activeTenant.businessType} />
           </div>
         </div>
       </header>

@@ -16,7 +16,8 @@ let app: INestApplication;
 let owner: pg.Pool;
 let runtime: pg.Pool;
 const http = () => request(app.getHttpServer());
-const RESTAURANT_REPORTS = ['item-performance', 'ingredient-usage', 'kitchen-voids', 'prep-times', 'service-charge'] as const;
+/** Salon reports that read any business's sales (tips, supplies used). */
+const SALON_SALES_REPORTS = ['tips', 'ingredient-usage'] as const;
 /** Today in Manila (the branches' timezone). */
 const today = () => new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
 
@@ -78,21 +79,6 @@ interface World {
   journalEntryId: string;
   cashAccountId: string;
   dishId: string;
-  stationId: string;
-  areaId: string;
-  tableId: string;
-  modifierGroupId: string;
-  modifierOptionId: string;
-  menuId: string;
-  draftVersionId: string;
-  orderId: string;
-  pendingItemId: string;
-  firedItemId: string;
-  ticketId: string;
-  billId: string;
-  checkSaleId: string;
-  liveOrderId: string;
-  liveItemId: string;
   terminalHeaders: Record<string, string>;
   snapshotId: string;
   offlineTxnId: string;
@@ -105,18 +91,6 @@ interface World {
   bundleId: string;
   customerPackageId: string;
   noteId: string;
-  roomTypeId: string;
-  roomId: string;
-  roomBlockId: string;
-  stayId: string;
-  folioId: string;
-  guestId: string;
-  beneficiaryId: string;
-  garmentTypeId: string;
-  machineId: string;
-  machineRunId: string;
-  jobOrderId: string;
-  tripId: string;
   amoxId: string;
   prescriptionId: string;
   prescriptionItemId: string;
@@ -192,7 +166,7 @@ async function world(prefix: string): Promise<World> {
       .set('Idempotency-Key', randomUUID())
       .send({ cashierSessionId: openSession.id, kind: 'RETURN', reason: 'Fixture return', lines: [{ saleLineId: soldLines[0]!.id, quantity: '1', disposition: 'DAMAGED' }] }),
   );
-  // Phase 4: a dish made from Cola (recipe v1), sold once, so its consumption is in the ledger.
+  // Phase 4 / ADR-0022 §9: a service that uses up Cola (recipe v1), sold once, so its consumption is in the ledger.
   const dish = ok<{ variants: { id: string }[] }>(
     await http().post('/v1/products').set(auth).send({ name: 'Float', taxCategoryId: taxId, uomId, trackInventory: false, variants: [{ sku: uniq('DISH'), price: '60.00' }] }),
   );
@@ -203,13 +177,13 @@ async function world(prefix: string): Promise<World> {
     await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
       .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), lines: [{ variantId: dishId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }], tip: { amount: '5.00' } }),
   );
-  // Session 25: a dish with a card tip, voided: the tip's charge is cancelled (sale_tip_refunds).
+  // Session 25: the service with a card tip, voided: the tip's charge is cancelled (sale_tip_refunds).
   const tipTxn = randomUUID();
   const tipCharge = ok<{ id: string }>(await http().post('/v1/payment-intents').set(auth).set('Idempotency-Key', randomUUID())
     .send({ cashierSessionId: openSession.id, clientTransactionId: tipTxn, method: 'CARD', amount: '7.00', purpose: 'TIP' }));
   const tipped = ok<{ id: string }>(await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
     .send({ cashierSessionId: openSession.id, clientTransactionId: tipTxn, lines: [{ variantId: dishId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }], tip: { amount: '7.00', paymentIntentId: tipCharge.id } }));
-  ok(await http().post(`/v1/sales/${tipped.id}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: openSession.id, kind: 'VOID', reason: 'Wrong table' }));
+  ok(await http().post(`/v1/sales/${tipped.id}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: openSession.id, kind: 'VOID', reason: 'Rung up twice' }));
   const payment = ok(
     await http()
       .post('/v1/payment-intents')
@@ -269,47 +243,6 @@ async function world(prefix: string): Promise<World> {
   // Phase 3 slice 4: the books every document above posted to (chart seeded with the entity).
   const accounts = ok<{ data: { id: string; systemKey: string }[] }>(await http().get('/v1/accounts').query({ legalEntityId: entity.id }).set(auth), 200).data;
   const entries = ok<{ data: { id: string }[] }>(await http().get('/v1/journal-entries').query({ legalEntityId: entity.id, sourceType: 'SALE' }).set(auth), 200).data;
-  // Phase 4 slice 2: station, floor, modifiers, a published menu with a new draft, settings and an 86.
-  const station = ok(await http().post('/v1/kitchen-stations').set(auth).send({ branchId: branch.id, code: 'GRILL', name: 'Grill', isDefault: true }));
-  const area = ok(await http().post('/v1/dining-areas').set(auth).send({ branchId: branch.id, name: 'Hall' }));
-  const table = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T1' }));
-  const group = ok<{ id: string; options: { id: string }[] }>(
-    await http().post('/v1/modifier-groups').set(auth).send({ name: 'Extras', options: [{ name: 'Extra', variantId: dishId }, { name: 'Plain' }] }),
-  );
-  const menu = ok<{ id: string; draft: { id: string } }>(await http().post('/v1/menus').set(auth).send({ name: 'All day' }));
-  ok(await http().put(`/v1/menu-versions/${menu.draft.id}/content`).set(auth).send({ sections: [{ name: 'Mains', items: [{ variantId: dishId, stationCode: 'GRILL', modifierGroupIds: [group.id] }] }] }), 200);
-  ok(await http().post(`/v1/menu-versions/${menu.draft.id}/publish`).set(auth), 200);
-  const draftVersion = ok(await http().post(`/v1/menus/${menu.id}/drafts`).set(auth));
-  ok(await http().put(`/v1/branches/${branch.id}/restaurant-settings`).set(auth).send({ dineInMenuId: menu.id, takeawayMenuId: null, serviceChargeRate: '0.10', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' }), 200);
-  ok(await http().put(`/v1/branches/${branch.id}/sold-out`).set(auth).send({ variantId, soldOut: true }), 200);
-  // Phase 4 slice 3: an order on T1 with one fired item (a kitchen ticket) and one pending item.
-  const order = ok<{ id: string }>(await http().post('/v1/restaurant/orders').set(auth).send({ branchId: branch.id, orderType: 'DINE_IN', tableId: table.id }));
-  ok(await http().post(`/v1/restaurant/orders/${order.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1', modifierOptionIds: [group.options[0]!.id] }] }));
-  const fired = ok<{ items: { id: string }[]; tickets: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${order.id}/fire`).set(auth).send({}), 200);
-  const withPending = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${order.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
-  // Phase 4 slice 4: billed with an SC diner and the service charge, paid in one check, part returned.
-  ok(await http().post(`/v1/restaurant/orders/${order.id}/fire`).set(auth).send({}), 200);
-  const bill = ok<{ id: string }>(
-    await http().post(`/v1/restaurant/orders/${order.id}/bill`).set(auth).set('Idempotency-Key', randomUUID())
-      .send({ beneficiaries: [{ ref: 'b1', scheme: 'SC', name: 'Lolo', idNumber: 'OSCA-2' }], statutory: [{ orderItemId: withPending.items[1]!.id, beneficiary: 'b1' }] }),
-  );
-  const checkSale = ok<{ id: string; lines: { id: string }[] }>(
-    await http().post(`/v1/restaurant/bills/${bill.id}/checks`).set(auth).set('Idempotency-Key', randomUUID())
-      .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] }),
-  );
-  ok(
-    await http().post(`/v1/sales/${checkSale.id}/returns`).set(auth).set('Idempotency-Key', randomUUID())
-      .send({ cashierSessionId: openSession.id, kind: 'RETURN', reason: 'Fixture', lines: [{ saleLineId: checkSale.lines[0]!.id, quantity: '1', disposition: 'DAMAGED' }] }),
-  );
-  // A second, still-open order (T2) for the move/transfer probes.
-  const table2 = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T2' }));
-  const liveOrder = ok<{ id: string }>(await http().post('/v1/restaurant/orders').set(auth).send({ branchId: branch.id, orderType: 'DINE_IN', tableId: table2.id }));
-  const liveItems = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${liveOrder.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
-  // Session 16: a course note on the live order, and an item moved from it to a new order on T3 (its move history).
-  ok(await http().put(`/v1/restaurant/orders/${liveOrder.id}/course-notes`).set(auth).send({ course: 1, note: 'Fixture note' }), 200);
-  const extra = ok<{ items: { id: string }[] }>(await http().post(`/v1/restaurant/orders/${liveOrder.id}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: dishId, quantity: '1' }] }));
-  const table3 = ok(await http().post('/v1/restaurant-tables').set(auth).send({ areaId: area.id, code: 'T3' }));
-  ok(await http().post(`/v1/restaurant/orders/${liveOrder.id}/move-items`).set(auth).send({ itemIds: [extra.items[1]!.id], toTableId: table3.id }), 200);
   // Phase 5: the terminal takes a snapshot and delivers two offline sales: one recorded, one quarantined (wrong total).
   const terminalHeaders = { 'x-terminal-id': terminal.terminal.id, Authorization: `Terminal ${terminal.credential}` };
   const snap = ok<{ snapshotId: string }>(await http().get('/v1/terminal/snapshot').set(terminalHeaders), 200);
@@ -376,54 +309,6 @@ async function world(prefix: string): Promise<World> {
     .send({ cashierSessionId: openSession.id, kind: 'RETURN', reason: 'Fixture redo', lines: [{ saleLineId: session.lines[0]!.id, quantity: '1', disposition: 'RESTOCK' }] }));
   const appointment = ok(await http().post('/v1/appointments').set(auth).send({ branchId: branch.id, guestName: 'Fixture guest', outsideHours: true, services: [{ variantId: wrapId, staffId: stylist.id, startsAt: '2031-01-04T10:00:00+08:00' }] }));
   const note = ok(await http().post(`/v1/customers/${customer.id}/notes`).set(auth).send({ body: 'Fixture note', pinned: true }));
-  // Session 28 (ADR-0023): a room type and rooms (one blocked, one cleaned), lodging settings, an in-house
-  // stay with its registry, an SC guest, a cash deposit applied, its nights, a dinner charged to the room
-  // and a cash payment on the folio.
-  const roomType = ok<{ id: string; nightVariantId: string }>(await http().post('/v1/room-types').set(auth).set('Idempotency-Key', randomUUID()).send({ code: 'STD', name: 'Standard', rackRate: '2800.00' }));
-  ok(await http().post(`/v1/price-lists/${priceList.id}/prices`).set(auth).send({ items: [{ variantId: roomType.nightVariantId, amount: '2800.00' }] }));
-  const room = ok(await http().post('/v1/rooms').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch.id, roomTypeId: roomType.id, number: '101' }));
-  const room2 = ok(await http().post('/v1/rooms').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch.id, roomTypeId: roomType.id, number: '102' }));
-  const roomBlock = ok(await http().post('/v1/room-blocks').set(auth).set('Idempotency-Key', randomUUID()).send({ roomId: room2.id, startsOn: '2031-05-01', endsOn: '2031-05-03', reason: 'Fixture repair' }));
-  ok(await http().post(`/v1/rooms/${room.id}/status`).set(auth).send({ status: 'INSPECTED' }), 200);
-  ok(await http().patch(`/v1/branches/${branch.id}/lodging-settings`).set(auth).send({ nightAuditTime: '00:00', accommodationTaxRate: '0.01' }), 200);
-  const yesterday = new Date(Date.parse(today()) - 86_400_000).toISOString().slice(0, 10);
-  const tomorrow = new Date(Date.parse(today()) + 86_400_000).toISOString().slice(0, 10);
-  const stay = ok<{ id: string; guests: { id: string }[] }>(await http().post('/v1/stays').set(auth).set('Idempotency-Key', randomUUID())
-    .send({ branchId: branch.id, roomId: room.id, arrivalDate: yesterday, departureDate: tomorrow, adults: 2, guests: [{ fullName: `${prefix} Guest`, idNumber: 'P-1' }] }));
-  const beneficiary = ok(await http().post(`/v1/stays/${stay.id}/beneficiaries`).set(auth).send({ scheme: 'SC', name: 'Fixture Lola', idNumber: 'OSCA-9' }));
-  ok(await http().post(`/v1/stays/${stay.id}/deposits`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: openSession.id, amount: '100.00' }));
-  ok(await http().post(`/v1/stays/${stay.id}/check-in`).set(auth).send({}), 200);
-  ok(await http().post('/v1/lodging/night-audit').set(auth).send({ branchId: branch.id }), 200);
-  const stayFolio = ok<{ id: string }>(await http().get(`/v1/stays/${stay.id}/folio`).set(auth), 200);
-  ok(await http().post(`/v1/stays/${stay.id}/deposits/apply`).set(auth).set('Idempotency-Key', randomUUID()).send({}), 200);
-  ok(await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
-    .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), lines: [{ variantId, quantity: '1' }], tenders: [{ method: 'ROOM_CHARGE', stayId: stay.id }] }));
-  ok(await http().post(`/v1/folios/${stayFolio.id}/payments`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: openSession.id, tendered: '50.00' }));
-  // Session 29 (ADR-0024): laundry settings, a garment type, a washer, a per-load service and a
-  // self-service cycle sold on the washer, a job order with items, a cash down payment, its delivery
-  // trip and a load on the washer (stopped), made ready (its notice queued).
-  const laundryService = ok<{ variants: { id: string }[] }>(await http().post('/v1/products').set(auth)
-    .send({ name: 'Wash per load', uomId, taxCategoryId: taxId, productType: 'SERVICE', variants: [{ sku: `${prefix}-WASH`, price: '70.00', laundryUnit: 'LOAD', laundryKgPerLoad: '8' }] })).variants[0]!.id;
-  const cycle = ok<{ variants: { id: string }[] }>(await http().post('/v1/products').set(auth)
-    .send({ name: 'Self wash', uomId, taxCategoryId: taxId, productType: 'SERVICE', variants: [{ sku: `${prefix}-CYC`, price: '60.00', machineKind: 'WASHER', machineMinutes: 30 }] })).variants[0]!.id;
-  const deliveryFee = ok<{ variants: { id: string }[] }>(await http().post('/v1/products').set(auth)
-    .send({ name: 'Delivery', uomId, taxCategoryId: taxId, productType: 'SERVICE', variants: [{ sku: `${prefix}-DLV`, price: '50.00' }] })).variants[0]!.id;
-  ok(await http().post(`/v1/price-lists/${priceList.id}/prices`).set(auth).send({ items: [{ variantId: laundryService, amount: '70.00' }, { variantId: cycle, amount: '60.00' }, { variantId: deliveryFee, amount: '50.00' }] }));
-  ok(await http().patch(`/v1/branches/${branch.id}/laundry-settings`).set(auth).send({ deliveryVariantId: deliveryFee, claimPolicyText: 'Fixture policy' }), 200);
-  const garmentType = ok(await http().post('/v1/laundry/garment-types').set(auth).set('Idempotency-Key', randomUUID()).send({ name: 'Shirts' }));
-  const machine = ok(await http().post('/v1/laundry/machines').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: branch.id, kind: 'WASHER', label: 'W1', cycleMinutes: 30 }));
-  const cycleSale = ok<{ id: string }>(await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
-    .send({ cashierSessionId: openSession.id, clientTransactionId: randomUUID(), lines: [{ variantId: cycle, quantity: '1', machineId: machine.id }], tenders: [{ method: 'CASH', tendered: '60.00' }] }));
-  const [selfRun] = await asOwnerInTenant(owner, t.tenantId, async (c) => (await c.query<{ id: string }>('SELECT id FROM machine_runs WHERE sale_id = $1', [cycleSale.id])).rows);
-  ok(await http().post(`/v1/machine-runs/${selfRun!.id}/stop`).set(auth), 200);
-  const job = ok<{ id: string; trips: { id: string }[] }>(await http().post('/v1/job-orders').set(auth).set('Idempotency-Key', randomUUID()).send({
-    branchId: branch.id, customerId: customer.id, lines: [{ variantId: laundryService, quantity: '2' }], items: [{ garmentTypeId: garmentType.id, count: 3 }],
-    delivery: { address: 'Fixture St', contactPhone: '09171112222' },
-  }));
-  ok(await http().post(`/v1/job-orders/${job.id}/deposits`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: openSession.id, amount: '20.00' }));
-  const load = ok(await http().post(`/v1/job-orders/${job.id}/machine-runs`).set(auth).send({ machineId: machine.id }));
-  ok(await http().post(`/v1/machine-runs/${load.id}/stop`).set(auth), 200);
-  ok(await http().post(`/v1/job-orders/${job.id}/status`).set(auth).send({ status: 'READY' }), 200);
   // Session 30 (ADR-0025): pharmacy settings, the member's pharmacist licence, an antibiotic with a dated
   // lot, a sale filling a prescription recorded with it, a pharmacist's approval (not used) and a lot hold.
   ok(await http().put('/v1/pharmacy/settings').set(auth).send({ requirePurchaseBooklet: true }), 200);
@@ -448,6 +333,16 @@ async function world(prefix: string): Promise<World> {
   // Session 20: a price approved for the item (not used), and a cart held on the open shift.
   const override = ok(await http().post('/v1/price-overrides').set(auth).send({ branchId: branch.id, variantId, unitPrice: '19.00', quantity: '1', reason: 'Fixture' }));
   const held = ok(await http().post('/v1/held-carts').set(auth).send({ cashierSessionId: openSession.id, label: 'Fixture', lines: [{ variantId, sku: 'X', name: 'Cola', quantity: '1' }] }));
+  // Restaurant checks made sale_charges (and their returns sale_return_charges) until 0111; nothing creates them
+  // now, so the fixture writes a zero service charge on the first sale and its return, as the schema owner.
+  await asOwnerInTenant(owner, t.tenantId, async (c) => {
+    const zero = `0, 0, 0, 0, 0, 0, 0, 0, 0, 0`;
+    const buckets = 'gross, discount, statutory_discount, vat_exemption_amount, vatable_sales, vat_amount, vat_exempt_sales, zero_rated_sales, percentage_tax_sales, amount_due';
+    const { rows: [charge] } = await c.query<{ id: string }>(
+      `INSERT INTO sale_charges (tenant_id, sale_id, kind, base, rate, vat_treatment, tax_snapshot, ${buckets})
+       VALUES ($1, $2, 'SERVICE_CHARGE', 0, 0, 'VATABLE', '{}'::jsonb, ${zero}) RETURNING id`, [t.tenantId, sold.id]);
+    await c.query(`INSERT INTO sale_return_charges (tenant_id, sale_return_id, sale_charge_id, ${buckets}) VALUES ($1, $2, $3, ${zero})`, [t.tenantId, saleReturn.id, charge!.id]);
+  });
   // Phase 6 slice 6: support access and a data export request (the worker does not run here).
   const grant = ok(await http().post('/v1/support-access').set(auth).send({ purpose: 'Fixture support access', hours: 2 }));
   const dataExport = ok(await http().post('/v1/data-exports').set(auth), 202);
@@ -509,21 +404,6 @@ async function world(prefix: string): Promise<World> {
     journalEntryId: entries[0]!.id,
     cashAccountId: accounts.find((x) => x.systemKey === 'CASH_ON_HAND')!.id,
     dishId,
-    stationId: station.id,
-    areaId: area.id,
-    tableId: table.id,
-    modifierGroupId: group.id,
-    modifierOptionId: group.options[1]!.id,
-    menuId: menu.id,
-    draftVersionId: draftVersion.id,
-    orderId: order.id,
-    firedItemId: fired.items[0]!.id,
-    pendingItemId: withPending.items[1]!.id,
-    ticketId: fired.tickets[0]!.id,
-    billId: bill.id,
-    checkSaleId: checkSale.id,
-    liveOrderId: liveOrder.id,
-    liveItemId: liveItems.items[0]!.id,
     terminalHeaders,
     snapshotId: snap.snapshotId,
     offlineTxnId: quarantined.id,
@@ -536,18 +416,6 @@ async function world(prefix: string): Promise<World> {
     bundleId,
     customerPackageId,
     noteId: note.id,
-    roomTypeId: roomType.id,
-    roomId: room.id,
-    roomBlockId: roomBlock.id,
-    stayId: stay.id,
-    folioId: stayFolio.id,
-    guestId: stay.guests[0]!.id,
-    beneficiaryId: beneficiary.id,
-    garmentTypeId: garmentType.id,
-    machineId: machine.id,
-    machineRunId: load.id,
-    jobOrderId: job.id,
-    tripId: job.trips[0]!.id,
     amoxId: amox,
     prescriptionId: rx!.id,
     prescriptionItemId: rx!.item_id,
@@ -700,55 +568,6 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
     'GET /v1/variants/:id/recipe': () => http().get(`/v1/variants/${a.dishId}/recipe`).set(auth),
     'POST /v1/variants/:id/recipe': () => http().post(`/v1/variants/${a.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: b.variantId, quantity: '1' }] }),
-    'PATCH /v1/kitchen-stations/:id': () => http().patch(`/v1/kitchen-stations/${a.stationId}`).set(auth).send({ name: 'pwned' }),
-    'POST /v1/kitchen-stations/:id/archive': () => http().post(`/v1/kitchen-stations/${a.stationId}/archive`).set(auth),
-    'PATCH /v1/dining-areas/:id': () => http().patch(`/v1/dining-areas/${a.areaId}`).set(auth).send({ name: 'pwned' }),
-    'POST /v1/dining-areas/:id/archive': () => http().post(`/v1/dining-areas/${a.areaId}/archive`).set(auth),
-    'PATCH /v1/restaurant-tables/:id': () => http().patch(`/v1/restaurant-tables/${a.tableId}`).set(auth).send({ seats: 99 }),
-    'POST /v1/restaurant-tables/:id/archive': () => http().post(`/v1/restaurant-tables/${a.tableId}/archive`).set(auth),
-    'GET /v1/branches/:id/restaurant-settings': () => http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(auth),
-    'PUT /v1/branches/:id/restaurant-settings': () =>
-      http().put(`/v1/branches/${a.branchId}/restaurant-settings`).set(auth).send({ dineInMenuId: null, takeawayMenuId: null, serviceChargeRate: '0', serviceChargeDineIn: false, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' }),
-    'GET /v1/branches/:id/sold-out': () => http().get(`/v1/branches/${a.branchId}/sold-out`).set(auth),
-    'PUT /v1/branches/:id/sold-out': () => http().put(`/v1/branches/${a.branchId}/sold-out`).set(auth).send({ variantId: b.variantId, soldOut: true }),
-    'GET /v1/branches/:id/menu': () => http().get(`/v1/branches/${a.branchId}/menu`).set(auth),
-    'PATCH /v1/modifier-groups/:id': () => http().patch(`/v1/modifier-groups/${a.modifierGroupId}`).set(auth).send({ name: 'pwned' }),
-    'POST /v1/modifier-groups/:id/options': () => http().post(`/v1/modifier-groups/${a.modifierGroupId}/options`).set(auth).send({ name: 'pwned' }),
-    'POST /v1/modifier-groups/:id/archive': () => http().post(`/v1/modifier-groups/${a.modifierGroupId}/archive`).set(auth),
-    'POST /v1/modifier-options/:id/archive': () => http().post(`/v1/modifier-options/${a.modifierOptionId}/archive`).set(auth),
-    'GET /v1/menus/:id': () => http().get(`/v1/menus/${a.menuId}`).set(auth),
-    'PATCH /v1/menus/:id': () => http().patch(`/v1/menus/${a.menuId}`).set(auth).send({ name: 'pwned' }),
-    'POST /v1/menus/:id/archive': () => http().post(`/v1/menus/${a.menuId}/archive`).set(auth),
-    'POST /v1/menus/:id/drafts': () => http().post(`/v1/menus/${a.menuId}/drafts`).set(auth),
-    'GET /v1/menu-versions/:id': () => http().get(`/v1/menu-versions/${a.draftVersionId}`).set(auth),
-    'PUT /v1/menu-versions/:id/content': () => http().put(`/v1/menu-versions/${a.draftVersionId}/content`).set(auth).send({ sections: [] }),
-    'POST /v1/menu-versions/:id/publish': () => http().post(`/v1/menu-versions/${a.draftVersionId}/publish`).set(auth),
-    'GET /v1/restaurant/orders/:id': () => http().get(`/v1/restaurant/orders/${a.orderId}`).set(auth),
-    'POST /v1/restaurant/orders/:id/items': () =>
-      http().post(`/v1/restaurant/orders/${a.orderId}/items`).set(auth).set('Idempotency-Key', randomUUID()).send({ items: [{ variantId: b.dishId, quantity: '1' }] }),
-    'POST /v1/restaurant/orders/:id/fire': () => http().post(`/v1/restaurant/orders/${a.orderId}/fire`).set(auth).send({}),
-    'PUT /v1/restaurant/orders/:id/course-notes': () => http().put(`/v1/restaurant/orders/${a.liveOrderId}/course-notes`).set(auth).send({ course: 1, note: 'pwned' }),
-    'POST /v1/restaurant/orders/:id/transfer': () => http().post(`/v1/restaurant/orders/${a.orderId}/transfer`).set(auth).send({ tableId: b.tableId }),
-    'POST /v1/restaurant/orders/:id/merge': () => http().post(`/v1/restaurant/orders/${a.orderId}/merge`).set(auth).send({ intoOrderId: b.orderId }),
-    'POST /v1/restaurant/orders/:id/move-items': () => http().post(`/v1/restaurant/orders/${a.orderId}/move-items`).set(auth).send({ itemIds: [a.firedItemId], toOrderId: b.orderId }),
-    'POST /v1/restaurant/orders/:id/cancel': () => http().post(`/v1/restaurant/orders/${a.orderId}/cancel`).set(auth).send({ reason: 'sabotage' }),
-    'PATCH /v1/order-items/:id': () => http().patch(`/v1/order-items/${a.pendingItemId}`).set(auth).send({ quantity: '9' }),
-    'POST /v1/order-items/:id/remove': () => http().post(`/v1/order-items/${a.pendingItemId}/remove`).set(auth),
-    'POST /v1/order-items/:id/void': () => http().post(`/v1/order-items/${a.firedItemId}/void`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'sabotage', wasted: true }),
-    'POST /v1/order-items/:id/status': () => http().post(`/v1/order-items/${a.firedItemId}/status`).set(auth).send({ status: 'SERVED' }),
-    'POST /v1/kitchen/tickets/:id/bump': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/bump`).set(auth),
-    'POST /v1/kitchen/tickets/:id/unbump': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/unbump`).set(auth),
-    'POST /v1/kitchen/tickets/:id/reprint': () => http().post(`/v1/kitchen/tickets/${a.ticketId}/reprint`).set(auth),
-    // B's till marks A's ticket printed or gives it back (the tenant comes from B's credential).
-    'POST /v1/terminal/kitchen-tickets/:id/printed': () => http().post(`/v1/terminal/kitchen-tickets/${a.ticketId}/printed`).set(b.terminalHeaders),
-    'POST /v1/terminal/kitchen-tickets/:id/release': () => http().post(`/v1/terminal/kitchen-tickets/${a.ticketId}/release`).set(b.terminalHeaders),
-    'POST /v1/restaurant/orders/:id/bill': () => http().post(`/v1/restaurant/orders/${a.orderId}/bill`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
-    'GET /v1/restaurant/bills/:id': () => http().get(`/v1/restaurant/bills/${a.billId}`).set(auth),
-    'POST /v1/restaurant/bills/:id/void': () => http().post(`/v1/restaurant/bills/${a.billId}/void`).set(auth).send({ reason: 'sabotage' }),
-    'POST /v1/restaurant/bills/:id/checks': () =>
-      http().post(`/v1/restaurant/bills/${a.billId}/checks`).set(auth).set('Idempotency-Key', randomUUID())
-        .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] }),
-    'POST /v1/restaurant/bills/:id/checks/preview': () => http().post(`/v1/restaurant/bills/${a.billId}/checks/preview`).set(auth).send({}),
     'POST /v1/support-access/:id/revoke': () => http().post(`/v1/support-access/${a.supportGrantId}/revoke`).set(auth).send({ reason: 'sabotage' }),
     // B's owner is not Tilvara staff: A's grant is as good as absent.
     'POST /v1/support/grants/:id/open': () => http().post(`/v1/support/grants/${a.supportGrantId}/open`).set(auth),
@@ -778,69 +597,6 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/customers/:id/notes': () => http().post(`/v1/customers/${a.customerId}/notes`).set(auth).send({ body: 'pwned' }),
     'PATCH /v1/customers/:id/notes/:noteId': () => http().patch(`/v1/customers/${a.customerId}/notes/${a.noteId}`).set(auth).send({ body: 'pwned' }),
     'DELETE /v1/customers/:id/notes/:noteId': () => http().delete(`/v1/customers/${a.customerId}/notes/${a.noteId}`).set(auth),
-    // Session 28 (ADR-0023): lodging.
-    'GET /v1/room-types/:id': () => http().get(`/v1/room-types/${a.roomTypeId}`).set(auth),
-    'PATCH /v1/room-types/:id': () => http().patch(`/v1/room-types/${a.roomTypeId}`).set(auth).send({ name: 'pwned' }),
-    'GET /v1/rooms/:id': () => http().get(`/v1/rooms/${a.roomId}`).set(auth),
-    'PATCH /v1/rooms/:id': () => http().patch(`/v1/rooms/${a.roomId}`).set(auth).send({ notes: 'pwned' }),
-    'POST /v1/rooms/:id/status': () => http().post(`/v1/rooms/${a.roomId}/status`).set(auth).send({ status: 'DIRTY' }),
-    'GET /v1/rooms/:id/status-changes': () => http().get(`/v1/rooms/${a.roomId}/status-changes`).set(auth),
-    'DELETE /v1/room-blocks/:id': () => http().delete(`/v1/room-blocks/${a.roomBlockId}`).set(auth),
-    'GET /v1/branches/:id/lodging-settings': () => http().get(`/v1/branches/${a.branchId}/lodging-settings`).set(auth),
-    'PATCH /v1/branches/:id/lodging-settings': () => http().patch(`/v1/branches/${a.branchId}/lodging-settings`).set(auth).send({ forfeitOnCancel: false }),
-    'GET /v1/stays/:id': () => http().get(`/v1/stays/${a.stayId}`).set(auth),
-    'PATCH /v1/stays/:id': () => http().patch(`/v1/stays/${a.stayId}`).set(auth).send({ notes: 'pwned' }),
-    'POST /v1/stays/:id/cancel': () => http().post(`/v1/stays/${a.stayId}/cancel`).set(auth).send({ reason: 'sabotage' }),
-    'POST /v1/stays/:id/no-show': () => http().post(`/v1/stays/${a.stayId}/no-show`).set(auth).send({ reason: 'sabotage' }),
-    'POST /v1/stays/:id/check-in': () => http().post(`/v1/stays/${a.stayId}/check-in`).set(auth).send({}),
-    'POST /v1/stays/:id/prepare-check-out': () => http().post(`/v1/stays/${a.stayId}/prepare-check-out`).set(auth).send({}),
-    'POST /v1/stays/:id/check-out': () => http().post(`/v1/stays/${a.stayId}/check-out`).set(auth).send({}),
-    'GET /v1/stays/:id/guests': () => http().get(`/v1/stays/${a.stayId}/guests`).set(auth),
-    'POST /v1/stays/:id/guests': () => http().post(`/v1/stays/${a.stayId}/guests`).set(auth).send({ fullName: 'pwned' }),
-    'PATCH /v1/stays/:id/guests/:guestId': () => http().patch(`/v1/stays/${a.stayId}/guests/${a.guestId}`).set(auth).send({ fullName: 'pwned' }),
-    'DELETE /v1/stays/:id/guests/:guestId': () => http().delete(`/v1/stays/${a.stayId}/guests/${a.guestId}`).set(auth),
-    'GET /v1/stays/:id/registration-card': () => http().get(`/v1/stays/${a.stayId}/registration-card`).set(auth),
-    'POST /v1/stays/:id/beneficiaries': () => http().post(`/v1/stays/${a.stayId}/beneficiaries`).set(auth).send({ scheme: 'SC', name: 'x', idNumber: 'x' }),
-    'DELETE /v1/stays/:id/beneficiaries/:beneficiaryId': () => http().delete(`/v1/stays/${a.stayId}/beneficiaries/${a.beneficiaryId}`).set(auth),
-    'GET /v1/stays/:id/deposits': () => http().get(`/v1/stays/${a.stayId}/deposits`).set(auth),
-    'POST /v1/stays/:id/deposits': () => http().post(`/v1/stays/${a.stayId}/deposits`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'BANK_TRANSFER', amount: '1.00', reference: 'x' }),
-    'POST /v1/stays/:id/deposits/apply': () => http().post(`/v1/stays/${a.stayId}/deposits/apply`).set(auth).set('Idempotency-Key', randomUUID()).send({}),
-    'POST /v1/stays/:id/deposits/refund': () => http().post(`/v1/stays/${a.stayId}/deposits/refund`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'x', refund: { method: 'BANK_TRANSFER', reference: 'x' } }),
-    'POST /v1/stays/:id/deposits/forfeit': () => http().post(`/v1/stays/${a.stayId}/deposits/forfeit`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'x' }),
-    'GET /v1/stays/:id/folio': () => http().get(`/v1/stays/${a.stayId}/folio`).set(auth),
-    'GET /v1/folios/:id': () => http().get(`/v1/folios/${a.folioId}`).set(auth),
-    'GET /v1/folios/:id/statement': () => http().get(`/v1/folios/${a.folioId}/statement`).set(auth),
-    'POST /v1/folios/:id/payments': () => http().post(`/v1/folios/${a.folioId}/payments`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: b.openSessionId, tendered: '1.00' }),
-    'POST /v1/folios/:id/adjustments': () => http().post(`/v1/folios/${a.folioId}/adjustments`).set(auth).set('Idempotency-Key', randomUUID()).send({ amount: '-1.00', reason: 'x' }),
-    'POST /v1/folios/:id/night-reversals': () => http().post(`/v1/folios/${a.folioId}/night-reversals`).set(auth).set('Idempotency-Key', randomUUID()).send({ entryId: randomUUID(), reason: 'x' }),
-    // Session 29 (ADR-0024): laundry.
-    'GET /v1/branches/:id/laundry-settings': () => http().get(`/v1/branches/${a.branchId}/laundry-settings`).set(auth),
-    'PATCH /v1/branches/:id/laundry-settings': () => http().patch(`/v1/branches/${a.branchId}/laundry-settings`).set(auth).send({ smsEnabled: true }),
-    'PATCH /v1/laundry/garment-types/:id': () => http().patch(`/v1/laundry/garment-types/${a.garmentTypeId}`).set(auth).send({ name: 'pwned' }),
-    'PATCH /v1/laundry/machines/:id': () => http().patch(`/v1/laundry/machines/${a.machineId}`).set(auth).send({ outOfOrderReason: 'pwned' }),
-    'POST /v1/machine-runs/:id/stop': () => http().post(`/v1/machine-runs/${a.machineRunId}/stop`).set(auth),
-    'GET /v1/job-orders/:id': () => http().get(`/v1/job-orders/${a.jobOrderId}`).set(auth),
-    'PATCH /v1/job-orders/:id': () => http().patch(`/v1/job-orders/${a.jobOrderId}`).set(auth).send({ conditionNotes: 'pwned' }),
-    'PUT /v1/job-orders/:id/lines': () => http().put(`/v1/job-orders/${a.jobOrderId}/lines`).set(auth).send({ lines: [{ variantId: b.variantId, quantity: '1' }] }),
-    'PUT /v1/job-orders/:id/items': () => http().put(`/v1/job-orders/${a.jobOrderId}/items`).set(auth).send({ items: [] }),
-    'POST /v1/job-orders/:id/status': () => http().post(`/v1/job-orders/${a.jobOrderId}/status`).set(auth).send({ status: 'FOLDING', note: 'x' }),
-    'POST /v1/job-orders/:id/cancel': () => http().post(`/v1/job-orders/${a.jobOrderId}/cancel`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'x', deposit: 'forfeit' }),
-    'POST /v1/job-orders/:id/dispose': () => http().post(`/v1/job-orders/${a.jobOrderId}/dispose`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'DISCARDED' }),
-    'GET /v1/job-orders/:id/ticket': () => http().get(`/v1/job-orders/${a.jobOrderId}/ticket`).set(auth),
-    'GET /v1/job-orders/:id/message': () => http().get(`/v1/job-orders/${a.jobOrderId}/message`).set(auth),
-    'GET /v1/job-orders/:id/notices': () => http().get(`/v1/job-orders/${a.jobOrderId}/notices`).set(auth),
-    'POST /v1/job-orders/:id/machine-runs': () => http().post(`/v1/job-orders/${a.jobOrderId}/machine-runs`).set(auth).send({ machineId: b.machineId }),
-    'GET /v1/job-orders/:id/deposits': () => http().get(`/v1/job-orders/${a.jobOrderId}/deposits`).set(auth),
-    'POST /v1/job-orders/:id/deposits': () => http().post(`/v1/job-orders/${a.jobOrderId}/deposits`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'BANK_TRANSFER', amount: '1.00', reference: 'x' }),
-    'POST /v1/job-orders/:id/deposits/refund': () => http().post(`/v1/job-orders/${a.jobOrderId}/deposits/refund`).set(auth).set('Idempotency-Key', randomUUID()).send({ reason: 'x', refund: { method: 'BANK_TRANSFER', reference: 'x' } }),
-    'POST /v1/job-orders/:id/claim': () => http().post(`/v1/job-orders/${a.jobOrderId}/claim`).set(auth).set('Idempotency-Key', randomUUID())
-      .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), overrideReason: 'x', tenders: [{ method: 'CASH', tendered: '1000.00' }] }),
-    'POST /v1/job-orders/:id/trips': () => http().post(`/v1/job-orders/${a.jobOrderId}/trips`).set(auth).send({ kind: 'PICKUP', address: 'x', contactPhone: '09170000000' }),
-    'PATCH /v1/laundry/trips/:id': () => http().patch(`/v1/laundry/trips/${a.tripId}`).set(auth).send({ notes: 'pwned' }),
-    'POST /v1/laundry/trips/:id/start': () => http().post(`/v1/laundry/trips/${a.tripId}/start`).set(auth),
-    'POST /v1/laundry/trips/:id/done': () => http().post(`/v1/laundry/trips/${a.tripId}/done`).set(auth),
-    'POST /v1/laundry/trips/:id/failed': () => http().post(`/v1/laundry/trips/${a.tripId}/failed`).set(auth).send({ reason: 'x' }),
-    'POST /v1/laundry/trips/:id/cancel': () => http().post(`/v1/laundry/trips/${a.tripId}/cancel`).set(auth).send({ reason: 'x' }),
     // Session 30 (ADR-0025): pharmacy.
     'GET /v1/prescriptions/:id': () => http().get(`/v1/prescriptions/${a.prescriptionId}`).set(auth),
     'PATCH /v1/prescriptions/:id': () => http().patch(`/v1/prescriptions/${a.prescriptionId}`).set(auth).send({ notes: 'pwned' }),
@@ -941,46 +697,14 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['use an A package on a B sale', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), customerId: b.customerId, lines: [{ variantId: b.serviceId, quantity: '1', packageId: a.customerPackageId }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
     ['name an A stylist on a B sale', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1', staffId: a.staffId }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
     ['tip an A stylist', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }], tip: { amount: '1.00', shares: [{ staffId: a.staffId, amount: '1.00' }] } })],
-    ['book an A room', () => http().post('/v1/stays').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, roomId: a.roomId, arrivalDate: '2031-06-01', departureDate: '2031-06-02', guestName: 'x' })],
-    ['a B room of an A type', () => http().post('/v1/rooms').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, roomTypeId: a.roomTypeId, number: '999' })],
-    ['a room at the A branch', () => http().post('/v1/rooms').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, roomTypeId: b.roomTypeId, number: '999' })],
-    ['block an A room', () => http().post('/v1/room-blocks').set(auth).set('Idempotency-Key', randomUUID()).send({ roomId: a.roomId, startsOn: '2031-06-01', endsOn: '2031-06-02', reason: 'x' })],
-    ['charge a B sale to an A stay', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'ROOM_CHARGE', stayId: a.stayId }] })],
-    ['pay a B folio at the A drawer', () => http().post(`/v1/folios/${b.folioId}/payments`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: a.openSessionId, tendered: '1.00' })],
-    ['reverse an A night on a B folio', () => http().post(`/v1/folios/${b.folioId}/night-reversals`).set(b.auth).set('Idempotency-Key', randomUUID()).send({ entryId: a.folioId, reason: 'x' })],
-    ['in-house guests at the A branch', () => http().get('/v1/stays/in-house').query({ branchId: a.branchId }).set(auth)],
-    ['availability at the A branch', () => http().get('/v1/lodging/availability').query({ branchId: a.branchId, from: '2031-01-01', to: '2031-01-03' }).set(auth)],
-    ['housekeeping of the A branch', () => http().get('/v1/lodging/housekeeping').query({ branchId: a.branchId }).set(auth)],
-    ['night audit at the A branch', () => http().post('/v1/lodging/night-audit').set(auth).send({ branchId: a.branchId })],
-    ['a job order at the A branch', () => http().post('/v1/job-orders').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, customerName: 'x', lines: [{ variantId: b.variantId, quantity: '1' }] })],
-    ['a B job order for an A customer', () => http().post('/v1/job-orders').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, customerId: a.customerId, lines: [{ variantId: b.variantId, quantity: '1' }] })],
-    ['a B job order line of an A item', () => http().put(`/v1/job-orders/${b.jobOrderId}/lines`).set(auth).send({ lines: [{ variantId: a.variantId, quantity: '1' }] })],
-    ['a B job order item of an A garment type', () => http().put(`/v1/job-orders/${b.jobOrderId}/items`).set(auth).send({ items: [{ garmentTypeId: a.garmentTypeId, count: 1 }] })],
-    ['a B load on an A machine', () => http().post(`/v1/job-orders/${b.jobOrderId}/machine-runs`).set(auth).send({ machineId: a.machineId })],
-    ['a B self-service cycle on an A machine', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID())
-      .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), lines: [{ variantId: b.variantId, quantity: '1', machineId: a.machineId }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
-    ['a B down payment at the A drawer', () => http().post(`/v1/job-orders/${b.jobOrderId}/deposits`).set(auth).set('Idempotency-Key', randomUUID()).send({ method: 'CASH', cashierSessionId: a.openSessionId, amount: '1.00' })],
-    ['a B claim on the A session', () => http().post(`/v1/job-orders/${b.jobOrderId}/claim`).set(auth).set('Idempotency-Key', randomUUID())
-      .send({ cashierSessionId: a.openSessionId, clientTransactionId: randomUUID(), overrideReason: 'x', tenders: [{ method: 'CASH', tendered: '1000.00' }] })],
-    ['a machine at the A branch', () => http().post('/v1/laundry/machines').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, kind: 'DRYER', label: 'x', cycleMinutes: 10 })],
-    ['the machine board of the A branch', () => http().get('/v1/laundry/machines/board').query({ branchId: a.branchId }).set(auth)],
-    ['trips of the A branch', () => http().get('/v1/laundry/trips').query({ branchId: a.branchId }).set(auth)],
-    ['job orders of the A branch', () => http().get('/v1/job-orders').query({ branchId: a.branchId }).set(auth)],
-    ['an A job by its number', () => http().get('/v1/job-orders/lookup').query({ branchId: a.branchId, number: 1 }).set(auth)],
-    ['A down payments report', () => http().get('/v1/reports/job-order-deposits').query({ legalEntityId: a.entityId }).set(auth)],
-    ['B settings naming an A item', () => http().patch(`/v1/branches/${b.branchId}/laundry-settings`).set(auth).send({ expressVariantId: a.variantId })],
     // Session 30 (ADR-0025): pharmacy.
     ...pharmacySmuggles(auth),
-    ['guest ledger of the A entity', () => http().get('/v1/reports/guest-ledger').query({ legalEntityId: a.entityId }).set(auth)],
-    ...(['occupancy', 'accommodation-tax'] as const).map(
-      (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
-    ),
     ['ring up an A appointment', () => http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), appointmentId: a.appointmentId, lines: [{ variantId: b.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '100.00' }] })],
     ...(['commissions', 'service-packages', 'tips-by-staff'] as const).map(
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
     ['refund a B sale from the A drawer', () => http().post(`/v1/sales/${b.saleId}/returns`).set(auth).set('Idempotency-Key', randomUUID()).send({ cashierSessionId: a.openSessionId, kind: 'VOID', reason: 'x' })],
-    ...(['sales-summary', 'by-product', 'by-attribute', 'promotions', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book', ...RESTAURANT_REPORTS] as const).map(
+    ...(['sales-summary', 'by-product', 'by-attribute', 'promotions', 'by-cashier', 'refund-watch', 'by-tender', 'tax-summary', 'statutory-book', ...SALON_SALES_REPORTS] as const).map(
       (r) => [`report ${r} on A branch`, () => http().get(`/v1/reports/${r}`).query({ branchId: a.branchId, from: '2026-01-01', to: '2026-12-31' }).set(auth)] as [string, () => request.Test],
     ),
     ...(['by-category', 'discounts', 'purchases-by-supplier'] as const).map(
@@ -988,7 +712,6 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ),
     ['payment exceptions of the A branch', () => http().get('/v1/reports/payment-exceptions').query({ branchId: a.branchId }).set(auth)],
     ['consolidated report of the A entity', () => http().get('/v1/reports/by-branch').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
-    ['open orders of the A branch', () => http().get('/v1/reports/open-orders').query({ branchId: a.branchId, day: today() }).set(auth)],
     ['adjust stock at A branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: a.branchId, reason: 'x', items: [{ variantId: b.variantId, quantity: '1' }] })],
     ['adjust A variant at B branch', () => http().post('/v1/stock/adjustments').set(auth).set('Idempotency-Key', randomUUID()).send({ branchId: b.branchId, reason: 'x', items: [{ variantId: a.variantId, quantity: '1' }] })],
     ['read A stock balances', () => http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(auth)],
@@ -1041,35 +764,6 @@ function smuggleMatrix(): [string, () => request.Test][] {
     ['close an A period', () => http().post('/v1/accounting/periods/close').set(auth).send({ legalEntityId: a.entityId, month: '2020-01' })],
     ['trial balance of the A entity', () => http().get('/v1/reports/trial-balance').query({ legalEntityId: a.entityId, from: '2026-01-01', to: '2026-12-31' }).set(auth)],
     ['recipe with an A ingredient', () => http().post(`/v1/variants/${b.dishId}/recipe`).set(auth).send({ ingredients: [{ variantId: a.variantId, quantity: '1' }] })],
-    ['station at the A branch', () => http().post('/v1/kitchen-stations').set(auth).send({ branchId: a.branchId, code: 'HACK', name: 'x' })],
-    ['stations of the A branch', () => http().get('/v1/kitchen-stations').query({ branchId: a.branchId }).set(auth)],
-    ['area at the A branch', () => http().post('/v1/dining-areas').set(auth).send({ branchId: a.branchId, name: 'x' })],
-    ['floor of the A branch', () => http().get('/v1/dining-areas').query({ branchId: a.branchId }).set(auth)],
-    ['table in the A area', () => http().post('/v1/restaurant-tables').set(auth).send({ areaId: a.areaId, code: 'HACK' })],
-    ['move a B table into the A area', () => http().patch(`/v1/restaurant-tables/${b.tableId}`).set(auth).send({ areaId: a.areaId })],
-    ['modifier option priced by an A item', () => http().post('/v1/modifier-groups').set(auth).send({ name: 'x', options: [{ name: 'x', variantId: a.variantId }] })],
-    ['add an A-item option to a B group', () => http().post(`/v1/modifier-groups/${b.modifierGroupId}/options`).set(auth).send({ name: 'x', variantId: a.variantId })],
-    ['B menu offering an A item', () => http().put(`/v1/menu-versions/${b.draftVersionId}/content`).set(auth).send({ sections: [{ name: 'x', items: [{ variantId: a.variantId }] }] })],
-    ['B menu with an A modifier group', () => http().put(`/v1/menu-versions/${b.draftVersionId}/content`).set(auth).send({ sections: [{ name: 'x', items: [{ variantId: b.dishId, modifierGroupIds: [a.modifierGroupId] }] }] })],
-    ['B branch serving the A menu', () => http().put(`/v1/branches/${b.branchId}/restaurant-settings`).set(auth).send({ dineInMenuId: a.menuId, takeawayMenuId: null, serviceChargeRate: '0', serviceChargeDineIn: true, serviceChargeTakeaway: false, serviceChargeVatTreatment: 'VATABLE' })],
-    ['86 an A item at the B branch', () => http().put(`/v1/branches/${b.branchId}/sold-out`).set(auth).send({ variantId: a.variantId, soldOut: true })],
-    ['open an order at the A branch', () => http().post('/v1/restaurant/orders').set(auth).send({ branchId: a.branchId, orderType: 'TAKEAWAY' })],
-    ['open a B order on an A table', () => http().post('/v1/restaurant/orders').set(auth).send({ branchId: b.branchId, orderType: 'DINE_IN', tableId: a.tableId })],
-    ['orders of the A branch', () => http().get('/v1/restaurant/orders').query({ branchId: a.branchId }).set(auth)],
-    ['move a B order to an A table', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/transfer`).set(auth).send({ tableId: a.tableId })],
-    ['merge a B order into an A order', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/merge`).set(auth).send({ intoOrderId: a.liveOrderId })],
-    ['move B items into an A order', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [b.liveItemId], toOrderId: a.liveOrderId })],
-    ['move B items onto an A table', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [b.liveItemId], toTableId: a.tableId })],
-    ['move A items out of a B order', () => http().post(`/v1/restaurant/orders/${b.liveOrderId}/move-items`).set(auth).send({ itemIds: [a.liveItemId], toTableId: b.tableId })],
-    ['floor stream of the A branch', () => http().get('/v1/restaurant/stream').query({ branchId: a.branchId }).set(auth)],
-    ['kitchen tickets of the A branch', () => http().get('/v1/kitchen/tickets').query({ branchId: a.branchId }).set(auth)],
-    ['A station on the B kitchen display', () => http().get('/v1/kitchen/tickets').query({ branchId: b.branchId, stationId: a.stationId }).set(auth)],
-    ['pay an A bill from the B drawer', () =>
-      http().post(`/v1/restaurant/bills/${a.billId}/checks`).set(auth).set('Idempotency-Key', randomUUID())
-        .send({ cashierSessionId: b.openSessionId, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] })],
-    ['pay a B bill on the A session', () =>
-      http().post(`/v1/restaurant/bills/${b.billId}/checks`).set(auth).set('Idempotency-Key', randomUUID())
-        .send({ cashierSessionId: a.openSessionId, clientTransactionId: randomUUID(), tenders: [{ method: 'CASH', tendered: '1000.00' }] })],
   ];
 }
 
@@ -1136,12 +830,11 @@ describe('Phase 1 cross-tenant sweep', () => {
     const closed = (await http().get(`/v1/cashier-sessions/${a.closedSessionId}`).set(a.auth).expect(200)).body;
     expect([closed.status, closed.reconciliation.approvedBy]).toEqual(['CLOSED', null]);
     const stock = (await http().get('/v1/stock/balances').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
-    // 10 opening − 1 sold − 1 used in the dish + 3 received − 1 returned to the supplier − 1 transferred to branch 2
-    // − 3 used by the restaurant check (two dishes and a priced "Extra" that is the dish again) − 1 sold offline
-    // − 1 used in the card-tipped dish that was voided (cooked food is never restocked) − 1 charged to the room.
+    // 10 opening − 1 sold − 1 used by the service + 3 received − 1 returned to the supplier − 1 transferred to
+    // branch 2 − 1 sold offline − 1 used by the card-tipped service that was voided (supplies used are never restocked).
     // The fourth balance is the antibiotic (session 30): 30 received, 7 dispensed.
     const onHand = (variantId: string) => stock.find((x: { variantId: string }) => x.variantId === variantId)?.quantity;
-    expect([stock.length, onHand(a.variantId), onHand(a.amoxId)]).toEqual([4, '3', '23']);
+    expect([stock.length, onHand(a.variantId), onHand(a.amoxId)]).toEqual([4, '7', '23']);
     const rx = (await http().get(`/v1/prescriptions/${a.prescriptionId}`).set(a.auth).expect(200)).body;
     expect([rx.status, rx.notes, rx.voidedAt, rx.items[0].dispensed]).toEqual(['PARTLY_FILLED', null, null, '7']);
     const lotHolds = (await http().get('/v1/stock/lot-holds').set(a.auth).expect(200)).body.data;
@@ -1170,18 +863,6 @@ describe('Phase 1 cross-tenant sweep', () => {
     expect(catalog.map((i: { id: string; unitCost: string }) => [i.id, i.unitCost])).toEqual([[a.supplierItemId, '11.0000']]);
     const carts = (await http().get('/v1/held-carts').query({ registerId: a.registerId }).set(a.auth).expect(200)).body.data;
     expect(carts.map((c: { id: string; status: string }) => [c.id, c.status])).toEqual([[a.heldCartId, 'OPEN']]);
-    const settings = (await http().get(`/v1/branches/${a.branchId}/restaurant-settings`).set(a.auth).expect(200)).body;
-    expect([settings.dineInMenuId, settings.serviceChargeRate]).toEqual([a.menuId, '0.1']);
-    const draft = (await http().get(`/v1/menu-versions/${a.draftVersionId}`).set(a.auth).expect(200)).body;
-    expect([draft.status, draft.sections.length]).toEqual(['DRAFT', 1]);
-    const stations = (await http().get('/v1/kitchen-stations').query({ branchId: a.branchId }).set(a.auth).expect(200)).body.data;
-    expect(stations.map((s: { name: string; isDefault: boolean }) => [s.name, s.isDefault])).toEqual([['Grill', true]]);
-    const soldOut = (await http().get(`/v1/branches/${a.branchId}/sold-out`).set(a.auth).expect(200)).body.data;
-    expect(soldOut.map((s: { variantId: string }) => s.variantId)).toEqual([a.variantId]);
-    const order = (await http().get(`/v1/restaurant/orders/${a.orderId}`).set(a.auth).expect(200)).body;
-    expect([order.status, order.table.id, order.items.map((i: { status: string; quantity: string }) => [i.status, i.quantity])]).toEqual(['SETTLED', a.tableId, [['FIRED', '1'], ['FIRED', '1']]]);
-    const bill = (await http().get(`/v1/restaurant/bills/${a.billId}`).set(a.auth).expect(200)).body;
-    expect([bill.status, bill.checks.map((c: { id: string }) => c.id)]).toEqual(['SETTLED', [a.checkSaleId]]);
   });
 
   it("a terminal cannot reach the other tenant: its snapshot is its own, and naming B's snapshot or shift records nothing in B", async () => {
@@ -1221,24 +902,9 @@ describe('Phase 1 cross-tenant sweep', () => {
       `/v1/stock/low?branchId=${b.branchId}`, `/v1/stock/reorder-points?branchId=${b.branchId}`,`/v1/reports/inventory-valuation?branchId=${b.branchId}`, `/v1/reports/stock-movements?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`,
       `/v1/accounts?legalEntityId=${b.entityId}`, `/v1/journal-entries?legalEntityId=${b.entityId}`, `/v1/journal-lines?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`, `/v1/journal-entries/${b.journalEntryId}`,
       `/v1/accounting/periods?legalEntityId=${b.entityId}`, `/v1/reports/trial-balance?legalEntityId=${b.entityId}&from=2026-01-01&to=2026-12-31`,
-      `/v1/kitchen-stations?branchId=${b.branchId}`, `/v1/dining-areas?branchId=${b.branchId}`, '/v1/modifier-groups', '/v1/menus', `/v1/menus/${b.menuId}`,
-      `/v1/menu-versions/${b.draftVersionId}`, `/v1/branches/${b.branchId}/restaurant-settings`, `/v1/branches/${b.branchId}/sold-out`, `/v1/branches/${b.branchId}/menu`,
-      `/v1/restaurant/orders?branchId=${b.branchId}&status=ALL`, `/v1/restaurant/orders/${b.orderId}`, `/v1/kitchen/tickets?branchId=${b.branchId}&status=ALL`,
-      `/v1/restaurant/bills/${b.billId}`, `/v1/sales/${b.checkSaleId}`, `/v1/sales/${b.checkSaleId}/receipt`,
-      ...RESTAURANT_REPORTS.map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`), `/v1/reports/open-orders?branchId=${b.branchId}&day=${today()}`,
       `/v1/service-staff?branchId=${b.branchId}&includeArchived=true`, `/v1/service-staff/${b.staffId}`, `/v1/appointments?branchId=${b.branchId}&from=2031-01-01T00:00:00Z&to=2031-01-10T00:00:00Z`,
       `/v1/appointments/${b.appointmentId}`, `/v1/variants/${b.bundleId}/package-items`, `/v1/customers/${b.customerId}/packages`, `/v1/customers/${b.customerId}/visits`, `/v1/customers/${b.customerId}/notes`,
-      ...['commissions', 'service-packages', 'tips-by-staff'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`),
-      '/v1/room-types', `/v1/room-types/${b.roomTypeId}`, '/v1/rooms', `/v1/rooms/${b.roomId}`, `/v1/rooms/${b.roomId}/status-changes`, `/v1/room-blocks?branchId=${b.branchId}`,
-      `/v1/branches/${b.branchId}/lodging-settings`, `/v1/lodging/housekeeping?branchId=${b.branchId}`, `/v1/lodging/availability?branchId=${b.branchId}&from=2031-01-01&to=2031-01-03`,
-      '/v1/stays', `/v1/stays/in-house?branchId=${b.branchId}`, `/v1/stays/${b.stayId}`, `/v1/stays/${b.stayId}/guests`, `/v1/stays/${b.stayId}/registration-card`,
-      `/v1/stays/${b.stayId}/deposits`, `/v1/stays/${b.stayId}/folio`, `/v1/folios/${b.folioId}`, `/v1/folios/${b.folioId}/statement`,
-      `/v1/reports/guest-ledger?legalEntityId=${b.entityId}`,
-      ...['occupancy', 'accommodation-tax'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`),
-      `/v1/branches/${b.branchId}/laundry-settings`, '/v1/laundry/garment-types', '/v1/laundry/machines', `/v1/laundry/machines/board?branchId=${b.branchId}`,
-      '/v1/job-orders', `/v1/job-orders?branchId=${b.branchId}`, `/v1/job-orders/${b.jobOrderId}`, `/v1/job-orders/${b.jobOrderId}/ticket`, `/v1/job-orders/${b.jobOrderId}/deposits`,
-      `/v1/job-orders/${b.jobOrderId}/notices`, `/v1/job-orders/${b.jobOrderId}/message`, `/v1/laundry/trips?branchId=${b.branchId}`, `/v1/reports/job-order-deposits?legalEntityId=${b.entityId}`,
-      ...['job-orders', 'machine-usage', 'deliveries'].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`),
+      ...['commissions', 'service-packages', 'tips-by-staff', ...SALON_SALES_REPORTS].map((r) => `/v1/reports/${r}?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`),
       '/v1/promotions?state=ALL', `/v1/promotions/${b.promotionId}`, `/v1/reports/promotions?branchId=${b.branchId}&from=2026-01-01&to=2026-12-31`, `/v1/stock/locations?branchId=${b.branchId}`,
       '/v1/prescriptions', `/v1/prescriptions/${b.prescriptionId}`, `/v1/customers/${b.customerId}/prescriptions`, '/v1/pharmacy/settings', '/v1/pharmacy/pharmacists',
       '/v1/stock/lot-holds?includeReleased=true', `/v1/stock/lots/trace?variantId=${b.amoxId}&lotCode=AMX-1`, `/v1/catalog/equivalents?branchId=${b.branchId}&variantId=${b.amoxId}`,

@@ -1,13 +1,13 @@
 # Tilvara
 
-Multi-tenant retail and restaurant point-of-sale SaaS for the Philippines. One codebase serves many
+Multi-tenant point-of-sale SaaS for Philippine shops, groceries, salons and pharmacies. One codebase serves many
 businesses; each business's data is isolated by PostgreSQL row-level security.
 
 It is a modular monolith:
 
 | App | What it is | Tech |
 |---|---|---|
-| `apps/api` | The HTTP API (`/v1`): auth, catalog, prices, sales, inventory, purchasing, books, restaurant, offline sync | NestJS, Drizzle, PostgreSQL |
+| `apps/api` | The HTTP API (`/v1`): auth, catalog, prices, sales, inventory, purchasing, books, salons, pharmacies, offline sync | NestJS, Drizzle, PostgreSQL |
 | `apps/workers` | Background worker: delivers outbox events (welcome mail, data exports), purges expired idempotency keys | Node |
 | `apps/admin-web` | The back office for owners and managers | Next.js 16 (App Router), Tailwind |
 | `apps/pos-desktop` | The till: in a browser, or as a Windows desktop app that keeps selling cash during an outage | React + Vite; Tauri 2 for desktop |
@@ -155,7 +155,7 @@ With the API, the admin and the till running:
    - **Locations**: add a legal entity (registered name; TIN and VAT status are optional for dev), a
      branch, and a register in that branch.
    - **Products & prices**: add products with a price, *or* use **Try it with sample items** on the
-     overview (8 labelled café items, offered to a trial business before its first sale).
+     overview (labelled sample items, offered to a trial business before its first sale).
 3. **Open the till** at http://127.0.0.1:3330 and sign in with the same email and password.
 4. **Choose the register**, enter an opening float (e.g. `1000.00`) to open the shift.
 5. **Sell**: scan or search an item, take cash, print/show the receipt. Card/QR use the dev payment
@@ -163,10 +163,6 @@ With the API, the admin and the till running:
 6. Back in the admin: the sale shows under **Reports**, its journal entry under **Books**, the stock
    movement under **Inventory**, and the overview ticks **First sale**. Close the shift in the till to
    count the drawer.
-
-Restaurant flow: in the admin, **Restaurant** sets up kitchen stations, dining areas/tables, modifier
-groups and a published menu. The till then has **Tables** (orders, bills, split checks) and the
-**Kitchen** display.
 
 ### Good to know in development
 
@@ -251,12 +247,10 @@ They drive a headless Edge/Chrome against **running** servers and save screensho
 ```bash
 pnpm test:e2e:web                    # admin smoke
 pnpm test:e2e:pos                    # till smoke
-pnpm test:e2e:service                # a full restaurant service across admin, floor and kitchen
 ```
 
-Other suites: `test:e2e:web:security`, `web:backoffice`, `web:reports`, `web:restaurant`,
-`web:offline`, `web:onboarding` (needs the worker), `web:account`, `test:e2e:tables`,
-`test:e2e:kitchen`, `test:e2e:pos:mfa`, `test:e2e:desktop`. Most accept
+Other suites: `test:e2e:web:security`, `web:backoffice`, `web:offline`, `web:onboarding` (needs the
+worker), `web:account`, `web:salon`, `web:pharmacy`, `test:e2e:pos:mfa`, `test:e2e:desktop`. Most accept
 `[baseUrl] [screenshotDir] [apiUrl]`.
 
 ### Security gates

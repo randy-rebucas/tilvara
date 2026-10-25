@@ -11,16 +11,12 @@ export const DEFAULT_CHART = [
   { key: 'CASH_ON_HAND', code: '1010', name: 'Cash on hand', type: 'ASSET' },
   { key: 'PAYMENT_CLEARING', code: '1020', name: 'Card/QR clearing', type: 'ASSET' },
   { key: 'CASH_IN_BANK', code: '1030', name: 'Cash in bank', type: 'ASSET' },
-  // Session 28 (ADR-0023 §5): what in-house and departed guests owe on their folios.
-  { key: 'GUEST_LEDGER', code: '1150', name: 'Guest ledger', type: 'ASSET' },
   { key: 'INVENTORY', code: '1200', name: 'Inventory', type: 'ASSET' },
   { key: 'INVENTORY_IN_TRANSIT', code: '1210', name: 'Inventory in transit', type: 'ASSET' },
   { key: 'INPUT_VAT', code: '1300', name: 'Input VAT', type: 'ASSET' },
   { key: 'ACCOUNTS_PAYABLE', code: '2000', name: 'Accounts payable – trade', type: 'LIABILITY' },
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
-  // ADR-0023 §10: a local tax on room charges, owed to the LGU. Rate and base unverified (tax adviser).
-  { key: 'ACCOMMODATION_TAX_PAYABLE', code: '2120', name: 'Accommodation tax payable', type: 'LIABILITY' },
   { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
   // Session 25: tips are the staff's, never sales; paid out from the drawer. Pending the accountant.
   { key: 'TIPS_PAYABLE', code: '2210', name: 'Tips payable', type: 'LIABILITY' },
@@ -28,17 +24,10 @@ export const DEFAULT_CHART = [
   { key: 'CUSTOMER_STORE_CREDIT', code: '2300', name: 'Customer store credit', type: 'LIABILITY' },
   // Session 27 (ADR-0022 §6): service packages paid for and not used yet, ex VAT. Pending the accountant.
   { key: 'PREPAID_SERVICES', code: '2310', name: 'Prepaid service packages', type: 'LIABILITY' },
-  // ADR-0023 §6: booking deposits held without VAT until applied or forfeited. Pending the accountant.
-  { key: 'GUEST_DEPOSITS', code: '2320', name: 'Guest deposits', type: 'LIABILITY' },
-  // ADR-0024 §5: laundry job orders' down payments, held without VAT until the claim or a forfeit. Pending the accountant.
-  { key: 'CUSTOMER_DOWN_PAYMENTS', code: '2330', name: 'Customer down payments', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },
   { key: 'SALES', code: '4000', name: 'Sales', type: 'REVENUE' },
   { key: 'SALES_RETURNS', code: '4010', name: 'Sales returns', type: 'REVENUE' },
   { key: 'STATUTORY_DISCOUNTS', code: '4020', name: 'SC/PWD discounts', type: 'REVENUE' },
-  { key: 'ROOM_REVENUE', code: '4100', name: 'Room revenue', type: 'REVENUE' },
-  { key: 'CANCELLATION_INCOME', code: '4110', name: 'Cancellation fees', type: 'REVENUE' },
-  { key: 'FORFEITED_DOWN_PAYMENTS', code: '4120', name: 'Forfeited down payments', type: 'REVENUE' },
   { key: 'COGS', code: '5000', name: 'Cost of goods sold', type: 'EXPENSE' },
   { key: 'PURCHASES_NON_STOCK', code: '5050', name: 'Purchases – non-stock items', type: 'EXPENSE' },
   { key: 'PURCHASE_PRICE_VARIANCE', code: '5060', name: 'Purchase price variance', type: 'EXPENSE' },
@@ -114,10 +103,6 @@ export interface SaleAmounts {
   packagesSold?: Amount;
   /** Package sessions used: their value moves from what is owed into sales. */
   packageSessions?: Amount;
-  /** Charged to an in-house guest's folio (ADR-0023 §5.1): the guest ledger, not cash. */
-  roomCharge?: Amount;
-  /** A laundry claim paid by the job's down payment (ADR-0024 §5): what was held is owed no more. */
-  downPayment?: Amount;
 }
 
 /** Sale: money in, revenue and output tax out, cost of goods moved from inventory. */
@@ -127,8 +112,6 @@ export function salePosting(a: SaleAmounts, branchId?: string | null): PostingLi
     dr('PAYMENT_CLEARING', toDec(String(a.electronic)).plus(a.tip?.electronic ? String(a.tip.amount) : 0), branchId),
     cr('TIPS_PAYABLE', a.tip?.amount ?? 0, branchId),
     dr('CUSTOMER_STORE_CREDIT', a.storeCredit ?? 0, branchId),
-    dr('GUEST_LEDGER', a.roomCharge ?? 0, branchId),
-    dr('CUSTOMER_DOWN_PAYMENTS', a.downPayment ?? 0, branchId),
     dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
     cr('SALES', toDec(String(a.salesExVat)).minus(String(a.packagesSold ?? 0)), branchId),
     cr('PREPAID_SERVICES', a.packagesSold ?? 0, branchId),
@@ -163,16 +146,13 @@ export interface SaleReturnAmounts {
   packagesRefunded?: Amount;
   /** Package sessions given back: their value goes back from sales to what is owed. */
   packageSessionsRestored?: Amount;
-  /** Part of `refund` credited to the guest's open folio (ADR-0023 §5.1), not paid out. */
-  folioRefund?: Amount;
 }
 
 /** Return or void: the sale's revenue, tax and discount reversed into Sales returns; restocked goods back to inventory. */
 export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null): PostingLine[] {
   const toCredit = a.refundTo === 'STORE_CREDIT';
   const tip = toDec(String(a.tipRefund ?? 0));
-  const folio = toDec(String(a.folioRefund ?? 0));
-  const paid = toDec(String(a.refund)).minus(folio);
+  const paid = toDec(String(a.refund));
   const credit = toCredit ? paid : toDec(String(a.storeCredit ?? 0));
   return balanced([
     dr('SALES_RETURNS', toDec(String(a.salesExVat)).minus(String(a.packagesRefunded ?? 0)), branchId),
@@ -182,7 +162,6 @@ export function saleReturnPosting(a: SaleReturnAmounts, branchId?: string | null
     dr('SERVICE_CHARGE_PAYABLE', a.serviceCharge ?? 0, branchId),
     dr('OUTPUT_VAT', a.vatAmount, branchId),
     cr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
-    cr('GUEST_LEDGER', folio, branchId),
     cr('CUSTOMER_STORE_CREDIT', credit, branchId),
     cr('CASH_ON_HAND', paid.minus(credit).plus(tip), branchId),
     dr('TIPS_PAYABLE', tip, branchId),
@@ -353,81 +332,6 @@ export function tipRefundPosting(amount: Amount, via: 'CARD' | 'CASH', branchId?
 /** Drawer count variance: counted − expected (negative = short). */
 export function cashVariancePosting(variance: Amount, branchId?: string | null): PostingLine[] {
   return balanced([dr('CASH_ON_HAND', variance, branchId), cr('CASH_OVER_SHORT', variance, branchId)]);
-}
-
-// ------------------------------------------------------------------ lodging (ADR-0023)
-
-/** How money reached the business at the front desk. */
-export type FrontDeskVia = 'CASH' | 'ELECTRONIC' | 'STORE_CREDIT' | 'BANK';
-const VIA_ACCOUNT: Record<FrontDeskVia, SystemAccount> = {
-  CASH: 'CASH_ON_HAND', ELECTRONIC: 'PAYMENT_CLEARING', STORE_CREDIT: 'CUSTOMER_STORE_CREDIT', BANK: 'CASH_IN_BANK',
-};
-
-export interface RoomChargeAmounts {
-  /** Ex VAT, before the statutory discount (VATable + exempt + zero-rated + percentage-tax). Signed: − for a credit or reversal. */
-  exVat: Amount;
-  vatAmount: Amount;
-  statutoryDiscount: Amount;
-  /** The local accommodation tax on it (§10); not revenue, not subject to VAT. */
-  accommodationTax?: Amount;
-}
-
-/**
- * A room night, an adjustment or a night reversal on a folio (§5): the guest owes what was charged;
- * room revenue ex VAT, output VAT and the accommodation tax payable; SC/PWD as for sales. Signed: a
- * credit or reversal (negative amounts) mirrors it.
- */
-export function roomChargePosting(a: RoomChargeAmounts, branchId?: string | null): PostingLine[] {
-  const owed = toDec(String(a.exVat)).plus(String(a.vatAmount)).minus(String(a.statutoryDiscount)).plus(String(a.accommodationTax ?? 0));
-  return balanced([
-    dr('GUEST_LEDGER', owed, branchId),
-    dr('STATUTORY_DISCOUNTS', a.statutoryDiscount, branchId),
-    cr('ROOM_REVENUE', a.exVat, branchId),
-    cr('OUTPUT_VAT', a.vatAmount, branchId),
-    cr('ACCOMMODATION_TAX_PAYABLE', a.accommodationTax ?? 0, branchId),
-  ]);
-}
-
-/** A guest settling (part of) a folio: money in, the guest ledger down. */
-export function folioPaymentPosting(amount: Amount, via: FrontDeskVia, branchId?: string | null): PostingLine[] {
-  return balanced([dr(VIA_ACCOUNT[via], amount, branchId), cr('GUEST_LEDGER', amount, branchId)]);
-}
-
-/** A booking deposit received (§6): held, without VAT, until applied or forfeited. */
-export function depositReceivedPosting(amount: Amount, via: Exclude<FrontDeskVia, 'STORE_CREDIT'>, branchId?: string | null): PostingLine[] {
-  return balanced([dr(VIA_ACCOUNT[via], amount, branchId), cr('GUEST_DEPOSITS', amount, branchId)]);
-}
-
-/** Deposits moved onto the folio: they pay for what the guest owes. */
-export function depositAppliedPosting(amount: Amount, branchId?: string | null): PostingLine[] {
-  return balanced([dr('GUEST_DEPOSITS', amount, branchId), cr('GUEST_LEDGER', amount, branchId)]);
-}
-
-/** A deposit given back in cash from a drawer or by bank transfer. */
-export function depositRefundedPosting(amount: Amount, via: 'CASH' | 'BANK', branchId?: string | null): PostingLine[] {
-  return balanced([dr('GUEST_DEPOSITS', amount, branchId), cr(VIA_ACCOUNT[via], amount, branchId)]);
-}
-
-/** A deposit kept on a cancellation or no-show: a cancellation fee ex VAT plus its output VAT. */
-export function depositForfeitedPosting(a: { amount: Amount; exVat: Amount; vatAmount: Amount }, branchId?: string | null): PostingLine[] {
-  return balanced([dr('GUEST_DEPOSITS', a.amount, branchId), cr('CANCELLATION_INCOME', a.exVat, branchId), cr('OUTPUT_VAT', a.vatAmount, branchId)]);
-}
-
-// ------------------------------------------------------------------ laundry (ADR-0024)
-
-/** A job order's down payment received (§5): held, without VAT, until the claim or a forfeit. */
-export function downPaymentReceivedPosting(amount: Amount, via: Exclude<FrontDeskVia, 'STORE_CREDIT'>, branchId?: string | null): PostingLine[] {
-  return balanced([dr(VIA_ACCOUNT[via], amount, branchId), cr('CUSTOMER_DOWN_PAYMENTS', amount, branchId)]);
-}
-
-/** A down payment given back in cash from a drawer or by bank transfer. */
-export function downPaymentRefundedPosting(amount: Amount, via: 'CASH' | 'BANK', branchId?: string | null): PostingLine[] {
-  return balanced([dr('CUSTOMER_DOWN_PAYMENTS', amount, branchId), cr(VIA_ACCOUNT[via], amount, branchId)]);
-}
-
-/** A down payment kept (unclaimed laundry disposed of, a cancelled job): income ex VAT plus its output VAT. */
-export function downPaymentForfeitedPosting(a: { amount: Amount; exVat: Amount; vatAmount: Amount }, branchId?: string | null): PostingLine[] {
-  return balanced([dr('CUSTOMER_DOWN_PAYMENTS', a.amount, branchId), cr('FORFEITED_DOWN_PAYMENTS', a.exVat, branchId), cr('OUTPUT_VAT', a.vatAmount, branchId)]);
 }
 
 /** Mirror of an entry's lines (debits ↔ credits). */

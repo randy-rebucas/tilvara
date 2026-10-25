@@ -119,7 +119,8 @@ export class PaymentsService extends TenantService {
     const intent = await this.mutate(auth, async (db) => {
       const row = await this.load(db, auth, id, 'operate');
       if (row.saleId) throw conflict('PAYMENT_CONSUMED', 'This payment is part of a completed sale; refund the sale instead');
-      if (row.folioId) throw conflict('PAYMENT_CONSUMED', 'This payment settled a guest folio or paid a deposit');
+      // A payment of a purpose no longer offered (a laundry down payment before 0110, a folio payment before 0111) was settled by its own document.
+      if (!(['SALE', 'TIP'] as string[]).includes(row.purpose)) throw conflict('PAYMENT_CONSUMED', 'This payment was settled by a document of a feature no longer offered');
       if (row.status === 'PROCESSING' || row.status === 'UNKNOWN') throw conflict('RECONCILE_FIRST', 'Reconcile this payment before cancelling it');
       if (row.status === 'SUCCEEDED') await this.event(db, auth, id, 'CANCEL_REQUESTED', null);
       return row;

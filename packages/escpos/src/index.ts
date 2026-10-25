@@ -5,7 +5,7 @@
  */
 
 export interface PrintableReceipt {
-  /** Printed first, centred, bold and double height (a kitchen "VOID" slip); none on receipts. */
+  /** Printed first, centred, bold and double height; none on receipts. */
   banner?: string;
   /** Seller name, registered name, address, TIN — centred. */
   header: string[];

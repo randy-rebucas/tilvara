@@ -1,11 +1,11 @@
 // End-to-end test of a sari-sari store (ADR-0020) in the back office: sign up as "Sari-sari store or
-// grocery" (no Restaurant tab, the box "Keeps expiry dates" ticked on a new product); link a pack to
+// grocery" (no Appointments tab, the box "Keeps expiry dates" ticked on a new product); link a pack to
 // its pieces on the pack's page; a till sale of pieces opens a pack by itself and Inventory → Packs
 // shows it for that sale; open a pack by hand; Inventory → Expiry lists an expired lot and writes it
 // off; the expiry alert days are set; the guide's "Tingi and expiry dates" part; Filipino; phone width.
 // Usage: node apps/admin-web/e2e/grocery.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -57,7 +57,7 @@ try {
   await fill('password', PASSWORD);
   await evaluate(`[...document.querySelectorAll('form button.btn-primary')].filter((x) => x.getClientRects().length).at(-1).click()`);
   await waitFor(`location.pathname === '/'`);
-  check('a sari-sari store has no Restaurant tab', !(await evaluate(`[...document.querySelectorAll('header a')].some((a) => a.textContent.trim() === 'Restaurant')`)));
+  check('a sari-sari store has no Appointments tab', !(await evaluate(`[...document.querySelectorAll('header a')].some((a) => a.textContent.trim() === 'Appointments')`)));
   await go('/subscription/business');
   check('the business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=GROCERY]').checked`));
 

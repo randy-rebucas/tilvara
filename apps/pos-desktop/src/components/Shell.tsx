@@ -25,17 +25,10 @@ export function LangToggle() {
   );
 }
 
-/**
- * Which part of the user guide the ? button (and F1) opens; `restaurant` false leaves out tables and the
- * kitchen, `salon` false the appointments part, `lodging` false the rooms part, `laundry` false the
- * laundry part.
- */
+/** Which part of the user guide the ? button (and F1) opens; `salon` false leaves out the appointments part, `pharmacy` false the medicines part. */
 export interface HelpContext {
   topic: GuideTopic;
-  restaurant?: boolean;
   salon?: boolean;
-  lodging?: boolean;
-  laundry?: boolean;
   /** A pharmacy, drugstore or hybrid business (ADR-0025): the medicines part. */
   pharmacy?: boolean;
 }
@@ -96,7 +89,7 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}
       {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
-      {guideOpen && <Guide topic={help.topic} restaurant={help.restaurant ?? true} salon={help.salon ?? true} lodging={help.lodging ?? true} laundry={help.laundry ?? true} pharmacy={help.pharmacy ?? true} onBack={() => setOverlay(null)} />}
+      {guideOpen && <Guide topic={help.topic} salon={help.salon ?? true} pharmacy={help.pharmacy ?? true} onBack={() => setOverlay(null)} />}
       <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
     </div>
   );

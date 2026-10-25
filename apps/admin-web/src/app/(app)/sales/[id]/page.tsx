@@ -63,7 +63,6 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
           {branch?.code ?? '—'} · {register ? `${register.code} ${register.name}` : '—'} · {person(sale.cashierUserId)} · {formatDateTime(sale.completedAt, lang)}
           {sale.offlineReference && ` · ${t('doc.offline', { ref: sale.offlineReference })}`}
           {sale.customerId && <> · <Link href={`/customers/${sale.customerId}`} className="underline">{t('doc.customer')}</Link></>}
-          {sale.counterOrder && ` · ${t('doc.callNumber', { n: sale.counterOrder.callNumber ?? sale.counterOrder.orderNumber })}${sale.counterOrder.pickupName ? ` · ${t('doc.pickupName', { name: sale.counterOrder.pickupName })}` : ''}`}
         </Serial>
       </div>
 
@@ -118,11 +117,8 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
             figure: (l) => <span className="money font-semibold">{peso(l.amountDue)}</span>,
           }}
         />
-        {(sale.charges.length > 0 || sale.tenders.length > 0 || sale.tip) && (
+        {(sale.tenders.length > 0 || sale.tip) && (
           <dl className="grid gap-1 border-t border-hair-soft px-4 py-3 text-[0.9375rem]">
-            {sale.charges.map((c) => (
-              <div key={c.id} className="flex justify-between gap-3"><dt>{t('doc.serviceCharge')}</dt><dd className="money">{peso(c.amountDue)}</dd></div>
-            ))}
             {sale.tenders.map((tn) => (
               <div key={tn.id} className="flex justify-between gap-3 text-muted"><dt>{tn.method}</dt><dd className="money">{peso(tn.amount)}</dd></div>
             ))}

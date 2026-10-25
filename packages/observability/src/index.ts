@@ -46,10 +46,10 @@ const SECRET_KEYS = ['password', 'passwordHash', 'token', 'accessToken', 'refres
 export const PERSONAL_KEYS = [
   'email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary',
   'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient', 'guestName',
-  // The guest registry (ADR-0023 §8).
+  // Identity details (once the hotel guest registry, ADR-0023 §8; any field of these names).
   'nationality', 'idType', 'birthDate', 'contact',
-  // Laundry job orders and trips (ADR-0024): a walk-in's phone, where and whom a rider calls on, the rider's name.
-  'customerPhone', 'contactPhone', 'contactName', 'riderName',
+  // A client's phone on an appointment (ADR-0022).
+  'customerPhone',
   // Prescriptions and pharmacist licences (ADR-0025 §6): health data and licence numbers.
   'patientName', 'patientAddress', 'prescriberName', 'prescriberLicenseNo', 'prescriberS2No', 'yellowFormNo', 'licenseNo', 'prescriptions',
 ];

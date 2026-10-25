@@ -12,11 +12,8 @@ export interface Shift {
   branch: Workstation['branch'];
 }
 
-/**
- * Pick a register: continue your open shift, or open one with a counted starting float. Kitchen staff
- * (kitchen.operate) can open the kitchen display instead, without a register or a drawer.
- */
-export function RegisterPicker({ onReady, onKitchen, onFloor }: { onReady: (shift: Shift) => void; onKitchen?: () => void; onFloor?: () => void }) {
+/** Pick a register: continue your open shift, or open one with a counted starting float. */
+export function RegisterPicker({ onReady }: { onReady: (shift: Shift) => void }) {
   const { t } = useT();
   const [stations, setStations] = useState<Workstation[] | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -49,25 +46,7 @@ export function RegisterPicker({ onReady, onKitchen, onFloor }: { onReady: (shif
       <h1 className="text-[1.75rem] font-bold">{t('register.title')}</h1>
       <p className="mt-1 text-muted">{t('register.lede')}</p>
       {error && <div className="mt-4"><Callout kind="error">{error}</Callout></div>}
-      {stations?.length === 0 && !onKitchen && !onFloor && <div className="mt-6"><Callout kind="warn">{t('register.none')}</Callout></div>}
-      {onFloor && (
-        <Note denom="blue" className="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
-          <div>
-            <p className="text-[1.0625rem] font-semibold">{t('floor.entryTitle')}</p>
-            <p className="text-[0.875rem] text-muted">{t('floor.entryLede')}</p>
-          </div>
-          <button type="button" className="btn" onClick={onFloor}>{t('floor.workFloor')}</button>
-        </Note>
-      )}
-      {onKitchen && (
-        <Note denom="violet" className="mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
-          <div>
-            <p className="text-[1.0625rem] font-semibold">{t('kds.entryTitle')}</p>
-            <p className="text-[0.875rem] text-muted">{t('kds.entryLede')}</p>
-          </div>
-          <button type="button" className="btn" onClick={onKitchen}>{t('kds.open')}</button>
-        </Note>
-      )}
+      {stations?.length === 0 && <div className="mt-6"><Callout kind="warn">{t('register.none')}</Callout></div>}
       <div className="mt-6 grid gap-3">
         {stations?.map((ws) => (
           <Note key={ws.register.id} denom="orange" className="p-5">

@@ -4,15 +4,13 @@ import { ActionButton, ReasonAction } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type Branch, type CreditEntry, type Customer, type CustomerSale, type Me } from '@/lib/api';
-import { servesAppointments, servesLaundry, servesLodging, servesPharmacy } from '@/lib/business-type';
+import { servesAppointments, servesPharmacy } from '@/lib/business-type';
 import { formatDateTime, formatTin, peso, signOf } from '@/lib/format';
 import { branchLabel, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { ConsentForm, EditCustomerForm, ExportButton } from '../forms';
 import { SalonHistory } from './salon-history';
-import { CustomerJobOrders } from './job-orders';
 import { CustomerPrescriptions } from './prescriptions';
-import { CustomerStays } from './stays';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('customers.item');
@@ -110,8 +108,6 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
 
       {/* Client history for a salon, spa or barber shop (ADR-0022 §8). */}
       {servesAppointments(me.activeTenant?.businessType) && <SalonHistory customerId={customer.id} canManage={manage} branches={branches?.data} />}
-      {servesLodging(me.activeTenant?.businessType) && <CustomerStays customerId={customer.id} branches={branches?.data} />}
-      {servesLaundry(me.activeTenant?.businessType) && <CustomerJobOrders customerId={customer.id} branches={branches?.data} />}
       {servesPharmacy(me.activeTenant?.businessType) && (me.activeTenant?.permissions.includes('pharmacy.read') ?? false) && (
         <CustomerPrescriptions customerId={customer.id} branches={branches?.data?.filter((b) => !b.archivedAt)} canRecord={me.activeTenant?.permissions.includes('pharmacy.dispense') ?? false} />
       )}

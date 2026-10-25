@@ -80,21 +80,15 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
 }
 
 type Outstanding = Pick<PaymentIntent, 'id' | 'method' | 'amount' | 'status'>;
-/** A live restaurant order that holds the close (OPEN_BILLS): the last shift at the branch, or part-paid here. */
-interface OpenBill { orderId: string; orderNumber: number; orderType: string; tableCode: string | null; customerName: string | null; status: string; amountDue: string | null; paid: string; paidOnThisShift: boolean }
 
-/**
- * Count the drawer and close. The expected amount comes from the drawer ledger on the server.
- * Tables still to be paid stop the close; a manager (`canOverride`) may close anyway with a reason.
- */
-export function CloseShift({ shift, canOverride = false, onClosed }: { shift: Shift; canOverride?: boolean; onClosed: () => void }) {
+/** Count the drawer and close. The expected amount comes from the drawer ledger on the server. */
+export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => void }) {
   const { t } = useT();
   const [view, setView] = useState<SessionView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
   // Card/QR charges that belong to no sale: the server refuses to close until each is settled.
   const [outstanding, setOutstanding] = useState<Outstanding[]>([]);
-  const [openBills, setOpenBills] = useState<OpenBill[]>([]);
   // Carts parked at this register stay for the next shift; the cashier is told, not stopped.
   const [heldCount, setHeldCount] = useState(0);
   useEffect(() => {
@@ -114,20 +108,14 @@ export function CloseShift({ shift, canOverride = false, onClosed }: { shift: Sh
     const counted = parseAmount(String(form.get('counted') ?? ''));
     if (!counted) return setFieldError(t('register.floatInvalid'));
     setFieldError(undefined);
-    const reason = String(form.get('openBillsReason') ?? '').trim();
     try {
-      setView(await api<SessionView>('POST', `/v1/cashier-sessions/${shift.sessionId}/close`, { countedCash: counted, ...(reason && { openBillsReason: reason }) }));
+      setView(await api<SessionView>('POST', `/v1/cashier-sessions/${shift.sessionId}/close`, { countedCash: counted }));
       setError(null);
     } catch (err) {
       if (err instanceof ApiFailure && err.error.code === 'PAYMENTS_OUTSTANDING') {
         const payments = (err.error.details?.payments ?? []) as Outstanding[];
         setOutstanding(payments);
         return setError(t('close.paymentsOutstanding', { count: String(payments.length) }));
-      }
-      if (err instanceof ApiFailure && err.error.code === 'OPEN_BILLS') {
-        const orders = (err.error.details?.orders ?? []) as OpenBill[];
-        setOpenBills(orders);
-        return setError(t(canOverride ? 'close.openBillsManager' : 'close.openBills', { count: String(orders.length) }));
       }
       setError(failure(err));
     }
@@ -169,22 +157,7 @@ export function CloseShift({ shift, canOverride = false, onClosed }: { shift: Sh
           </>
         )}
         {!closed && heldCount > 0 && <Callout kind="info">{t('close.heldCarts', { n: String(heldCount) })}</Callout>}
-        {error && <Callout kind={outstanding.length || openBills.length ? 'warn' : 'error'}>{error}</Callout>}
-        {!closed && openBills.length > 0 && (
-          <ul className="grid gap-2" aria-label={t('close.openBillsLabel')}>
-            {openBills.map((o) => (
-              <li key={o.orderId} className="flex flex-wrap items-center justify-between gap-2 rounded-[5px] border border-hair bg-white px-3 py-2">
-                <span>
-                  {o.tableCode ? t('close.orderTable', { code: o.tableCode }) : t('close.orderTakeaway', { n: String(o.orderNumber) })}
-                  {o.customerName && <span className="text-muted"> · {o.customerName}</span>}
-                </span>
-                <span className="text-[0.875rem] text-muted">
-                  {o.amountDue === null ? t('close.notBilled') : <>{t('close.paidSoFar')} <Money value={o.paid} /> / <Money value={o.amountDue} /></>}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {error && <Callout kind={outstanding.length ? 'warn' : 'error'}>{error}</Callout>}
         {!closed && unsettled.length > 0 && (
           <ul className="grid gap-2" aria-label={t('close.unsettledPayments')}>
             {unsettled.map((p) => (
@@ -204,9 +177,8 @@ export function CloseShift({ shift, canOverride = false, onClosed }: { shift: Sh
         {!closed && (
           <form className="grid gap-3" onSubmit={submit}>
             <Field id="counted" name="counted" inputMode="decimal" autoFocus className="input-money" label={t('close.counted')} error={fieldError} placeholder="0.00" />
-            {openBills.length > 0 && canOverride && <Field id="openBillsReason" name="openBillsReason" required label={t('close.anywayReason')} />}
             <button className="btn btn-primary" disabled={unsettled.length > 0}>
-              {openBills.length > 0 && canOverride ? t('close.anyway') : t('close.submit')}
+              {t('close.submit')}
             </button>
           </form>
         )}

@@ -101,11 +101,6 @@ export const serverEnvSchema = z.object({
    * timeout (which would make it resend the whole batch while the first copy is still recording).
    */
   SYNC_BATCH_BUDGET_MS: z.coerce.number().int().min(0).max(60_000).default(8_000),
-  /**
-   * How often the API's night audit (ADR-0023 §7) looks for room nights due, in ms; 0 = off (tests,
-   * or an instance that should not run it). One instance runs it at a time (advisory lock).
-   */
-  NIGHT_AUDIT_INTERVAL_MS: z.coerce.number().int().min(0).max(86_400_000).default(600_000),
   /** Key prefix of the rate-limit counters in Redis (tests use a unique one per run). */
   RATE_LIMIT_PREFIX: z.string().min(1).max(64).default('onepos:rl:'),
   /**
@@ -155,8 +150,6 @@ export const workerEnvSchema = z.object({
   OUTBOX_BATCH: z.coerce.number().int().min(1).max(500).default(50),
   OUTBOX_LEASE_SECONDS: z.coerce.number().int().min(5).max(3600).default(60),
   MAILER_DRIVER: z.enum(['dev']).default('dev'),
-  /** Laundry "ready" texts (ADR-0024 §6): only the dev adapter until an SMS provider is chosen (D7). */
-  SMS_DRIVER: z.enum(['dev']).default('dev'),
   ...fileStorage,
   /** Days a finished data export stays downloadable before the worker deletes the file. */
   DATA_EXPORT_RETENTION_DAYS: z.coerce.number().int().min(1).max(30).default(7),
@@ -173,7 +166,6 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
   }
   const issues: string[] = [];
   if (isProd(env) && parsed.data.MAILER_DRIVER === 'dev') issues.push('MAILER_DRIVER: the dev mailer cannot be used in production');
-  if (isProd(env) && parsed.data.SMS_DRIVER === 'dev') issues.push('SMS_DRIVER: the dev SMS sender cannot be used in production (no SMS provider chosen yet, D7)');
   if (isProd(env) && parsed.data.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
   if (isProd(env) && !parsed.data.WORKER_DATABASE_URL) {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');

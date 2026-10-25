@@ -85,8 +85,7 @@ worker's logs and `dead-letters list`, fix the cause, and ask the owner to prepa
 **Not automated yet.** When the period has ended (confirmed by the DPO and tax adviser):
 
 - personal data in the business's records is pseudonymised: member names and emails (when the person has
-  no other business), SC/PWD beneficiary names and ID numbers, supplier contact details, customer names on
-  restaurant orders;
+  no other business), SC/PWD beneficiary names and ID numbers, supplier contact details, customer names;
 - financial figures, document numbers and dates stay, so totals remain consistent;
 - the business is set to `CLOSED`.
 

@@ -4,8 +4,7 @@ import { ReasonAction } from '@/components/actions';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, type Branch, type CashierSession, type Me, type Member, type Register, type Sale, type SessionReport } from '@/lib/api';
-import { servesLaundry, servesLodging } from '@/lib/business-type';
+import { api, apiOrNull, type Branch, type CashierSession, type Me, type Member, type Register, type Sale } from '@/lib/api';
 import { formatDateTime, peso, signed, signOf } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -14,8 +13,8 @@ import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('shifts.item');
 
-/** Cash movement types as the API names them (tips since session 25, the front desk since session 28). */
-const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT', 'FOLIO_PAYMENT', 'DEPOSIT', 'DEPOSIT_REFUND'] as const;
+/** Cash movement types as the API names them (tips since session 25). */
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'TIP', 'TIP_REFUND', 'TIP_PAYOUT'] as const;
 
 /** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,12 +35,6 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const person = (userId: string | null) => (userId ? members?.data.find((m) => m.user.id === userId)?.user.displayName ?? '—' : '—');
   const journal = (sourceId: string) => (branch ? `/books?entity=${branch.legalEntityId}&source=${sourceId}` : null);
   const rec = shift.reconciliation;
-  // A front desk drawer (ADR-0023 §5.2): folio payments and deposits taken here, apart from sales.
-  // Job order down payments (ADR-0024 §5): taken and given back at this drawer, also apart from sales.
-  const type = me.activeTenant?.businessType;
-  const report = servesLodging(type) || servesLaundry(type) ? await apiOrNull<SessionReport>(`/reports/cashier-sessions/${id}`) : null;
-  const frontDesk = servesLodging(type) ? report?.frontDeskCollections : undefined;
-  const downPayments = servesLaundry(type) ? report?.jobOrderDownPayments : undefined;
   // Counted short or over and not yet approved: a manager other than the counter approves (the API checks both).
   const awaiting = shift.status === 'CLOSED' && rec !== null && (me.activeTenant?.permissions.includes('cash.reconcile') ?? false);
 
@@ -78,40 +71,6 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
               ))}
             </dl>
           </Note>
-        </section>
-      )}
-
-      {frontDesk && frontDesk.data.length > 0 && (
-        <section>
-          <h2 className="section-title mb-3">{t('lod.frontDeskCollections')}</h2>
-          <Note denom="none">
-            <dl className="grid gap-1 px-4 py-3 text-[0.9375rem]" data-testid="front-desk-collections">
-              {frontDesk.data.map((f) => (
-                <div key={`${f.kind}:${f.method}`} className="flex justify-between gap-3">
-                  <dt>{t(`lod.fd.${f.kind}` as MessageKey)} <span className="text-muted">· {f.method ? t(`lod.method.${f.method}` as MessageKey) : '—'} · {f.count}</span></dt>
-                  <dd className="money">{peso(f.amount)}</dd>
-                </div>
-              ))}
-            </dl>
-          </Note>
-          <p className="mt-2 text-[0.8125rem] text-muted">{t('lod.frontDeskHint', { cash: peso(frontDesk.cash) })}</p>
-        </section>
-      )}
-
-      {downPayments && downPayments.data.length > 0 && (
-        <section>
-          <h2 className="section-title mb-3">{t('lau.downPaymentsTaken')}</h2>
-          <Note denom="none">
-            <dl className="grid gap-1 px-4 py-3 text-[0.9375rem]" data-testid="job-down-payments">
-              {downPayments.data.map((f) => (
-                <div key={`${f.kind}:${f.method}`} className="flex justify-between gap-3">
-                  <dt>{t(`lau.dep.${f.kind}` as MessageKey)} <span className="text-muted">· {f.method ? t(`lau.method.${f.method}` as MessageKey) : '—'} · {f.count}</span></dt>
-                  <dd className="money">{peso(f.amount)}</dd>
-                </div>
-              ))}
-            </dl>
-          </Note>
-          <p className="mt-2 text-[0.8125rem] text-muted">{t('lau.downPaymentsHint', { cash: peso(downPayments.cash) })}</p>
         </section>
       )}
 

@@ -9,39 +9,20 @@ import { rejectCrossSite } from '@/lib/csrf';
  * invitation goes through `/api/auth` (it sets the session cookies), never through here.
  */
 const ALLOWED =
-  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|kitchen-stations|dining-areas|restaurant-tables|modifier-groups|modifier-options|menus|menu-versions|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance|service-staff|appointments)(\/|$)/;
-/**
- * Lodging (ADR-0023), exact paths only: set-up, housekeeping, availability and the night audit, stays
- * with their registry, beneficiaries and deposits, and folio adjustments and night reversals. Folio
- * payments are not here: they are taken at the till, at an open drawer.
- */
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance|service-staff|appointments)(\/|$)/;
 const ID = '[0-9a-f-]{36}';
-const LODGING = new RegExp(
-  `^(room-types(\\/${ID})?|rooms(\\/${ID}(\\/status)?)?|room-blocks(\\/${ID})?|lodging\\/(availability|night-audit|housekeeping)` +
-    `|stays(\\/${ID}(\\/(cancel|no-show|check-in|prepare-check-out|check-out|guests(\\/${ID})?|beneficiaries(\\/${ID})?|deposits(\\/(apply|refund|forfeit))?))?)?` +
-    `|folios\\/${ID}\\/(adjustments|night-reversals))$`,
-);
-/**
- * Laundry (ADR-0024), exact paths only: settings, garment types, machines and runs, job orders with
- * their lines, items, status moves, cancel and disposal, down payments by bank transfer, loads on a
- * machine, and a trip's changes (PATCH), start, done, failed or cancel. The claim is not here: it is a sale, taken at the till at an open drawer.
- */
-const LAUNDRY = new RegExp(
-  `^(branches\\/${ID}\\/laundry-settings|laundry\\/(garment-types(\\/${ID})?|machines(\\/(${ID}|board))?|trips\\/${ID}(\\/(start|done|failed|cancel))?)|machine-runs\\/${ID}\\/stop` +
-    `|job-orders(\\/(lookup|${ID}(\\/(lines|items|status|cancel|dispose|ticket|message|notices|machine-runs|trips|deposits(\\/refund)?))?))?)$`,
-);
 /**
  * Pharmacy (ADR-0025), exact paths only: recording and correcting a prescription, voiding one, the
  * pharmacy settings and a member's pharmacist licence. Lot holds and their release are under `stock`
  * (above). A pharmacist's approval at the till is not here: it is taken at the till.
  */
 const PHARMACY = new RegExp(`^(prescriptions(\\/${ID}(\\/void)?)?|pharmacy\\/(settings|pharmacists\\/${ID}))$`);
-/** DELETE reaches only these: a staff member's time off and a customer's service note (ADR-0022), a room block, a stay's guest or SC/PWD guest (ADR-0023). */
-const DELETABLE = new RegExp(`^((service-staff\\/${ID}\\/time-off|customers\\/${ID}\\/notes)\\/${ID}|room-blocks\\/${ID}|stays\\/${ID}\\/(guests|beneficiaries)\\/${ID})$`);
+/** DELETE reaches only these: a staff member's time off and a customer's service note (ADR-0022). */
+const DELETABLE = new RegExp(`^(service-staff\\/${ID}\\/time-off|customers\\/${ID}\\/notes)\\/${ID}$`);
 
 async function forward(request: NextRequest, path: string[]) {
   const joined = path.join('/');
-  if (!(ALLOWED.test(joined) || LODGING.test(joined) || LAUNDRY.test(joined) || PHARMACY.test(joined)) || path.some((p) => p === '..' || p.includes('\\')) || (request.method === 'DELETE' && !DELETABLE.test(joined))) {
+  if (!(ALLOWED.test(joined) || PHARMACY.test(joined)) || path.some((p) => p === '..' || p.includes('\\')) || (request.method === 'DELETE' && !DELETABLE.test(joined))) {
     return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Not found' } }, { status: 404 });
   }
   if (request.method !== 'GET') {

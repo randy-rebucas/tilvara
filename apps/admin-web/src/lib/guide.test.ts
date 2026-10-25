@@ -3,7 +3,7 @@ import { en, fil } from '../i18n/messages';
 import { GUIDE_SECTIONS, guideFor, topicFor } from './guide';
 import { NAV_ITEMS } from './nav';
 
-const ALL = ['catalog.read', 'inventory.read', 'purchasing.manage', 'accounting.read', 'restaurant.manage', 'reports.read', 'cash.reconcile', 'org.read', 'members.read', 'tenant.manage'];
+const ALL = ['catalog.read', 'inventory.read', 'purchasing.manage', 'accounting.read', 'reports.read', 'cash.reconcile', 'org.read', 'members.read', 'tenant.manage'];
 
 describe('user guide', () => {
   it('words every section, step and tip in English and Filipino', () => {
@@ -43,9 +43,7 @@ describe('user guide', () => {
     expect(topicFor('/productsx')).toBe('start');
   });
 
-  it('sends a retail shop on a restaurant page to the part about changing the type of business', () => {
-    expect(topicFor('/restaurant/menus', 'RETAIL')).toBe('subscription');
-    expect(topicFor('/restaurant/menus', 'RESTAURANT')).toBe('restaurant');
+  it('picks the parts for a shop, a sari-sari store and a boutique', () => {
     expect(topicFor('/products', 'RETAIL')).toBe('products');
     // ADR-0020: packs and expiry have their own part; the rest of Inventory stays with inventory.
     expect([topicFor('/inventory/packs', 'GROCERY'), topicFor('/inventory/expiry'), topicFor('/inventory/movements', 'GROCERY')]).toEqual(['tingi', 'tingi', 'inventory']);
@@ -55,84 +53,32 @@ describe('user guide', () => {
     expect([topicFor('/products/categories'), topicFor('/products/units')]).toEqual(['products', 'products']);
   });
 
-  it('leaves restaurant service out for a retail shop, and selling by weight out for a restaurant', () => {
-    const retail = guideFor('RETAIL', ALL);
-    expect(retail.map((s) => s.id)).not.toContain('restaurant');
-    expect(retail.flatMap((s) => [...s.steps, ...s.tips]).some((l) => l.only === 'restaurant')).toBe(false);
-    expect(retail.find((s) => s.id === 'products')!.tips.map((l) => l.key)).toContain('guide.products.t1');
-
-    const restaurant = guideFor('RESTAURANT', ALL);
-    expect(restaurant.map((s) => s.id)).toContain('restaurant');
-    expect(restaurant.find((s) => s.id === 'products')!.tips.map((l) => l.key)).not.toContain('guide.products.t1');
-    expect(restaurant.find((s) => s.id === 'reports')!.steps.map((l) => l.key)).toContain('guide.reports.s5');
-
-    const both = guideFor('HYBRID', ALL);
-    expect(both).toHaveLength(GUIDE_SECTIONS.length);
-  });
-
-  it('a plan without restaurant service leaves it out like a retail shop does (session 22)', () => {
-    const starter = guideFor('RESTAURANT', ALL, []);
-    expect(starter.map((s) => s.id)).not.toContain('restaurant');
-    expect(topicFor('/restaurant/menus', 'RESTAURANT', [])).toBe('subscription');
-    expect(topicFor('/restaurant/menus', 'RESTAURANT', ['restaurant'])).toBe('restaurant');
-    expect(guideFor('HYBRID', ALL, ['restaurant'])).toHaveLength(GUIDE_SECTIONS.length);
-  });
-
   it('still explains areas the role does not open, marked as such', () => {
-    const cashier = guideFor('HYBRID', ['catalog.read', 'sales.create', 'cash.session', 'restaurant.orders']);
+    const cashier = guideFor('HYBRID', ['catalog.read', 'sales.create', 'cash.session']);
     const by = Object.fromEntries(cashier.map((s) => [s.id, s.permitted]));
-    expect(by).toMatchObject({ start: true, products: true, prices: true, books: false, team: false, restaurant: false, account: true, till: true });
+    expect(by).toMatchObject({ start: true, products: true, prices: true, books: false, team: false, salon: false, account: true, till: true });
+    expect(cashier).toHaveLength(GUIDE_SECTIONS.length);
   });
 
-  it('a salon gets the appointments part and no restaurant; a shop gets neither (ADR-0022)', () => {
+  it('a salon gets the appointments part; a shop does not (ADR-0022)', () => {
     const salon = guideFor('SALON', [...ALL, 'appointments.read']);
     expect(salon.map((s) => s.id)).toContain('salon');
-    expect(salon.map((s) => s.id)).not.toContain('restaurant');
+    expect(salon.map((s) => s.id)).not.toContain('pharmacy');
     expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('salon');
     expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('salon');
     expect(topicFor('/appointments/staff/abc', 'SALON')).toBe('salon');
     expect(topicFor('/reports/commissions', 'SALON')).toBe('salon');
+    expect([topicFor('/reports/tips', 'SALON'), topicFor('/reports/ingredient-usage', 'HYBRID'), topicFor('/products/abc/supplies/def', 'SALON')]).toEqual(['salon', 'salon', 'products']);
     expect(topicFor('/appointments', 'RETAIL')).toBe('subscription');
-    expect(topicFor('/restaurant/menus', 'SALON')).toBe('subscription');
-  });
-});
-
-describe('lodging guide (ADR-0023)', () => {
-  it('a hotel gets the rooms part and its restaurant; a shop and a salon get no rooms part', () => {
-    const hotel = guideFor('LODGING', [...ALL, 'lodging.read']).map((s) => s.id);
-    expect(hotel).toContain('lodging');
-    expect(hotel).toContain('restaurant');
-    expect(hotel).not.toContain('salon');
-    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('lodging');
-    expect(guideFor('SALON', ALL).map((s) => s.id)).not.toContain('lodging');
-    expect(topicFor('/lodging/stays/abc', 'LODGING')).toBe('lodging');
-    expect(topicFor('/reports/occupancy', 'LODGING')).toBe('lodging');
-    expect(topicFor('/reports/guest-ledger', 'HYBRID')).toBe('lodging');
-    expect(topicFor('/lodging', 'RETAIL')).toBe('subscription');
-  });
-});
-
-describe('laundry guide (ADR-0024)', () => {
-  it('a laundry gets its part and no tables; other types do not get it', () => {
-    const laundry = guideFor('LAUNDRY', [...ALL, 'laundry.read']).map((s) => s.id);
-    expect(laundry).toContain('laundry');
-    expect(laundry).not.toContain('restaurant');
-    expect(laundry).not.toContain('lodging');
-    expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('laundry');
-    expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('laundry');
-    expect(topicFor('/laundry/jobs/abc', 'LAUNDRY')).toBe('laundry');
-    expect(topicFor('/reports/machine-usage', 'LAUNDRY')).toBe('laundry');
-    expect(topicFor('/laundry', 'SALON')).toBe('subscription');
   });
 });
 
 describe('pharmacy guide (ADR-0025)', () => {
-  it('a pharmacy gets its part and no tables; other types do not get it', () => {
+  it('a pharmacy gets its part and no salon part; other types do not get it', () => {
     const pharmacy = guideFor('PHARMACY', [...ALL, 'pharmacy.read']).map((s) => s.id);
     expect(pharmacy).toContain('pharmacy');
     expect(pharmacy).toContain('tingi');
-    expect(pharmacy).not.toContain('restaurant');
-    expect(pharmacy).not.toContain('laundry');
+    expect(pharmacy).not.toContain('salon');
     expect(guideFor('RETAIL', ALL).map((s) => s.id)).not.toContain('pharmacy');
     expect(guideFor('HYBRID', ALL).map((s) => s.id)).toContain('pharmacy');
     expect(topicFor('/pharmacy/prescriptions/abc', 'PHARMACY')).toBe('pharmacy');

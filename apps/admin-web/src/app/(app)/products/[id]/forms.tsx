@@ -10,7 +10,6 @@ import type { ProductDetail, TaxCategory } from '@/lib/api';
 import type { VariantOption } from '@/components/line-items';
 import { drugBody } from '@/lib/pharmacy';
 import { DrugFields } from '../drug-fields';
-import { draftOf, LaundryFields, laundryBody } from '../laundry-fields';
 
 type Variant = ProductDetail['variants'][number];
 const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
@@ -123,10 +122,9 @@ export function AddVariant({ productId }: { productId: string }) {
   return <Disclosure label={t('prod.addVariant')}>{(close) => <AddVariantFields close={close} productId={productId} />}</Disclosure>;
 }
 
-function VariantFields({ close, variant, productType, laundry }: { close: () => void; variant: Variant; productType: string; laundry: boolean }) {
+function VariantFields({ close, variant, productType }: { close: () => void; variant: Variant; productType: string }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
-  const [wash, setWash] = useState(() => draftOf(variant));
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -138,7 +136,6 @@ function VariantFields({ close, variant, productType, laundry }: { close: () => 
       referenceCost: cost || null,
       ...(productType === 'SERVICE' ? { serviceMinutes: minutes ? Number(minutes) : null } : {}),
       ...(productType === 'PACKAGE' ? { packageValidDays: days ? Number(days) : null } : {}),
-      ...(laundry && productType !== 'PACKAGE' ? laundryBody(f, wash, productType === 'SERVICE') : {}),
     });
     if (r.ok) close();
   }
@@ -148,15 +145,14 @@ function VariantFields({ close, variant, productType, laundry }: { close: () => 
       <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
       {productType === 'SERVICE' && <TextField label={t('prod.serviceMinutes')} name="serviceMinutes" type="number" min={5} max={720} step={5} inputMode="numeric" defaultValue={variant.serviceMinutes ?? ''} hint={t('prod.serviceMinutesHint')} error={fieldError('serviceMinutes')} />}
       {productType === 'PACKAGE' && <TextField label={`${t('prod.packageValidDays')} (${t('common.optional')})`} name="packageValidDays" type="number" min={1} max={3650} inputMode="numeric" defaultValue={variant.packageValidDays ?? ''} hint={t('prod.packageValidDaysHint')} error={fieldError('packageValidDays')} />}
-      {laundry && productType !== 'PACKAGE' && <LaundryFields draft={wash} onChange={setWash} service={productType === 'SERVICE'} values={variant} fieldError={fieldError} />}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );
 }
 
-export function EditVariant({ variant, productType = 'STANDARD', laundry = false }: { variant: Variant; productType?: string; laundry?: boolean }) {
+export function EditVariant({ variant, productType = 'STANDARD' }: { variant: Variant; productType?: string }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} productType={productType} laundry={laundry} />}</Disclosure>;
+  return <Disclosure kind="edit" label={t('prod.editVariant')}>{(close) => <VariantFields close={close} variant={variant} productType={productType} />}</Disclosure>;
 }
 
 /** Scan or type another barcode for this variant (e.g. a new pack design). */

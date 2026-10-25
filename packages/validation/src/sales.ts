@@ -8,25 +8,19 @@ const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digit
 /** Client-generated reference (transaction ids, beneficiary refs). */
 export const clientRefSchema = ref;
 
-/** One tender. A job order's down payment (`JOB_DEPOSIT`, ADR-0024 §5) is never sent by a client: only the claim builds it. */
+/** One tender. */
 export const tenderSchema = z.discriminatedUnion('method', [
   z.object({ method: z.literal('CASH'), tendered: amountSchema }),
   z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
   /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
   z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
-  /**
-   * Charge to room (ADR-0023 §5.1): an in-house guest of the same legal entity; applied after store
-   * credit, before cash; `amount` omitted = all that is left to pay. Never gives change; online only.
-   */
-  z.object({ method: z.literal('ROOM_CHARGE'), stayId: z.uuid(), amount: positiveAmount.optional() }),
 ]);
 /** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
 export const tendersSchema = z
   .array(tenderSchema)
   .min(1)
   .max(10)
-  .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale')
-  .refine((ts) => ts.filter((t) => t.method === 'ROOM_CHARGE').length <= 1, 'One room charge per sale');
+  .refine((ts) => ts.filter((t) => t.method === 'STORE_CREDIT').length <= 1, 'Store credit once per sale');
 export type TendersInput = z.infer<typeof tendersSchema>;
 
 // ------------------------------------------------------------------ cashier sessions
@@ -49,8 +43,6 @@ export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 export const closeCashierSessionSchema = z.object({
   countedCash: amountSchema,
   note: z.string().trim().max(500).nullable().optional(),
-  /** A manager (`cash.reconcile`) closing despite open restaurant bills (OPEN_BILLS) says why; audited. */
-  openBillsReason: z.string().trim().min(1).max(500).optional(),
 });
 export type CloseCashierSessionInput = z.infer<typeof closeCashierSessionSchema>;
 
@@ -67,13 +59,6 @@ export type CashierSessionListQuery = z.infer<typeof cashierSessionListQuerySche
 
 // ------------------------------------------------------------------ sales
 
-/**
- * Counter service (session 25): a menu item's choices (modifier option ids of the branch's takeaway
- * menu). Priced choices become their own lines under the item, at the item's quantity; free ones go
- * to the kitchen only. Lines with choices, or on the menu, go to the kitchen when the sale is paid.
- */
-export const counterChoicesSchema = z.array(z.uuid()).max(30);
-export const kitchenNoteSchema = z.string().trim().min(1).max(200);
 
 /** A tip with the sale (session 25): in cash, or by its own card/QR payment of this checkout. Not part of the amount due. */
 export const tipSchema = z
@@ -96,8 +81,6 @@ export type TipRefundInput = z.infer<typeof tipRefundSchema>;
 
 export const saleLineSchema = taxQuoteLineObject
   .extend({
-    choices: counterChoicesSchema.optional(),
-    kitchenNote: kitchenNoteSchema.optional(),
     statutory: z
       .object({
         scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
@@ -112,15 +95,9 @@ export const saleLineSchema = taxQuoteLineObject
   .refine(...oneDiscountRefinement)
   .refine(...packageSessionRefinement);
 
-/**
- * A counter sale line may name the washer or dryer a self-service cycle runs on (ADR-0024 §7): a cycle
- * item of the branch's machines. Online only (the offline envelope has no such field).
- */
+/** A counter sale line, with its statutory discount. */
 export const counterSaleLineSchema = taxQuoteLineObject
   .extend({
-    choices: counterChoicesSchema.optional(),
-    kitchenNote: kitchenNoteSchema.optional(),
-    machineId: z.uuid().optional(),
     statutory: z
       .object({
         scheme: z.string().trim().toUpperCase().regex(/^[A-Z_]{2,30}$/),
@@ -194,8 +171,6 @@ export const createSaleSchema = z
     expectedAmountDue: amountSchema.optional(),
     /** The customer it is rung up for (ADR-0018); required to pay with their store credit. */
     customerId: z.uuid().optional(),
-    /** Counter service: the name the kitchen calls out with the order number. */
-    pickupName: z.string().trim().min(1).max(60).optional(),
     tip: tipSchema.optional(),
     /** The appointment this sale rings up (ADR-0022 §4); it becomes COMPLETED with the sale. */
     appointmentId: z.uuid().optional(),
@@ -216,10 +191,9 @@ export const createPaymentIntentSchema = z.object({
   amount: positiveAmount,
   /**
    * TIP (session 25): the charge of a tip given with the sale (`tip.paymentIntentId`), never one of its
-   * tenders. FOLIO (ADR-0023 §5.2): a guest settling a folio or paying a booking deposit at the front desk.
-   * JOB_ORDER (ADR-0024 §5): a down payment on a laundry job order.
+   * tenders.
    */
-  purpose: z.enum(['SALE', 'TIP', 'FOLIO', 'JOB_ORDER']).default('SALE'),
+  purpose: z.enum(['SALE', 'TIP']).default('SALE'),
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
@@ -467,14 +441,6 @@ export const consolidatedRangeSchema = z
   .refine((v) => v.from <= v.to, { message: '"from" must not be after "to"', path: ['from'] })
   .refine((v) => (Date.parse(v.to) - Date.parse(v.from)) / 86_400_000 <= 366, { message: 'At most 366 days per report', path: ['to'] });
 export type ConsolidatedRangeQuery = z.infer<typeof consolidatedRangeSchema>;
-
-/** One local business day at a branch (e.g. open orders at its close). */
-export const reportDaySchema = z.object({ branchId: z.uuid(), day: localDate });
-export type ReportDayQuery = z.infer<typeof reportDaySchema>;
-
-/** Prep times grouped by station (default), local hour fired, or menu item. */
-export const prepTimesBySchema = z.object({ by: z.enum(['station', 'hour', 'item']).default('station') });
-export type PrepTimesByQuery = z.infer<typeof prepTimesBySchema>;
 
 /** Take the Z-reading of a register for one local business day (session 16). */
 export const zReadingSchema = z.object({ day: z.iso.date() });

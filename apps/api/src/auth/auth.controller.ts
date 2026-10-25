@@ -193,9 +193,9 @@ export class AuthController {
             tenantId: auth.tenant.tenantId,
             membershipId: auth.tenant.membershipId,
             status: auth.tenant.status,
-            // Which features the screens offer (the server refuses restaurant writes for RETAIL and GROCERY itself).
+            // Which features the screens offer (the server refuses what the type leaves out itself, e.g. `assertAppointments`).
             businessType: business!.businessType,
-            // What the plan includes (restaurant, multi_entity, api_access, advanced_reports): the screens
+            // What the plan includes (multi_entity, api_access, advanced_reports): the screens
             // hide the rest, which the server refuses anyway (`assertFeature`).
             features: business!.features,
             permissions: permissionCodes(auth.tenant.grants),

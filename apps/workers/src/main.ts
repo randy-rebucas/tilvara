@@ -3,7 +3,7 @@ import { createLogger, startMetricsServer, type MetricsServer } from '@1pos/obse
 import { hostname } from 'node:os';
 import { DevFileStorage } from '@1pos/database';
 import pg from 'pg';
-import { buildHandlers, DevSmsSender, DevWorkerMailer, expireDataExports } from './handlers.js';
+import { buildHandlers, DevWorkerMailer, expireDataExports } from './handlers.js';
 import { WorkerMonitor } from './monitoring.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
 import { WebhookDispatcher } from './webhook-dispatcher.js';
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const processor = new OutboxProcessor({
     pool,
     workerId,
-    handlers: buildHandlers(new DevWorkerMailer(logger), { storage, retentionDays: env.DATA_EXPORT_RETENTION_DAYS }, new DevSmsSender(logger), monitor),
+    handlers: buildHandlers(new DevWorkerMailer(logger), { storage, retentionDays: env.DATA_EXPORT_RETENTION_DAYS }),
     batchSize: env.OUTBOX_BATCH,
     leaseSeconds: env.OUTBOX_LEASE_SECONDS,
     logger,
@@ -67,9 +67,6 @@ async function main(): Promise<void> {
         // Appointments starting within a day: one appointment.reminder event each (ADR-0022 §10).
         const { rows: reminders } = await pool.query<{ n: number }>('SELECT platform_flag_appointment_reminders() AS n');
         if (reminders[0]?.n) logger.info('flagged appointment reminders', { count: reminders[0].n });
-        // Laundry waiting to be claimed: reminders on the branch's days and the final notice (ADR-0024 §6).
-        const { rows: notices } = await pool.query<{ n: number }>('SELECT platform_flag_laundry_notices() AS n');
-        if (notices[0]?.n) logger.info('flagged laundry notices', { count: notices[0].n });
         const expired = await expireDataExports(pool, storage, logger);
         if (expired) logger.info('expired data exports', { count: expired });
       }

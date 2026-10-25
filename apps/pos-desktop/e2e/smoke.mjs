@@ -65,15 +65,13 @@ try {
   await fill('password', PASSWORD);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.body.innerText.includes('Counter 1')`);
-  // A retail shop (business type): no table service or kitchen display, though the owner may do both.
-  check('retail shop: no floor or kitchen entry on the register picker', !/Work the floor|Kitchen display/.test(await text()));
   await clickText('Open shift');
   await waitFor(`document.getElementById('float')`);
   await fill('float', '1000');
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.getElementById('scan')`);
   check('shift opened; counter shows the scan field focused', await evaluate(`document.activeElement?.id === 'scan'`));
-  check('retail shop: no Tables tab', !(await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].some((x) => x.textContent === 'Tables')`)));
+  check('retail shop: the counter tabs are Sell, This shift and Close shift', (await evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].map((x) => x.textContent.trim()).join('|')`)) === 'Sell|This shift|Close shift');
 
   // Customer display (session 16): opened before the sale. A same-origin iframe stands in for the
   // second window (the till feeds it over a BroadcastChannel, which reaches both alike).
@@ -98,7 +96,7 @@ try {
   await evaluate(`document.querySelector('header button[title^="Help and user guide"]').click()`);
   await waitFor(`document.getElementById('guide-sell')`);
   check('the ? button opens the guide at Sell, marked "You are here"', await evaluate(`document.getElementById('guide-sell').innerText.includes('You are here') && !document.getElementById('guide-start').innerText.includes('You are here')`));
-  check('retail shop: the guide leaves out tables and the kitchen, keeps the desktop till and problems', await evaluate(`!document.getElementById('guide-tables') && !document.getElementById('guide-kitchen') && !!document.getElementById('guide-till') && !!document.getElementById('guide-trouble')`));
+  check('retail shop: the guide leaves out appointments and medicines, keeps the desktop till and problems', await evaluate(`!document.getElementById('guide-appointments') && !document.getElementById('guide-pharmacy') && !!document.getElementById('guide-till') && !!document.getElementById('guide-trouble')`));
   check('the counter is hidden behind the guide, which lists the counter keys', await evaluate(`document.querySelector('main').hidden`) && (await text()).includes('F8 exact cash'));
   await shot('guide-sell.png', false);
   await pressKey('F8');

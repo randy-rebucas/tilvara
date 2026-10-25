@@ -81,10 +81,5 @@ export const oneDiscountRefinement = [oneDiscountForm, oneDiscountMessage] as co
 export const taxQuoteSchema = z.object({
   branchId: z.uuid(),
   lines: z.array(taxQuoteLineSchema).min(1).max(200),
-  /**
-   * `false` prices without promotions, as a restaurant bill does (ADR-0021 §1): the order screen's
-   * running subtotal. Omitted = promoted, as a counter sale is.
-   */
-  promotions: z.boolean().optional(),
 });
 export type TaxQuoteInput = z.infer<typeof taxQuoteSchema>;

@@ -8,7 +8,6 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ApiMetrics, BUSINESS_GAUGES } from '../../src/infrastructure/metrics.js';
 import { MonitoringService } from '../../src/infrastructure/monitoring.service.js';
-import { NightAuditScheduler } from '../../src/lodging/night-audit.scheduler.js';
 import { addMember, bearer, createApp, loginToken, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
 
 /**
@@ -275,31 +274,6 @@ describe('business gauges', () => {
              has_function_privilege('onepos_worker', p.oid, 'EXECUTE') AS worker
         FROM pg_proc p WHERE p.proname = 'platform_metrics'`);
     expect(fn).toEqual({ owner: 'onepos_platform', secdef: true, app: true, readonly: false, worker: false });
-  });
-});
-
-describe('night audit (audit 2026-10-21 §3)', () => {
-  it('a stay whose nights fell due more than a day ago shows in the gauge; the scheduler posts them and counts them', async () => {
-    const day = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(Date.now() + days * 86_400_000));
-    const t = await signup(app, 'mon-hotel');
-    const auth = bearer(t.access);
-    const idem = (path: string, body: object) => http().post(path).set(auth).set('Idempotency-Key', randomUUID()).send(body);
-    await http().patch('/v1/business').set(auth).send({ businessType: 'LODGING' }).expect(200);
-    const le = (await http().post('/v1/legal-entities').set(auth).send({ registeredName: 'Mon Hotel Corp', vatStatus: 'VAT' }).expect(201)).body.id;
-    const h1 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le, code: 'H1', name: 'H1' }).expect(201)).body.id;
-    await http().patch(`/v1/branches/${h1}/lodging-settings`).set(auth).send({ nightAuditTime: '00:00' }).expect(200);
-    const type = (await idem('/v1/room-types', { code: 'STD', name: 'Standard', baseOccupancy: 2, maxOccupancy: 3, rackRate: '2800.00' }).expect(201)).body.id;
-    const room = (await idem('/v1/rooms', { branchId: h1, roomTypeId: type, number: '101' }).expect(201)).body.id;
-    const guest = { fullName: 'Liza Reyes', nationality: 'Filipino', idType: 'Passport', idNumber: 'P1234567', address: 'Quezon City' };
-    // In since three days ago: the night three days ago fell due (at 00:00 two days ago) more than a day ago.
-    await idem('/v1/stays', { branchId: h1, roomId: room, arrivalDate: day(-3), departureDate: day(1), guests: [guest], checkIn: true }).expect(201);
-    expect(sample(await scrape(), 'onepos_lodging_stays_nights_overdue')).toBeGreaterThanOrEqual(1);
-
-    const posted = metrics.nightAudit.get({ outcome: 'posted' });
-    const pass = await app.get(NightAuditScheduler).runOnce();
-    expect(pass.find((p) => p.tenantId === t.tenantId)).toMatchObject({ nights: 3, failed: 0 });
-    expect(metrics.nightAudit.get({ outcome: 'posted' }) - posted).toBe(pass.reduce((a, p) => a + p.nights, 0));
-    expect(await scrape()).toMatch(/^onepos_night_audit_total\{outcome="posted"\} \d+$/m);
   });
 });
 

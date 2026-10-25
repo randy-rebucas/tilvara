@@ -57,7 +57,7 @@ describe('layout', () => {
     expect(text).toContain(['--------------------------------', 'Senior citizen: Lola Cruz', 'ID OSCA-123', 'Discount              -PHP 26.79', '', '', '_'.repeat(32), '  Signature of the beneficiary'].join('\n'));
   });
 
-  it('prints a banner first, centred, bold and double height (a kitchen VOID slip)', () => {
+  it('prints a banner first, centred, bold and double height', () => {
     const lines = layout({ ...receipt, banner: '*** VOID ***' }, 32);
     expect(lines[0]).toEqual({ kind: 'text', text: '*** VOID ***', align: 'center', bold: true, double: true });
     expect(layout(receipt, 32)[0]).toMatchObject({ text: 'Tindahan ni Aling Nena' });

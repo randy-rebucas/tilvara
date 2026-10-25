@@ -312,19 +312,7 @@ describe('grace period', () => {
     }
   });
 
-  it('decision A3: disposing of laundry and recording pharmacist licences need two-step sign-in where the business has them', async () => {
-    // A laundry's branch manager may dispose of unclaimed laundry (laundry.dispose): privileged.
-    const laundry = await signup(app, 'grace-laundry');
-    await http().patch('/v1/business').set(bearer(laundry.access)).send({ businessType: 'LAUNDRY' }).expect(200);
-    const bm = await addMember(owner, laundry.tenantId, 'branch_manager');
-    const bmToken = (await login(bm.email).expect(200)).body.tokens.accessToken;
-    expect((await http().get('/v1/me').set(bearer(bmToken)).expect(200)).body.mfa.required).toBe(true);
-    await backdatePrivilege(bm.userId, 8);
-    expect((await http().get('/v1/job-orders').set(bearer(bmToken)).expect(403)).body.error.code).toBe('MFA_REQUIRED');
-    const attendant = await addMember(owner, laundry.tenantId, 'laundry_attendant');
-    const attendantToken = (await login(attendant.email).expect(200)).body.tokens.accessToken;
-    expect((await http().get('/v1/me').set(bearer(attendantToken)).expect(200)).body.mfa.required).toBe(false);
-
+  it('decision A3: recording pharmacist licences needs two-step sign-in where the business has them', async () => {
     // A pharmacy role holding pharmacy.setup only (pharmacist licences): privileged.
     const pharmacy = await signup(app, 'grace-pharmacy');
     await http().patch('/v1/business').set(bearer(pharmacy.access)).send({ businessType: 'PHARMACY' }).expect(200);

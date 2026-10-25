@@ -270,21 +270,6 @@ describe('schema isolation catalog', () => {
       `SELECT has_function_privilege('onepos_app', 'platform_set_subscription(uuid, text, text, timestamptz, timestamptz)', 'EXECUTE') AS ok`,
     );
     expect(setSub!.ok).toBe(false);
-    // The night audit (ADR-0023 §7): the API lists the businesses with nights due; nobody else may.
-    const [due] = await q<{ app: boolean; worker: boolean; readonly: boolean }>(`SELECT
-       has_function_privilege('onepos_app', 'platform_lodging_due_tenants()', 'EXECUTE') AS app,
-       has_function_privilege('onepos_worker', 'platform_lodging_due_tenants()', 'EXECUTE') AS worker,
-       has_function_privilege('onepos_readonly', 'platform_lodging_due_tenants()', 'EXECUTE') AS readonly`);
-    expect(due).toEqual({ app: true, worker: false, readonly: false });
-    // Laundry notices (ADR-0024 §6): the worker's hourly pass queues reminders and settles each notice; nobody else.
-    const laundry = await q<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(`
-      SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,
-             has_function_privilege('onepos_readonly', f, 'EXECUTE') AS readonly
-        FROM unnest(ARRAY['platform_flag_laundry_notices()', 'laundry_notice_settle(uuid, text, text, text, text, text)']) AS f`);
-    expect(laundry.map(({ fn, ...r }) => [fn.split('(')[0], r])).toEqual([
-      ['platform_flag_laundry_notices', { app: false, worker: true, readonly: false }],
-      ['laundry_notice_settle', { app: false, worker: true, readonly: false }],
-    ]);
     // MFA resets (session 10): the business resets its own members; support resets need ops credentials.
     const resets = await q<{ fn: string; app: boolean; worker: boolean; readonly: boolean; migrator: boolean }>(`
       SELECT f AS fn, has_function_privilege('onepos_app', f, 'EXECUTE') AS app, has_function_privilege('onepos_worker', f, 'EXECUTE') AS worker,

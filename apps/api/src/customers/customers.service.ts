@@ -10,8 +10,6 @@ import {
   desc,
   eq,
   isNull,
-  jobOrders,
-  jobOrderTrips,
   legalEntities,
   prescriptionFills,
   prescriptionItems,
@@ -19,9 +17,6 @@ import {
   registers,
   saleLines,
   sales,
-  stayBeneficiaries,
-  stayGuests,
-  stays,
   sql,
   inArray,
   inSequence,
@@ -192,16 +187,7 @@ export class CustomersService extends TenantService {
       }
       // Service notes may hold health information; appointment notes may name them: both go (ADR-0022 §8).
       await db.delete(customerNotes).where(eq(customerNotes.customerId, id));
-      // The guest registry of their stays (ADR-0023 §8): names, ID numbers, addresses.
-      await db.execute(sql`DELETE FROM stay_guests WHERE stay_id IN (SELECT id FROM stays WHERE customer_id = ${id})`);
-      // Free text on their stays and jobs may name them; an ended one may only have it blanked (0107).
-      await db.execute(sql`UPDATE stays SET notes = NULL, updated_by = ${auth.userId}, updated_at = now() WHERE customer_id = ${id} AND notes IS NOT NULL`);
       await db.update(appointments).set({ notes: null, updatedBy: auth.userId, updatedAt: sql`now()` }).where(and(eq(appointments.customerId, id), sql`${appointments.notes} IS NOT NULL`));
-      // Their laundry (ADR-0024): where it was picked up and delivered, and any walk-in name and phone on the job.
-      await db.execute(sql`UPDATE job_order_trips SET address = NULL, contact_phone = NULL, contact_name = NULL, notes = NULL, updated_at = now()
-                            WHERE job_order_id IN (SELECT id FROM job_orders WHERE customer_id = ${id})`);
-      await db.execute(sql`UPDATE job_orders SET customer_name = NULL, customer_phone = NULL, special_instructions = NULL, condition_notes = NULL, updated_by = ${auth.userId}, updated_at = now()
-                            WHERE customer_id = ${id} AND (customer_name IS NOT NULL OR customer_phone IS NOT NULL OR special_instructions IS NOT NULL OR condition_notes IS NOT NULL)`);
       // Prescriptions are dispensing records the pharmacy keeps (ADR-0025 §6): only the link to the customer goes;
       // the patient's details stay until the retention period ends (the DPO's decision, G6).
       await db.execute(sql`UPDATE prescriptions SET customer_id = NULL, updated_by = ${auth.userId}, updated_at = now() WHERE customer_id = ${id}`);
@@ -276,7 +262,7 @@ export class CustomersService extends TenantService {
   /**
    * Everything the business holds about the customer, as one JSON document (a data subject's access
    * request, privacy pack): the profile, consent history, purchases with their lines, store credit,
-   * appointments and packages, stays with their guest registry, laundry jobs and prescriptions.
+   * appointments and packages, and prescriptions.
    * A suspended or lapsed business must still answer such a request, so this write (its audit row) is allowed then.
    */
   export(auth: AuthContext, id: string) {
@@ -296,19 +282,10 @@ export class CustomersService extends TenantService {
         () => db.select().from(appointments).where(eq(appointments.customerId, id)).orderBy(asc(appointments.startsAt)),
       );
       const packages = await customerPackageBalances(db, id);
-      // Their stays with the guest registry (ADR-0023 §8), laundry jobs with trips (ADR-0024) and prescriptions (ADR-0025).
-      const [stayRows, jobRows, rxRows] = await inSequence(
-        () => db.select().from(stays).where(eq(stays.customerId, id)).orderBy(asc(stays.arrivalDate)),
-        () => db.select().from(jobOrders).where(eq(jobOrders.customerId, id)).orderBy(asc(jobOrders.createdAt)),
-        () => db.select().from(prescriptions).where(eq(prescriptions.customerId, id)).orderBy(asc(prescriptions.createdAt)),
-      );
-      const stayIds = stayRows.map((s) => s.id);
-      const jobIds = jobRows.map((j) => j.id);
+      // Their prescriptions (ADR-0025).
+      const rxRows = await db.select().from(prescriptions).where(eq(prescriptions.customerId, id)).orderBy(asc(prescriptions.createdAt));
       const rxIds = rxRows.map((p) => p.id);
-      const [guests, beneficiaries, trips, rxItems, fills] = await inSequence(
-        () => (stayIds.length ? db.select().from(stayGuests).where(inArray(stayGuests.stayId, stayIds)).orderBy(asc(stayGuests.createdAt)) : Promise.resolve([])),
-        () => (stayIds.length ? db.select().from(stayBeneficiaries).where(inArray(stayBeneficiaries.stayId, stayIds)).orderBy(asc(stayBeneficiaries.createdAt)) : Promise.resolve([])),
-        () => (jobIds.length ? db.select().from(jobOrderTrips).where(inArray(jobOrderTrips.jobOrderId, jobIds)).orderBy(asc(jobOrderTrips.createdAt)) : Promise.resolve([])),
+      const [rxItems, fills] = await inSequence(
         () => (rxIds.length ? db.select().from(prescriptionItems).where(inArray(prescriptionItems.prescriptionId, rxIds)).orderBy(asc(prescriptionItems.lineNo)) : Promise.resolve([])),
         () => (rxIds.length ? db.select().from(prescriptionFills).where(inArray(prescriptionFills.prescriptionId, rxIds)).orderBy(asc(prescriptionFills.createdAt)) : Promise.resolve([])),
       );
@@ -329,22 +306,6 @@ export class CustomersService extends TenantService {
         serviceNotes: notes.map((n) => ({ body: n.body, pinned: n.pinned, createdAt: n.createdAt, updatedAt: n.updatedAt })),
         appointments: booked.map((a) => ({ status: a.status, startsAt: a.startsAt, endsAt: a.endsAt, notes: a.notes, cancelReason: a.cancelReason })),
         packages: packages.map((p) => ({ name: p.name, boughtAt: p.boughtAt, expiresOn: p.expiresOn, services: p.services.map((x) => ({ name: x.name, sessions: x.sessions, sessionsLeft: x.sessionsLeft })) })),
-        stays: stayRows.map((s) => ({
-          status: s.status, arrivalDate: s.arrivalDate, departureDate: s.departureDate, adults: s.adults, children: s.children, guestName: s.guestName,
-          source: s.source, externalReference: s.externalReference, notes: s.notes, checkedInAt: s.checkedInAt, checkedOutAt: s.checkedOutAt, cancelReason: s.cancelReason,
-          guests: guests.filter((g) => g.stayId === s.id).map((g) => ({
-            isPrimary: g.isPrimary, fullName: g.fullName, nationality: g.nationality, idType: g.idType, idNumber: g.idNumber, address: g.address, birthDate: g.birthDate, contact: g.contact,
-          })),
-          seniorOrPwdGuests: beneficiaries.filter((b) => b.stayId === s.id).map((b) => ({ schemeCode: b.schemeCode, name: b.name, idNumber: b.idNumber, removedAt: b.removedAt })),
-        })),
-        laundryJobs: jobRows.map((j) => ({
-          number: j.number, status: j.status, customerName: j.customerName, customerPhone: j.customerPhone, serviceLevel: j.serviceLevel, promisedAt: j.promisedAt,
-          weightKg: j.weightKg, bagCount: j.bagCount, specialInstructions: j.specialInstructions, conditionNotes: j.conditionNotes, amountDue: money(j.amountDue),
-          createdAt: j.createdAt, readyAt: j.readyAt, claimedAt: j.claimedAt, cancelReason: j.cancelReason, disposedAt: j.disposedAt, disposedReason: j.disposedReason,
-          trips: trips.filter((t) => t.jobOrderId === j.id).map((t) => ({
-            kind: t.kind, status: t.status, address: t.address, contactName: t.contactName, contactPhone: t.contactPhone, windowStart: t.windowStart, windowEnd: t.windowEnd, notes: t.notes, doneAt: t.doneAt,
-          })),
-        })),
         prescriptions: rxRows.map((p) => ({
           patientName: p.patientName, patientAddress: p.patientAddress, prescriberName: p.prescriberName, prescriberLicenseNo: p.prescriberLicenseNo, issuedOn: p.issuedOn,
           notes: p.notes, createdAt: p.createdAt, voidedAt: p.voidedAt, voidReason: p.voidReason,

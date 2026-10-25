@@ -36,20 +36,20 @@ try {
   check('tokens are not readable by page JS', !(await evaluate(`document.cookie.includes('onepos_at') || document.cookie.includes('onepos_rt')`)));
   await shot('overview-empty.png');
 
-  // 2b. Business type: a retail shop sees no restaurant; changing the type brings it into view.
+  // 2b. Business type: a retail shop sees no appointments; changing the type brings them into view.
   const navHas = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=main-nav] a')].some((a) => a.textContent === ${JSON.stringify(label)})`);
-  check('retail shop: no Restaurant tab', !(await navHas('Restaurant')));
-  await go('/restaurant');
-  check('retail shop: restaurant set-up says it is off', await evaluate(`document.body.innerText.includes('set up as a shop (retail, or sari-sari store and grocery)')`));
+  check('retail shop: no Appointments tab', !(await navHas('Appointments')));
+  await go('/appointments');
+  check('retail shop: appointments say they are off', await evaluate(`document.body.innerText.includes('are for a salon, spa or barber shop')`));
   await go('/subscription/business');
   check('business page shows the type chosen at sign-up', await evaluate(`document.querySelector('input[name=businessType][value=RETAIL]').checked`));
   await shot('business-type.png');
-  await evaluate(`document.querySelector('input[name=businessType][value=RESTAURANT]').click()`);
+  await evaluate(`document.querySelector('input[name=businessType][value=SALON]').click()`);
   // The type's own form (the page also has the business name form, session 22).
   await evaluate(`document.querySelector('input[name=businessType]').closest('form').querySelector('button.btn-primary').click()`);
   await waitFor(`[...document.querySelectorAll('[role=status]')].some((x) => x.textContent.startsWith('Saved'))`);
   await go('/');
-  check('after changing to Restaurant: Restaurant tab shown', await navHas('Restaurant'));
+  check('after changing to Salon: Appointments tab shown', await navHas('Appointments'));
 
   // 3. CSRF: a mutation without the custom header is refused by the BFF
   const csrf = await evaluate(`fetch('/api/v1/categories', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"name":"x"}' }).then((r) => r.status)`);

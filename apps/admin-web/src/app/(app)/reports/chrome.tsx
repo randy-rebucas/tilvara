@@ -4,8 +4,7 @@ import type { ReactNode } from 'react';
 import { Callout, Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
 import { api, apiOrNull, ApiError, type Branch, type Me } from '@/lib/api';
-import { hasRestaurant, servesAppointments, servesLaundry, servesLodging } from '@/lib/business-type';
-import { RestaurantOff } from '@/components/restaurant-off';
+import { servesAppointments } from '@/lib/business-type';
 import { PrintButton } from '@/components/print-button';
 import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
@@ -14,11 +13,8 @@ import { getT } from '@/i18n/server';
 export type ReportTab =
   | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z'
   | 'promotions' | 'attributes'
-  | 'items' | 'usage' | 'voids' | 'prep' | 'open' | 'charge' | 'tips'
   | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments'
-  | 'commissions' | 'servicePackages' | 'staffTips'
-  | 'occupancy' | 'guestLedger' | 'accommodationTax'
-  | 'jobOrders' | 'machineUsage' | 'jobDeposits' | 'deliveries';
+  | 'commissions' | 'servicePackages' | 'staffTips' | 'tips' | 'usage';
 const PATHS: Record<ReportTab, string> = {
   sales: '/reports/sales',
   products: '/reports/products',
@@ -30,13 +26,6 @@ const PATHS: Record<ReportTab, string> = {
   tax: '/reports/tax',
   statutory: '/reports/statutory',
   z: '/reports/z-readings',
-  items: '/reports',
-  usage: '/reports/ingredient-usage',
-  voids: '/reports/kitchen-voids',
-  prep: '/reports/prep-times',
-  open: '/reports/open-orders',
-  charge: '/reports/service-charge',
-  tips: '/reports/tips',
   category: '/reports/categories',
   branches: '/reports/branches',
   discounts: '/reports/discounts',
@@ -45,42 +34,32 @@ const PATHS: Record<ReportTab, string> = {
   commissions: '/reports/commissions',
   servicePackages: '/reports/service-packages',
   staffTips: '/reports/staff-tips',
-  occupancy: '/reports/occupancy',
-  guestLedger: '/reports/guest-ledger',
-  accommodationTax: '/reports/accommodation-tax',
-  jobOrders: '/reports/job-orders',
-  machineUsage: '/reports/machine-usage',
-  jobDeposits: '/reports/job-order-deposits',
-  deliveries: '/reports/deliveries',
+  tips: '/reports/tips',
+  usage: '/reports/ingredient-usage',
 };
 /** All branches at once: no branch to pick. */
 const CONSOLIDATED: readonly ReportTab[] = ['branches'];
 /** As things stand now: no dates to pick. */
-const UNDATED: readonly ReportTab[] = ['payments', 'guestLedger', 'jobDeposits'];
+const UNDATED: readonly ReportTab[] = ['payments'];
 const GROUPS = {
   // ADR-0021: promotions and sizes and colours sit with the everyday sales reports (every plan).
   sales: ['sales', 'products', 'promotions', 'attributes', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'z'],
   // Session 20 (SPEC §6.10): across categories and branches, discounts and price changes, purchasing, payments.
   analysis: ['category', 'branches', 'discounts', 'purchases', 'payments'],
-  restaurant: ['items', 'usage', 'voids', 'prep', 'open', 'charge', 'tips'],
-  // ADR-0022: a salon's staff commissions, prepaid service packages and tips per staff member.
-  salon: ['commissions', 'servicePackages', 'staffTips'],
-  // ADR-0023: a hotel's occupancy and room revenue, the guest ledger beside the books, the local accommodation tax.
-  lodging: ['occupancy', 'guestLedger', 'accommodationTax'],
-  // ADR-0024: a laundry's job orders and turnaround, machine usage, down payments and unclaimed laundry beside the books, deliveries.
-  laundry: ['jobOrders', 'machineUsage', 'jobDeposits', 'deliveries'],
+  // ADR-0022: a salon's staff commissions, prepaid service packages, tips per staff member, tips owed
+  // and paid out, and the supplies its services used.
+  salon: ['commissions', 'servicePackages', 'staffTips', 'tips', 'usage'],
 } as const satisfies Record<string, readonly ReportTab[]>;
 
 export interface ReportQuery {
   branch?: string;
   from?: string;
   to?: string;
-  day?: string;
 }
 
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-/** Branch (?branch=, else the first) and local dates (?from=&to= or ?day=), defaulting to today in Manila. */
+/** Branch (?branch=, else the first) and local dates (?from=&to=), defaulting to today in Manila. */
 export async function reportScope(q: ReportQuery) {
   const list = await apiOrNull<{ data: Branch[] }>('/branches');
   const branches = list?.data.filter((b) => !b.archivedAt) ?? [];
@@ -90,7 +69,6 @@ export async function reportScope(q: ReportQuery) {
     branch: branches.find((b) => b.id === q.branch) ?? branches[0],
     from: isDate(q.from) ? q.from! : today,
     to: isDate(q.to) ? q.to! : today,
-    day: isDate(q.day) ? q.day! : today,
   };
 }
 
@@ -121,53 +99,19 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   children: ReactNode;
 }) {
   const { t, lang } = await getT();
-  const { branches, branch, from, to, day } = scope;
+  const { branches, branch, from, to } = scope;
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
-  // A retail business has no restaurant reports (business type): one group, so no group tabs either.
-  // Reports read records made before a plan change, so only the type hides the restaurant group.
+  // Only a business that takes appointments has the salon group (business type).
   const tenant = (await api<Me>('/me')).activeTenant;
-  const restaurant = hasRestaurant(tenant?.businessType);
   const salon = servesAppointments(tenant?.businessType);
-  const lodging = servesLodging(tenant?.businessType);
-  const laundry = servesLaundry(tenant?.businessType);
-  if (group === 'laundry' && !laundry) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
-        <Callout>
-          {t('biz.laundryOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
-        </Callout>
-      </div>
-    );
-  }
-  if (group === 'lodging' && !lodging) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
-        <Callout>
-          {t('biz.lodgingOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
-        </Callout>
-      </div>
-    );
-  }
   if (group === 'salon' && !salon) {
     return (
       <div className="flex flex-col gap-6">
         <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
         <Callout>
           {t('biz.salonOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
+          <a href="/subscription/business" className="font-semibold underline">{t('biz.changeTypeLink')}</a>
         </Callout>
-      </div>
-    );
-  }
-  if (group === 'restaurant' && !restaurant) {
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeader title={t('rep.title')} lede={t('rep.lede')} />
-        <RestaurantOff />
       </div>
     );
   }
@@ -176,35 +120,30 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   const notOnPlan = group === 'analysis' && tenant?.features !== undefined && !tenant.features.includes('advanced_reports');
   const error = notOnPlan ? t('rep.notOnPlan') : reportError;
   const params = (k: ReportTab, extra: Record<string, string> = {}) =>
-    new URLSearchParams({ ...(branch && { branch: branch.id }), ...(k === 'open' ? { day } : { from, to }), ...extra });
+    new URLSearchParams({ ...(branch && { branch: branch.id }), from, to, ...extra });
   const keep = (k: ReportTab) => `${PATHS[k]}?${params(k)}`;
   const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : group === 'salon' ? 'rep.salonLede' : group === 'lodging' ? 'rep.lodgingLede' : group === 'laundry' ? 'rep.laundryLede' : 'rep.lede')} />
+      <PageHeader title={t('rep.title')} lede={t(group === 'sales' ? 'rep.salesLede' : group === 'analysis' ? 'rep.analysisLede' : 'rep.salonLede')} />
       {/* On paper (or a saved PDF): which report, branch and range, and when it was printed. */}
       {branch && (
         <p className="hidden text-[0.9375rem] print:block" data-testid="print-heading">
           <b>{t(`rep.tab.${tab}` as MessageKey)}</b> · {CONSOLIDATED.includes(tab) ? t('rep.allBranches') : branch.name}
-          {!UNDATED.includes(tab) && <> · {tab === 'open' ? day : from === to ? from : `${from} – ${to}`}</>} · {t('rep.printedAt', { at: formatDateTime(new Date().toISOString(), lang) })}
+          {!UNDATED.includes(tab) && <> · {from === to ? from : `${from} – ${to}`}</>} · {t('rep.printedAt', { at: formatDateTime(new Date().toISOString(), lang) })}
         </p>
       )}
       <div className="contents print:hidden">
-      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => (g !== 'restaurant' || restaurant) && (g !== 'salon' || salon) && (g !== 'lodging' || lodging) && (g !== 'laundry' || laundry)).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
+      <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).filter((g) => g !== 'salon' || salon).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav level={2} label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
-      {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, ...(tab === 'open' ? { day } : { from, to }), ...extra })}`} />}
+      {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, from, to, ...extra })}`} />}
       {branch && (
         <div className="flex flex-col gap-2">
           {/* A plain GET form: the range lives in the URL, so a report can be bookmarked or shared. */}
           <form method="get" action={PATHS[tab]} className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="branch" value={branch.id} />
             {Object.entries(extra).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
-            {UNDATED.includes(tab) ? null : tab === 'open' ? (
-              <div className="field">
-                <label htmlFor="day">{t('rep.closeOf')}</label>
-                <input id="day" name="day" type="date" className="input" defaultValue={day} />
-              </div>
-            ) : (
+            {UNDATED.includes(tab) ? null : (
               <>
                 <div className="field">
                   <label htmlFor="from">{t('common.from')}</label>
@@ -224,7 +163,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
             )}
             {!error && <PrintButton />}
           </form>
-          {tab !== 'open' && !UNDATED.includes(tab) && (
+          {!UNDATED.includes(tab) && (
             <nav aria-label={t('rep.presets')} className="flex flex-wrap gap-1.5">
               {datePresets(today).map((p) => {
                 const on = p.from === from && p.to === to;

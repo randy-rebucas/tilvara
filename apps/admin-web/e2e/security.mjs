@@ -5,7 +5,7 @@
 // apps/api/test/integration/account-security.test.ts.
 // Usage: node e2e/security.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { createHmac } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser, sleep } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';

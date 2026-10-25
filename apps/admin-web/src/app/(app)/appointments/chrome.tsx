@@ -60,7 +60,7 @@ export async function AppointmentsChrome({
         {header}
         <Callout>
           {t('biz.salonOff')}{' '}
-          <a href="/subscription/business" className="font-semibold underline">{t('biz.restaurantOffLink')}</a>
+          <a href="/subscription/business" className="font-semibold underline">{t('biz.changeTypeLink')}</a>
         </Callout>
       </div>
     );

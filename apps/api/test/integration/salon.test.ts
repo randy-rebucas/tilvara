@@ -92,11 +92,10 @@ const gl = async (s: S, key: string) =>
   Number((await sql<{ v: string }>(s, `SELECT coalesce(sum(l.debit - l.credit), 0)::text AS v FROM journal_lines l JOIN accounts a ON a.id = l.account_id WHERE a.system_key = $1`, [key]))[0]!.v);
 
 describe('a salon business', () => {
-  it('takes appointments and gets the salon roles; other types are refused, and restaurant service stays off', async () => {
+  it('takes appointments and gets the salon roles; other types are refused', async () => {
     const s = await salon('salon-type');
     const roles = await sql<{ key: string }>(s, `SELECT key FROM roles WHERE is_system ORDER BY key`);
     expect(roles.map((r) => r.key)).toEqual(expect.arrayContaining(['front_desk', 'stylist']));
-    await http().post('/v1/restaurant/floors').set(s.auth).send({ branchId: s.b1, name: 'Floor' }).expect((r) => expect([403, 404]).toContain(r.status));
 
     const shop = await signup(app, 'salon-retail');
     const shopAuth = bearer(shop.access);
@@ -297,8 +296,8 @@ describe('service packages', () => {
   it('what a package holds is business-wide catalog: a branch catalog.manage grant cannot change it', async () => {
     const s = await salon('sal-pkg-scope');
     const v = await pkg(s);
-    await http().post('/v1/roles').set(s.auth).send({ key: 'menu_editor', name: 'Menu editor', permissions: ['catalog.manage', 'catalog.read'] }).expect(201);
-    const editor = bearer(await loginToken(app, (await addMember(owner, s.tenantId, 'menu_editor', { type: 'BRANCH', id: s.b1 })).email));
+    await http().post('/v1/roles').set(s.auth).send({ key: 'catalog_editor', name: 'Catalog editor', permissions: ['catalog.manage', 'catalog.read'] }).expect(201);
+    const editor = bearer(await loginToken(app, (await addMember(owner, s.tenantId, 'catalog_editor', { type: 'BRANCH', id: s.b1 })).email));
     const refused = (await http().put(`/v1/variants/${v}/package-items`).set(editor).send({ items: [{ serviceVariantId: s.cut, sessions: 10 }] }).expect(403)).body.error;
     expect(refused.details.missing).toEqual(['catalog.manage']);
     await http().get(`/v1/variants/${v}/package-items`).set(editor).expect(200);

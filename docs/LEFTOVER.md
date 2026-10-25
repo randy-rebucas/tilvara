@@ -20,7 +20,7 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ⏳ `webhook_deliveries` is never purged (proposed 30 days after delivered/dead; retention schedule) — waits on the DPO's periods like the other purge jobs.
 - ✅ Restaurant: a pending item's choices change in place (session 25, `PATCH /v1/order-items/:id { modifierOptionIds }`). ⬜ Comps use `sales.discount`; a separate comp permission or a comp reason report is not built (reasons are in the `order.billed` audit row).
 - ⬜ Shift close with open bills (session 21): the admin has no shift-close screen, so the manager override exists only at the till. (`test:e2e:pos` 41/41 and `test:e2e:service` 22/22 re-run in session 22 against the refusal.)
-- ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: restaurant, multi_entity, advanced_reports; Enterprise: all four).
+- ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: multi_entity, advanced_reports; Enterprise: all three; `restaurant` dropped 2026-10-25).
 - ⬜ Watch: `offline-sync.test.ts` failed once with `TAX_PROFILE_MISSING` in a full gate run (session 20) and passed on its own. The likely cause is the Docker VM clock running ~1 s off the host around a profile's effective time. Two billing tests failed the same way and their tolerance was widened. If it recurs, give the fixture's tax profile an earlier effective time.
 - ⬜ Offline sales after a lapse (session 21): a till that stays offline keeps selling on its last writable snapshot for up to `OFFLINE_WINDOW_HOURS` after a lapse or suspension, and those sales are recorded (audited `offline_sale.recorded_while_read_only`); that bound is the posture accepted. Snapshots issued before migration 0080 count as not writable.
 - ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
@@ -28,9 +28,9 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 
 ## Audit 2026-10-21 (session 31)
 Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) and every work item (§3) was fixed in session 31, and decisions A1–A6 were taken as recommended (§4, the user asked to fix them all). Migrations 0107–0109.
-- ⬜ VOID kitchen slips have no E2E: the desktop E2E does not cover kitchen printing (the slip format is unit-tested in `printing.test.ts`, the claim in `counter-service.test.ts`). Every other suite passes after the audit (audit §7), including onboarding, account, `pos:mfa` and the desktop till. The check customer picker, the voided-check re-pay, overstays, the staff archive conflict and calling off a queued cycle now have E2E steps.
+- ✅ Moot since 2026-10-25: VOID kitchen slips, voided-check re-pay, overstays and machine cycles were removed with their industries. Every other suite passed after the audit (audit §7).
 - ⏳ DPO to confirm A1 (service notes refused to API keys and support sessions, appointment notes blanked for them) and the processing-register wording. Asked as question 8 in `compliance/privacy/README.md` §4.
-- ⏳ A3 means branch managers of LAUNDRY and HYBRID businesses (HYBRID is the sign-up default) now need two-step sign-in after the grace period, because they hold `laundry.dispose`. Tell pilot businesses; or decide to take `laundry.dispose` out of the branch-manager template outside LAUNDRY.
+- ✅ A3 for laundry is moot: laundry was removed on 2026-10-25 (session 32), so `laundry.dispose` no longer exists and HYBRID branch managers need no two-step sign-in for it.
 - ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm: question 13 in `accounting/ACCOUNTANT_REVIEW_REQUEST.md`.
 - ⬜ The night audit still runs in the API process with a cross-tenant scan granted to `onepos_app` (A6, documented in ADR-0023). Move it into the worker if another scheduled posting needs the tax and ledger code there.
 
@@ -48,33 +48,15 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 - ⬜ Filipino copy for the pharmacy screens needs a native speaker's review.
 
 ## Session 29 — laundromats and laundry shops (ADR-0024)
-- ⏳ **D7 — SMS provider and account** (e.g. Semaphore): only `DevSmsSender` exists; the worker refuses the dev SMS driver in production. Notices in Filipino by customer preference and two-way SMS wait on it.
-- ⏳ Accountant: down payments held on *2330 Customer down payments* without VAT until the claim sale; forfeits (cancel, disposal) on *4120 Forfeited down payments* with VAT. Add to the review request with store credit, tips, packages and lodging deposits.
-- ⏳ The business's adviser: the claim policy text and the rules on abandoned goods (disposal after `unclaimed_days`) are unverified; the default text is a starting point only.
-- ⏳ DPO: walk-in names and phones on job orders, trip addresses and phones, masked notice recipients (processing register §15c, retention schedule); no purge job yet, like the others.
-- ⬜ Partial claims (some bags now) and splitting a job; customer accounts receivable for business clients (monthly billing).
-- ⬜ Supplies used on cancelled or disposed jobs post no consumption (recipes run only with the claim sale); per-kilo packages (packages take whole LOAD/PIECE units only).
-- ⬜ Down payments do not take store credit (as lodging deposits). Machine utilisation is over 24-hour days (branches have no opening hours). The trial samples' detergent sachets are untracked and have no recipe (samples never touch stock).
-- ⬜ Driving coin/card machine controllers; a customer-facing status page.
-- ⬜ Filipino copy for the laundry screens needs a native speaker's review.
+- ✅ All items closed by removal: the user removed laundry on 2026-10-25 (session 32; ADR-0024 withdrawn, migration 0110). D7 (SMS provider), the down-payment accounts for the accountant, the claim policy, and the DPO rows for job orders, trips and notices are no longer needed.
 
 ## Session 28 — hotels, resorts and transient houses (ADR-0023)
-- ⏳ Accountant: VAT timing of nightly room charges vs. the invoice issued at check-out; deposits held without VAT until applied; forfeited deposits as cancellation fees with VAT. Add to the review request with store credit, tips and packages.
-- ⏳ Tax adviser: the local accommodation tax (rate and base per LGU; base used = the night's amount due less VAT, after SC/PWD; adjustments carry none), off by default and marked unverified. SC/PWD on room nights follows the pending SC/PWD review; several schemes on one stay split the night into lines (centavo rounding).
-- ⏳ DPO: guest registry (`stay_guests`: nationality, ID type/number, address, birth date, contact) in the processing register and retention schedule; no purge job yet, like the others.
-- ⬜ Group bookings and a master folio, splitting a folio, moving charges between folios; refunding a folio credit balance; a tip charged to the room.
-- ⬜ Writes from an outside PMS (needs write-scoped API keys: a decision), channel managers (Booking.com, Agoda), a public booking page, online deposits; room service as an order type; rate plans (seasons, weekends); per-person environmental fees.
-- ⬜ Till: booking a future stay, cancel and no-show, card/QR deposits, bank-transfer refunds, folio adjustments and night reversals, printing the registration card (all in the admin today). Admin: no one-step walk-in (book, then check in) and no full stays list page.
-- ⬜ Reversing a night after a credit adjustment can be refused (`FOLIO_OVERPAID`) because the night's accommodation-tax reversal is a separate entry; reverse first, then adjust.
-- ⬜ Check-out refuses while a deposit exceeds the balance (`DEPOSIT_HELD`): refund the rest first. Deposits do not take store credit; card refunds of deposits are not supported.
-- ⬜ Tests not written: the night audit skipping a read-only business and catching up once it is writable; Charge to room on restaurant checks in E2E; the hidden tender and Rooms callout offline (browser mode cannot go offline); workers E2E for the three new webhook topics.
-- ⬜ Filipino copy for the lodging screens (admin ~325 keys, till ~143) needs a native speaker's review.
-- ⬜ `backup.test.ts` and the desktop till (`cargo test`, `test:e2e:desktop`) were not re-run in session 28 (no Rust changed; the offline engine is unchanged).
+- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111).
 
 ## Session 27 — beauty salons, spas and barber shops (ADR-0022)
 - ⏳ Accountant: packages are owed until used (*2310 Prepaid service packages*, ex VAT; VAT due when paid); unused sessions of an expired package stay owed (breakage not recognised); commissions are a report only. Add to the accountant review request with store credit and tips.
 - ⏳ DPO: service notes may hold allergies (sensitive personal information); retention periods proposed for appointments, notes and staff records (processing register §15a, retention schedule). No purge jobs yet, like the others.
-- ⬜ Refunding part of a used package (only whole unused packages come back), moving a package to another customer, and package sessions on restaurant checks; keep PACKAGE items off restaurant menus (a menu does not refuse them today; a check records such a line as an ordinary sale).
+- ⬜ Refunding part of a used package (only whole unused packages come back) and moving a package to another customer.
 - ⬜ Public booking page, deposits, SMS reminders (needs a provider), reminders in Filipino; rooms or chairs as booked resources.
 - ⬜ Paying out commissions and tips per staff member (the drawer pays tips out as one amount); payroll.
 - ⬜ Appointments and package sessions need the server (the offline till sells services and names staff, but refuses packages and has no calendar).
@@ -96,16 +78,7 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 - ⬜ `backup.test.ts` was not re-run in session 26 (the Docker CLI on this machine stopped answering); re-run it when Docker is back.
 
 ## Session 25 — restaurants, cafés and food trucks (ADR-0014 amendment)
-- ⏳ Accountant (the user chose the defaults to build on, session 25): tips are owed to staff (`TIPS_PAYABLE`, not revenue, no VAT) and paid out from drawers; still to confirm, plus whether card tips need a settlement report against the card provider.
-- ✅ A void gives a card tip back by cancelling its charge (`sale_tip_refunds`, after the void commits), cash when the provider refuses; pending ones are retried from the till (This shift → the sale → "Give the tip back") or `POST /v1/sale-returns/:id/tip-refund`. ⬜ The void slip does not print the card tip given back (the till's message and the admin's sale page show it). ⬜ Nothing retries a pending one on its own; the admin shows it but cannot retry (the till does).
-- ✅ Offline tills take cash tips (envelope `tip`). Card tips stay online only.
-- ✅ An offline counter sale keeps its till's call number (`restaurant_orders.till_call_number`) on the KDS, receipts, kitchen tickets and the admin.
-- ⬜ Sold-out at an offline till: since the audit of 2026-10-21, marking an item sold out bumps the catalog version, so a till that is online refetches and refuses it (`SOLD_OUT`). A till that stays offline still sells what was available at its last snapshot, and the kitchen finds out from the printed ticket.
-- ⬜ Kitchen printing needs a desktop till that is online and set up for the station; browser-mode screens print nothing to the kitchen. A till that crashes after printing but before marking it printed prints the ticket again a minute later (at-least-once).
-- ✅ Held carts keep counter choices and kitchen notes (the server always stored them; the till now restores their names from the menu served at resume; a choice no longer offered is dropped).
-- ⬜ Exchanges at a counter-service branch accept choices like a sale, untested end to end.
-- ✅ A tip's charge is told from the sale's by `payment_intents.purpose` (TIP | SALE; checkout refuses a tip charge as a tender, `TIP_PAYMENT_AS_TENDER`, and a sale charge as the tip); a lost answer is recovered as the tip's.
-- ⬜ Desktop till kitchen printing is tested in API integration only (claims, leases, reprints); the Tauri print loop and the printer set-up screen have no desktop E2E and no physical printer was used. `test:e2e:desktop` was not re-run.
+- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111). Tips stay (salons split them per staff).
 
 ## Session 24 — sari-sari stores: packs and pieces, expiry dates (ADR-0020)
 - ⏳ Opening packs posts a revaluation of pieces sold short (and rounding) to COGS, like receipts and transfers. Accountant to confirm with the next batch of questions (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`).
@@ -119,7 +92,7 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 ## Session 23 — till quantities and stock movements
 - ⏳ Damaged returns now move their cost from COGS to Spoilage and waste (RETURN then WASTE). Accountant to confirm this treatment (add to `docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md` with the next batch of questions).
 - ⬜ Price approvals made before migration 0084 have no quantity (no limit); they expire within minutes, so nothing is left to do once the pilot starts on 0084. A till build older than session 23 cannot ask for a price (the API now requires `quantity`).
-- ⬜ Counter "+"/"−" and rescans have no E2E check (restaurant steppers do, in `tables`/`service`).
+- ⬜ Counter "+"/"−" and rescans have no E2E check.
 
 ## Phase 0 — Repository & architecture
 - ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux)
@@ -128,8 +101,8 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 - ✅ Sample items follow the type (session 22): a RETAIL trial gets shop items, the others the café set.
 - ✅ Role templates follow the type (session 22): a RETAIL sign-up gets no Restaurant Manager / Kitchen Crew; changing to RESTAURANT/HYBRID adds them. ⬜ Cashier and branch-manager templates still hold `restaurant.orders`/`kitchen.operate` in a retail shop (harmless; the role editor lists them), and existing RETAIL businesses keep the restaurant roles they were given.
 - ✅ `/me` carries the plan's `features` (session 22); the admin hides the Restaurant area, its guide part, a second legal entity and integrations the plan lacks, with the reason; the till hides the kitchen display and server mode. ⬜ The till's Tables tab stays for a restaurant-type business after a downgrade on purpose (printed bills must still be paid).
-- ⬜ Race: an order opened in the same instant the owner switches to RETAIL can slip past the open-orders check (`assertFeature` reads the type without a row lock, to keep restaurant writes from contending on the tenant row). The order stays readable; a BILLED one can still be paid (`createFromBill` does not check the type or plan, on purpose: refusing payment for food served is worse), other changes need switching back.
-- ✅ Selling by weight: `POST /v1/products` refuses `soldBy: WEIGHT` for a RESTAURANT business (session 25). ⬜ Scale-label lookups still resolve a WEIGHT product created before (or under another type).
+- ✅ Moot since 2026-10-25: the race between opening an order and switching to RETAIL went with table service.
+- ✅ Selling by weight was refused for RESTAURANT businesses (session 25; the type was removed on 2026-10-25). ⬜ Scale-label lookups still resolve a WEIGHT product created before (or under another type).
 
 ## User guide (session 18)
 - ✅ Drawer variance approval has a screen (session 18, second part): admin Drawer counts (`/shifts`) and the shift page; see STATUS.
@@ -141,7 +114,7 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)
-- ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once restaurant/multi-entity features exist; per-tenant entitlement overrides
+- ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once multi-entity features exist; per-tenant entitlement overrides
 - ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft, Takeaway are kept in English on purpose until reviewed)
 - ⏳ OTel SDK + exporter — D1 (hosting)
 - ⬜ Typed OpenAPI response schemas
@@ -189,41 +162,7 @@ Phase-level:
 - ⏳ Accountant review of the default chart and posting policies
 
 ## Phase 4 — Restaurant
-Slice 2 (menu foundation):
-- ⬜ Modifier groups are live configuration: edits to min/max apply to published menus immediately (orders snapshot what was chosen)
-
-Slice 3 (orders + kitchen):
-- ⬜ Per-seat views and "fire course N" reminders/timers
-- ✅ Kitchen printers (session 25): network/Windows ESC/POS from the desktop till, claimed per station
-- ✅ Reprint a ticket (session 25: KDS "Reprint" → the printing till prints it again, marked REPRINT)
-- ⬜ Floor push (session 16) at deployment (slice 7): the edge proxy must not buffer `text/event-stream` (`/v1/restaurant/stream`; the API sends `X-Accel-Buffering: no`) and must allow a 10-minute response; open streams are not yet a metric
-
-Slice 4 (bills + checks + service charge):
-- ⬜ Tips
-- ⬜ Adding items after a partial payment (today: a new order once the bill settles)
-- ⬜ Returns still prorate each bucket on its own (ADR-0011), unlike checks' residual-bucket proration; align if odd cents show up on partial returns
-
-Slice 5 (restaurant reports):
-- ✅ Free modifiers ("no onions") count in item performance once their order is SETTLED (session 25)
-- ⏳ The DOLE distributable base (ex VAT) is pending the accountant (ADR-0014 §9)
-
-Slice 6 (UI):
-- 6a POS table service:
-  - ⬜ Floor positions/shapes on a drawn plan (tiles today)
-- 6c admin set-up:
-  - ⬜ Drag-and-drop ordering (buttons today)
-  - ⬜ A plan view of the floor (positions/shapes are stored, tiles today)
-
-Slice 7 (exit review):
-- ⬜ `sales.gross` counts a service charge ex VAT while item lines count VAT-inclusive; the receipt adds the charge VAT back, but any other consumer of `gross` (exports, a future invoice) must do the same — decide whether to store a charge's gross with VAT
-- ⬜ No drill for an API restart between a check's commit and its answer (covered generically by the Phase 2 restart drill and the same idempotency path)
-- ⬜ The "void vs bill" drill asserts both outcomes but cannot force each interleaving
-
-Out of scope for Phase 4 (later):
-- ⬜ Delivery orders and delivery platforms (Grab, foodpanda); unit conversions/purchase units for recipes; sub-recipes/prep production; rule-based modifier pricing; table reservations. (Tips and kitchen printers: session 25.)
-
-Open questions for the tax adviser and the accountant:
-- ⏳ Service charge base and VAT; SC/PWD share of the service charge; service charge as a liability
+- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111). Recipes stay for salons; earlier sales keep their service charges and choice lines.
 
 ## Phase 5 — Offline & integrations
 Slice 6 (deferred by the user's decision):
@@ -288,7 +227,7 @@ Slice 8 (runbooks and privacy pack). The privacy items come from the personal-da
 - ⏳ Till: no local purge of offline sales once recorded in the cloud (`till.sqlite` keeps them for ever); period pending the DPO
 - ⏳ Anonymisation job for closed accounts (`users.closed_at`) once no business's records within their retention period name the person; pending the DPO's periods. Until then a closed account's email stays taken (signing up again with it answers `EMAIL_UNAVAILABLE`; ops can `account-enable` it)
 - ⬜ No correction document for SC/PWD beneficiary name or ID number on a recorded sale (append-only); needs the tax adviser's view of what a correction must show
-- ⏳ Takeaway customer names (`restaurant_orders.customer_name`) are never cleared; period pending the DPO
+- ✅ Takeaway customer names: moot, `restaurant_orders` was dropped on 2026-10-25 (migration 0111)
 - ⬜ Log redaction works on field names; free text in a log *message* string is not caught. Rule: log ids, never names or emails, in messages
 - ⬜ No account page in the POS (a cashier with POS-only habits corrects their name or closes their account in the admin)
 - ⬜ Error references: the POS shows the first 8 characters of the correlation id (search logs by prefix)

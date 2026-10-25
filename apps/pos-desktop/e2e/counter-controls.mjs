@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { checklist, openBrowser, sleep } from '../../admin-web/e2e/cdp.mjs';
-import { client, PASSWORD } from './restaurant.mjs';
+import { client, PASSWORD } from './api.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';

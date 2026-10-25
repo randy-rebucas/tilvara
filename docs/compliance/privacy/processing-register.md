@@ -26,7 +26,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | | |
 |---|---|
 | Purpose | Let people sign in to Tilvara securely; protect accounts from takeover |
-| People | Everyone with a Tilvara account: owners, managers, cashiers, kitchen staff, accountants, Tilvara support staff |
+| People | Everyone with a Tilvara account: owners, managers, cashiers, accountants, Tilvara support staff |
 | Data | Email, display name, password hash (argon2id), failed sign-in count and lock time, last sign-in time; sessions (refresh-token hash, start/expiry/revocation, **browser user agent**); two-step sign-in secret (encrypted AES-256-GCM, key outside the database) and hashed recovery codes; hashed password-reset tokens (30 minutes); a requested new sign-in email with its hashed confirmation link (24 hours); `closed_at`, when the person closed the account |
 | Source | The person (sign-up, invitation acceptance, Your account page); their browser (user agent) |
 | Basis | Contract (Sec. 12(b)): needed to provide the account. Security measures: legitimate interest (Sec. 12(f)) |
@@ -59,16 +59,8 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Retention | Fiscal records: at least 5 years (schedule), then anonymised (job not built). A held cart's copy: until it is resumed or discarded (enforced by the database); a cart left open stays until someone discards it |
 | Notes | Price changes at the counter (`price_overrides`, session 20) record which staff member asked and which approved, by account id, with the reason typed; the approver's email and password are checked once and never stored |
 
-### 4. Restaurant orders — PIP
-| | |
-|---|---|
-| Purpose | Call out takeaway and counter-service orders (session 25: the pickup name of a counter sale, printed on the receipt and kitchen ticket); run tables and the kitchen |
-| People | Customers who give a name for a takeaway or a counter order; staff who open, fire, void and close orders |
-| Data | `customer_name` (free text, optional), order notes; staff ids on orders, tickets and voids |
-| Source | Cashier or waiter |
-| Basis | For the business: contract with the customer (Sec. 12(b)) |
-| Tables | `restaurant_orders`, `kitchen_tickets`, `order_items` |
-| Notes | Staff should be told not to type phone numbers or other details into names and notes |
+### 4. Restaurant orders — removed
+Restaurants and counter service were removed on 2026-10-25 (migration 0111 dropped `restaurant_orders`, `kitchen_tickets` and `order_items`). Pickup names on earlier offline receipts stay only on the tills that printed them.
 
 ### 5. Suppliers and purchasing — PIP
 | | |
@@ -185,33 +177,8 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Retention | *Proposed:* appointments (with guest names and notes) 2 years after the appointment; service notes with the customer (anonymised 2 years after the last purchase); staff records while the person works there plus the fiscal period of the last sale naming them (DPO to confirm) |
 | Notes | The note form tells staff to keep only what the service needs. Audit rows never carry note text or guest names; `guestName` is redacted from logs |
 
-### 15b. Hotels and resorts: stays, the guest registry, SC/PWD guests and folios — PIP (session 28, ADR-0023)
-| | |
-|---|---|
-| Purpose | Book rooms, check guests in and out, keep the guest registry and registration card the front desk records at check-in, apply the SC/PWD discount to the beneficiaries' share of each room night, and keep each stay's folio (room nights, charges from outlets, deposits, payments) |
-| People | The business's guests (customers, or guests booked by name) and everyone recorded in a stay's registry; SC/PWD guests |
-| Data | Stays: guest (customer or a guest name), room, dates, adults, children, agreed rate, charge limit, source and external booking reference, notes, cancellation reason. **Guest registry**: full name, nationality, ID type and number, address, optional birth date and contact. SC/PWD guests: scheme, name, ID number, share of the room. Folios: entries, payments (method, bank reference), deposits |
-| Source | The guest, at booking and at check-in through the front desk; an external PMS or channel only by the front desk keying it in |
-| Basis | Contract (Sec. 12(b)) for the stay; the registry and registration card as the establishment's legal obligation where the LGU or tourism rules require one (Sec. 12(c); **DPO to confirm per place**); SC/PWD details by legal obligation (RA 9994, RA 10754, Sec. 12(c)) |
-| Recipients | Staff with `lodging.manage` (registry, registration card); `lodging.read` sees stays and guest names only (housekeeping, cashiers finding an in-house guest for Charge to room); an API key with the `lodging` scope reads stays, folios and rooms but never the registry; webhooks carry ids only |
-| Tables | `stays`, `stay_guests`, `stay_beneficiaries`, `folios`, `folio_entries` (append-only), `folio_payments` (append-only), `stay_deposits` (append-only), `room_status_changes` (append-only, staff ids) |
-| Rights | Access: the data export includes every table. Correction: registry rows are edited in place (audited by field name, never the value). Erasure: "Remove personal details" on the customer deletes the registry of their stays; SC/PWD names stay with the books (as `sale_beneficiaries`) |
-| Retention | *Proposed:* registry 1 year after check-out (or as the LGU rule requires, DPO to confirm), then deleted; stays and folios for the fiscal period (they post to the books); SC/PWD guests the fiscal period |
-| Notes | Audit rows name changed fields only; `fullName`, `idNumber`, `nationality`, `idType`, `birthDate`, `address`, `contact`, `guestName` are redacted from logs (`PERSONAL_KEYS`) |
-
-### 15c. Laundry: job orders, pickups and deliveries, notices — PIP (session 29, ADR-0024)
-| | |
-|---|---|
-| Purpose | Take in laundry against a claim ticket, tell the customer when it is ready (email, and SMS once a provider is chosen), pick it up from and deliver it to the customer, and release it to the right person |
-| People | The laundry's customers, walk-ins named on a job, and whoever a rider meets at a pickup or delivery address |
-| Data | Job orders: customer or a walk-in name and phone, weight, items counted, condition notes, special instructions, status history, down payments. Trips: address, contact phone and name, time window, rider name. Notices: kind, what each channel did, and the recipient **masked** (`l***@example.ph`, `***4567`) |
-| Source | The customer at the counter or by phone; the rider at the door |
-| Basis | Contract (Sec. 12(b)): the laundry service, its notices (service messages, not marketing: they do not depend on marketing consent; the job's "notify" switch stops them) and its delivery |
-| Recipients | Staff with `laundry.read` / `laundry.manage`; riders (`laundry.deliver`) see the trips of their branch with address and phone; the email provider (D2) and the SMS provider (D7) receive the recipient and the message text only (no items, no claim code); an API key with the `laundry` scope reads job orders; webhooks carry ids only |
-| Tables | `job_orders`, `job_order_lines`, `job_order_items`, `job_order_trips`, `job_order_notices` (settled once), `job_order_status_changes` (append-only, staff ids), `job_order_deposits` (append-only) |
-| Rights | Access: the data export includes every table. Correction: a job's name, phone and notes and a trip's address are edited in place (audited by field name only). Erasure: "Remove personal details" on the customer blanks the walk-in name and phone of their jobs and the address, phone and name of their trips |
-| Retention | *Proposed:* trips' address and phone 90 days after the trip, walk-in name and phone 1 year after the claim (DPO to confirm); job orders and down payments for the fiscal period (claims post to the books) |
-| Notes | `customerName`, `customerPhone`, `contactPhone`, `contactName`, `address` are redacted from logs (`PERSONAL_KEYS`); the dev SMS sender logs a masked number and the message length only |
+### 15b. Hotels and resorts — removed
+Lodging was removed on 2026-10-25 (migration 0111 dropped stays, the guest registry, SC/PWD guests and folios); nothing of it is processed any more.
 
 ### 15d. Pharmacy: prescriptions, dispensing, pharmacist licences — PIP (session 30, ADR-0025)
 | | |

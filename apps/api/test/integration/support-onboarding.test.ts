@@ -396,7 +396,7 @@ describe('data export (ADR-0016 slice 6)', () => {
     expect(zip.get('tables/member_invitations.csv')!.toString().split('\r\n')[0]).not.toContain('token_hash');
     expect(everything).not.toMatch(/argon2|password_hash/);
     // Values exact, quoted per RFC 4180, the owner listed with name and email.
-    expect(zip.get('tables/product_prices.csv')!.toString()).toContain(',120.0000,');
+    expect(zip.get('tables/product_prices.csv')!.toString()).toContain(',275.0000,');
     expect(zip.get('tables/legal_entities.csv')!.toString()).toContain(`"${a.tenantId} Corp, ""Inc"""`);
     expect(zip.get('members.csv')!.toString()).toContain(a.email);
     expect(zip.get('README.txt')!.toString()).toContain('Left out on purpose');
@@ -476,10 +476,10 @@ describe('sample items for a trial (ADR-0016 slice 6)', () => {
     const branch = (await http().post('/v1/branches').set(auth).send({ legalEntityId: entity.id, code: 'B1', name: 'One' }).expect(201)).body;
     const register = (await http().post('/v1/registers').set(auth).send({ branchId: branch.id, code: 'R1', name: 'Counter' }).expect(201)).body;
     const found = (await http().get('/v1/catalog/lookup').query({ code: '2000000000015', branchId: branch.id }).set(auth).expect(200)).body;
-    expect(found).toMatchObject({ sku: 'SAMPLE-01', price: { amount: '120.0000' } });
+    expect(found).toMatchObject({ sku: 'SAMPLE-01', price: { amount: '275.0000' } });
     const session = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId: register.id, openingFloat: '0' }).expect(201)).body;
     const sale = (await http().post('/v1/sales').set(auth).set('Idempotency-Key', randomUUID()).send({
-      cashierSessionId: session.id, clientTransactionId: randomUUID(), lines: [{ variantId: found.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '200.00' }],
+      cashierSessionId: session.id, clientTransactionId: randomUUID(), lines: [{ variantId: found.variantId, quantity: '1' }], tenders: [{ method: 'CASH', tendered: '300.00' }],
     }).expect(201)).body;
 
     const removed = (await http().post('/v1/sample-data/remove').set(auth).expect(200)).body;
@@ -488,25 +488,24 @@ describe('sample items for a trial (ADR-0016 slice 6)', () => {
     expect((await http().get('/v1/catalog/lookup').query({ code: '2000000000015', branchId: branch.id }).set(auth)).status).toBe(404);
     // The sale keeps what was sold, and the codes are free for real products.
     const kept = (await http().get(`/v1/sales/${sale.id}`).set(auth).expect(200)).body;
-    expect(kept.lines[0].name).toBe('Iced coffee 16oz (sample)');
+    expect(kept.lines[0].name).toBe('Rice 5 kg (sample)');
     const taxes = (await http().get('/v1/tax-categories').set(auth)).body.data as { id: string; code: string }[];
     const uoms = (await http().get('/v1/uoms').set(auth)).body.data as { id: string; code: string }[];
-    await http().post('/v1/products').set(auth).send({ name: 'Real coffee', taxCategoryId: taxes.find((x) => x.code === 'VAT')!.id, uomId: uoms.find((u) => u.code === 'PC')!.id, variants: [{ sku: 'SAMPLE-01' }] }).expect(201);
+    await http().post('/v1/products').set(auth).send({ name: 'Real rice', taxCategoryId: taxes.find((x) => x.code === 'VAT')!.id, uomId: uoms.find((u) => u.code === 'PC')!.id, variants: [{ sku: 'SAMPLE-01' }] }).expect(201);
     // After the first sale the set is not offered again.
     expect((await http().get('/v1/sample-data').set(auth).expect(200)).body).toMatchObject({ canLoad: false, reason: 'HAS_SALES' });
     expect((await http().post('/v1/sample-data').set(auth).expect(409)).body.error.code).toBe('HAS_SALES');
     expect((await tenantAudit(t.tenantId, 'sample_data.loaded')).length + (await tenantAudit(t.tenantId, 'sample_data.removed')).length).toBe(2);
   });
 
-  it('a retail shop gets shop items, not the café set (session 22)', async () => {
-    const t = await signup(app, 'sample-shop');
+  it('a salon gets its own set, not the shop set (ADR-0022)', async () => {
+    const t = await signup(app, 'sample-salon');
     const auth = bearer(t.access);
-    await http().patch('/v1/business').set(auth).send({ businessType: 'RETAIL' }).expect(200);
-    expect((await http().get('/v1/sample-data').set(auth).expect(200)).body.items).toBe(8);
+    await http().patch('/v1/business').set(auth).send({ businessType: 'SALON' }).expect(200);
     await http().post('/v1/sample-data').set(auth).expect(201);
     const names = ((await http().get('/v1/products').query({ limit: 50 }).set(auth).expect(200)).body.data as { name: string }[]).map((p) => p.name);
-    expect(names).toContain('Rice 5 kg (sample)');
-    expect(names.some((n) => n.startsWith('Iced coffee'))).toBe(false);
+    expect(names).not.toContain('Rice 5 kg (sample)');
+    expect(names.length).toBeGreaterThan(0);
   });
 
   it('is for trials only', async () => {

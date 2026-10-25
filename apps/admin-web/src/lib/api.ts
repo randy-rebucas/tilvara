@@ -110,7 +110,7 @@ export interface Me {
   userId: string;
   user: { email: string; displayName: string };
   /**
-   * `features`: what the plan includes (restaurant, multi_entity, api_access, advanced_reports).
+   * `features`: what the plan includes (multi_entity, api_access, advanced_reports).
    * Absent from an API older than session 22: treat as "not known" (show everything; the API still refuses).
    */
   activeTenant: { tenantId: string; membershipId: string; status: string; businessType: BusinessType; features?: string[]; permissions: string[] } | null;
@@ -236,14 +236,14 @@ export interface Product {
   dosageForm?: DosageForm | null;
   fdaRegistrationNo?: string | null;
   archivedAt: string | null;
-  variants: ({ id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null } & LaundryVariantFields)[];
+  variants: { id: string; sku: string; name: string | null; barcodes: string[]; archivedAt: string | null; attributes?: Record<string, string> | null; quickKeyPosition?: number | null; serviceMinutes?: number | null; packageValidDays?: number | null }[];
 }
 /** One product as GET /products/:id returns it (the editor's view). */
 export interface ProductDetail extends Omit<Product, 'variants'> {
   description: string | null;
   taxCategoryId: string;
   uomId: string;
-  variants: ({
+  variants: {
     id: string;
     sku: string;
     name: string | null;
@@ -259,7 +259,7 @@ export interface ProductDetail extends Omit<Product, 'variants'> {
     serviceMinutes?: number | null;
     /** A package's validity in days from the sale; null = no expiry (ADR-0022 §6). */
     packageValidDays?: number | null;
-  } & LaundryVariantFields)[];
+  }[];
 }
 /** A promotion (ADR-0021 §1): terms never change once made; only the name, or ending it. */
 export type PromotionKind = 'MULTI_BUY' | 'BUY_X_GET_Y' | 'QUANTITY_BREAK';
@@ -539,7 +539,6 @@ export interface Sale extends Buckets {
   status: string;
   origin: string;
   offlineReference: string | null;
-  orderBillId: string | null;
   amountDue: string;
   amountTendered: string;
   changeDue: string;
@@ -566,7 +565,6 @@ export interface Sale extends Buckets {
     drugClass?: DrugClass | null;
     drugLabel?: string | null;
   })[];
-  charges: { id: string; kind: string; rate: string; amountDue: string }[];
   /** SC/PWD beneficiaries; `purchaseBooklet` is set when the discount covered a medicine (ADR-0025 §8). */
   beneficiaries?: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null; purchaseBooklet?: boolean | null }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
@@ -574,9 +572,6 @@ export interface Sale extends Buckets {
   customerId?: string | null;
   /** A tip taken with the sale (session 25): owed to staff, outside the total. */
   tip?: { method: string; amount: string } | null;
-  /** Counter service: the kitchen order the sale sent, with its call number. */
-  /** `callNumber`: what the customer's receipt says (an offline till's own number, else `orderNumber`). */
-  counterOrder?: { id: string; orderNumber: number; callNumber?: number; pickupName: string | null; tickets: { id: string; ticketNumber: number; stationId: string }[] } | null;
 }
 export interface SaleReturnDoc extends Buckets {
   id: string;
@@ -886,92 +881,7 @@ export interface MovementSummary {
   }[];
 }
 
-// ---- restaurant (Phase 4, ADR-0014) ----
-export interface KitchenStation {
-  id: string;
-  branchId: string;
-  code: string;
-  name: string;
-  isDefault: boolean;
-  archivedAt: string | null;
-}
-export interface RestaurantTable {
-  id: string;
-  areaId: string;
-  code: string;
-  seats: number;
-  archivedAt: string | null;
-}
-export interface DiningArea {
-  id: string;
-  branchId: string;
-  name: string;
-  sortOrder: number;
-  tables: RestaurantTable[];
-}
-export interface ModifierOption {
-  id: string;
-  modifierGroupId: string;
-  name: string;
-  /** A priced choice sells this item; null = free instruction. */
-  variantId: string | null;
-}
-export interface ModifierGroup {
-  id: string;
-  name: string;
-  minSelect: number;
-  maxSelect: number;
-  required: boolean;
-  options: ModifierOption[];
-}
-export interface MenuVersionRef {
-  id: string;
-  version: number;
-  status: 'DRAFT' | 'PUBLISHED' | 'RETIRED';
-  createdAt: string;
-  publishedAt: string | null;
-}
-export interface Menu {
-  id: string;
-  name: string;
-  archivedAt: string | null;
-  draft: MenuVersionRef | null;
-  published: MenuVersionRef | null;
-  versions: MenuVersionRef[];
-  servedBy: { branchId: string; orderTypes: ('DINE_IN' | 'TAKEAWAY')[] }[];
-}
-export interface MenuItemEntry {
-  id: string;
-  variantId: string;
-  displayName: string | null;
-  stationCode: string | null;
-  modifierGroupIds: string[];
-  sku: string | null;
-  name: string | null;
-}
-export interface MenuVersion extends MenuVersionRef {
-  menuId: string;
-  sections: { id: string; name: string; items: MenuItemEntry[] }[];
-}
-export interface RestaurantSettings {
-  branchId: string;
-  dineInMenuId: string | null;
-  takeawayMenuId: string | null;
-  serviceChargeRate: string;
-  serviceChargeDineIn: boolean;
-  serviceChargeTakeaway: boolean;
-  serviceChargeVatTreatment: 'VATABLE' | 'VAT_EXEMPT';
-  /** Counter service (session 25): pay first, then the kitchen gets the order. Needs a takeaway menu. */
-  counterService: boolean;
-  updatedAt: string | null;
-}
-export interface SoldOutRow {
-  variantId: string;
-  sku: string;
-  name: string | null;
-  note: string | null;
-  markedAt: string;
-}
+/** A salon service's supplies used (its recipe, ADR-0022 §9), one version. */
 export interface RecipeVersion {
   id: string;
   version: number;
@@ -981,18 +891,14 @@ export interface RecipeVersion {
   ingredients: { variantId: string; sku: string; name: string; unit: string; quantity: string }[];
 }
 
-// ---- restaurant reports (ADR-0014 §10) ----
 // ---- retail reports (Phase 2 slice 5) ----
 export type SaleBuckets = Record<'gross' | 'discount' | 'statutoryDiscount' | 'vatExemptionAmount' | 'vatableSales' | 'vatAmount' | 'vatExemptSales' | 'zeroRatedSales' | 'percentageTaxSales' | 'amountDue', string>;
 export interface SalesSummary {
-  /** ADR-0023: room nights, by night (absent from an older API). */
-  rooms?: SalesSummaryRooms;
   days: { day: string; salesCount: number; returnsCount: number; voidsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets }[];
   totals: { salesCount: number; returnsCount: number; sales: SaleBuckets; returns: SaleBuckets; net: SaleBuckets };
 }
 export interface ByProduct {
   data: { variantId: string; sku: string; name: string; quantitySold: string; quantityReturned: string; netQuantity: string; sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string }[];
-  charges: { kind: string; charged: string; returned: string; net: string; netExVat: string }[];
 }
 export interface ByCashier {
   data: { userId: string; displayName: string | null; salesCount: number; sales: string; returnsProcessed: number; returns: string }[];
@@ -1030,58 +936,13 @@ export interface TaxSummary {
   data: (Omit<SaleBuckets, 'gross' | 'discount'> & { vatStatus: 'VAT' | 'NON_VAT'; vatRate: string })[];
 }
 export interface StatutoryBook {
-  /** Room nights (ADR-0023) have no register or number. */
-  data: { document: 'SALE' | 'RETURN' | 'ROOM_NIGHT' | 'NIGHT_REVERSAL'; day: string; number: number | null; register: string | null; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string; purchaseBooklet?: boolean | null }[];
+  data: { document: 'SALE' | 'RETURN'; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string; purchaseBooklet?: boolean | null }[];
 }
 
-export interface ReportFigures {
-  quantitySold: string;
-  quantityReturned: string;
-  netQuantity: string;
-  netSales: string;
-  revenueExVat: string;
-  cogs: string;
-  grossProfit: string;
-  marginPct: string | null;
-}
-export interface ItemPerformance {
-  data: (ReportFigures & {
-    variantId: string;
-    sku: string;
-    name: string;
-    checks: number;
-    modifiers: (ReportFigures & { variantId: string; sku: string; name: string; checks: number })[];
-    /** Free choices ("No onions"), counted once their order is fully paid (session 25). */
-    freeChoices: { modifierOptionId: string; name: string; quantity: string; orders: number }[];
-    withModifiers: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
-  })[];
-  totals: { netSales: string; revenueExVat: string; cogs: string; grossProfit: string; marginPct: string | null };
-}
-type UsageSide = Record<'recipe' | 'sold' | 'expected' | 'preparedWaste' | 'otherWaste' | 'countVariance' | 'actual' | 'variance', string>;
+type UsageSide = Record<'recipe' | 'sold' | 'expected' | 'waste' | 'countVariance' | 'actual' | 'variance', string>;
 export interface IngredientUsage {
   data: { variantId: string; sku: string; name: string; unit: string; quantity: UsageSide; value: UsageSide; variancePct: string | null }[];
   totals: { expectedValue: string; wasteValue: string; countVarianceValue: string; actualValue: string; varianceValue: string };
-}
-export interface KitchenVoids {
-  data: {
-    orderItemId: string;
-    voidedAt: string;
-    order: { id: string; orderNumber: number; orderType: string; tableCode: string | null };
-    stationCode: string | null;
-    name: string;
-    quantity: string;
-    modifiers: string[];
-    reason: string;
-    voidedBy: { userId: string; displayName: string | null };
-    stage: 'FIRED' | 'IN_PREP' | 'READY' | 'SERVED';
-    cookingStarted: boolean;
-    wasted: boolean;
-    wasteAdjustmentId: string | null;
-    wasteValue: string;
-  }[];
-  byReason: { reason: string; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
-  byUser: { userId: string; displayName: string | null; voids: number; cookingStarted: number; wasted: number; wasteValue: string }[];
-  totals: { voids: number; cookingStarted: number; wasted: number; wasteValue: string };
 }
 /** A register's Z-reading (session 16; not BIR-accredited). Money as 2-dp strings. */
 export interface ZReading {
@@ -1131,57 +992,12 @@ export interface RefundWatch {
   }[];
   branch: { sales: string; refunded: string; refundRate: string | null };
 }
-export interface PrepFigures {
-  tickets: number;
-  items: number;
-  voided: number;
-  timed: number;
-  prepSeconds: { average: number | null; median: number | null; p90: number | null; max: number | null };
-  waitSeconds: number | null;
-  passSeconds: number | null;
-}
-export interface PrepTimes {
-  stations: (PrepFigures & { stationId: string; code: string; name: string })[];
-  overall: PrepFigures | null;
-}
-/** Prep times by local hour fired (`hour`) or by menu item (`variantId`, `name`). */
-export interface PrepTimesGrouped {
-  by: 'hour' | 'item';
-  groups: (PrepFigures & { key: string; hour?: number; variantId?: string; name?: string })[];
-}
-export interface OpenOrders {
-  day: string;
-  asOf: string;
-  data: {
-    orderId: string;
-    orderNumber: number;
-    orderType: 'DINE_IN' | 'TAKEAWAY';
-    tableCode: string | null;
-    customerName: string | null;
-    guestCount: number | null;
-    openedAt: string;
-    openedBy: { userId: string; displayName: string | null };
-    status: 'OPEN' | 'BILLED';
-    statusNow: string;
-    bill: { id: string; billNumber: number; amountDue: string; paid: string; remaining: string } | null;
-    items: number;
-    notServed: number;
-  }[];
-  totals: { orders: number; unbilled: number; billed: number; unpaid: string };
-}
-type ChargeParts = { exVat: string; vat: string; amountDue: string };
 type TipFigures = { tips: number; cash: string; electronic: string; taken: string; refunded: string; paidOut: string; owed: string };
 /** Tips (session 25): owed to staff, not sales. Owed = taken − given back on voids − paid out; ledger = TIPS_PAYABLE movement. */
 export interface TipsReport {
   days: (TipFigures & { day: string })[];
   byCashier: { userId: string; name: string | null; tips: number; amount: string }[];
   totals: TipFigures;
-  ledger: string;
-}
-export interface ServiceChargeReport {
-  days: { day: string; checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts }[];
-  totals: { checks: number; returns: number; base: string; charged: ChargeParts; returned: ChargeParts; net: ChargeParts };
-  distributable: string;
   ledger: string;
 }
 
@@ -1363,458 +1179,6 @@ export interface TipsByStaffReport {
   /** `staffId`/`name` null: tips on sales without staff (unassigned). */
   staff: { staffId: string | null; name: string | null; tips: number; amount: string; voided: string }[];
   total: string;
-}
-
-// ---- hotels, resorts and transient houses (ADR-0023) ----
-export type HousekeepingStatus = 'CLEAN' | 'DIRTY' | 'INSPECTED' | 'OUT_OF_ORDER';
-export type StayStatus = 'BOOKED' | 'IN_HOUSE' | 'CHECKED_OUT' | 'CANCELLED' | 'NO_SHOW';
-export type StaySource = 'WALK_IN' | 'PHONE' | 'ONLINE' | 'OTA' | 'OTHER';
-export interface RoomType {
-  id: string;
-  code: string;
-  name: string;
-  baseOccupancy: number;
-  maxOccupancy: number;
-  /** The room-night SERVICE item: its branch price is the rack rate per night. */
-  nightVariantId: string;
-  nightItem: { id: string; sku: string; name: string } | null;
-  isSample: boolean;
-  archivedAt: string | null;
-  /** Active rooms of this type. */
-  rooms: number;
-}
-export interface Room {
-  id: string;
-  branchId: string;
-  roomTypeId: string;
-  number: string;
-  floor: string | null;
-  notes: string | null;
-  housekeepingStatus: HousekeepingStatus;
-  isSample: boolean;
-  archivedAt: string | null;
-  roomType: { id: string; code: string; name: string } | null;
-}
-export interface RoomBlock {
-  id: string;
-  branchId: string;
-  roomId: string;
-  roomNumber: string;
-  startsOn: string;
-  endsOn: string;
-  reason: string;
-  createdAt: string;
-}
-export interface RoomStatusChange {
-  id: string;
-  fromStatus: HousekeepingStatus;
-  toStatus: HousekeepingStatus;
-  note: string | null;
-  stayId: string | null;
-  changedAt: string;
-  changedByName: string | null;
-}
-export interface HousekeepingBoard {
-  branchId: string;
-  /** Today in the branch's calendar. */
-  day: string | null;
-  data: {
-    roomId: string;
-    number: string;
-    floor: string | null;
-    roomType: { id: string; code: string; name: string };
-    status: HousekeepingStatus;
-    lastChange: { at: string; byName: string | null; note: string | null } | null;
-    /** A guest in house holds the room (beside the housekeeping status, never one of its values). */
-    occupied: boolean;
-    /** The guest in house should have left before today. */
-    overstay: boolean;
-    departingToday: boolean;
-    arrivingToday: boolean;
-  }[];
-}
-export interface LodgingSettings {
-  branchId: string;
-  nightAuditTime: string;
-  /** A fraction ("0.05"), or null when the branch charges none. */
-  accommodationTaxRate: string | null;
-  forfeitOnCancel: boolean;
-  updatedAt: string | null;
-}
-export interface StayRow {
-  id: string;
-  branchId: string;
-  legalEntityId: string;
-  roomId: string;
-  roomTypeId: string;
-  customerId: string | null;
-  guestName: string | null;
-  arrivalDate: string;
-  departureDate: string;
-  adults: number;
-  children: number;
-  status: StayStatus;
-  nightlyRate: string | null;
-  allowCharges: boolean;
-  chargeLimit: string | null;
-  source: StaySource;
-  externalReference: string | null;
-  notes: string | null;
-  createdAt: string;
-  checkedInAt: string | null;
-  checkedOutAt: string | null;
-  cancelReason: string | null;
-  cancelledAt: string | null;
-  room: { id: string; number: string; floor: string | null } | null;
-  roomType: { id: string; code: string; name: string } | null;
-  customer: { id: string; displayName: string } | null;
-  guestDisplayName: string | null;
-  guests: { id: string; fullName: string; isPrimary: boolean }[];
-  folio: { id: string; status: 'OPEN' | 'SETTLED' } | null;
-  /** In house after the departure date: check-out moves the departure to today and charges the extra nights. */
-  overstay: boolean;
-}
-export interface Stay extends Omit<StayRow, 'folio'> {
-  folio: { id: string; status: 'OPEN' | 'SETTLED'; balance: string; charged: string } | null;
-  depositsHeld: string;
-  beneficiaries: { id: string; schemeCode: string; name: string; idNumber: string; share: string | null; removedAt: string | null }[];
-  nightsPosted: number;
-}
-export interface StayGuest {
-  id: string;
-  stayId: string;
-  isPrimary: boolean;
-  fullName: string;
-  nationality: string | null;
-  idType: string | null;
-  idNumber: string | null;
-  address: string | null;
-  birthDate: string | null;
-  contact: string | null;
-}
-export interface LodgingAvailability {
-  branchId: string;
-  from: string;
-  to: string;
-  nights: { date: string; roomTypes: { roomTypeId: string; code: string | null; name: string | null; total: number; available: number; freeRoomIds: string[] }[] }[];
-  rooms: { roomId: string; number: string; roomTypeId: string; housekeepingStatus: HousekeepingStatus; availableAllNights: boolean; freeNights: string[] }[];
-}
-export type FolioEntryKind = 'ROOM_NIGHT' | 'ACCOMMODATION_TAX' | 'CHARGE' | 'CHARGE_RETURN' | 'DEPOSIT_APPLIED' | 'PAYMENT' | 'ADJUSTMENT' | 'NIGHT_REVERSAL';
-export interface FolioEntry {
-  id: string;
-  kind: FolioEntryKind;
-  amount: string;
-  nightDate: string | null;
-  description: string | null;
-  reason: string | null;
-  vatAmount: string | null;
-  saleId: string | null;
-  saleReturnId: string | null;
-  relatedEntryId: string | null;
-  journalDate: string | null;
-  createdAt: string;
-}
-export interface StayDeposit {
-  id: string;
-  kind: 'RECEIVED' | 'APPLIED' | 'REFUNDED' | 'FORFEITED';
-  amount: string;
-  method: string | null;
-  reference: string | null;
-  reason: string | null;
-  createdAt: string;
-}
-export interface Folio {
-  id: string;
-  stayId: string;
-  branchId: string;
-  legalEntityId: string;
-  currency: string;
-  status: 'OPEN' | 'SETTLED';
-  openedAt: string;
-  settledAt: string | null;
-  stay: { id: string; status: StayStatus; roomNumber: string; arrivalDate: string; departureDate: string; guestName: string | null };
-  balance: string;
-  depositsHeld: string;
-  entries: FolioEntry[];
-  payments: { id: string; method: string; amount: string; tendered: string; change: string; reference: string | null; createdAt: string }[];
-  deposits: StayDeposit[];
-}
-export interface FolioStatement {
-  title: string;
-  invoicingMode: string;
-  seller: { registeredName: string; tradeName: string | null; tin: string; registeredAddress: string | null };
-  branch: { name: string; address: string | null };
-  folio: { id: string; status: string; openedAt: string; settledAt: string | null; currency: string };
-  stay: { id: string; roomNumber: string; roomType: string; arrivalDate: string; departureDate: string; guestName: string | null };
-  lines: { id: string; date: string; kind: FolioEntryKind; description: string; amount: string; vatAmount: string | null }[];
-  totals: { roomNights: string; accommodationTax: string; charges: string; adjustments: string; deposits: string; payments: string; balance: string };
-  signatureLine: string;
-}
-export interface RegistrationCard {
-  title: string;
-  business: { registeredName: string; tradeName: string | null; tin: string; registeredAddress: string | null };
-  branch: { name: string; address: string | null };
-  stay: { id: string; roomNumber: string; roomType: string; arrivalDate: string; departureDate: string; adults: number; children: number; nightlyRate: string | null; source: StaySource; externalReference: string | null; checkedInAt: string | null };
-  guests: StayGuest[];
-  declaration: string;
-  signatureLine: string;
-}
-export interface OccupancyReport {
-  days: { day: string; roomsAvailable: number; roomsSold: number; occupancyPercent: string | null; roomRevenueExVat: string; adr: string | null; revpar: string | null }[];
-  totals: { roomsAvailable: number; roomsSold: number; occupancyPercent: string | null; roomRevenueExVat: string; adr: string | null; revpar: string | null };
-}
-export interface GuestLedgerReport {
-  legalEntityId: string;
-  folios: { folioId: string; stayId: string; stayStatus: StayStatus; branchId: string; roomNumber: string; guestName: string | null; arrivalDate: string; departureDate: string; balance: string }[];
-  deposits: { stayId: string; stayStatus: StayStatus; roomNumber: string; arrivalDate: string; held: string }[];
-  totals: { folios: string; guestLedgerGl: string; guestLedgerDifference: string; deposits: string; guestDepositsGl: string; depositsDifference: string };
-}
-export interface AccommodationTaxReport {
-  rate: string | null;
-  data: { month: string; nights: number; base: string; tax: string }[];
-  totals: { base: string; tax: string };
-}
-/** The "Rooms" part of the sales summary (room nights are not sales). */
-export interface SalesSummaryRooms {
-  days: ({ day: string; nights: number } & SaleBuckets)[];
-  totals: { nights: number } & SaleBuckets;
-}
-/** The session report's front desk collections: folio payments and deposits at the drawer. */
-export interface SessionReport {
-  frontDeskCollections: { data: { kind: string; method: string | null; count: number; amount: string }[]; cash: string };
-  /** Job order down payments taken and given back at this drawer (ADR-0024 §5). */
-  jobOrderDownPayments?: { data: { kind: string; method: string | null; count: number; amount: string }[]; cash: string };
-}
-
-// ---- laundromats and laundry shops (ADR-0024) ----
-export type LaundryUnit = 'KG' | 'LOAD' | 'PIECE';
-export type MachineKind = 'WASHER' | 'DRYER';
-export type JobOrderStatus = 'RECEIVED' | 'WASHING' | 'DRYING' | 'FOLDING' | 'READY' | 'OUT_FOR_DELIVERY' | 'CLAIMED' | 'CANCELLED' | 'DISPOSED';
-export type TripKind = 'PICKUP' | 'DELIVERY';
-export type TripStatus = 'SCHEDULED' | 'DONE' | 'FAILED' | 'CANCELLED';
-/** A product variant's laundry fields (ADR-0024 §2, §7), on GET /products/:id variants. */
-export interface LaundryVariantFields {
-  laundryUnit?: LaundryUnit | null;
-  laundryMinQuantity?: string | null;
-  laundryKgPerLoad?: string | null;
-  laundryAddon?: boolean;
-  machineKind?: MachineKind | null;
-  machineMinutes?: number | null;
-}
-export interface LaundrySettings {
-  branchId: string;
-  regularHours: number;
-  expressHours: number;
-  expressVariantId: string | null;
-  deliveryVariantId: string | null;
-  storageFeeVariantId: string | null;
-  storageFreeDays: number | null;
-  unclaimedDays: number;
-  finalNoticeDays: number;
-  reminderDays: number[];
-  claimPolicyText: string | null;
-  smsEnabled: boolean;
-  updatedAt: string | null;
-}
-export interface GarmentType { id: string; name: string; archivedAt: string | null }
-export interface LaundryMachine {
-  id: string;
-  branchId: string;
-  kind: MachineKind;
-  label: string;
-  capacityKg: string | null;
-  cycleMinutes: number;
-  outOfOrderReason: string | null;
-  isSample?: boolean;
-  archivedAt: string | null;
-}
-export interface MachineBoard {
-  branchId: string;
-  asOf: string | null;
-  data: {
-    id: string;
-    kind: MachineKind;
-    label: string;
-    capacityKg: string | null;
-    cycleMinutes: number;
-    outOfOrderReason: string | null;
-    status: 'FREE' | 'RUNNING' | 'OUT_OF_ORDER';
-    current: { runId: string; source: 'SELF_SERVICE' | 'JOB'; jobOrderId: string | null; jobReference: string | null; saleId: string | null; saleNumber: number | null; startedAt: string; endsAt: string; secondsLeft: number } | null;
-    nextFreeAt: string;
-    /** Runs waiting behind the current one (paid for ahead); they can be called off. */
-    queued: { runId: string; source: 'SELF_SERVICE' | 'JOB'; saleId: string | null; saleNumber: number | null; startsAt: string; endsAt: string }[];
-  }[];
-}
-/** A job order as GET /job-orders lists it. */
-export interface JobOrderRow {
-  id: string;
-  branchId: string;
-  legalEntityId: string;
-  number: number;
-  reference: string;
-  claimCode: string;
-  customerId: string | null;
-  customerName: string | null;
-  customerPhone: string | null;
-  customerDisplayName: string | null;
-  serviceLevel: 'REGULAR' | 'EXPRESS';
-  promisedAt: string;
-  status: JobOrderStatus;
-  weightKg: string | null;
-  bagCount: number;
-  specialInstructions: string | null;
-  conditionNotes: string | null;
-  pickupRequested: boolean;
-  deliveryRequested: boolean;
-  notify: boolean;
-  amountDue: string;
-  depositHeld: string;
-  balance: string;
-  overdue: boolean;
-  saleId: string | null;
-  readyAt: string | null;
-  claimedAt: string | null;
-  cancelledAt: string | null;
-  cancelReason: string | null;
-  disposedAt?: string | null;
-  disposedReason?: string | null;
-  disposedNote?: string | null;
-  createdAt: string;
-}
-export interface JobOrderLine {
-  id: string;
-  lineNo: number;
-  variantId: string;
-  sku: string;
-  name: string;
-  laundryUnit: LaundryUnit | null;
-  measuredQuantity: string;
-  quantity: string;
-  unitPrice: string;
-  discount: string;
-  vatAmount: string;
-  amountDue: string;
-  customerPackageId: string | null;
-  promotionId: string | null;
-  /** Added by the server (the express or delivery item). */
-  auto: boolean;
-}
-export interface JobOrderTrip {
-  id: string;
-  jobOrderId: string;
-  kind: TripKind;
-  status: TripStatus;
-  address: string | null;
-  contactPhone: string | null;
-  contactName: string | null;
-  windowStart: string | null;
-  windowEnd: string | null;
-  riderMemberId: string | null;
-  riderName: string | null;
-  notes: string | null;
-  failReason?: string | null;
-  doneAt: string | null;
-}
-export interface JobOrder extends JobOrderRow {
-  branchName: string;
-  unclaimed: boolean;
-  storageDays: number;
-  lines: JobOrderLine[];
-  items: { id: string; garmentTypeId: string | null; label: string; count: number; note: string | null }[];
-  trips: JobOrderTrip[];
-  history: { id: string; fromStatus: JobOrderStatus | null; toStatus: JobOrderStatus; note: string | null; changedAt: string }[];
-}
-export interface JobDeposit {
-  id: string;
-  kind: 'RECEIVED' | 'APPLIED' | 'REFUNDED' | 'FORFEITED';
-  amount: string;
-  method: string | null;
-  reference: string | null;
-  reason: string | null;
-  saleId: string | null;
-  createdAt: string;
-}
-export interface JobNotice {
-  id: string;
-  kind: 'READY' | 'REMINDER' | 'FINAL';
-  step: number;
-  status: string;
-  emailStatus: string | null;
-  emailTo: string | null;
-  smsStatus: string | null;
-  smsTo: string | null;
-  createdAt: string;
-  settledAt: string | null;
-}
-export interface JobTicket {
-  stub: {
-    business: string;
-    legalName: string;
-    branch: string;
-    branchAddress: string | null;
-    timezone: string;
-    reference: string;
-    claimCode: string;
-    receivedAt: string;
-    promisedAt: string;
-    serviceLevel: 'REGULAR' | 'EXPRESS';
-    customer: string | null;
-    weightKg: string | null;
-    bagCount: number;
-    lines: { name: string; measuredQuantity: string; quantity: string; unit: LaundryUnit | null; unitPrice: string; amountDue: string; packageSession: boolean }[];
-    amountDue: string;
-    depositHeld: string;
-    balance: string;
-    items: { label: string; count: number; note: string | null }[];
-    pieces: number;
-    specialInstructions: string | null;
-    conditionNotes: string | null;
-    claimPolicy: string | null;
-    notice: string;
-  };
-  tag: { reference: string; customer: string | null; bagCount: number; serviceLevel: 'REGULAR' | 'EXPRESS'; promisedAt: string; specialInstructions: string | null; pieces: number };
-}
-export interface TripRow {
-  id: string;
-  jobOrderId: string;
-  jobReference: string;
-  jobStatus: JobOrderStatus;
-  kind: TripKind;
-  status: TripStatus;
-  customer: string | null;
-  address: string | null;
-  contactPhone: string | null;
-  contactName: string | null;
-  windowStart: string | null;
-  windowEnd: string | null;
-  riderMemberId: string | null;
-  riderName: string | null;
-  notes: string | null;
-  failReason: string | null;
-  doneAt: string | null;
-  bagCount: number;
-  amountDue: string;
-  balance: string;
-}
-export interface JobOrdersReport {
-  days: { day: string; received: number; ready: number; claimed: number; cancelled: number; disposed: number; averageTurnaroundHours: string | null; onTimePercent: string | null }[];
-  services: { variantId: string; name: string; unit: LaundryUnit; measured: string; billed: string; jobs: number; amount: string }[];
-  totals: { received: number; ready: number; claimed: number; cancelled: number; disposed: number; averageTurnaroundHours: string | null; onTimePercent: string | null; kilos: string; loads: string; overdueNow: number; openNow: number };
-}
-export interface MachineUsageReport {
-  machines: { machineId: string; kind: MachineKind; label: string; archived: boolean; selfServiceCycles: number; dropOffCycles: number; selfServiceMinutes: number; dropOffMinutes: number; utilisationPercent: string | null; selfServiceSales: string }[];
-  totals: { selfServiceCycles: number; dropOffCycles: number; selfServiceSales: string };
-}
-export interface JobDepositsReport {
-  legalEntityId: string;
-  held: { jobOrderId: string; reference: string; branchId: string; status: JobOrderStatus; customer: string | null; amountDue: string; held: string }[];
-  unclaimed: { jobOrderId: string; reference: string; branchId: string; customer: string | null; readyAt: string; daysWaiting: number; amountDue: string; held: string; finalNoticeSent: boolean }[];
-  forfeited: { amount: string; entries: number };
-  totals: { held: string; customerDownPaymentsGl: string; difference: string; unclaimedValue: string };
-}
-export interface DeliveriesReport {
-  days: { day: string; kind: TripKind; trips: number; done: number; failed: number; cancelled: number; scheduled: number }[];
-  totals: { trips: number; done: number; failed: number; deliveryFees: string; deliveredJobsWithFee: number };
 }
 
 // ---- pharmacies and drugstores (ADR-0025) ----

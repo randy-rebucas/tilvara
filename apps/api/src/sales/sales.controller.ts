@@ -4,7 +4,6 @@ import {
   cashierSessionListQuerySchema,
   cashMovementSchema,
   closeCashierSessionSchema,
-  createCheckSchema,
   createExchangeSchema,
   createHeldCartSchema,
   createPriceOverrideSchema,
@@ -16,7 +15,6 @@ import {
   createSaleSchema,
   idParamSchema,
   openCashierSessionSchema,
-  previewCheckSchema,
   previewSaleReturnSchema,
   saleListQuerySchema,
   stockAdjustmentSchema,
@@ -25,7 +23,6 @@ import {
   type CashierSessionListQuery,
   type CashMovementInput,
   type CloseCashierSessionInput,
-  type CreateCheckInput,
   type CreateExchangeInput,
   type CreateHeldCartInput,
   type CreatePriceOverrideInput,
@@ -34,7 +31,6 @@ import {
   type CreateSaleInput,
   type CreateSaleReturnInput,
   type OpenCashierSessionInput,
-  type PreviewCheckInput,
   type PreviewSaleReturnInput,
   type SaleListQuery,
   type StockAdjustmentInput,
@@ -110,20 +106,6 @@ export class SalesController {
   @Post('sales')
   createSale(@Auth() auth: AuthContext, @Body(new ZodPipe(createSaleSchema)) body: CreateSaleInput) {
     return this.sales.create(auth, body);
-  }
-
-  /** A restaurant check: a sale paying shares of a bill (ADR-0014 §8). Idempotency-Key is mandatory. */
-  @Idempotent({ required: true })
-  @Post('restaurant/bills/:id/checks')
-  createCheck(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(createCheckSchema)) body: CreateCheckInput) {
-    return this.sales.createFromBill(auth, billId, body);
-  }
-
-  /** What a check would pay, priced like the check itself; records nothing. */
-  @HttpCode(200)
-  @Post('restaurant/bills/:id/checks/preview')
-  previewCheck(@Auth() auth: AuthContext, @Param('id', id) billId: string, @Body(new ZodPipe(previewCheckSchema)) body: PreviewCheckInput) {
-    return this.sales.previewCheck(auth, billId, body);
   }
 
   /** Return lines of an earlier sale and sell new items in one go (session 20). Idempotency-Key is mandatory. */

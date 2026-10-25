@@ -20,7 +20,7 @@ import {
   inSequence,
 } from '@1pos/database';
 import type { AssignPriceListInput, CreatePriceListInput, SetPricesInput, UpdatePriceListInput } from '@1pos/validation';
-import { laundryOf, parseScaleLabel } from '@1pos/sync-protocol';
+import { parseScaleLabel } from '@1pos/sync-protocol';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -269,8 +269,6 @@ export class PricingService extends TenantService {
         trackInventory: item.product.trackInventory,
         /** STANDARD, SERVICE or PACKAGE (ADR-0022): a package needs the customer on the sale. */
         productType: item.product.productType,
-        /** A laundry service, add-on or self-service cycle (ADR-0024), else null. */
-        laundry: laundryOf(item.variant),
         /** A medicine (ADR-0025 §3): class, generic name, strength, form; null for an ordinary item. */
         drug: (await tillDrugs(db, [variantId])).get(variantId) ?? null,
         /** Where expired or held lots may not be sold (ADR-0025 §4): what of it is sellable here now. */
@@ -292,7 +290,7 @@ export class PricingService extends TenantService {
       if (!branch) throw notFound('Branch');
       this.assertCan(auth, 'catalog.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
       const rows = await db
-        .select({ variant: productVariants, variantId: productVariants.id, sku: productVariants.sku, variantName: productVariants.name, productName: products.name, position: productVariants.quickKeyPosition, productType: products.productType })
+        .select({ variantId: productVariants.id, sku: productVariants.sku, variantName: productVariants.name, productName: products.name, position: productVariants.quickKeyPosition, productType: products.productType })
         .from(productVariants)
         .innerJoin(products, eq(products.id, productVariants.productId))
         .where(and(sql`${productVariants.quickKeyPosition} IS NOT NULL`, isNull(productVariants.archivedAt), isNull(products.archivedAt)))
@@ -305,7 +303,6 @@ export class PricingService extends TenantService {
           sku: r.sku,
           name: r.variantName ? `${r.productName} — ${r.variantName}` : r.productName,
           productType: r.productType,
-          laundry: laundryOf(r.variant),
           price: prices.get(r.variantId)?.amount ?? null,
         })),
       };
@@ -318,7 +315,7 @@ export class PricingService extends TenantService {
   }
 
   /**
-   * Prices in force at `at` for many variants of one branch, in one query (the cart, the branch menu):
+   * Prices in force at `at` for many variants of one branch, in one query (the cart, the till's snapshot):
    * the branch's price list (else the tenant default), then per variant the newest price effective by
    * `at`. Variants without a price are absent from the map. With `knownAt` (an offline sale re-priced as
    * of its snapshot), price rows created after that instant are ignored even when back-dated up to

@@ -5,8 +5,8 @@ import { allProducts, api, apiOrNull, type Me, type RecipeVersion, type Uom } fr
 import { usesRecipes } from '@/lib/business-type';
 import { isUuid, variantOptions } from '@/lib/options';
 import { getT } from '@/i18n/server';
-import { RecipeForm } from '../../../../restaurant/forms';
-import { RecipeHistory } from '../../../../restaurant/recipes/recipe-history';
+import { SuppliesForm } from './supplies-form';
+import { SuppliesHistory } from './supplies-history';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('products.item.supplies');
@@ -14,7 +14,7 @@ export const generateMetadata = pageTitle('products.item.supplies');
 /**
  * A salon service's supplies used (ADR-0022 §9): the recipe of the service, consumed from stock at
  * checkout (a package session too). Supplies are ordinary stock-counted items; their reorder points
- * give the low-supply alerts. Versions are append-only, like a dish's recipe.
+ * give the low-supply alerts. Versions are append-only.
  */
 export default async function SuppliesPage({ params }: { params: Promise<{ id: string; variantId: string }> }) {
   const { id, variantId } = await params;
@@ -44,9 +44,9 @@ export default async function SuppliesPage({ params }: { params: Promise<{ id: s
       </div>
       {!usesRecipes(me.activeTenant?.businessType) && <Callout>{t('prod.suppliesOff')}</Callout>}
       {canManage && usesRecipes(me.activeTenant?.businessType) && (
-        supplies.length > 0 ? <div><RecipeForm variantId={variantId} ingredients={supplies} supplies /></div> : <Callout tone="warn">{t('prod.noSupplies')}</Callout>
+        supplies.length > 0 ? <div><SuppliesForm variantId={variantId} supplies={supplies} /></div> : <Callout tone="warn">{t('prod.noSupplies')}</Callout>
       )}
-      <RecipeHistory history={history.data} emptyText={t('prod.noSuppliesYet')} />
+      <SuppliesHistory history={history.data} />
     </div>
   );
 }

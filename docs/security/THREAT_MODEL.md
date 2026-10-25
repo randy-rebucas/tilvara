@@ -48,7 +48,7 @@ Each control and the automated check that proves it, or the gap. Test files are 
 |---|---|---|
 | T1 | ✅ | `isolation.test.ts` (the attack matrix equals the live router's `:id` routes; smuggling; DB sweep); `packages/database/test/integration/rls-catalog.test.ts` (schema rules) |
 | T2 | ✅ | `packages/database/test/integration/tenant-isolation.test.ts` ("drops tenant context when the transaction ends, on the same physical connection", also after a rollback) |
-| T3 | ✅ | `sales.test.ts`, `bills.test.ts`, `restaurant-drills.test.ts` (stale or forged totals refused: `STALE_TOTAL`, `TOTAL_CHANGED`) |
+| T3 | ✅ | `sales.test.ts` (stale or forged totals refused: `STALE_TOTAL`, `TOTAL_CHANGED`) |
 | T4 | ✅ | `reliability.test.ts` (idempotency, concurrent duplicates), `failure-drills.test.ts`, `sales.test.ts` (`DUPLICATE_TRANSACTION`), `offline-engine.test.ts` |
 | T5 | 🟡 | Returns are refused beyond what was sold (`sales.test.ts`, the DB within-sold trigger), with permission checks. Refund watch report (session 16): per person, refunds against own sales and the branch rate, flagging twice the branch rate and refunds of one's own sales (`refund-watch.test.ts`, `test:e2e:web:backoffice`). **Gap**: no manager-approval threshold at the till (a second person for refunds above an amount), which needs the user's choice of thresholds |
 | T6 | ⬜ | **Gap**: no webhooks yet (PayMongo, D6). Signature, timestamp and dedupe tests come with the adapter |

@@ -47,11 +47,6 @@ export default async function ByProductPage({ searchParams }: { searchParams: Pr
           <Empty>{t('rep.noData')}</Empty>
         )}
       </Note>
-      {r?.data && r.data.charges.length > 0 && (
-        <p className="text-[0.875rem] text-muted">
-          {r.data.charges.map((c) => `${t('doc.serviceCharge')}: ${peso(c.net)} (${t('rep.revenueExVat')} ${peso(c.netExVat)})`).join(' · ')}
-        </p>
-      )}
     </ReportsChrome>
   );
 }

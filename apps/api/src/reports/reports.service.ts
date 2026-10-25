@@ -60,13 +60,6 @@ export class ReportsService extends TenantService {
                count(*) FILTER (WHERE r.kind = 'VOID')::int AS voids, ${sum('r')}
           FROM sale_returns r WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
          GROUP BY 1 ORDER BY 1`);
-      // Room nights (ADR-0023 §12) are not sales; they appear as their own "Rooms" source, by night.
-      const { rows: roomRows } = await db.execute<Row>(sql`
-        SELECT e.night_date::text AS day, count(*) FILTER (WHERE e.kind = 'ROOM_NIGHT')::int AS count, ${sql.raw(BUCKETS.map((b) => `coalesce(sum(e.${b === 'amount_due' ? 'amount' : b}), 0)::text AS ${b}`).join(', '))}
-          FROM folio_entries e JOIN folios f ON f.id = e.folio_id
-         WHERE f.branch_id = ${w.branchId} AND e.night_date BETWEEN ${range.from}::date AND ${range.to}::date
-           AND e.kind IN ('ROOM_NIGHT', 'NIGHT_REVERSAL') AND e.vatable_sales IS NOT NULL
-         GROUP BY 1 ORDER BY 1`);
       const days = [...new Set([...sales.map((r) => r.day as string), ...returns.map((r) => r.day as string)])].sort();
       const net = (s?: Row, r?: Row) =>
         Object.fromEntries(BUCKETS.map((b) => [camel(b), toDec((s?.[b] as string) ?? '0').minus((r?.[b] as string) ?? '0').toFixed(2)]));
@@ -86,13 +79,8 @@ export class ReportsService extends TenantService {
             sales: shape(Object.fromEntries(BUCKETS.map((b) => [b, (s?.[b] as string) ?? '0']))),
             returns: shape(Object.fromEntries(BUCKETS.map((b) => [b, (r?.[b] as string) ?? '0']))),
             net: net(s, r),
-            rooms: shape(Object.fromEntries(BUCKETS.map((b) => [b, (roomRows.find((x) => x.day === day)?.[b] as string) ?? '0']))),
           };
         }),
-        rooms: {
-          days: roomRows.map((r) => ({ day: r.day, nights: r.count, ...shape(Object.fromEntries(BUCKETS.map((b) => [b, r[b] as string]))) })),
-          totals: { nights: roomRows.reduce((a, x) => a + (x.count as number), 0), ...shape(total(roomRows)) },
-        },
         totals: {
           salesCount: sales.reduce((a, x) => a + (x.count as number), 0),
           returnsCount: returns.reduce((a, x) => a + (x.count as number), 0),
@@ -137,7 +125,7 @@ export class ReportsService extends TenantService {
           LEFT JOIN sold ON sold.variant_id = v.id LEFT JOIN back ON back.variant_id = v.id LEFT JOIN cost ON cost.variant_id = v.id
          WHERE sold.variant_id IS NOT NULL OR back.variant_id IS NOT NULL
          ORDER BY net_sales DESC, v.sku`);
-      // Charges (service charge) are not products: listed apart so Σ products + Σ charges = the summary.
+      // Charges (a service charge on sales rung up before 0111) are not products: listed apart so Σ products + Σ charges = the summary.
       const { rows: charges } = await db.execute<Row>(sql`
         WITH sold AS (
           SELECT c.kind, sum(c.amount_due) AS amount, sum(c.amount_due - c.vat_amount) AS ex_vat
@@ -313,7 +301,7 @@ export class ReportsService extends TenantService {
       const { rows } = await db.execute<Row>(sql`
         WITH t AS (SELECT t.method, count(*) AS n, sum(t.amount) AS amount FROM sale_tenders t JOIN sales s ON s.id = t.sale_id
                     WHERE s.branch_id = ${w.branchId} AND s.completed_at >= ${w.start} AND s.completed_at < ${w.end} GROUP BY 1),
-             -- A return split between store credit, a folio and cash counts under each, for its part (refund-parts.ts).
+             -- A return split between store credit and cash counts under each, for its part (refund-parts.ts).
              r AS (SELECT method, count(DISTINCT sale_return_id) AS n, sum(amount) AS amount
                      FROM (${refundParts(sql`r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}`)}) rp GROUP BY 1)
         SELECT coalesce(t.method, r.method) AS method, coalesce(t.n, 0)::int AS tenders, coalesce(t.amount, 0)::text AS collected,
@@ -337,14 +325,7 @@ export class ReportsService extends TenantService {
           SELECT s.tax_snapshot->>'vatStatus', s.tax_snapshot->>'vatRate', -1,
                  -r.statutory_discount, -r.vat_exemption_amount, -r.vatable_sales, -r.vat_amount, -r.vat_exempt_sales, -r.zero_rated_sales, -r.percentage_tax_sales, -r.amount_due
             FROM sale_returns r JOIN sales s ON s.id = r.sale_id
-           WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end}
-          UNION ALL
-          -- Room nights, their reversals and folio adjustments (ADR-0023 §12), signed, on their date.
-          SELECT e.tax_snapshot->>'vatStatus', e.tax_snapshot->>'vatRate', 1,
-                 e.statutory_discount, e.vat_exemption_amount, e.vatable_sales, e.vat_amount, e.vat_exempt_sales, e.zero_rated_sales, e.percentage_tax_sales, e.amount
-            FROM folio_entries e JOIN folios f ON f.id = e.folio_id
-           WHERE f.branch_id = ${w.branchId} AND e.kind IN ('ROOM_NIGHT', 'NIGHT_REVERSAL', 'ADJUSTMENT') AND e.vatable_sales IS NOT NULL
-             AND coalesce(e.night_date, e.journal_date) BETWEEN ${range.from}::date AND ${range.to}::date)
+           WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end})
         SELECT vat_status, vat_rate, ${cols} FROM docs GROUP BY 1, 2 ORDER BY 1, 2`);
       return { data: rows.map((r) => ({ ...shape(r), vatRate: toDec((r.vat_rate as string) ?? '0').toString() })) };
     });
@@ -374,19 +355,6 @@ export class ReportsService extends TenantService {
           JOIN sale_beneficiaries b ON b.id = l.beneficiary_id JOIN registers reg ON reg.id = r.register_id
          WHERE r.branch_id = ${w.branchId} AND r.created_at >= ${w.start} AND r.created_at < ${w.end} ${scheme}
          GROUP BY r.id, r.created_at, r.return_number, reg.code, b.id
-        UNION ALL
-        -- SC/PWD room nights (ADR-0023 §7): each beneficiary's part of the night by their share of the discounted share.
-        SELECT CASE e.kind WHEN 'ROOM_NIGHT' THEN 'ROOM_NIGHT' ELSE 'NIGHT_REVERSAL' END, e.created_at, e.night_date::text, NULL::int, NULL,
-               sb.scheme_code, sb.name, sb.id_number, NULL, NULL,
-               ((e.vat_exempt_sales + e.zero_rated_sales + e.percentage_tax_sales) * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text,
-               (e.statutory_discount * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text,
-               (e.amount * (bj->>'share')::numeric / tot.share)::numeric(20,2)::text
-          FROM folio_entries e JOIN folios f ON f.id = e.folio_id
-          CROSS JOIN LATERAL jsonb_array_elements(e.tax_snapshot->'beneficiaries') bj
-          CROSS JOIN LATERAL (SELECT sum((x->>'share')::numeric) AS share FROM jsonb_array_elements(e.tax_snapshot->'beneficiaries') x) tot
-          JOIN stay_beneficiaries sb ON sb.id = (bj->>'id')::uuid
-         WHERE f.branch_id = ${w.branchId} AND e.kind IN ('ROOM_NIGHT', 'NIGHT_REVERSAL') AND e.statutory_discount <> 0
-           AND e.night_date BETWEEN ${range.from}::date AND ${range.to}::date ${range.scheme ? sql`AND sb.scheme_code = ${range.scheme}` : sql``}
          ORDER BY 2, 1`);
       return { data: rows.map(({ completed_at: _t, ...r }) => shape(r as Row, ['sales', 'discount', 'net'])) };
     });
@@ -473,34 +441,12 @@ export class ReportsService extends TenantService {
       const { rows: drawer } = await db.execute<Row>(sql`
         SELECT type, count(*)::int AS count, sum(amount)::text AS amount FROM cash_movements WHERE cashier_session_id = ${sessionId} GROUP BY 1 ORDER BY 1`);
       const { rows: [rec] } = await db.execute<Row>(sql`SELECT counted_cash::text, variance::text, approved_at FROM cash_reconciliations WHERE cashier_session_id = ${sessionId}`);
-      // Front desk collections (ADR-0023 §5.2): folio payments and deposits at this drawer, apart from sales.
-      const { rows: frontDesk } = await db.execute<Row>(sql`
-        SELECT 'FOLIO_PAYMENT' AS kind, p.method, count(*)::int AS count, sum(p.amount)::text AS amount FROM folio_payments p WHERE p.cashier_session_id = ${sessionId} GROUP BY 1, 2
-        UNION ALL
-        SELECT 'DEPOSIT_' || d.kind, d.method, count(*)::int, sum(d.amount)::text FROM stay_deposits d
-         WHERE d.kind IN ('RECEIVED', 'REFUNDED') AND (d.cashier_session_id = ${sessionId}
-            OR d.payment_intent_id IN (SELECT id FROM payment_intents WHERE cashier_session_id = ${sessionId}))
-         GROUP BY 1, 2 ORDER BY 1, 2`);
-      // Job order down payments (ADR-0024 §5): taken and given back at this drawer, apart from sales.
-      const { rows: downPayments } = await db.execute<Row>(sql`
-        SELECT d.kind, d.method, count(*)::int AS count, sum(d.amount)::text AS amount FROM job_order_deposits d
-         WHERE d.kind IN ('RECEIVED', 'REFUNDED') AND (d.cashier_session_id = ${sessionId}
-            OR d.payment_intent_id IN (SELECT id FROM payment_intents WHERE cashier_session_id = ${sessionId}))
-         GROUP BY 1, 2 ORDER BY 1, 2`);
       return {
         session: { id: session.id, registerId: session.registerId, status: session.status, openedAt: session.openedAt, closedAt: session.closedAt, openingFloat: money(session.openingFloat) },
         sales: shape(sales!, ['amount_due', 'statutory_discount', 'vat_amount']),
         tenders: tenders.map((t) => shape(t, ['amount'])),
         returns: returns.map((r) => shape(r, ['amount'])),
         drawer: drawer.map((d) => shape(d, ['amount'])),
-        frontDeskCollections: {
-          data: frontDesk.map((f) => shape(f, ['amount'])),
-          cash: money(frontDesk.filter((f) => f.method === 'CASH').reduce((a, f) => a.plus(f.amount as string), toDec('0')).toString()),
-        },
-        jobOrderDownPayments: {
-          data: downPayments.map((f) => shape(f, ['amount'])),
-          cash: money(downPayments.filter((f) => f.method === 'CASH').reduce((a, f) => a.plus(f.amount as string), toDec('0')).toString()),
-        },
         expectedCash: money(await expectedCash(db, sessionId)),
         count: rec ? { countedCash: money(rec.counted_cash as string), variance: money(rec.variance as string), approved: rec.approved_at !== null } : null,
       };

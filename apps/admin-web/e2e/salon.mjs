@@ -1,5 +1,5 @@
 // End-to-end test of a salon, spa or barber shop (ADR-0022) in the back office: the sign-up offers
-// "Salon, spa or barber shop"; the band has Appointments and no Restaurant; a staff member is added
+// "Salon, spa or barber shop"; the band has Appointments and no Pharmacy; a staff member is added
 // with weekly hours; a service is added with its duration (and has "Supplies used"); an appointment
 // is booked from an empty slot of the calendar and shows there; a booking outside the staff's hours
 // asks first and "Book anyway" books it; the client arrives; a package is made with its contents; the
@@ -8,7 +8,7 @@
 // guide's part; Filipino; phone width.
 // Usage: node apps/admin-web/e2e/salon.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -66,7 +66,7 @@ try {
   await evaluate(`[...document.querySelectorAll('form button.btn-primary')].filter((x) => x.getClientRects().length).at(-1).click()`);
   await waitFor(`location.pathname === '/'`);
   const tabs = await evaluate(`[...document.querySelectorAll('header nav a')].map((a) => a.textContent.trim())`);
-  check('a salon has the Appointments tab and no Restaurant tab', tabs.includes('Appointments') && !tabs.includes('Restaurant'));
+  check('a salon has the Appointments tab and no Pharmacy tab', tabs.includes('Appointments') && !tabs.includes('Pharmacy'));
 
   // ---- a staff member with weekly hours ----
   await go(`/appointments/staff?branch=${br.id}`);

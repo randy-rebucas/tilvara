@@ -1,7 +1,6 @@
 import type { PrintableReceipt } from '@1pos/escpos';
-import { toDec } from '@1pos/money';
 import type { OfflineReceipt } from '@1pos/pos-offline';
-import type { Bill, FolioStatement, JobTicket, Receipt } from '../types';
+import type { Receipt } from '../types';
 import { isZero, peso } from './money';
 
 /** Receipt wording stays in English, matching BIR document terminology (not UI copy). */
@@ -54,9 +53,10 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
   return {
     header: [r.seller.name, r.seller.registeredName, ...(r.seller.address ? [r.seller.address] : []), ...(r.seller.tin ? [`${r.seller.tinLabel} ${r.seller.tin}`] : [])],
     notice: r.notice,
-    meta: [...(r.callNumber !== undefined ? [[`ORDER #${r.callNumber}`, r.pickupName ?? ''] as [string, string]] : []), [r.transaction.reference, r.transaction.dateTime]],
+    meta: [[r.transaction.reference, r.transaction.dateTime]],
     items: [
       ...r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(salonDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion && l.discount ? { name: l.promotion, discount: l.discount } : undefined), l), l) })),
+      // An older sale's service charge: its own line after the items, as the server words it.
       ...(r.charges ?? []).map((c) => ({ name: c.label, amount: `${c.amount} ${c.flag}`.trim() })),
     ],
     totals: entries
@@ -67,50 +67,13 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       ...SETTLEMENT.flatMap((k) => entries.filter(([e]) => e === k).map(([, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v) }))),
       ...(r.tip ? [{ label: tipLabel(r.tip.method), amount: peso(r.tip.amount) }] : []),
     ],
-    blocks: [
-      // Charge to room (ADR-0023 §5.1): the line and the guest's signature, as the server words them.
-      ...(r.roomCharge ? [{ lines: [r.roomCharge.line], pairs: [['Amount', peso(r.roomCharge.amount)] as [string, string]], signature: r.roomCharge.signatureLine }] : []),
-      ...r.statutory.map((s) => ({
+    blocks: r.statutory.map((s) => ({
       lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`, ...(s.purchaseBooklet ? [BOOKLET_PRESENTED] : [])],
       // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
       pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
-      })),
-    ],
+    })),
     footer: [...(r.customer ? [`Customer: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`Reason: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
-  };
-}
-
-/** The notice on a printed bill: it asks for payment, it is not a receipt or an invoice. */
-export const BILL_NOTICE = 'BILL - NOT AN OFFICIAL RECEIPT OR INVOICE';
-
-/**
- * A table's bill as handed to the guests before they pay (printed again on request): its lines with
- * choices, the service charge, the total and VAT, what is already paid and what is left. Wording is
- * English like the receipt (BIR document terminology).
- */
-export function billToPrintable(b: Bill, place: { branch: string; where: string; dateTime: string }): PrintableReceipt {
-  const children = (id: string) => b.lines.filter((l) => l.parentLineId === id);
-  return {
-    header: [place.branch],
-    notice: BILL_NOTICE,
-    meta: [[`Bill ${b.billNumber} · ${place.where}`, place.dateTime]],
-    items: [
-      ...b.lines.filter((l) => !l.parentLineId).flatMap((l) => [
-        { name: `${l.quantity} x ${l.name}${l.seat ? ` (seat ${l.seat})` : ''}`, amount: l.amountDue },
-        ...children(l.id).map((c) => ({ name: `  + ${c.name}`, amount: c.amountDue })),
-        // An order or item discount, or a comp: the guest sees why the line costs less (or nothing).
-        ...(toDec(l.discount ?? '0').gt(0) ? [{ name: '  Discount', amount: `-${toDec(l.discount).toFixed(2)}` }] : []),
-      ]),
-      ...b.charges.map((c) => ({ name: `Service charge ${toDec(c.rate).times(100).toString()}%`, amount: c.amountDue })),
-    ],
-    totals: [
-      { label: 'TOTAL DUE', amount: peso(b.amountDue), emphasis: true },
-      { label: 'VAT', amount: peso(b.vatAmount) },
-      ...(b.checks.length ? [{ label: 'Paid', amount: peso(b.amountPaid) }, { label: 'Left to pay', amount: peso(b.amountRemaining) }] : []),
-    ],
-    payments: [],
-    footer: ['Please check your bill before paying.'],
   };
 }
 
@@ -123,7 +86,7 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
   return {
     header: [r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
     notice: r.notice,
-    meta: [...(r.callNumber !== undefined ? [[`ORDER #${r.callNumber}`, r.pickupName ?? ''] as [string, string]] : []), [r.localReference, dateTime]],
+    meta: [[r.localReference, dateTime]],
     items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: drugDetail(promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion), l) })),
     totals: totals.map(([k, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v), ...(k === 'amountDue' && { emphasis: true }) })),
     payments: [
@@ -134,88 +97,9 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
   };
 }
 
-/**
- * The guest folio statement (ADR-0023 §5.2) for a thermal printer: what the guest signs at check-out.
- * Its title ("Guest folio — not an invoice" while invoicing is disabled) is the server's, as printed.
- */
-export function statementToPrintable(s: FolioStatement): PrintableReceipt {
-  const totals: [string, string][] = [
-    ['Room nights', s.totals.roomNights], ['Accommodation tax', s.totals.accommodationTax], ['Charges', s.totals.charges],
-    ['Adjustments', s.totals.adjustments], ['Deposits', s.totals.deposits], ['Payments', s.totals.payments],
-  ];
-  return {
-    header: [s.seller.tradeName ?? s.seller.registeredName, s.seller.registeredName, ...(s.seller.registeredAddress ? [s.seller.registeredAddress] : []), ...(s.seller.tin ? [`TIN ${s.seller.tin}`] : [])],
-    notice: s.title,
-    meta: [[`Room ${s.stay.roomNumber} · ${s.stay.roomType}`, `${s.stay.arrivalDate} - ${s.stay.departureDate}`], ...(s.stay.guestName ? [['Guest', s.stay.guestName] as [string, string]] : [])],
-    items: s.lines.map((l) => ({ name: `${l.date} ${l.description}`, amount: l.amount })),
-    totals: [...totals.filter(([, v]) => !isZero(v)).map(([label, v]) => ({ label, amount: peso(v) })), { label: 'BALANCE', amount: peso(s.totals.balance), emphasis: true }],
-    payments: [],
-    blocks: [{ lines: [], signature: s.signatureLine }],
-    footer: [s.branch.name],
-  };
-}
-
 /** A tip on the receipt (session 25): after the payment, for the staff, not part of the total. */
 export const tipLabel = (method: string) => (method === 'CASH' ? 'Tip (cash)' : `Tip (${method.toLowerCase()})`);
 
 /** How a tender reads on a receipt: an exchange credit names the return it came from. */
 export const tenderLabel = (t: { method: string; exchangeReturnNumber?: number }) =>
-  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method === 'ROOM_CHARGE' ? 'CHARGE TO ROOM' : t.method === 'JOB_DEPOSIT' ? 'DOWN PAYMENT' : t.method;
-
-/** A date and time on a laundry ticket, in the branch's time zone. */
-export const ticketTime = (at: string, timeZone: string) =>
-  new Intl.DateTimeFormat('en-PH', { timeZone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
-
-/** How a job line's quantity reads on the stub: "3.5 kg (min 5)" when the minimum was billed. */
-export function jobQuantity(l: { measuredQuantity: string; quantity: string; unit: string | null }): string {
-  const unit = l.unit === 'KG' ? ' kg' : l.unit === 'LOAD' ? (l.quantity === '1' ? ' load' : ' loads') : l.unit === 'PIECE' ? ' pc' : '';
-  return l.measuredQuantity !== l.quantity ? `${l.measuredQuantity}${unit} (min ${l.quantity})` : `${l.quantity}${unit}`;
-}
-
-/**
- * The customer's claim stub (ADR-0024 §4): number and claim code, promised time, lines and total, the
- * down payment and balance, items and condition, and the branch's claim policy. English, like receipts.
- */
-export function stubToPrintable(t: JobTicket): PrintableReceipt {
-  const s = t.stub;
-  return {
-    header: [s.business, s.legalName, s.branch, ...(s.branchAddress ? [s.branchAddress] : [])],
-    notice: s.notice,
-    meta: [
-      [s.reference, `CLAIM CODE ${s.claimCode}`],
-      ['Received', ticketTime(s.receivedAt, s.timezone)],
-      [s.serviceLevel === 'EXPRESS' ? 'EXPRESS - ready by' : 'Ready by', ticketTime(s.promisedAt, s.timezone)],
-      ...(s.customer ? [['Customer', s.customer] as [string, string]] : []),
-      [`Bags ${s.bagCount}`, s.weightKg ? `${s.weightKg} kg` : ''],
-    ],
-    items: s.lines.map((l) => ({ name: l.name, amount: l.amountDue, detail: `${jobQuantity(l)} x ${l.unitPrice}${l.packageSession ? ' · Package session' : ''}` })),
-    totals: [
-      { label: 'TOTAL', amount: peso(s.amountDue), emphasis: true },
-      ...(isZero(s.depositHeld) ? [] : [{ label: 'Down payment', amount: peso(s.depositHeld) }]),
-      { label: 'BALANCE AT PICKUP', amount: peso(s.balance), emphasis: true },
-    ],
-    payments: [],
-    blocks: [
-      ...(s.items.length ? [{ lines: [`Items (${s.pieces} pcs)`, ...s.items.map((i) => `${i.count} x ${i.label}${i.note ? ` - ${i.note}` : ''}`)] }] : []),
-      ...(s.conditionNotes ? [{ lines: ['Condition at drop-off', s.conditionNotes] }] : []),
-      ...(s.specialInstructions ? [{ lines: ['Instructions', s.specialInstructions] }] : []),
-      ...(s.claimPolicy ? [{ lines: [s.claimPolicy] }] : []),
-    ],
-    footer: ['Bring this stub to claim your laundry.'],
-  };
-}
-
-/** The bag tag (ADR-0024 §4): number, name, bags, service level and instructions; no prices. */
-export function tagToPrintable(t: JobTicket): PrintableReceipt {
-  const g = t.tag;
-  return {
-    header: [g.reference],
-    notice: g.serviceLevel === 'EXPRESS' ? 'EXPRESS' : 'BAG TAG',
-    meta: [...(g.customer ? [['Customer', g.customer] as [string, string]] : []), [`Bags ${g.bagCount}`, `${g.pieces} pcs`], ['Ready by', ticketTime(g.promisedAt, t.stub.timezone)]],
-    items: [],
-    totals: [],
-    payments: [],
-    blocks: g.specialInstructions ? [{ lines: ['Instructions', g.specialInstructions] }] : [],
-    footer: [],
-  };
-}
+  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method;

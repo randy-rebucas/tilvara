@@ -1,10 +1,10 @@
 // End-to-end test of the admin user guide (/help): the band's help button on every page opens the
 // part about that page; the guide lists every area the business offers, marks none for an owner,
-// links to each area; the band still fits all its tabs at 1440px with a long business name (sixteen for
-// a business that does both, Appointments since ADR-0022, Lodging since ADR-0023 and Laundry since ADR-0024, Pharmacy since ADR-0025);
-// a retail shop sees no restaurant part; Filipino; phone width.
+// links to each area; the band still fits all its tabs at 1440px with a long business name (thirteen for
+// a business that does both, Appointments since ADR-0022, Pharmacy since ADR-0025);
+// a retail shop sees no appointments or pharmacy part; Filipino; phone width.
 // Usage: node apps/admin-web/e2e/guide.mjs [baseUrl] [screenshotDir] [apiUrl]
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -15,7 +15,7 @@ const call = client(API);
 const stamp = Date.now().toString(36);
 const email = `guide-${stamp}@example.ph`;
 // Long on purpose: the help button joins the band, which must still fit every tab at 1440px.
-const BUSINESS = `Sari-sari Store at Karinderya ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
+const BUSINESS = `Sari-sari Store at Botika ni Aling Lorna sa Kanto ng Mabini ${stamp}`;
 await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Lorna Reyes', businessName: BUSINESS, tenantSlug: `guide-${stamp}`, businessType: 'HYBRID' });
 
 const { check, finish } = checklist();
@@ -34,11 +34,11 @@ try {
   await evaluate(`[...document.querySelectorAll('form button.btn-primary')].filter((x) => x.getClientRects().length).at(-1).click()`);
   await waitFor(`location.pathname === '/'`);
 
-  check('1440px, long business name: the help button is in the band and all sixteen tabs still fit', await evaluate(`(() => {
+  check('1440px, long business name: the help button is in the band and all thirteen tabs still fit', await evaluate(`(() => {
     const nav = document.querySelector('nav[data-testid=main-nav]');
     const help = document.querySelector('header a[href^="/help"]');
     const r = help?.getBoundingClientRect();
-    return nav.querySelectorAll('a').length === 16 && nav.scrollWidth <= nav.clientWidth + 1 && !!r && r.right <= innerWidth && r.width > 0;
+    return nav.querySelectorAll('a').length === 13 && nav.scrollWidth <= nav.clientWidth + 1 && !!r && r.right <= innerWidth && r.width > 0;
   })()`));
   check('…and it has a label for screen readers and a tooltip', await evaluate(`(() => { const a = document.querySelector('header a[href^="/help"]'); return a.title === 'Help and user guide' && a.innerText.includes('Help and user guide'); })()`));
   await shot('guide-band-1440.png', false);
@@ -46,7 +46,7 @@ try {
   check('the setup checklist links to the guide', await evaluate(`[...document.querySelectorAll('aside a')].some((a) => a.getAttribute('href') === '/help#start' && a.textContent.includes('Read the user guide'))`));
 
   // The button follows the page.
-  const pages = [['/products', 'products'], ['/prices', 'prices'], ['/inventory/counts', 'inventory'], ['/purchasing', 'purchasing'], ['/books/periods', 'books'], ['/restaurant/menus', 'restaurant'], ['/pharmacy/holds', 'pharmacy'], ['/reports/z-readings', 'reports'], ['/offline-sales', 'offline'], ['/shifts', 'drawers'], ['/locations', 'locations'], ['/team', 'team'], ['/audit', 'team'], ['/subscription/export', 'subscription']];
+  const pages = [['/products', 'products'], ['/prices', 'prices'], ['/inventory/counts', 'inventory'], ['/purchasing', 'purchasing'], ['/books/periods', 'books'], ['/appointments/staff', 'salon'], ['/pharmacy/holds', 'pharmacy'], ['/reports/z-readings', 'reports'], ['/offline-sales', 'offline'], ['/shifts', 'drawers'], ['/locations', 'locations'], ['/team', 'team'], ['/audit', 'team'], ['/subscription/export', 'subscription']];
   const wrong = [];
   for (const [path, topic] of pages) {
     await go(path);
@@ -65,7 +65,7 @@ try {
   await shot('guide-inventory-1440.png', false);
 
   await go('/help');
-  const all = ['start', 'products', 'prices', 'retail', 'inventory', 'tingi', 'purchasing', 'restaurant', 'salon', 'lodging', 'laundry', 'pharmacy', 'reports', 'customers', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
+  const all = ['start', 'products', 'prices', 'retail', 'inventory', 'tingi', 'purchasing', 'salon', 'pharmacy', 'reports', 'customers', 'books', 'offline', 'drawers', 'locations', 'team', 'subscription', 'account', 'till'];
   check('a business that does both sees every part, in set-up order', JSON.stringify(await sectionIds()) === JSON.stringify(all));
   check('the contents link to every part', await evaluate(`[...document.querySelectorAll('nav[aria-label="Contents"] a')].map((a) => a.getAttribute('href')).join() === ${JSON.stringify(all.map((i) => `#${i}`).join())}`));
   check('each part has numbered steps', await evaluate(`[...document.querySelectorAll('main article')].every((a) => a.querySelectorAll('ol li').length >= 3)`));
@@ -74,7 +74,7 @@ try {
     const link = (id) => document.getElementById(id).querySelector('a.btn')?.getAttribute('href');
     return link('inventory') === '/inventory' && link('reports') === '/reports/sales' && link('start') === '/' && link('account') === '/account';
   })()`));
-  check('restaurant steps and selling-by-weight tips both show for a business that does both', (await text()).includes('Restaurant reports: item performance') && (await text()).includes('set “Sold by” to Weight'));
+  check('salon tips and selling-by-weight tips both show for a business that does both', (await text()).includes('Reports → Salon → Tips') && (await text()).includes('set “Sold by” to Weight'));
   await shot('guide-1440.png');
 
   // Filipino.
@@ -99,14 +99,14 @@ try {
   check('the business becomes a retail shop', changed.status === 200);
   await go('/help');
   const retail = await sectionIds();
-  check('retail: no restaurant, appointments, lodging, laundry or pharmacy part, everything else stays', !retail.includes('restaurant') && !retail.includes('salon') && !retail.includes('lodging') && !retail.includes('laundry') && !retail.includes('pharmacy') && retail.length === all.length - 5);
-  check('retail: no restaurant lines in other parts, selling by weight still explained', !(await text()).includes('Restaurant reports: item performance') && !(await text()).includes('Servers can “Work the floor”') && (await text()).includes('set “Sold by” to Weight'));
-  await go('/restaurant');
-  check('retail: on a restaurant page the help button opens the part about changing the type of business', (await helpHref()) === '/help#subscription');
+  check('retail: no appointments or pharmacy part, everything else stays', !retail.includes('salon') && !retail.includes('pharmacy') && retail.length === all.length - 2);
+  check('retail: selling by weight still explained', (await text()).includes('set “Sold by” to Weight'));
+  await go('/appointments');
+  check('retail: on an appointments page the help button opens the part about changing the type of business', (await helpHref()) === '/help#subscription');
 
-  const back = await bff('PATCH', '/api/v1/business', { businessType: 'RESTAURANT' }, true);
+  const back = await bff('PATCH', '/api/v1/business', { businessType: 'SALON' }, true);
   await go('/help');
-  check('restaurant: the part is back, and selling by weight is not explained', back.status === 200 && (await sectionIds()).includes('restaurant') && !(await text()).includes('set “Sold by” to Weight'));
+  check('salon: the appointments part is back, the pharmacy part is not', back.status === 200 && (await sectionIds()).includes('salon') && !(await sectionIds()).includes('pharmacy'));
   b.close();
 } catch (e) {
   console.error(e);

@@ -7,7 +7,7 @@ import type { BusinessType } from '@/lib/business-type';
 import { send } from '@/lib/client-api';
 import { HelpLink } from './help-link';
 
-export function UserMenu({ tenantName, userName, multiple, businessType, features }: { tenantName: string; userName: string; multiple: boolean; businessType: BusinessType; features?: string[] }) {
+export function UserMenu({ tenantName, userName, multiple, businessType }: { tenantName: string; userName: string; multiple: boolean; businessType: BusinessType }) {
   const { t } = useT();
   const router = useRouter();
   async function signOut() {
@@ -23,7 +23,7 @@ export function UserMenu({ tenantName, userName, multiple, businessType, feature
         <span className="max-w-[min(44vw,100%)] truncate text-[0.875rem] font-semibold text-white sm:max-w-[240px] lg:max-w-[96px]">{tenantName}</span>
         <span className="max-w-[min(44vw,100%)] truncate text-[0.75rem] text-blue-ink underline-offset-2 group-hover:underline sm:max-w-[240px] lg:max-w-[96px]">{userName}</span>
       </a>
-      <HelpLink businessType={businessType} features={features} />
+      <HelpLink businessType={businessType} />
       {multiple && (
         <button type="button" onClick={() => router.push('/select-business')} title={t('nav.switchBusiness')}
           className="grid size-8 shrink-0 place-items-center rounded-[4px] text-blue-ink hover:bg-white/10 hover:text-white">

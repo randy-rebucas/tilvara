@@ -78,8 +78,7 @@ const manila = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'A
 /**
  * A HYBRID business's day with every sub-ledger kept beside the books (audit 2026-10-21 §3): store credit
  * given back and spent, a service package sold and one session used, cash tips taken, given back by a
- * void and paid out, a guest's night, room charge and folio payment, a booking deposit, laundry down
- * payments (one held, one applied at the claim), and an item that keeps expiry dates sold and returned.
+ * void and paid out, and an item that keeps expiry dates sold and returned.
  */
 async function serviceDay() {
   const t = await signup(app, 'trace-svc');
@@ -92,13 +91,11 @@ async function serviceDay() {
   const session = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId: reg, openingFloat: '5000.00' }).expect(201)).body.id as string;
   const vat = ((await http().get('/v1/tax-categories').set(auth)).body.data as { id: string; code: string }[]).find((x) => x.code === 'VAT')!.id;
   const uoms = (await http().get('/v1/uoms').set(auth)).body.data as { id: string; code: string }[];
-  const [pc, kg] = [uoms.find((u) => u.code === 'PC')!.id, uoms.find((u) => u.code === 'KG')!.id];
+  const pc = uoms.find((u) => u.code === 'PC')!.id;
   const product = async (body: Record<string, unknown>, variant: Record<string, unknown>) =>
     (await http().post('/v1/products').set(auth).send({ uomId: pc, taxCategoryId: vat, ...body, variants: [{ sku: uniq('SKU'), ...variant }] }).expect(201)).body.variants[0].id as string;
   const cola = await product({ name: 'Cola', tracksExpiry: true }, { price: '22.40' });
   const cut = await product({ name: 'Haircut', productType: 'SERVICE' }, { price: '560.00', serviceMinutes: 30 });
-  const dinner = await product({ name: 'Dinner set', productType: 'SERVICE', trackInventory: false }, { price: '560.00' });
-  const wdf = await product({ name: 'Wash-dry-fold', productType: 'SERVICE', uomId: kg, soldBy: 'WEIGHT' }, { price: '35.00', laundryUnit: 'KG', laundryMinQuantity: '3' });
   const bundle = await product({ name: 'Five cuts', productType: 'PACKAGE' }, { price: '2800.00', packageValidDays: 90 });
   await http().put(`/v1/variants/${bundle}/package-items`).set(auth).send({ items: [{ serviceVariantId: cut, sessions: 5 }] }).expect(200);
   await idem('/v1/stock/adjustments', { branchId: b1, reason: 'Opening', items: [{ variantId: cola, quantity: '10', unitCost: '11.00', expiresOn: manila(60) }] }).expect(201);
@@ -121,25 +118,6 @@ async function serviceDay() {
   await giveBack(tipped.id, { kind: 'VOID' });
   await http().post(`/v1/cashier-sessions/${session}/movements`).set(auth).send({ type: 'TIP_PAYOUT', amount: '20.00', reason: 'Tips to staff' }).expect(201);
 
-  // Lodging: a guest in since yesterday (one night posted), a dinner on the room, ₱1,000 paid; a booking's deposit.
-  await http().patch(`/v1/branches/${b1}/lodging-settings`).set(auth).send({ nightAuditTime: '00:00' }).expect(200);
-  const type = (await idem('/v1/room-types', { code: 'STD', name: 'Standard', baseOccupancy: 2, maxOccupancy: 3, rackRate: '2800.00' }).expect(201)).body.id as string;
-  const room = async (number: string) => (await idem('/v1/rooms', { branchId: b1, roomTypeId: type, number }).expect(201)).body.id as string;
-  const guest = { fullName: 'Liza Reyes', nationality: 'Filipino', idType: 'Passport', idNumber: 'P1234567', address: 'Quezon City' };
-  const stay = (await idem('/v1/stays', { branchId: b1, roomId: await room('101'), arrivalDate: manila(-1), departureDate: manila(1), guests: [guest], checkIn: true }).expect(201)).body;
-  expect((await http().post('/v1/lodging/night-audit').set(auth).send({ branchId: b1 }).expect(200)).body.nights).toBe(1);
-  await sell({ lines: [{ variantId: dinner, quantity: '1' }], tenders: [{ method: 'ROOM_CHARGE', stayId: stay.id }] });
-  await idem(`/v1/folios/${stay.folio.id}/payments`, { method: 'CASH', cashierSessionId: session, tendered: '1000.00' }).expect(201);
-  const booked = (await idem('/v1/stays', { branchId: b1, roomId: await room('102'), arrivalDate: manila(5), departureDate: manila(6), guests: [guest] }).expect(201)).body;
-  await idem(`/v1/stays/${booked.id}/deposits`, { method: 'CASH', cashierSessionId: session, amount: '500.00' }).expect(201);
-
-  // Laundry: ₱100 held on one job; ₱50 on another, applied when it is claimed.
-  const held = (await idem('/v1/job-orders', { branchId: b1, customerId: customer, lines: [{ variantId: wdf, quantity: '6' }] }).expect(201)).body;
-  await idem(`/v1/job-orders/${held.id}/deposits`, { method: 'CASH', cashierSessionId: session, amount: '100.00' }).expect(201);
-  const job = (await idem('/v1/job-orders', { branchId: b1, customerId: customer, lines: [{ variantId: wdf, quantity: '3' }] }).expect(201)).body;
-  await idem(`/v1/job-orders/${job.id}/deposits`, { method: 'CASH', cashierSessionId: session, amount: '50.00' }).expect(201);
-  await http().post(`/v1/job-orders/${job.id}/status`).set(auth).send({ status: 'READY' }).expect(200);
-  await idem(`/v1/job-orders/${job.id}/claim`, { cashierSessionId: session, clientTransactionId: randomUUID(), claimCode: job.claimCode, tenders: [{ method: 'CASH', tendered: '100.00' }] }).expect(201);
   return { tenantId: t.tenantId, auth, le, b1 };
 }
 
@@ -197,19 +175,16 @@ describe('traceability (Phase 3 exit criterion)', () => {
     expect(shift.payInOut).toMatchObject([{ id: pay.id, type: 'PAY_IN', amount: '100.00' }]);
   });
 
-  it('the balance-sheet sub-ledgers (store credit, packages, guest ledger and deposits, down payments, tips) and the expiry lots tie to the books', async () => {
+  it('the balance-sheet sub-ledgers (store credit, packages, tips) and the expiry lots tie to the books', async () => {
     const d = await serviceDay();
     expect(await asOwnerInTenant(owner, d.tenantId, (c) => traceabilityAudit(c))).toEqual(CLEAN);
     // Not vacuous: every account carries a balance, and the lots moved.
     const balances = await asOwnerInTenant(owner, d.tenantId, async (c) => Object.fromEntries((await c.query(`
       SELECT a.system_key, sum(l.credit - l.debit)::text AS v FROM journal_lines l JOIN accounts a ON a.id = l.account_id
-       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'GUEST_LEDGER', 'GUEST_DEPOSITS', 'CUSTOMER_DOWN_PAYMENTS', 'TIPS_PAYABLE') GROUP BY 1`)).rows.map((r) => [r.system_key, Number(r.v)])));
+       WHERE a.system_key IN ('CUSTOMER_STORE_CREDIT', 'PREPAID_SERVICES', 'TIPS_PAYABLE') GROUP BY 1`)).rows.map((r) => [r.system_key, Number(r.v)])));
     expect(balances).toEqual({
       CUSTOMER_STORE_CREDIT: 12.4, // 22.40 back as credit − 10.00 spent
       PREPAID_SERVICES: 2000, // 2,500 sold − one 500 session
-      GUEST_LEDGER: -(2800 + 560 - 1000), // a night + a dinner charged − paid
-      GUEST_DEPOSITS: 500,
-      CUSTOMER_DOWN_PAYMENTS: 100, // the one still held; the claimed job's 50 was applied
       TIPS_PAYABLE: 30, // 50 + 10 taken − 10 given back by the void − 20 paid out
     });
     const lots = await asOwnerInTenant(owner, d.tenantId, async (c) => (await c.query(`SELECT trim_scale(l.quantity)::text AS q, (SELECT count(*)::int FROM stock_lot_movements m WHERE m.lot_id = l.id) AS n FROM stock_lots l`)).rows);

@@ -1,21 +1,30 @@
 // End-to-end test of counter features the 2026-10-19 audit wired to API that had no screen:
-// pay in / pay out on Close shift (expected cash moves), a return for a sale of an earlier shift
-// found by its receipt number, and the kitchen display's Sold out view (86 an item and back).
+// pay in / pay out on Close shift (expected cash moves) and a return for a sale of an earlier shift
+// found by its receipt number.
 // Usage: node apps/pos-desktop/e2e/counter-extras.mjs [posUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
 import { checklist, openBrowser } from '../../admin-web/e2e/cdp.mjs';
-import { arrangeRestaurant, PASSWORD } from './restaurant.mjs';
+import { client, PASSWORD } from './api.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3330';
 const OUT = process.argv[3] ?? '.impeccable/review/pos';
 const API = process.argv[4] ?? 'http://127.0.0.1:4320';
 
-const r = await arrangeRestaurant(API, 'ctr');
-const { call, tk } = r;
+// A VAT shop with one register (Front) and Iced tea at ₱45.
+const call = client(API);
+const slug = `ctr-${Date.now().toString(36)}`;
+const email = `${slug}@example.ph`;
+const tk = (await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Lito Santos', businessName: 'Tindahan ni Lito', tenantSlug: slug, businessType: 'RETAIL' })).tokens.accessToken;
+const le = await call('POST', '/v1/legal-entities', tk, { registeredName: 'Lito Santos Trading', tradeName: 'Tindahan ni Lito', tin: '234-567-891', vatStatus: 'VAT' });
+const br = await call('POST', '/v1/branches', tk, { legalEntityId: le.id, code: 'MKT-01', name: 'Makati' });
+await call('POST', '/v1/registers', tk, { branchId: br.id, code: 'R1', name: 'Front' });
+const vat = (await call('GET', '/v1/tax-categories', tk)).data.find((x) => x.code === 'VAT').id;
+const pc = (await call('GET', '/v1/uoms', tk)).data.find((u) => u.code === 'PC').id;
+const tea = (await call('POST', '/v1/products', tk, { name: 'Iced tea', taxCategoryId: vat, uomId: pc, trackInventory: false, variants: [{ sku: 'TEA-1', price: '45.00' }] }, { 'idempotency-key': randomUUID() })).variants[0].id;
 const register = (await call('GET', '/v1/registers', tk)).data[0];
 // Yesterday's shift (as far as the till knows): three teas sold on sale #1, then closed.
 const earlier = await call('POST', '/v1/cashier-sessions', tk, { registerId: register.id, openingFloat: '500.00' });
-const sale = await call('POST', '/v1/sales', tk, { cashierSessionId: earlier.id, clientTransactionId: randomUUID(), lines: [{ variantId: r.tea, quantity: '3' }], tenders: [{ method: 'CASH', tendered: '135.00' }] }, { 'idempotency-key': randomUUID() });
+const sale = await call('POST', '/v1/sales', tk, { cashierSessionId: earlier.id, clientTransactionId: randomUUID(), lines: [{ variantId: tea, quantity: '3' }], tenders: [{ method: 'CASH', tendered: '135.00' }] }, { 'idempotency-key': randomUUID() });
 await call('POST', `/v1/cashier-sessions/${earlier.id}/close`, tk, { countedCash: '635.00' });
 
 const { check, finish } = checklist();
@@ -29,7 +38,7 @@ const shiftView = async (id) => call('GET', `/v1/cashier-sessions/${id}`, tk);
 try {
   await viewport(1440, 900);
   await go('/');
-  await fill('email', r.email);
+  await fill('email', email);
   await fill('password', PASSWORD);
   await evaluate(`document.querySelector('form button.btn-primary').click()`);
   await waitFor(`document.body.innerText.includes('Front')`);
@@ -79,29 +88,6 @@ try {
   check('refunded from today’s drawer', await shown('Refund ₱45.00 in cash', 10000));
   check('the server agrees: one return on the old sale, cash out of this shift', (await call('GET', `/v1/sales/${sale.id}`, tk)).lines[0].returnedQuantity === '1' && (await shiftView(shiftId)).expectedCash === '1005.00');
   await shot('earlier-sale-return.png', false);
-
-  // ---- kitchen: sold out ----
-  // A reload signs the till out (tokens live in memory only): sign in again to reach the picker.
-  await go('/');
-  await fill('email', r.email);
-  await fill('password', PASSWORD);
-  await evaluate(`document.querySelector('form button.btn-primary').click()`);
-  await waitFor(`document.body.innerText.includes('Open kitchen display')`, 15000).catch(() => undefined);
-  await clickText('Open kitchen display');
-  await shown('Grill');
-  await evaluate(`[...document.querySelectorAll('section')].find((s) => s.textContent.includes('GRILL')).querySelector('button').click()`);
-  await waitFor(`[...document.querySelectorAll('button')].some((x) => x.textContent.trim() === 'Sold out')`);
-  await clickText('Sold out');
-  check('the Sold out view lists the menu items', await shown('Iced tea', 10000) && (await text()).includes('Burger'));
-  await evaluate(`[...document.querySelectorAll('li')].find((li) => li.innerText.includes('Iced tea')).querySelector('button').click()`);
-  await waitFor(`[...document.querySelectorAll('li')].find((li) => li.innerText.includes('Iced tea'))?.innerText.includes('Available again')`, 10000).catch(() => undefined);
-  const out = (await call('GET', `/v1/branches/${r.branchId}/sold-out`, tk)).data;
-  check('marking it sold out reaches the server', out.length === 1 && out[0].variantId === r.tea);
-  check('the floor menu shows it sold out', (await call('GET', `/v1/branches/${r.branchId}/menu`, tk)).menu.sections.flatMap((s) => s.items).find((i) => i.variantId === r.tea).soldOut === true);
-  await shot('kds-sold-out.png', false);
-  await evaluate(`[...document.querySelectorAll('li')].find((li) => li.innerText.includes('Iced tea')).querySelector('button').click()`);
-  await waitFor(`[...document.querySelectorAll('li')].find((li) => li.innerText.includes('Iced tea'))?.innerText.includes('Sold out')`, 10000).catch(() => undefined);
-  check('and back in service', (await call('GET', `/v1/branches/${r.branchId}/sold-out`, tk)).data.length === 0);
   b.close();
 } catch (e) {
   console.error(e);

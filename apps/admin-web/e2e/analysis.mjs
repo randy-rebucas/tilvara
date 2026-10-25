@@ -4,7 +4,7 @@
 // that still need checking; a CSV download; Filipino; phone width.
 // Usage: node apps/admin-web/e2e/analysis.mjs [baseUrl] [screenshotDir] [apiUrl]
 import { randomUUID } from 'node:crypto';
-import { client, PASSWORD } from '../../pos-desktop/e2e/restaurant.mjs';
+import { client, PASSWORD } from '../../pos-desktop/e2e/api.mjs';
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
@@ -57,7 +57,7 @@ try {
   await waitFor(`location.pathname === '/'`);
 
   await go(`/reports/sales?${q}`);
-  check('a retail shop now has report groups: Sales and Analysis, no Restaurant', await shown('Analysis') && !(await text()).includes('Item performance'));
+  check('a retail shop now has report groups: Sales and Analysis, no Salon', await shown('Analysis') && !(await text()).includes('Commissions'));
   await clickText('Analysis');
   await waitFor(`location.pathname === '/reports/categories'`, 10000);
   // Section titles are upper-cased by CSS: compare without case.
