@@ -497,6 +497,8 @@ export interface PurchaseOrder extends Omit<PurchaseOrderRow, 'supplierName'> {
     name: string;
     /** What the supplier calls it (their catalog, session 20). */
     supplierSku?: string | null;
+    /** The item keeps expiry dates: receiving asks for the date (ADR-0020). */
+    tracksExpiry?: boolean;
     quantity: string;
     unitCost: string;
     lineValue: string;
@@ -520,7 +522,7 @@ export interface GoodsReceiptRow {
 export interface GoodsReceipt extends Omit<GoodsReceiptRow, 'supplierName'> {
   notes: string | null;
   receivedValue: string;
-  lines: { id: string; purchaseOrderLineId: string | null; variantId: string; quantity: string; rejectedQuantity: string; returnedQuantity: string; rejectionReason: string | null; unitCost: string; lineValue: string }[];
+  lines: { id: string; purchaseOrderLineId: string | null; variantId: string; quantity: string; rejectedQuantity: string; returnedQuantity: string; rejectionReason: string | null; unitCost: string; lineValue: string; expiresOn: string | null; lotCode: string | null }[];
   returns: { id: string; returnNumber: number; reason: string; createdAt: string }[];
 }
 // ---- tax profiles (ADR-0008): versioned, effective-dated, never backdated ----

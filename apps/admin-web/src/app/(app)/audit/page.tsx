@@ -5,6 +5,7 @@ import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, ApiError, type Member } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
+import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { pageTitle } from '@/i18n/page-title';
 
@@ -25,8 +26,23 @@ interface AuditRow {
 
 type Query = { from?: string; to?: string; action?: string; actor?: string; type?: string; record?: string; cursor?: string };
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
-/** Action families to narrow by (prefixes; the API matches "starts with"). */
-const FAMILIES = ['sale', 'cash', 'stock', 'goods', 'supplier', 'purchase', 'member', 'role', 'invitation', 'product', 'price', 'journal', 'period', 'terminal', 'support', 'data_export', 'held_cart', 'customer', 'api_key', 'webhook'] as const;
+/** Action families to narrow by (prefixes; the API matches "starts with"), in the order of the menu. */
+const FAMILIES = [
+  'sale', 'cash', 'customer', 'held_cart', 'payment', 'z_reading', 'offline_sale', 'terminal',
+  'product', 'variant', 'barcode', 'category', 'uom', 'pack_link', 'sample_data', 'price', 'promotion',
+  'stock', 'inventory', 'lot', 'goods', 'purchase', 'supplier', 'journal', 'period', 'tax',
+  'branch', 'register', 'legal_entity', 'member', 'role', 'invitation', 'auth', 'tenant', 'support', 'data_export', 'api_key', 'webhook',
+] as const;
+
+/** Record types of today's app, named in words; others (the removed trades' history) keep their code. */
+const RECORD_TYPES = new Set([
+  'sale', 'cashier_session', 'customer', 'held_cart', 'payment_intent', 'z_reading', 'terminal', 'terminal_transaction', 'price_override',
+  'product', 'variant', 'product_variant', 'barcode', 'category', 'uom', 'pack_conversion', 'pack_opening', 'price_list', 'promotion',
+  'stock_transfer', 'stock_count', 'stock_count_sheet', 'stock_adjustment', 'stock_reservation', 'lot_hold',
+  'goods_receipt', 'supplier_return', 'purchase_order', 'supplier', 'supplier_invoice', 'supplier_payment', 'supplier_note', 'journal_entry',
+  'tax_category', 'tax_profile', 'branch', 'register', 'legal_entity', 'membership', 'role', 'invitation', 'user', 'account',
+  'tenant', 'tenant_extension', 'support_grant', 'data_export', 'api_key', 'webhook_endpoint',
+]);
 
 /** Where a record lives in the admin, when it has a page. */
 function recordHref(type: string, id: string | null): string | null {
@@ -45,6 +61,15 @@ function recordHref(type: string, id: string | null): string | null {
     case 'role': return `/team/roles/${id}`;
     case 'membership': return `/team/members/${id}`;
     case 'legal_entity': return `/locations/entities/${id}`;
+    case 'customer': return `/customers/${id}`;
+    case 'promotion': return `/prices/promotions/${id}`;
+    case 'price_list': return `/prices?list=${id}`;
+    case 'category': return `/products?category=${id}`;
+    case 'supplier_invoice': return `/purchasing/invoices/${id}`;
+    case 'supplier_payment': return `/purchasing/payments/${id}`;
+    case 'supplier_note': return `/purchasing/notes/${id}`;
+    case 'stock_count_sheet': return `/inventory/count-sheets/${id}`;
+    case 'lot_hold': return '/inventory/holds?released=1';
     default: return null;
   }
 }
@@ -79,6 +104,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
     if (e.status !== 403) error = (e.details?.issues as { message: string }[] | undefined)?.map((i) => i.message).join(' ') || e.message;
   }
   const members = await apiOrNull<{ data: Member[] }>('/members');
+  const typeName = (type: string) => (RECORD_TYPES.has(type) ? t(`audit.type.${type}` as MessageKey) : type);
   const filtered = [...q.keys()].some((k) => !['limit', 'cursor'].includes(k));
   const keep = (extra: Record<string, string>) => {
     const p = new URLSearchParams(Object.entries(sp).filter(([k, v]) => k !== 'cursor' && v) as [string, string][]);
@@ -102,7 +128,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
           <label htmlFor="action">{t('audit.what')}</label>
           <select id="action" name="action" className="input" defaultValue={sp.action ?? ''}>
             <option value="">{t('common.all')}</option>
-            {FAMILIES.map((f) => <option key={f} value={f}>{t(`audit.family.${f}`)}</option>)}
+            {FAMILIES.map((f) => <option key={f} value={f}>{t(`audit.family.${f}` as MessageKey)}</option>)}
           </select>
         </div>
         {members && (
@@ -119,7 +145,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         <button className="btn">{t('common.show')}</button>
         {filtered && <Link href="/audit" className="self-center text-[0.875rem] underline">{t('audit.clear')}</Link>}
       </form>
-      {(sp.type || sp.record) && <p className="text-[0.875rem] text-muted">{t('audit.oneRecord', { type: sp.type ?? '', id: sp.record ?? '' })}</p>}
+      {(sp.type || sp.record) && <p className="text-[0.875rem] text-muted">{t('audit.oneRecord', { type: sp.type ? typeName(sp.type) : '', id: sp.record ?? '' })}</p>}
       {error && <Callout tone="error">{error}</Callout>}
       <Note denom="ink" className="pr-2">
         {log && log.data.length > 0 ? (
@@ -136,7 +162,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
                   const href = recordHref(r.resourceType, r.resourceId);
                   return (
                     <span className="flex flex-col">
-                      {href ? <Link href={href} className="underline">{r.resourceType}</Link> : <span>{r.resourceType}</span>}
+                      {href ? <Link href={href} className="underline">{typeName(r.resourceType)}</Link> : <span>{typeName(r.resourceType)}</span>}
                       {r.resourceId && <Link href={keep({ type: r.resourceType, record: r.resourceId })} className="serial text-[0.75rem] text-muted hover:underline">{t('audit.history')}</Link>}
                     </span>
                   );
@@ -146,7 +172,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
             ]}
             stacked={{
               title: (r) => <Serial className="text-ink">{r.action}</Serial>,
-              meta: (r) => <span className="text-[0.8125rem] text-muted">{formatDateTime(r.occurredAt, lang)} · {r.actorType === 'SUPPORT' ? t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') }) : (r.actorName ?? t('audit.system'))} · {r.resourceType}</span>,
+              meta: (r) => <span className="text-[0.8125rem] text-muted">{formatDateTime(r.occurredAt, lang)} · {r.actorType === 'SUPPORT' ? t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') }) : (r.actorName ?? t('audit.system'))} · {typeName(r.resourceType)}</span>,
             }}
           />
         ) : (

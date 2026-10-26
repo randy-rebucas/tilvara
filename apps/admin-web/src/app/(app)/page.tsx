@@ -66,11 +66,14 @@ export default async function OverviewPage() {
   const pendingInvites = invites?.data.filter((i) => i.status === 'PENDING').length ?? 0;
   const activeMembers = members?.data.filter((m) => m.status === 'ACTIVE').length ?? 0;
 
-  const steps: { key: MessageKey; action: MessageKey; done: boolean; href: string }[] = [
+  // A terminal is needed only for offline sales: the browser till and an online desktop till sell without one.
+  const needsPairing = active(registers).length > 0 && pairedTerminals === 0;
+  const steps: { key: MessageKey; action: MessageKey; done: boolean; href: string; hint?: MessageKey }[] = [
     { key: 'overview.setup.entity', action: 'overview.do.entity', done: active(entities).length > 0, href: '/locations' },
     { key: 'overview.setup.branch', action: 'overview.do.branch', done: active(branches).length > 0, href: '/locations' },
-    { key: 'overview.setup.register', action: 'overview.do.register', done: active(registers).length > 0 && pairedTerminals > 0, href: '/locations' },
-    { key: 'overview.setup.products', action: 'overview.do.products', done: activeProducts.length > 0 && unpriced === 0, href: '/prices' },
+    { key: 'overview.setup.register', action: 'overview.do.register', done: active(registers).length > 0, href: '/locations', ...(needsPairing && { hint: 'overview.pairHint' as MessageKey }) },
+    // Nothing to price yet: start in Products.
+    { key: 'overview.setup.products', action: activeProducts.length ? 'overview.do.products' : 'overview.do.addProducts', done: activeProducts.length > 0 && unpriced === 0, href: activeProducts.length ? '/prices' : '/products' },
     // The point of it all: one sale rung up at the till (with the sample items, or the business's own).
     { key: 'overview.setup.sale', action: POS_URL ? 'overview.do.saleTill' : 'overview.do.sale', done: (sales?.data.length ?? 0) > 0, href: POS_URL ?? '/reports/sales' },
     { key: 'overview.setup.team', action: 'overview.do.team', done: activeMembers + pendingInvites > 1, href: '/team' },
@@ -88,7 +91,7 @@ export default async function OverviewPage() {
       : []),
   ];
 
-  const branchName = active(branches)[0]?.name;
+  const firstBranch = active(branches)[0];
   const trialDays = sub?.status === 'TRIALING' ? daysUntil(sub.trialEndsAt) : null;
   const statusKey = `status.${sub?.status}` as MessageKey;
   const shown = prices?.data.slice(0, 8) ?? [];
@@ -97,7 +100,7 @@ export default async function OverviewPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <PageHeader title={t('overview.title')} lede={[branchName, 'Asia/Manila'].filter(Boolean).join(' · ')} />
+      <PageHeader title={t('overview.title')} lede={[firstBranch?.name, firstBranch?.timezone ?? 'Asia/Manila'].filter(Boolean).join(' · ')} />
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
         {/* Below xl the next action comes first; on wide screens it sits in the right column. */}
         <aside className="flex flex-col gap-4 xl:order-last">
@@ -122,7 +125,10 @@ export default async function OverviewPage() {
             <ol className="mt-2">
               {steps.map((s) => (
                 <li key={s.key} className="flex items-center justify-between gap-3 border-b border-dashed border-hair py-2.5 last:border-0">
-                  <Link href={s.href} className="hover:underline">{t(s.key)}</Link>
+                  <span className="min-w-0">
+                    <Link href={s.href} className="hover:underline">{t(s.key)}</Link>
+                    {s.hint && <Link href="/locations" className="mt-0.5 block text-[0.8125rem] text-muted underline" data-testid="pair-hint">{t(s.hint)}</Link>}
+                  </span>
                   {s.done ? (
                     <Check aria-label={t('common.done')} className="size-4.5 text-blue" />
                   ) : s === next ? (

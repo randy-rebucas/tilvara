@@ -13,8 +13,8 @@ import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('shifts.item');
 
-/** Cash movement types as the API names them. */
-const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND'] as const;
+/** Cash movement types as the API names them; the last three are history of the removed lodging and laundry (no longer made). */
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT'] as const;
 
 /** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,12 +36,14 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const journal = (sourceId: string) => (branch ? `/books?entity=${branch.legalEntityId}&source=${sourceId}` : null);
   const rec = shift.reconciliation;
   // Counted short or over and not yet approved: a manager other than the counter approves (the API checks both).
-  const awaiting = shift.status === 'CLOSED' && rec !== null && (me.activeTenant?.permissions.includes('cash.reconcile') ?? false);
+  const manager = me.activeTenant?.permissions.includes('cash.reconcile') ?? false;
+  const awaiting = shift.status === 'CLOSED' && rec !== null && manager;
 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('doc.shiftTitle', { register: register ? `${register.code} ${register.name}` : '—' })}</h1>
+        {manager && <Link href="/shifts" className="text-[0.875rem] text-muted underline">{t('drawers.title')}</Link>}
+        <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('doc.shiftTitle', { register: register ? `${register.code} ${register.name}` : '—' })}</h1>
         <Serial className="mt-1 block">
           {branch?.code ?? '—'} · {shift.openedByName ?? person(shift.openedBy)} · {formatDateTime(shift.openedAt, lang)}{shift.closedAt && ` – ${formatDateTime(shift.closedAt, lang)}`}
         </Serial>

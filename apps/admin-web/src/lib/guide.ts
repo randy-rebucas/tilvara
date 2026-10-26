@@ -75,17 +75,17 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('prices', 'nav.prices', 'blue', 4, 2, { area: area('/prices') }),
   // ADR-0021: promotions, sizes and colours, quick keys, labels and shelf locations (a shop's or boutique's tools).
   section('retail', 'guide.retail.title', 'blue', 6, 3, { area: area('/products'), href: '/prices/promotions' }),
-  section('inventory', 'nav.inventory', 'gold', 5, 4, { area: area('/inventory') }),
+  section('inventory', 'nav.inventory', 'gold', 5, 5, { area: area('/inventory') }),
   // ADR-0020: packs and pieces, expiry dates; ADR-0025 §5: lot holds and the batch trace.
   section('tingi', 'guide.tingi.title', 'gold', 4, 5, { area: area('/inventory'), href: '/inventory/packs' }),
-  section('purchasing', 'nav.purchasing', 'gold', 7, 5, { area: area('/purchasing') }),
+  section('purchasing', 'nav.purchasing', 'gold', 7, 7, { area: area('/purchasing') }),
   section('reports', 'nav.reports', 'none', 4, 3, { area: area('/reports/sales') }),
   // No band tab (the band is full): reached from the Overview and from each sale; who may open it is its own rule.
   section('customers', 'cust.title', 'green', 5, 2, { area: CUSTOMERS_AREA }),
   section('books', 'nav.books', 'ink', 5, 2, { area: area('/books') }),
   section('offline', 'off.title', 'orange', 3, 1, { area: area('/offline-sales') }),
   // Same managers (cash.reconcile) as offline sales; no tab of its own (the band is full), reached from there and the overview.
-  section('drawers', 'drawers.title', 'orange', 3, 2, { area: area('/offline-sales'), href: '/shifts' }),
+  section('drawers', 'drawers.title', 'orange', 3, 3, { area: area('/offline-sales'), href: '/shifts' }),
   section('locations', 'nav.locations', 'violet', 5, 3, { area: area('/locations') }),
   section('team', 'nav.team', 'green', 4, 2, { area: area('/team') }),
   section('subscription', 'nav.subscription', 'none', 6, 1, { area: area('/subscription') }),

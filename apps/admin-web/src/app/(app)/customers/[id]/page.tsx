@@ -16,13 +16,16 @@ export const generateMetadata = pageTitle('customers.item');
  * One customer (ADR-0018): contact details and corrections, marketing consent and how it was given,
  * store credit, purchases, the export for an access request, archiving and anonymising.
  */
-export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ cursor?: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
+  const { cursor: rawCursor } = await searchParams;
+  // Older purchases, 50 at a time (the API pages them by sale id).
+  const cursor = rawCursor && isUuid(rawCursor) ? rawCursor : undefined;
   const { t, lang } = await getT();
   const [customer, sales, credit, branches] = await Promise.all([
     apiOrNull<Customer>(`/customers/${id}`),
-    apiOrNull<{ data: CustomerSale[] }>(`/customers/${id}/sales?limit=50`),
+    apiOrNull<{ data: CustomerSale[]; nextCursor: string | null }>(`/customers/${id}/sales?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
     apiOrNull<{ data: CreditEntry[] }>(`/customers/${id}/store-credit`),
     apiOrNull<{ data: Branch[] }>('/branches'),
   ]);
@@ -86,7 +89,8 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
             ? t('cust.consentYes', { date: formatDateTime(customer.marketingConsentAt, lang) })
             : t('cust.consentNo')}
         </p>
-        {!customer.anonymisedAt && <ConsentForm customer={customer} />}
+        {/* Anyone who may open the customer can withdraw; giving consent needs customers.manage (the API checks both). */}
+        {!customer.anonymisedAt && (customer.canManage || customer.marketingConsent) && <ConsentForm customer={customer} />}
       </section>
 
       {manage && (
@@ -125,6 +129,12 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
             <Empty>{sales ? t('cust.noPurchases') : t('common.noAccess')}</Empty>
           )}
         </Note>
+        {(sales?.nextCursor || cursor) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {cursor && <Link href={`/customers/${customer.id}`} className="btn">{t('cust.latestPurchases')}</Link>}
+            {sales?.nextCursor && <Link href={`/customers/${customer.id}?cursor=${sales.nextCursor}`} className="btn">{t('cust.morePurchases')}</Link>}
+          </div>
+        )}
       </section>
 
       <section>

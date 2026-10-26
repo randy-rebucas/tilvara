@@ -18,7 +18,7 @@ type Move = LotTrace['movements'][number];
 /**
  * Batch trace (ADR-0025 §5): pick an item and a lot code to see, per branch, where the batch came
  * from, where it went (sales with their receipt and customer, returns, write-offs, transfers, packs
- * opened into strips and pieces) and what is left. For a recall: place a hold from here.
+ * opened into pieces) and what is left. For a recall: place a hold from here.
  */
 export default async function BatchTracePage({ searchParams }: { searchParams: Promise<{ variant?: string; lot?: string }> }) {
   const sp = await searchParams;

@@ -98,11 +98,11 @@ async function recordOpening(db: Database, ctx: OpeningContext, link: { id: stri
  * Chains (ADR-0025 §7): when the pack above is short too, the next pack up is opened first (a box for
  * strips, then strips for tablets), at most three levels up. Every balance involved is locked first, in
  * one call in variant order (as the sale's movements will lock them a moment later), so two tills cannot
- * open the same last pack for themselves. `sellableOnly` (expired stock blocked, ADR-0025 §4): expired or
- * held stock neither counts as available nor gets opened. Returns the openings made (none in the usual
+ * open the same last pack for themselves. `sellableOnly` (an online sale): held stock, and expired stock
+ * where the branch blocks it (`expired`, ADR-0025 §4), neither counts as available nor gets opened. Returns the openings made (none in the usual
  * case: one indexed query).
  */
-export async function openPacksForSale(db: Database, ctx: OpeningContext, outbound: readonly { variantId: string; quantity: string }[], options: { sellableOnly?: boolean } = {}) {
+export async function openPacksForSale(db: Database, ctx: OpeningContext, outbound: readonly { variantId: string; quantity: string }[], options: { sellableOnly?: boolean; expired?: boolean } = {}) {
   const need = new Map<string, Dec>();
   for (const o of outbound) {
     const q = toDec(o.quantity);
@@ -134,7 +134,7 @@ export async function openPacksForSale(db: Database, ctx: OpeningContext, outbou
   );
   const onHand = new Map(locked.map((r) => [r.variant_id, toDec(r.quantity)]));
   const reserved = await reservedAt(db, ctx.branchId, ids);
-  const blocked = options.sellableOnly ? await unsellableAt(db, ctx.branchId, ids) : new Map<string, Dec>();
+  const blocked = options.sellableOnly ? await unsellableAt(db, ctx.branchId, ids, { expired: options.expired ?? true }) : new Map<string, Dec>();
   const free = (id: string) => (onHand.get(id) ?? new Dec(0)).minus(reserved.get(id) ?? 0).minus(blocked.get(id) ?? 0);
 
   const made: Awaited<ReturnType<typeof recordOpening>>[] = [];

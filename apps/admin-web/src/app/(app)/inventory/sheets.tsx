@@ -217,8 +217,8 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
           negativeStockPolicy: f.get('negativeStockPolicy'),
           lowStockAlerts: f.get('lowStockAlerts') === 'on',
           ...(String(f.get('expiryAlertDays') ?? '').trim() !== '' ? { expiryAlertDays: Number(f.get('expiryAlertDays')) } : {}),
-          // ADR-0025 §4: '' = no choice made, which allows selling expired stock.
-          ...(settings.expiredStockRule ? { expiredStock: f.get('expiredStock') === 'BLOCK' ? 'BLOCK' : f.get('expiredStock') === 'ALLOW' ? 'ALLOW' : null } : {}),
+          // Two choices; a branch never set reads as Allow (`expiredStockRule`) and is saved as such.
+          expiredStock: f.get('expiredStock') === 'BLOCK' ? 'BLOCK' : 'ALLOW',
         });
         if (r.ok) setDone(true);
       }}
@@ -244,21 +244,19 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
           </span>
         </label>
       </fieldset>
-      {settings.expiredStockRule && (
-        <fieldset className="flex flex-col gap-3" disabled={!canEdit}>
-          <legend className="mb-1 font-semibold">{t('invset.expired')}</legend>
-          {(['', 'BLOCK', 'ALLOW'] as const).map((v) => (
-            <label key={v || 'DEFAULT'} className="flex items-start gap-2">
-              <input type="radio" name="expiredStock" value={v} defaultChecked={(settings.expiredStock ?? '') === v} className="mt-1" />
-              <span>
-                {t(`invset.expired.${v || 'DEFAULT'}`)}
-                <span className="block text-[0.8125rem] text-muted">{t(`invset.expired.${v || 'DEFAULT'}.hint`)}</span>
-              </span>
-            </label>
-          ))}
-          <p className="text-[0.875rem]" data-testid="expired-rule">{t('invset.expiredInForce', { rule: t(`invset.expired.${settings.expiredStockRule}`) })}</p>
-        </fieldset>
-      )}
+      <fieldset className="flex flex-col gap-3" disabled={!canEdit}>
+        <legend className="mb-1 font-semibold">{t('invset.expired')}</legend>
+        {(['ALLOW', 'BLOCK'] as const).map((v) => (
+          <label key={v} className="flex items-start gap-2">
+            <input type="radio" name="expiredStock" value={v} defaultChecked={(settings.expiredStockRule ?? 'ALLOW') === v} className="mt-1" />
+            <span>
+              {t(`invset.expired.${v}`)}
+              <span className="block text-[0.8125rem] text-muted">{t(`invset.expired.${v}.hint`)}</span>
+            </span>
+          </label>
+        ))}
+        <p className="text-[0.875rem] text-muted">{t('invset.expiredHolds')}</p>
+      </fieldset>
       <fieldset disabled={!canEdit} className="max-w-[320px]">
         <TextField label={t('invset.expiryDays')} name="expiryAlertDays" type="number" min={0} max={365} inputMode="numeric" defaultValue={String(settings.expiryAlertDays ?? 30)} hint={t('invset.expiryDaysHint')} error={fieldError('expiryAlertDays')} />
       </fieldset>

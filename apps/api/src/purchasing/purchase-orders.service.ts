@@ -200,8 +200,8 @@ export class PurchaseOrdersService extends TenantService {
   async view(db: Database, order: OrderRow) {
     const [[supplier], { rows: lines }, { rows: receipts }] = await inSequence(
       () => db.select({ id: suppliers.id, code: suppliers.code, name: suppliers.name }).from(suppliers).where(eq(suppliers.id, order.supplierId)),
-      () => db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string; supplier_sku: string | null }>(sql`
-        SELECT l.id, l.line_no, l.variant_id, v.sku, p.name, l.quantity::text, l.unit_cost::text,
+      () => db.execute<{ id: string; line_no: number; variant_id: string; sku: string; name: string; quantity: string; unit_cost: string; received: string; rejected: string; supplier_sku: string | null; tracks_expiry: boolean }>(sql`
+        SELECT l.id, l.line_no, l.variant_id, v.sku, p.name, p.tracks_expiry, l.quantity::text, l.unit_cost::text,
                (SELECT si.supplier_sku FROM supplier_items si WHERE si.tenant_id = l.tenant_id AND si.supplier_id = ${order.supplierId} AND si.variant_id = l.variant_id AND si.archived_at IS NULL) AS supplier_sku,
                coalesce(sum(g.quantity), 0)::text AS received, coalesce(sum(g.rejected_quantity), 0)::text AS rejected
           FROM purchase_order_lines l
@@ -209,7 +209,7 @@ export class PurchaseOrdersService extends TenantService {
           JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
           LEFT JOIN goods_receipt_lines g ON g.tenant_id = l.tenant_id AND g.purchase_order_line_id = l.id
          WHERE l.purchase_order_id = ${order.id}
-         GROUP BY l.id, v.sku, p.name ORDER BY l.line_no`),
+         GROUP BY l.id, v.sku, p.name, p.tracks_expiry ORDER BY l.line_no`),
       () => db.execute<{ id: string; receipt_number: number; supplier_invoice_ref: string | null; created_at: string }>(sql`
         SELECT id, receipt_number::int, supplier_invoice_ref, created_at FROM goods_receipts WHERE purchase_order_id = ${order.id} ORDER BY created_at, id`),
     );
@@ -227,6 +227,8 @@ export class PurchaseOrdersService extends TenantService {
         sku: l.sku,
         name: l.name,
         supplierSku: l.supplier_sku,
+        // Receiving asks for an expiry date only on these (ADR-0020 §3).
+        tracksExpiry: l.tracks_expiry,
         quantity: ordered.toString(),
         unitCost: toDec(l.unit_cost).toFixed(4),
         lineValue: ordered.times(l.unit_cost).toFixed(2),

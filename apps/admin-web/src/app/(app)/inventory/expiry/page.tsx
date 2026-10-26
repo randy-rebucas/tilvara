@@ -25,7 +25,7 @@ export default async function ExpiryPage({ searchParams }: { searchParams: Promi
   ]);
   const canAdjust = me.activeTenant?.permissions.includes('inventory.adjust') ?? false;
   const within = list?.withinDays ?? days ?? 30;
-  // ADR-0025 §5: a held lot (recall, advisory) is not sold where expired stock is blocked; it can be written off.
+  // A held lot (recall, advisory) is never sold at the counter (session 36); it can be written off.
   const writable = (r: StockLot) => r.daysLeft < 0 || !!r.held;
   const held = (r: StockLot) => (r.held ? <span className="tag ml-1 border-[#ead3a6]! bg-amber-bg! text-[#6b4a12]!" data-lot-held>{t('exp.onHold')}</span> : null);
   const when = (r: StockLot) =>

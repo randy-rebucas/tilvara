@@ -21,8 +21,9 @@ export default async function DrawerCountsPage() {
   const { t, lang } = await getT();
   const me = await api<Me>('/me');
   const manager = me.activeTenant?.permissions.includes('cash.reconcile') ?? false;
-  const [waiting, closed, branches, registers, members] = await Promise.all([
+  const [waiting, openNow, closed, branches, registers, members] = await Promise.all([
     apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=CLOSED'),
+    apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=OPEN'),
     apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=RECONCILED'),
     apiOrNull<{ data: Branch[] }>('/branches'),
     apiOrNull<{ data: Register[] }>('/registers'),
@@ -90,6 +91,32 @@ export default async function DrawerCountsPage() {
             />
           ) : (
             <Empty>{waiting ? t('drawers.noneWaiting') : t('common.noAccess')}</Empty>
+          )}
+        </Note>
+      </section>
+
+      {/* Shifts open at a till now, newest first: who is on which register. */}
+      <section aria-labelledby="open-now">
+        <h2 id="open-now" className="section-title mb-3">{t('drawers.openNow')}</h2>
+        <Note className="pr-2">
+          {openNow && openNow.data.length > 0 ? (
+            <RecordTable
+              rows={openNow.data}
+              rowKey={(s) => s.id}
+              columns={[
+                { header: t('drawers.register'), cell: (s) => <Link href={`/shifts/${s.id}`} className="serial underline">{where(s)}</Link> },
+                { header: t('drawers.cashier'), cell: (s) => s.openedByName ?? person(s.openedBy) },
+                { header: t('drawers.openedAt'), cell: (s) => <span className="text-muted">{formatDateTime(s.openedAt, lang)}</span> },
+                { header: t('doc.openingFloat'), num: true, cell: (s) => <span className="money">{peso(s.openingFloat)}</span> },
+              ]}
+              stacked={{
+                title: (s) => <Link href={`/shifts/${s.id}`} className="underline">{where(s)}</Link>,
+                meta: (s) => <Serial>{s.openedByName ?? person(s.openedBy)} · {formatDateTime(s.openedAt, lang)}</Serial>,
+                figure: (s) => <span className="money">{peso(s.openingFloat)}</span>,
+              }}
+            />
+          ) : (
+            <Empty>{openNow ? t('drawers.noneOpen') : t('common.noAccess')}</Empty>
           )}
         </Note>
       </section>

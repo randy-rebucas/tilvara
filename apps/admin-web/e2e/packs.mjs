@@ -148,7 +148,7 @@ try {
 
   // ---- settings: the expired-stock rule and the alert days ----
   await go(`/inventory/settings?branch=${br.id}`);
-  check('expired stock: no choice made, which allows', await evaluate(`document.querySelector('input[name="expiredStock"][value=""]')?.checked === true`) && await evaluate(`document.querySelector('[data-testid="expired-rule"]').innerText.includes('Allow')`) && !(await text()).toLowerCase().includes('pharmac'));
+  check('expired stock: two choices, a branch never set reads as Allow; holds never sell', await evaluate(`document.querySelectorAll('input[name="expiredStock"]').length === 2 && document.querySelector('input[name="expiredStock"][value="ALLOW"]')?.checked === true`) && (await text()).includes('Lots on hold (Lot holds) are never sold') && !(await text()).toLowerCase().includes('pharmac'));
   await evaluate(`document.querySelector('input[name="expiredStock"][value="BLOCK"]').click()`);
   await fill('expiryAlertDays', '7');
   await submitFormOf('expiryAlertDays');

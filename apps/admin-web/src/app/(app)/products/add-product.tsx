@@ -14,6 +14,7 @@ type CategoryOption = { id: string; label: string };
 function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: Uom[]; taxes: TaxCategory[]; categories: CategoryOption[] }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
+  const [stocked, setStocked] = useState(true);
   const [expiry, setExpiry] = useState(false);
   // Sizes and colours (ADR-0021 §2): every combination becomes a variant of this product.
   const [sized, setSized] = useState(false);
@@ -37,7 +38,8 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
       uomId: f.get('uomId'),
       ...(String(f.get('categoryId') ?? '') ? { categoryId: f.get('categoryId') } : {}),
       soldBy,
-      tracksExpiry: expiry,
+      trackInventory: stocked,
+      tracksExpiry: stocked && expiry,
       variants,
     }, { idempotent: true });
     if (r.ok) close();
@@ -79,9 +81,14 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
           {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </SelectField>
       )}
-      {/* ADR-0020: dated stock (expiry lots) for any item. */}
+      {/* Off for a fee, gift wrapping or anything not counted on a shelf. */}
       <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
-        <input type="checkbox" name="tracksExpiry" checked={expiry} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
+        <input type="checkbox" name="trackInventory" checked={stocked} onChange={(e) => setStocked(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
+        <span>{t('prod.trackInventory')}<span className="block text-[0.8125rem] text-muted">{t('prod.trackInventoryHint')}</span></span>
+      </label>
+      {/* ADR-0020: dated stock (expiry lots) for any counted item. */}
+      <label className={`col-span-full flex items-start gap-2 text-[0.9375rem] ${stocked ? '' : 'text-muted'}`}>
+        <input type="checkbox" name="tracksExpiry" checked={stocked && expiry} disabled={!stocked} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
         <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
       </label>
       <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">

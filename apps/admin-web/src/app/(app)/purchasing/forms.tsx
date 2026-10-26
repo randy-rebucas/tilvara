@@ -268,7 +268,7 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
   const lineError = (row: number, field: string) => (sent.includes(row) ? fieldError(`lines.${sent.indexOf(row)}.${field}`) : undefined);
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.receiveHint')}</p>
+      <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.receiveHint')}{open.some((l) => l.tracksExpiry) ? ` ${t('pur.expiresHint')}` : ''}</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <TextField label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
         <TextField label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
@@ -283,9 +283,13 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
             <TextField label={t('pur.accept')} name={`lines.${i}.quantity`} inputMode="decimal" defaultValue={qty(l.remainingQuantity).replaceAll(',', '')} error={lineError(i, 'quantity')} />
             <TextField label={t('pur.reject')} name={`lines.${i}.rejectedQuantity`} inputMode="decimal" placeholder="0" error={lineError(i, 'rejectedQuantity')} />
             <TextField label={t('pur.rejectReason')} name={`lines.${i}.rejectionReason`} error={lineError(i, 'rejectionReason')} />
-            {/* ADR-0020: the date is required for an item that keeps expiry dates (the API says which line); the lot code is optional. */}
-            <TextField label={t('pur.expiresOn')} name={`lines.${i}.expiresOn`} type="date" error={lineError(i, 'expiresOn')} />
-            <TextField label={t('inv.adjustLot')} name={`lines.${i}.lotCode`} maxLength={64} error={lineError(i, 'lotCode')} />
+            {/* ADR-0020: only an item that keeps expiry dates asks for one (required); its lot code is optional. */}
+            {l.tracksExpiry && (
+              <>
+                <TextField label={t('pur.expiresOn')} name={`lines.${i}.expiresOn`} type="date" error={lineError(i, 'expiresOn')} />
+                <TextField label={t('inv.adjustLot')} name={`lines.${i}.lotCode`} maxLength={40} error={lineError(i, 'lotCode')} />
+              </>
+            )}
           </li>
         ))}
       </ul>
@@ -297,6 +301,69 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
 export function ReceiveForm({ order }: { order: PurchaseOrder }) {
   const { t } = useT();
   return <Disclosure label={t('pur.receive')}>{(close) => <ReceiveFields close={close} order={order} />}</Disclosure>;
+}
+
+/**
+ * A delivery that came without a purchase order: every line at the cost typed (the API requires it).
+ * The expiry and lot columns show only when some item keeps expiry dates (`dated`); the API asks for
+ * the date on exactly those items.
+ */
+function UnorderedReceiptFields({ close, branches, suppliers, variants, dated }: { close: () => void; branches: Branch[]; suppliers: Supplier[]; variants: VariantOption[]; dated: boolean }) {
+  const { t } = useT();
+  const router = useRouter();
+  const key = useFormKey();
+  const { pending, submit, fieldError, error } = useSubmit();
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const r = await submit<{ id: string }>('POST', '/api/v1/goods-receipts', {
+      branchId: f.get('branchId'),
+      supplierId: f.get('supplierId'),
+      supplierInvoiceRef: orNull(text(f, 'supplierInvoiceRef')),
+      supplierDeliveryRef: orNull(text(f, 'supplierDeliveryRef')),
+      lines: readLines(f, dated ? ['variantId', 'quantity', 'unitCost', 'expiresOn', 'lotCode'] : ['variantId', 'quantity', 'unitCost']).map(compact),
+    }, { idempotencyKey: key, refresh: false });
+    if (r.ok) {
+      close();
+      router.push(`/purchasing/receipts/${r.data.id}`);
+    }
+  }
+  return (
+    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('pur.receiveNoOrderHint')}{dated ? ` ${t('pur.expiresHint')}` : ''}</p>
+      <SelectField label={t('pur.supplierOne')} name="supplierId">
+        {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
+      </SelectField>
+      <SelectField label={t('common.branch')} name="branchId">
+        {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
+      </SelectField>
+      <TextField label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
+      <TextField label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
+      <LineItems
+        fields={[
+          { name: 'variantId', label: t('common.item'), kind: 'select' },
+          { name: 'quantity', label: t('common.quantity'), kind: 'decimal', placeholder: '0' },
+          { name: 'unitCost', label: t('common.unitCost'), kind: 'decimal', placeholder: '0.00' },
+          ...(dated
+            ? [
+                { name: 'expiresOn', label: t('pur.expiresOn'), kind: 'date' as const },
+                { name: 'lotCode', label: t('inv.adjustLot'), kind: 'text' as const },
+              ]
+            : []),
+        ]}
+        options={variants}
+        fieldError={fieldError}
+        addLabel={t('common.addLine')}
+        removeLabel={t('common.removeLine')}
+      />
+      <Actions pending={pending} general={general(error) ?? fieldError('lines') ?? null} submitLabel={t('pur.receive')} close={close} />
+    </form>
+  );
+}
+
+export function UnorderedReceiptForm(props: { branches: Branch[]; suppliers: Supplier[]; variants: VariantOption[]; dated: boolean }) {
+  const { t } = useT();
+  return <Disclosure label={t('pur.receiveNoOrder')}>{(close) => <UnorderedReceiptFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- supplier catalog (session 20)

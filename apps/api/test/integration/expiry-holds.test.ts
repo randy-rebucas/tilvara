@@ -144,6 +144,36 @@ describe('expired and held stock where the branch blocks it', () => {
     expect(events.map((e) => e.payload)).toEqual([{ saleId: res.results[0].saleId, branchId: s.branchId, lots: 1 }]);
   });
 
+  it('a hold stops the sale where expired stock is allowed too (no setting); expired lots still sell there', async () => {
+    const s = await shop('exp-allow-hold');
+    await http().put(`/v1/branches/${s.branchId}/inventory-settings`).set(s.auth).send({ negativeStockPolicy: 'ALLOW', lowStockAlerts: true, expiredStock: null }).expect(200);
+    const tea = await s.product('Iced tea', '25.00');
+    const sku = ((await http().get('/v1/products').set(s.auth).expect(200)).body.data as { variants: { id: string; sku: string }[] }[]).flatMap((p) => p.variants).find((v) => v.id === tea)!.sku;
+    await stockIn(s, [
+      { variantId: tea, quantity: '3', expiresOn: day(50), lotCode: 'RC-1' },
+      { variantId: tea, quantity: '4', expiresOn: day(200), lotCode: 'OK-1' },
+    ]).expect(201);
+    const session = await openSession(s.cashier.auth, s.registerId);
+    // No hold: the till's lookup says nothing about sellable stock.
+    expect((await http().get('/v1/catalog/lookup').query({ code: sku, branchId: s.branchId }).set(s.auth).expect(200)).body).not.toHaveProperty('sellable');
+    const held = (await http().post('/v1/stock/lot-holds').set(s.auth).set('Idempotency-Key', randomUUID()).send({ variantId: tea, lotCode: 'RC-1', reason: 'Supplier recall' }).expect(201)).body;
+    expect((await http().get('/v1/catalog/lookup').query({ code: sku, branchId: s.branchId }).set(s.auth).expect(200)).body.sellable).toEqual({ onHand: '7', expiredOrHeld: '3', sellable: '4' });
+    // The sale takes the good lot though the held one expires first, then refuses what only the held lot could fill.
+    const sold = (await sell(session, s.cashier.auth, [{ variantId: tea, quantity: '4' }]).expect(201)).body;
+    const drawn = await q<{ lot_code: string }>(s, `SELECT l.lot_code FROM stock_lot_movements lm JOIN stock_lots l ON l.id = lm.lot_id JOIN stock_movements m ON m.id = lm.movement_id WHERE m.sale_id = $1`, [sold.id]);
+    expect(drawn.map((d) => d.lot_code)).toEqual(['OK-1']);
+    const refused = (await sell(session, s.cashier.auth, [{ variantId: tea, quantity: '1' }]).expect(409)).body.error;
+    expect(refused).toMatchObject({ code: 'EXPIRED_STOCK', details: { lines: [{ variantId: tea, sellable: '0', expiredOrHeld: '3', requested: '1' }] } });
+    expect(refused.message).toMatch(/^Only held stock is left/);
+    // An expired lot is sold where the branch allows it.
+    await stockIn(s, [{ variantId: tea, quantity: '2', expiresOn: day(-1), lotCode: 'EX-1' }]).expect(201);
+    await sell(session, s.cashier.auth, [{ variantId: tea, quantity: '2' }]).expect(201);
+    await http().post(`/v1/stock/lot-holds/${held.id}/release`).set(s.auth).send({ reason: 'Recall lifted' }).expect(200);
+    await sell(session, s.cashier.auth, [{ variantId: tea, quantity: '3' }]).expect(201);
+    expect(await onHand(s, tea)).toBe('0');
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+
   it('a hold on a box stops the loose pieces of its lot (the whole pack family)', async () => {
     const s = await shop('exp-hold');
     const box = await s.product('Candy box of 10', '70.00');

@@ -86,11 +86,18 @@ describe('expiry lots', () => {
     const later = day(200);
     // An item that keeps dates is refused without one; two lines, two dates.
     expect((await receive(s, [{ variantId: sardines, quantity: '10', unitCost: '20.00' }]).expect(422)).body.error.code).toBe('EXPIRY_DATE_REQUIRED');
-    await receive(s, [
+    const received = (await receive(s, [
       { variantId: sardines, quantity: '5', unitCost: '20.00', expiresOn: later, lotCode: 'L-2' },
       { variantId: sardines, quantity: '10', unitCost: '20.00', expiresOn: soon },
-    ]).expect(201);
+    ]).expect(201)).body;
     expect(brief(await lots(s, sardines))).toEqual([[[soon, '10'], [later, '5']], '0']);
+    // The receipt shows the dates and lots it came in with; an order says which lines need a date.
+    const receipt = (await http().get(`/v1/goods-receipts/${received.id}`).set(s.auth).expect(200)).body as { lines: { expiresOn: string | null; lotCode: string | null }[] };
+    expect(receipt.lines.map((l) => [l.expiresOn, l.lotCode]).sort()).toEqual([[later, 'L-2'], [soon, null]].sort());
+    const soap = (await s.product('Soap 90g', '30.00')).variants[0]!.id;
+    const po = (await http().post('/v1/purchase-orders').set(s.auth).send({ branchId: s.branchId, supplierId: s.supplierId, lines: [{ variantId: sardines, quantity: '1', unitCost: '20.00' }, { variantId: soap, quantity: '1', unitCost: '20.00' }] }).expect(201)).body;
+    const order = (await http().get(`/v1/purchase-orders/${po.id}`).set(s.auth).expect(200)).body as { lines: { tracksExpiry: boolean }[] };
+    expect(order.lines.map((l) => l.tracksExpiry)).toEqual([true, false]);
 
     // Two lines of the same item in one sale: the soonest lot gives 3 + 1.
     const sale = (await sell(s, [{ variantId: sardines, quantity: '3' }, { variantId: sardines, quantity: '1' }]).expect(201)).body;

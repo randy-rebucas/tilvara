@@ -82,7 +82,8 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
             { header: t('doc.amountDue'), num: true, cell: (l) => <span className="money font-semibold">{peso(l.amountDue)}</span> },
           ]}
           stacked={{
-            title: (l) => l.name,
+            // An old choice line (restaurants, removed) sits under its item, as on desktop.
+            title: (l) => <span className={l.parentLineId ? 'pl-4 text-muted' : ''}>{l.name}</span>,
             meta: (l) => (
               <>
                 <Serial>{qty(l.quantity)} × {peso(l.unitPrice)}{signOf(l.returnedQuantity) > 0 && ` · ${t('doc.returned')} ${qty(l.returnedQuantity)}`}</Serial>

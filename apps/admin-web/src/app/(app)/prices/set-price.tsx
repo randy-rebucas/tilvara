@@ -36,7 +36,7 @@ function Fields({ close, listId, variants }: { close: () => void; listId: string
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
       <div className="sm:col-span-2">
-        <SelectField label={t('prod.name')} name="variantId">
+        <SelectField label={t('common.item')} name="variantId">
           {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
         </SelectField>
       </div>

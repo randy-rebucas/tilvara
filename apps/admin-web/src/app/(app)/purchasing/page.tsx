@@ -1,12 +1,12 @@
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { allProducts, api, apiOrNull, type Branch, type Me, type PurchaseOrderRow, type Supplier, type SupplierReturn } from '@/lib/api';
+import { allProducts, api, apiOrNull, type Branch, type GoodsReceiptRow, type Me, type PurchaseOrderRow, type Supplier, type SupplierReturn } from '@/lib/api';
 import { formatDate, formatDateTime, formatTin, peso } from '@/lib/format';
 import { branchLabel, docNo, variantOptions } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
-import { AddSupplierForm, NewOrderForm } from './forms';
+import { AddSupplierForm, NewOrderForm, UnorderedReceiptForm } from './forms';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('purchasing');
@@ -25,12 +25,20 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
     apiOrNull<List<Branch>>('/branches'),
     allProducts(),
   ]);
-  const canManage = me.activeTenant?.permissions.includes('purchasing.manage') ?? false;
+  const permissions = me.activeTenant?.permissions ?? [];
+  const canManage = permissions.includes('purchasing.manage');
+  // Receiving is open to purchasing or to whoever adjusts stock (the API checks the branch).
+  const canReceive = canManage || permissions.includes('inventory.adjust');
   const activeSuppliers = suppliers?.data.filter((s) => !s.archivedAt) ?? [];
   const activeBranches = branches?.data.filter((b) => !b.archivedAt) ?? [];
-  // Returns to suppliers, newest first, across the branches this person can see (listed per branch by the API).
-  const returnLists = await Promise.all(activeBranches.map((b) => apiOrNull<List<Omit<SupplierReturn, 'lines' | 'creditValue'>>>(`/supplier-returns?branchId=${b.id}`)));
+  // Goods receipts and returns to suppliers, newest first, across the branches this person can see (listed per branch by the API).
+  const [receiptLists, returnLists] = await Promise.all([
+    Promise.all(activeBranches.map((b) => apiOrNull<List<GoodsReceiptRow>>(`/goods-receipts?branchId=${b.id}`))),
+    Promise.all(activeBranches.map((b) => apiOrNull<List<Omit<SupplierReturn, 'lines' | 'creditValue'>>>(`/supplier-returns?branchId=${b.id}`))),
+  ]);
+  const receipts = receiptLists.flatMap((l) => l?.data ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
   const returns = returnLists.flatMap((l) => l?.data ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+  const dated = products?.data.some((p) => p.tracksExpiry && !p.archivedAt) ?? false;
   const supplierName = new Map(suppliers?.data.map((s) => [s.id, s.name]));
 
   return (
@@ -78,6 +86,37 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
             />
           ) : (
             <Empty>{orders ? (activeSuppliers.length === 0 ? t('pur.needSupplier') : t('pur.noOrders')) : t('common.noAccess')}</Empty>
+          )}
+        </Note>
+      </section>
+
+      <section>
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <h2 className="section-title pt-2">{t('pur.receipts')}</h2>
+          {canReceive && activeSuppliers.length > 0 && activeBranches.length > 0 && (
+            <UnorderedReceiptForm branches={activeBranches} suppliers={activeSuppliers} variants={variantOptions(products?.data)} dated={dated} />
+          )}
+        </div>
+        <Note denom="gold" className="pr-2">
+          {receipts.length > 0 ? (
+            <RecordTable
+              rows={receipts}
+              rowKey={(r) => r.id}
+              columns={[
+                { header: t('common.number'), cell: (r) => <Link href={`/purchasing/receipts/${r.id}`} className="serial font-semibold text-gold underline">{docNo(r.receiptNumber)}</Link> },
+                { header: t('pur.supplierOne'), cell: (r) => r.supplierName },
+                { header: t('common.branch'), cell: (r) => <Serial className="text-ink">{branchLabel(branches?.data, r.branchId)}</Serial> },
+                { header: t('pur.orderOne'), cell: (r) => (r.purchaseOrderId ? <Link href={`/purchasing/orders/${r.purchaseOrderId}`} className="underline">{t('pur.viewOrder')}</Link> : <span className="text-muted">{t('pur.noOrder')}</span>) },
+                { header: t('pur.invoiceRef'), cell: (r) => <Serial className="text-ink">{r.supplierInvoiceRef ?? '—'}</Serial> },
+                { header: t('common.date'), cell: (r) => <span className="text-muted">{formatDateTime(r.createdAt, lang)}</span> },
+              ]}
+              stacked={{
+                title: (r) => <Link href={`/purchasing/receipts/${r.id}`} className="underline">{r.supplierName}</Link>,
+                meta: (r) => <Serial>{docNo(r.receiptNumber)} · {branchLabel(branches?.data, r.branchId)} · {r.purchaseOrderId ? t('pur.fromOrder') : t('pur.noOrder')} · {formatDateTime(r.createdAt, lang)}</Serial>,
+              }}
+            />
+          ) : (
+            <Empty>{t('pur.noReceipts')}</Empty>
           )}
         </Note>
       </section>

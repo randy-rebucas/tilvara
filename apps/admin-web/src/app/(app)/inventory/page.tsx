@@ -15,20 +15,19 @@ export const generateMetadata = pageTitle('inventory');
 export default async function StockPage({ searchParams }: { searchParams: Promise<{ branch?: string }> }) {
   const { t } = await getT();
   const sp = await searchParams;
+  const me = await api<Me>('/me');
+  const perms = me.activeTenant?.permissions ?? [];
   // Someone who may only count stock (inventory.count) lands on the counts they can do.
-  const own = (await api<Me>('/me')).activeTenant?.permissions ?? [];
-  if (!own.includes('inventory.read') && own.includes('inventory.count')) redirect(`/inventory/counts${sp.branch ? `?branch=${sp.branch}` : ''}`);
+  if (!perms.includes('inventory.read') && perms.includes('inventory.count')) redirect(`/inventory/counts${sp.branch ? `?branch=${sp.branch}` : ''}`);
   const { branches, branch } = await inventoryBranch(sp.branch);
   if (sp.branch === ALL && branches.length > 1) return <AllBranches branches={branches} branch={branch} />;
-  const [me, valuation, low, points, products, locations] = await Promise.all([
-    api<Me>('/me'),
+  const [valuation, low, points, products, locations] = await Promise.all([
     branch ? apiOrNull<Valuation>(`/reports/inventory-valuation?branchId=${branch.id}`) : null,
     branch ? apiOrNull<{ data: LowStockRow[] }>(`/stock/low?branchId=${branch.id}`) : null,
     branch ? apiOrNull<{ data: LowStockRow[] }>(`/stock/reorder-points?branchId=${branch.id}`) : null,
     allProducts(),
     branch ? apiOrNull<{ data: ItemLocation[] }>(`/stock/locations?branchId=${branch.id}`) : null,
   ]);
-  const perms = me.activeTenant?.permissions ?? [];
   const canReorder = perms.includes('purchasing.manage') || perms.includes('inventory.adjust');
   const canAdjust = perms.includes('inventory.adjust');
   // Shelf locations (ADR-0021 §5): set by whoever adjusts or counts stock here.
@@ -42,7 +41,7 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
       <section>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <h2 className="section-title pt-2">{t('inv.tab.stock')}</h2>
-          {canAdjust && branch && <AdjustStockForm branchId={branch.id} variants={variantOptions(products?.data, { stocked: true })} />}
+          {canAdjust && branch && <AdjustStockForm branchId={branch.id} variants={variantOptions(products?.data, { stocked: true })} dated={products?.data.some((p) => p.tracksExpiry && !p.archivedAt) ?? false} />}
         </div>
         {valuation && (
           <div className="mb-3">

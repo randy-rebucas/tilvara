@@ -5,9 +5,10 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { reservedAt } from './reservations.service.js';
 
 /**
- * The expired-stock rule (ADR-0020 §3, ADR-0025 §4 as kept for every shop): per branch
- * `inventory_settings.expired_stock`; where it is BLOCK, expired lots and lots on hold are not sold online
- * and an offline sale that drew them is flagged EXPIRED_STOCK. No setting = ALLOW.
+ * Lots that may not be sold (ADR-0020 §3, ADR-0025 §4 as kept for every shop): a lot on hold (a recall) is
+ * never sold online, at every branch (session 36); an expired lot only where the branch's
+ * `inventory_settings.expired_stock` is BLOCK (no setting = ALLOW). An offline sale that drew either is
+ * recorded and flagged EXPIRED_STOCK.
  */
 
 /** The branch's rule: its setting, else ALLOW (as the lot trigger decides; migration 0112 wrote BLOCK for the former pharmacies). */
@@ -21,13 +22,18 @@ export async function expiredStockRule(db: Database, branchId: string): Promise<
 }
 
 /**
- * What of each item at a branch sits in expired or held lots (not for sale where the rule is BLOCK). A hold
+ * What of each item at a branch sits in held lots, and in expired lots when `expired` (the branch blocks
+ * expired stock). Without `expired` and with no open hold in the business, nothing is read further. A hold
  * covers the item's whole pack family, as `app_lot_held()` does (migration 0107): every item linked to it
  * through pack links either way, archived links included (lot codes copied down while a link was active
  * stay on the pieces). Read here under RLS rather than through the definer function.
  */
-export async function unsellableAt(db: Database, branchId: string, variantIds: readonly string[]): Promise<Map<string, Dec>> {
+export async function unsellableAt(db: Database, branchId: string, variantIds: readonly string[], { expired = true }: { expired?: boolean } = {}): Promise<Map<string, Dec>> {
   if (!variantIds.length) return new Map();
+  if (!expired) {
+    const { rows: [h] } = await db.execute<{ any: boolean }>(sql`SELECT EXISTS (SELECT 1 FROM lot_holds WHERE released_at IS NULL) AS any`);
+    if (!h?.any) return new Map();
+  }
   const { rows } = await db.execute<{ variant_id: string; quantity: string }>(sql`
     WITH RECURSIVE family(start_id, v) AS (
       SELECT x, x FROM unnest(ARRAY[${sql.join(variantIds.map((id) => sql`${id}`), sql`, `)}]::uuid[]) AS x
@@ -38,7 +44,7 @@ export async function unsellableAt(db: Database, branchId: string, variantIds: r
       FROM stock_lots l JOIN branches b ON b.id = l.branch_id
      WHERE l.branch_id = ${branchId} AND l.quantity > 0
        AND l.variant_id IN (${sql.join(variantIds.map((id) => sql`${id}::uuid`), sql`, `)})
-       AND (l.expires_on < (now() AT TIME ZONE b.timezone)::date
+       AND ((${expired} AND l.expires_on < (now() AT TIME ZONE b.timezone)::date)
             OR (l.lot_code IS NOT NULL AND EXISTS (
                   SELECT 1 FROM lot_holds h JOIN family f ON f.start_id = l.variant_id AND f.v = h.variant_id
                    WHERE h.released_at IS NULL AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code))
@@ -48,17 +54,18 @@ export async function unsellableAt(db: Database, branchId: string, variantIds: r
 }
 
 /**
- * BLOCK: refuse an online sale that could only be filled from expired or held lots. Run
+ * Refuse an online sale that could only be filled from held lots, or from expired ones where the branch's
+ * rule is BLOCK (`rule`, from `expiredStockRule`). Run
  * after the sale's own pack openings, before the negative-stock rule, with the balances locked in variant
  * order (as the movements will lock them a moment later). Whatever is short of stock altogether is the
  * negative-stock rule's to decide; this refuses only what would take dated stock that may not be sold.
  */
-export async function assertNotExpired(db: Database, branchId: string, lines: readonly { variantId: string; quantity: string; name: string }[]): Promise<void> {
-  if (!lines.length || (await expiredStockRule(db, branchId)) !== 'BLOCK') return;
+export async function assertNotExpired(db: Database, branchId: string, lines: readonly { variantId: string; quantity: string; name: string }[], rule: 'ALLOW' | 'BLOCK'): Promise<void> {
+  if (!lines.length) return;
   const need = new Map<string, { quantity: Dec; name: string }>();
   for (const l of lines) need.set(l.variantId, { quantity: (need.get(l.variantId)?.quantity ?? new Dec(0)).plus(l.quantity), name: l.name });
   const ids = [...need.keys()].sort();
-  const unsellable = await unsellableAt(db, branchId, ids);
+  const unsellable = await unsellableAt(db, branchId, ids, { expired: rule === 'BLOCK' });
   if (![...unsellable.values()].some((q) => q.gt(0))) return;
   const { rows } = await db.execute<{ variant_id: string; quantity: string }>(
     sql`SELECT variant_id, quantity::text FROM app_lock_stock_balances(${branchId}, ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
@@ -75,7 +82,7 @@ export async function assertNotExpired(db: Database, branchId: string, lines: re
   if (short.length) {
     throw new AppError(
       'EXPIRED_STOCK',
-      `Only expired or held stock is left: ${short.map((s) => `${s.name} (${s.sellable} sellable)`).join(', ')}. Write it off or return it to the supplier.`,
+      `Only ${rule === 'BLOCK' ? 'expired or held' : 'held'} stock is left: ${short.map((s) => `${s.name} (${s.sellable} sellable)`).join(', ')}. Write it off or return it to the supplier.`,
       HttpStatus.CONFLICT,
       { lines: short },
     );
@@ -94,11 +101,11 @@ export async function expiredDraws(db: Database, saleId: string) {
   return rows.map((r) => ({ variantId: r.variant_id, lotCode: r.lot_code, expiresOn: r.expires_on, quantity: toDec(r.quantity).toString() }));
 }
 
-/** On hand less reserved and less expired or held lots: what of an item may be sold at a branch now. */
-export async function sellableAt(db: Database, branchId: string, variantId: string): Promise<{ onHand: string; expiredOrHeld: string; sellable: string }> {
+/** On hand less reserved and less held lots (and expired ones when `expired`): what of an item may be sold at a branch now. */
+export async function sellableAt(db: Database, branchId: string, variantId: string, options: { expired?: boolean } = {}): Promise<{ onHand: string; expiredOrHeld: string; sellable: string }> {
   const { rows: [b] } = await db.execute<{ quantity: string }>(sql`SELECT quantity::text FROM stock_balances WHERE branch_id = ${branchId} AND variant_id = ${variantId}`);
   const onHand = toDec(b?.quantity ?? '0');
-  const blocked = (await unsellableAt(db, branchId, [variantId])).get(variantId) ?? new Dec(0);
+  const blocked = (await unsellableAt(db, branchId, [variantId], options)).get(variantId) ?? new Dec(0);
   const reserved = (await reservedAt(db, branchId, [variantId])).get(variantId) ?? new Dec(0);
   return { onHand: onHand.toString(), expiredOrHeld: blocked.toString(), sellable: Dec.max(onHand.minus(reserved).minus(blocked), 0).toString() };
 }

@@ -21,6 +21,7 @@ import {
 } from '@1pos/database';
 import type { AssignPriceListInput, CreatePriceListInput, SetPricesInput, UpdatePriceListInput } from '@1pos/validation';
 import { parseScaleLabel } from '@1pos/sync-protocol';
+import { toDec } from '@1pos/money';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -29,6 +30,16 @@ import { dbNow, EFFECTIVE_SKEW, effectiveNowSql } from '../common/clock.js';
 
 /** Allowed clock skew for "now" prices; anything earlier is a backdated price and refused. */
 const BACKDATE_TOLERANCE_MS = 60_000;
+
+/**
+ * `{ sellable }` for the till's lookup where the branch blocks expired stock, or where a hold keeps some of
+ * the item back; nothing otherwise (all of it may be sold).
+ */
+async function sellableHere(db: Database, branchId: string, variantId: string) {
+  const rule = await expiredStockRule(db, branchId);
+  const sellable = await sellableAt(db, branchId, variantId, { expired: rule === 'BLOCK' });
+  return rule === 'BLOCK' || toDec(sellable.expiredOrHeld).gt(0) ? { sellable } : {};
+}
 
 export interface EffectivePrice {
   priceId: string;
@@ -269,8 +280,8 @@ export class PricingService extends TenantService {
         trackInventory: item.product.trackInventory,
         /** STANDARD or SERVICE. */
         productType: item.product.productType,
-        /** Where expired or held lots may not be sold: what of it is sellable here now. */
-        ...(item.product.tracksExpiry && (await expiredStockRule(db, branchId)) === 'BLOCK' && { sellable: await sellableAt(db, branchId, variantId) }),
+        /** What of it is sellable here now, when held lots (or expired ones, where blocked) keep some back. */
+        ...(item.product.tracksExpiry && (await sellableHere(db, branchId, variantId))),
         price,
         /** From a scale label: the weighed quantity (kg) to sell, as printed. */
         ...(label && { quantity: label.quantity }),

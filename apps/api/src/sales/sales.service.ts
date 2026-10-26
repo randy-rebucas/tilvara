@@ -543,11 +543,11 @@ export class SalesService extends TenantService {
       db,
       { tenantId, branchId: session.branchId, legalEntityId: priced.legalEntityId, userId: auth.userId, saleId: sale!.id, saleNumber: String(saleNumber), ...(entryDate && { entryDate }) },
       stock.map((m) => ({ variantId: m.variantId, quantity: toDec(m.quantity).negated().toString() })),
-      { sellableOnly: !priced.offline && expiredRule === 'BLOCK' },
+      { sellableOnly: !priced.offline, expired: expiredRule === 'BLOCK' },
     );
-    // Expired or held lots are not sold where the branch blocks them; offline sales are flagged instead.
-    if (!priced.offline && expiredRule === 'BLOCK') {
-      await assertNotExpired(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));
+    // Held lots are never sold online, expired ones not where the branch blocks them; offline sales are flagged instead.
+    if (!priced.offline) {
+      await assertNotExpired(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])), expiredRule);
     }
     if (priced.enforceStock) {
       await assertStockAvailable(db, session.branchId, priced.lines.flatMap((l) => (l.trackInventory ? [{ variantId: l.variantId, quantity: l.quantity, name: l.name }] : [])));

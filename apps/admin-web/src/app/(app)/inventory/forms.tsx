@@ -30,7 +30,7 @@ function Actions({ pending, general, submitLabel, close }: { pending: boolean; g
  * Correct stock by hand (ADJUSTMENT: a signed change) or write off spoiled stock (WASTE: the
  * quantity thrown away, sent negative). One document, one journal entry, one key per open form.
  */
-function AdjustFields({ close, branchId, variants }: { close: () => void; branchId: string; variants: VariantOption[] }) {
+function AdjustFields({ close, branchId, variants, dated }: { close: () => void; branchId: string; variants: VariantOption[]; dated: boolean }) {
   const { t } = useT();
   const router = useRouter();
   const key = useFormKey();
@@ -65,8 +65,13 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
           { name: 'quantity', label: t('inv.adjustQty'), kind: 'decimal', placeholder: '-1' },
-          { name: 'expiresOn', label: `${t('inv.adjustExpires')} (${t('common.optional')})`, kind: 'date' },
-          { name: 'lotCode', label: t('inv.adjustLot'), kind: 'text' },
+          // Only a shop with items that keep expiry dates sees the date and lot (ADR-0020).
+          ...(dated
+            ? [
+                { name: 'expiresOn', label: `${t('inv.adjustExpires')} (${t('common.optional')})`, kind: 'date' as const },
+                { name: 'lotCode', label: t('inv.adjustLot'), kind: 'text' as const },
+              ]
+            : []),
         ]}
         options={variants}
         fieldError={fieldError}
@@ -78,7 +83,7 @@ function AdjustFields({ close, branchId, variants }: { close: () => void; branch
   );
 }
 
-export function AdjustStockForm(props: { branchId: string; variants: VariantOption[] }) {
+export function AdjustStockForm(props: { branchId: string; variants: VariantOption[]; dated: boolean }) {
   const { t } = useT();
   return <Disclosure label={t('inv.adjust')}>{(close) => <AdjustFields close={close} {...props} />}</Disclosure>;
 }

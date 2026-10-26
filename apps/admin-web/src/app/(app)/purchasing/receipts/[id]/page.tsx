@@ -4,7 +4,7 @@ import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
 import { api, apiOrNull, variantNamesById, type Branch, type GoodsReceipt, type Me, type Supplier } from '@/lib/api';
-import { formatDateTime, peso, qty, signOf, subtractQty } from '@/lib/format';
+import { formatDate, formatDateTime, peso, qty, signOf, subtractQty } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { ReturnForm } from '../../forms';
@@ -29,6 +29,8 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const branch = branches?.data.find((b) => b.id === receipt.branchId);
   const rejected = receipt.lines.some((l) => signOf(l.rejectedQuantity) > 0);
   const returned = receipt.lines.some((l) => signOf(l.returnedQuantity) > 0);
+  const dated = receipt.lines.some((l) => l.expiresOn);
+  const expiryLot = (l: GoodsReceipt['lines'][number]) => (l.expiresOn ? `${formatDate(l.expiresOn, lang)}${l.lotCode ? ` · ${l.lotCode}` : ''}` : '');
   const canReturn = (me.activeTenant?.permissions.includes('purchasing.manage') ?? false) && !supplier?.archivedAt
     && receipt.lines.some((l) => signOf(subtractQty(l.quantity, l.returnedQuantity)) > 0);
 
@@ -76,6 +78,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
                 ]
               : []),
             ...(returned ? [{ header: t('pur.returned'), num: true, cell: (l: GoodsReceipt['lines'][number]) => qty(l.returnedQuantity) }] : []),
+            ...(dated ? [{ header: t('pur.expiryLot'), cell: (l: GoodsReceipt['lines'][number]) => <Serial className="text-ink">{expiryLot(l)}</Serial> }] : []),
             { header: t('common.cost'), num: true, cell: (l) => <span className="money">{peso(l.unitCost)}</span> },
             { header: t('common.value'), num: true, cell: (l) => <span className="money font-semibold">{peso(l.lineValue)}</span> },
           ]}
@@ -86,6 +89,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
                 {names.get(l.variantId)?.sku} · {qty(l.quantity)} × {peso(l.unitCost)}
                 {signOf(l.rejectedQuantity) > 0 && ` · ${t('pur.rejected')} ${qty(l.rejectedQuantity)}`}
                 {signOf(l.returnedQuantity) > 0 && ` · ${t('pur.returned')} ${qty(l.returnedQuantity)}`}
+                {l.expiresOn && ` · ${t('pur.expiresOn')} ${expiryLot(l)}`}
               </Serial>
             ),
             figure: (l) => <span className="money font-semibold">{peso(l.lineValue)}</span>,

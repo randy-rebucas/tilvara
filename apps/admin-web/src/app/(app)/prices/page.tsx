@@ -4,11 +4,14 @@ import { allProducts, api, apiOrNull, type Branch, type CurrentPrice, type Me, t
 import { formatDateTime, peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { ActionButton } from '@/components/actions';
+import { RecordTable } from '@/components/record-table';
 import { AssignBranch, NewPriceList, RenamePriceList, SetPrice } from './set-price';
 import { PricesTabs } from './tabs';
 import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('prices');
+
+const itemName = (p: CurrentPrice) => (p.variantName ? `${p.productName} — ${p.variantName}` : p.productName);
 
 export default async function PricesPage({ searchParams }: { searchParams: Promise<{ list?: string }> }) {
   const { t, lang } = await getT();
@@ -88,38 +91,29 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
               </div>
             )}
           </Note>
-          <Note denom="blue" className="overflow-x-auto pr-2">
+          <Note denom="blue" className="pr-2">
             {prices && prices.data.length > 0 ? (
-              <table className="tbl">
-                <thead>
-                  <tr>
-                    <th>{t('prod.sku')}</th>
-                    <th>{t('prod.name')}</th>
-                    <th className="num">{t('price.current')}</th>
-                    <th>{t('price.effective')}</th>
-                    <th className="num">{t('price.scheduled')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {prices.data.map((p) => (
-                    <tr key={p.priceId}>
-                      <td><Serial className="text-ink">{p.sku}</Serial></td>
-                      <td>{p.variantName ? `${p.productName} — ${p.variantName}` : p.productName}</td>
-                      <td className="num money font-semibold">{peso(p.amount)}</td>
-                      <td className="text-muted">{formatDateTime(p.effectiveFrom, lang)}</td>
-                      <td className="num">
-                        {p.scheduled ? (
-                          <span className="money">
-                            {peso(p.scheduled.amount)} <span className="block text-[0.8125rem] text-muted">{formatDateTime(p.scheduled.effectiveFrom, lang)}</span>
-                          </span>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RecordTable
+                rows={prices.data}
+                rowKey={(p) => p.priceId}
+                columns={[
+                  { header: t('prod.sku'), cell: (p) => <Serial className="text-ink">{p.sku}</Serial> },
+                  { header: t('common.item'), cell: (p) => itemName(p) },
+                  { header: t('price.current'), num: true, cell: (p) => <span className="money font-semibold">{peso(p.amount)}</span> },
+                  { header: t('price.effective'), cell: (p) => <span className="text-muted">{formatDateTime(p.effectiveFrom, lang)}</span> },
+                  { header: t('price.scheduled'), num: true, cell: (p) => (p.scheduled ? <span className="money">{peso(p.scheduled.amount)} <span className="block text-[0.8125rem] text-muted">{formatDateTime(p.scheduled.effectiveFrom, lang)}</span></span> : <span className="text-muted">—</span>) },
+                ]}
+                stacked={{
+                  title: (p) => itemName(p),
+                  meta: (p) => (
+                    <>
+                      <Serial>{p.sku} · {t('price.effective')} {formatDateTime(p.effectiveFrom, lang)}</Serial>
+                      {p.scheduled && <span className="block text-[0.8125rem]">{t('price.scheduled')}: <span className="money">{peso(p.scheduled.amount)}</span> · {formatDateTime(p.scheduled.effectiveFrom, lang)}</span>}
+                    </>
+                  ),
+                  figure: (p) => <span className="money font-semibold">{peso(p.amount)}</span>,
+                }}
+              />
             ) : (
               <Empty>{t('overview.noPrices')}</Empty>
             )}

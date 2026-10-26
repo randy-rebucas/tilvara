@@ -345,9 +345,9 @@ const en = {
   // Expired or held stock (sold only while sellable stock is left).
   'sell.expiredRefused': 'Only expired or held stock is left for {items}. Write it off in the back office.',
   'sell.sellableN': '{n} sellable',
-  'sell.expiredChip': 'Expired stock · {n} sellable',
+  'sell.expiredChip': 'Expired or on hold · {n} sellable',
   'sell.expiredWarn': 'Only {n} of {name} can be sold here: the rest is expired or on hold.',
-  'guide.sell.t10': '“Expired stock” on a line means only expired or held stock is left: the sale is refused. Write it off in the back office.',
+  'guide.sell.t10': '“Expired or on hold” on a line means only expired or held stock is left: the sale is refused. Write it off in the back office.',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -695,9 +695,9 @@ const fil: Record<MessageKey, string> = {
   // Expired or held stock (sold only while sellable stock is left).
   'sell.expiredRefused': 'Expired o naka-hold na stock na lang ang natitira para sa {items}. I-write off ito sa back office.',
   'sell.sellableN': '{n} ang puwedeng ibenta',
-  'sell.expiredChip': 'Expired na stock · {n} ang puwedeng ibenta',
+  'sell.expiredChip': 'Expired o naka-hold · {n} ang puwedeng ibenta',
   'sell.expiredWarn': '{n} lang ng {name} ang puwedeng ibenta dito: expired o naka-hold ang iba.',
-  'guide.sell.t10': 'Ang “Expired na stock” sa linya ay nangangahulugang expired o naka-hold na stock na lang ang natitira: tatanggihan ang benta. I-write off ito sa back office.',
+  'guide.sell.t10': 'Ang “Expired o naka-hold” sa linya ay nangangahulugang expired o naka-hold na stock na lang ang natitira: tatanggihan ang benta. I-write off ito sa back office.',
 };
 
 export type Lang = 'en' | 'fil';

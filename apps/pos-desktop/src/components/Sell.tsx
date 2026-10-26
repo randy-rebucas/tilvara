@@ -28,7 +28,7 @@ interface CartLine {
   /** Session 20: an ordinary discount (needs `sales.discount`) and a manager-approved price. */
   discount?: LineDiscount;
   override?: LineOverride;
-  /** What the lookup said is sellable here when expired or held stock is blocked (online). */
+  /** What the lookup said is sellable here when held lots, or expired ones where the branch blocks them, keep some back (online). */
   sellable?: string;
 }
 
