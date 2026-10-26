@@ -2,7 +2,6 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { API_URL } from './config';
 import { ACCESS_COOKIE } from './cookies';
-import type { BusinessType } from '@1pos/validation';
 
 export class ApiError extends Error {
   /**
@@ -103,7 +102,6 @@ export interface Business {
   id: string;
   slug: string;
   name: string;
-  businessType: BusinessType;
 }
 
 export interface Me {
@@ -117,7 +115,6 @@ export interface Me {
     tenantId: string;
     membershipId: string;
     status: string;
-    businessType: BusinessType;
     features?: string[];
     /** Usable extensions (ADR-0026); absent from older APIs. */
     extensions?: string[];
@@ -232,7 +229,8 @@ export interface Terminal {
   revokedAt: string | null;
 }
 export interface Subscription {
-  plan: { code: string; name: string; limits: Record<string, number>; features: string[] };
+  /** `extensions`: the codes a business on this plan may switch on (ADR-0026). */
+  plan: { code: string; name: string; limits: Record<string, number>; features: string[]; extensions: string[] };
   status: string;
   access: 'FULL' | 'READ_ONLY';
   trialEndsAt: string | null;

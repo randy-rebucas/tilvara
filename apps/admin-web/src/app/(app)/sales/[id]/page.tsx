@@ -5,6 +5,7 @@ import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
 import { apiOrNull, type Branch, type Member, type Register, type Sale, type SaleReturnDoc } from '@/lib/api';
 import { formatDateTime, peso, qty, signOf } from '@/lib/format';
+import { tenderLabel } from '@/lib/tenders';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { pageTitle } from '@/i18n/page-title';
@@ -97,7 +98,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
               <div key={c.id} className="flex justify-between gap-3"><dt>{t('doc.serviceCharge')}</dt><dd className="money">{peso(c.amountDue)}</dd></div>
             ))}
             {sale.tenders.map((tn) => (
-              <div key={tn.id} className="flex justify-between gap-3 text-muted"><dt>{tn.method}</dt><dd className="money">{peso(tn.amount)}</dd></div>
+              <div key={tn.id} className="flex justify-between gap-3 text-muted"><dt>{tenderLabel(t, tn.method)}</dt><dd className="money">{peso(tn.amount)}</dd></div>
             ))}
             {signOf(sale.changeDue) > 0 && <div className="flex justify-between gap-3 text-muted"><dt>{t('doc.change')}</dt><dd className="money">{peso(sale.changeDue)}</dd></div>}
           </dl>

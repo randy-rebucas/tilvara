@@ -33,11 +33,11 @@ export const signupSchema = z.object({
   businessType: businessTypeSchema.default('RETAIL'),
 });
 
-/** The business's name (as people see it; receipts print the legal entity's names) and/or its type. */
-export const businessUpdateSchema = z
-  .object({ name: z.string().trim().min(1).max(200), businessType: businessTypeSchema })
-  .partial()
-  .refine((v) => v.name !== undefined || v.businessType !== undefined, 'Nothing to update');
+/**
+ * The business's name (as people see it; receipts print the legal entity's names). The type is no longer
+ * changed here: retail is the base and a trade comes as an extension (ADR-0026); other fields are dropped.
+ */
+export const businessUpdateSchema = z.object({ name: z.string().trim().min(1).max(200) });
 export type BusinessUpdateInput = z.infer<typeof businessUpdateSchema>;
 export type SignupInput = z.infer<typeof signupSchema>;
 

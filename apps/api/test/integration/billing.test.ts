@@ -31,7 +31,7 @@ describe('subscription lifecycle', () => {
   it('starts every new business on a 14-day Growth trial with full access', async () => {
     const t = await signup(app, 'trial');
     const res = await http().get('/v1/subscription').set(bearer(t.access)).expect(200);
-    expect(res.body).toMatchObject({ plan: { code: 'growth' }, status: 'TRIALING', access: 'FULL', usage: { maxUsers: 1, maxBranches: 0 } });
+    expect(res.body).toMatchObject({ plan: { code: 'growth', features: ['multi_entity', 'advanced_reports'], extensions: expect.any(Array) }, status: 'TRIALING', access: 'FULL', usage: { maxUsers: 1, maxBranches: 0 } });
     // The trial ends 14 days after sign-up on the database clock, which may run a little ahead of this host's (Docker VM).
     const days = (new Date(res.body.trialEndsAt).getTime() - Date.now()) / 86_400_000;
     expect(days).toBeGreaterThan(13.9);

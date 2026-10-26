@@ -4,6 +4,7 @@ import { RecordTable } from '@/components/record-table';
 import { ScopePicker } from '@/components/scope';
 import { api, apiOrNull, type Me, type Register, type ZReading } from '@/lib/api';
 import { peso } from '@/lib/format';
+import { tenderLabel } from '@/lib/tenders';
 import { getT } from '@/i18n/server';
 import { ReportsChrome, reportScope, type ReportQuery } from '../chrome';
 import { TakeZReading } from './take';
@@ -57,7 +58,7 @@ export default async function ZReadingsPage({ searchParams }: { searchParams: Pr
                   <dt>{t('z.voids', { n: latest.voidsCount })}</dt><dd className="money text-right">−{peso(latest.voidsAmount)}</dd>
                   <dt className="font-semibold">{t('z.net')}</dt><dd className="money text-right font-semibold">{peso(latest.netAmount)}</dd>
                   {Object.entries(latest.tenders).map(([k, v]) => (
-                    <Fragment key={k}><dt>{t('z.tender', { method: k })}</dt><dd className="money text-right">{peso(v)}</dd></Fragment>
+                    <Fragment key={k}><dt>{t('z.tender', { method: tenderLabel(t, k) })}</dt><dd className="money text-right">{peso(v)}</dd></Fragment>
                   ))}
                   <dt>{t('z.previousGt')}</dt><dd className="money text-right">{peso(latest.previousGrandTotal)}</dd>
                   <dt className="font-semibold">{t('z.grandTotal')}</dt><dd className="money text-right font-semibold">{peso(latest.grandTotal)}</dd>

@@ -6,7 +6,11 @@ import { Dec, toDec } from '@1pos/money';
 
 export type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE';
 
-/** System accounts every legal entity has (seeded with its chart). */
+/**
+ * System accounts every legal entity has (seeded with its chart). SERVICE_CHARGE_PAYABLE (2200) left it with
+ * table service (0116): a chart that took charges keeps it, and the sale rules below still name it (a zero
+ * line is dropped before accounts are looked up, so a chart without it never needs it).
+ */
 export const DEFAULT_CHART = [
   { key: 'CASH_ON_HAND', code: '1010', name: 'Cash on hand', type: 'ASSET' },
   { key: 'PAYMENT_CLEARING', code: '1020', name: 'Card/QR clearing', type: 'ASSET' },
@@ -17,7 +21,6 @@ export const DEFAULT_CHART = [
   { key: 'ACCOUNTS_PAYABLE', code: '2000', name: 'Accounts payable – trade', type: 'LIABILITY' },
   { key: 'GRNI', code: '2010', name: 'Goods received not invoiced', type: 'LIABILITY' },
   { key: 'OUTPUT_VAT', code: '2100', name: 'Output VAT payable', type: 'LIABILITY' },
-  { key: 'SERVICE_CHARGE_PAYABLE', code: '2200', name: 'Service charge payable', type: 'LIABILITY' },
   // Session 20 (ADR-0018): refunds given as store credit, owed to customers until spent. Pending the accountant.
   { key: 'CUSTOMER_STORE_CREDIT', code: '2300', name: 'Customer store credit', type: 'LIABILITY' },
   { key: 'CASH_TRANSFERS', code: '3900', name: 'Cash fund transfers', type: 'EQUITY' },

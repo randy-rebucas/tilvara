@@ -13,8 +13,8 @@ type BusinessRow = {
 };
 
 /**
- * The business's own details. RETAIL is the only business type for now (0112 removed the others); the
- * type stays on the business and in the update, which accepts RETAIL only (validation).
+ * The business's own details. RETAIL is the only business type (0112 removed the others) and a trade comes
+ * back as an extension (ADR-0026), so only the name changes here; the type is still shown for older clients.
  */
 @Injectable()
 export class BusinessService extends TenantService {
@@ -32,20 +32,11 @@ export class BusinessService extends TenantService {
     this.assertCan(auth, 'tenant.manage');
     return this.mutate(auth, async (db) => {
       const before = await row(db, true);
-      const tenantId = tenantOf(auth).tenantId;
-      let after = before;
-      if (input.name !== undefined && input.name !== before.name) {
-        after = (await db.execute<BusinessRow>(
-          sql`UPDATE tenants SET name = ${input.name} WHERE id = ${tenantId} RETURNING id, slug, name, business_type`,
-        )).rows[0]!;
-        await this.audit(db, auth, 'tenant.renamed', 'tenant', before.id, { from: before.name, to: input.name });
-      }
-      if (input.businessType === undefined || before.business_type === input.businessType) return view(after);
+      if (input.name === before.name) return view(before);
       const { rows } = await db.execute<BusinessRow>(
-        sql`UPDATE tenants SET business_type = ${input.businessType} WHERE id = ${tenantId}
-            RETURNING id, slug, name, business_type`,
+        sql`UPDATE tenants SET name = ${input.name} WHERE id = ${tenantOf(auth).tenantId} RETURNING id, slug, name, business_type`,
       );
-      await this.audit(db, auth, 'tenant.business_type_changed', 'tenant', before.id, { from: before.business_type, to: input.businessType });
+      await this.audit(db, auth, 'tenant.renamed', 'tenant', before.id, { from: before.name, to: input.name });
       return view(rows[0]!);
     });
   }

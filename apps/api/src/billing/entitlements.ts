@@ -98,9 +98,10 @@ export async function subscriptionSummary(db: Database) {
     grace_ends_at: Date | null;
     limits: PlanLimits;
     features: PlanFeature[];
+    extensions: string[];
     writable: boolean;
   }>(sql`SELECT s.plan_code, p.name AS plan_name, s.status, s.trial_ends_at, s.current_period_end, s.grace_ends_at,
-                p.limits, p.features, app_subscription_write_allowed() AS writable
+                p.limits, p.features, p.extensions, app_subscription_write_allowed() AS writable
            FROM subscriptions s JOIN plans p ON p.code = s.plan_code`);
   const s = rows[0];
   if (!s) return null;
@@ -109,7 +110,7 @@ export async function subscriptionSummary(db: Database) {
     usage[key] = await usageOf(db, key);
   }
   return {
-    plan: { code: s.plan_code, name: s.plan_name, limits: s.limits, features: s.features },
+    plan: { code: s.plan_code, name: s.plan_name, limits: s.limits, features: s.features, extensions: s.extensions },
     status: s.status,
     access: s.writable ? 'FULL' : 'READ_ONLY',
     trialEndsAt: s.trial_ends_at,

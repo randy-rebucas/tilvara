@@ -2,6 +2,7 @@ import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import type { ByTender } from '@/lib/api';
 import { peso, sumDecimal } from '@/lib/format';
+import { tenderLabel } from '@/lib/tenders';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
 import { pageTitle } from '@/i18n/page-title';
@@ -23,14 +24,14 @@ export default async function ByTenderPage({ searchParams }: { searchParams: Pro
             rows={rows}
             rowKey={(x) => x.method}
             columns={[
-              { header: t('csv.method'), cell: (x) => <b>{x.method}</b> },
+              { header: t('csv.method'), cell: (x) => <b>{tenderLabel(t, x.method)}</b> },
               { header: t('rep.count'), num: true, cell: (x) => x.tenders },
               { header: t('rep.collected'), num: true, cell: (x) => <span className="money">{peso(x.collected)}</span> },
               { header: t('rep.refunded'), num: true, cell: (x) => <span className="money">{peso(x.refunded)}</span> },
               { header: t('rep.net'), num: true, cell: (x) => <span className="money font-semibold">{peso(x.net)}</span> },
             ]}
             stacked={{
-              title: (x) => x.method,
+              title: (x) => tenderLabel(t, x.method),
               meta: (x) => <Serial>{t('rep.collected')} {peso(x.collected)} · {t('rep.refunded')} {peso(x.refunded)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.net)}</span>,
             }}

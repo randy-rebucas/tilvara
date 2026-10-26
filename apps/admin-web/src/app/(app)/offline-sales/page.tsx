@@ -13,9 +13,9 @@ export const generateMetadata = pageTitle('offline-sales');
 
 type Tab = 'review' | 'recorded' | 'dismissed';
 const STATUS: Record<Tab, OfflineSale['status']> = { review: 'QUARANTINED', recorded: 'RECORDED', dismissed: 'DISMISSED' };
-const KNOWN = new Set(['TOTAL_MISMATCH', 'SESSION_NOT_OPEN', 'NOT_SESSION_OWNER', 'CASHIER_NOT_AUTHORIZED', 'WRONG_REGISTER', 'UNKNOWN_SNAPSHOT', 'PERIOD_CLOSED', 'FORBIDDEN', 'NOT_FOUND', 'DUPLICATE_TRANSACTION', 'SUBSCRIPTION_READ_ONLY', 'TENANT_SUSPENDED', 'VALIDATION_FAILED']);
-// ADR-0025: stock sold from an expired or held lot; PRESCRIPTION_REVIEW only on envelopes from before pharmacies were removed.
-const FLAGS = new Set(['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'PRESCRIPTION_REVIEW', 'EXPIRED_STOCK']);
+const KNOWN = new Set(['TOTAL_MISMATCH', 'SESSION_NOT_OPEN', 'NOT_SESSION_OWNER', 'CASHIER_NOT_AUTHORIZED', 'WRONG_REGISTER', 'UNKNOWN_SNAPSHOT', 'PERIOD_CLOSED', 'FORBIDDEN', 'NOT_FOUND', 'DUPLICATE_TRANSACTION', 'SUBSCRIPTION_READ_ONLY', 'TENANT_SUSPENDED', 'VALIDATION_FAILED', 'ARCHIVED', 'TAX_PROFILE_MISSING']);
+// As OFFLINE_FLAGS in @1pos/sync-protocol; EXPIRED_STOCK (ADR-0020): sold from an expired or held lot.
+const FLAGS = new Set(['PRICE_CHANGED', 'SNAPSHOT_EXPIRED', 'CLOCK_ADJUSTED', 'EXPIRED_STOCK']);
 
 /**
  * Offline sales delivered by the tills (ADR-0015 §5): the ones the server could not record wait here
@@ -53,7 +53,8 @@ export default async function OfflineSalesPage({ searchParams }: { searchParams:
         sale: d.saleNumber === undefined ? '' : `#${String(d.saleNumber).padStart(6, '0')}`,
       });
     }
-    return x.errorDetail?.message ?? x.errorCode ?? '';
+    // A code this screen has no words for: say so in the reader's language, with the server's own detail.
+    return t('off.why.other', { code: x.errorCode ?? '—', message: x.errorDetail?.message ?? '' });
   };
   const outcome = (x: OfflineSale) =>
     x.status === 'RECORDED'

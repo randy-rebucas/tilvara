@@ -3,6 +3,7 @@ import {
   and,
   asc,
   branches,
+  cashierSessions,
   eq,
   isNull,
   legalEntities,
@@ -226,6 +227,13 @@ export class OrgService extends TenantService {
         .where(and(eq(terminals.registerId, id), eq(terminals.status, 'ACTIVE')))
         .limit(1);
       if (active.length > 0) throw new AppError('HAS_ACTIVE_CHILDREN', 'Revoke its terminals first', HttpStatus.CONFLICT);
+      // A till lists only live registers, so an open drawer on an archived one would be hard to close there.
+      const open = await db
+        .select({ id: cashierSessions.id })
+        .from(cashierSessions)
+        .where(and(eq(cashierSessions.registerId, id), eq(cashierSessions.status, 'OPEN')))
+        .limit(1);
+      if (open.length > 0) throw new AppError('SHIFT_OPEN', 'Close the open shift on this register first', HttpStatus.CONFLICT);
       const [row] = await db.update(registers).set({ archivedAt: new Date() }).where(eq(registers.id, id)).returning();
       await this.audit(db, auth, 'register.archived', 'register', id);
       return row!;

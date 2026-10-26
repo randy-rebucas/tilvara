@@ -3,6 +3,7 @@ import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import type { PaymentExceptions } from '@/lib/api';
 import { formatDateTime, peso } from '@/lib/format';
+import { tenderLabel } from '@/lib/tenders';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { loadReport, ReportsChrome, reportScope, type ReportQuery } from '../chrome';
@@ -29,14 +30,14 @@ export default async function PaymentExceptionsPage({ searchParams }: { searchPa
             rowKey={(x) => x.id}
             columns={[
               { header: t('rep.problem'), cell: (x) => <span className="tag tag-warn">{t(`rep.problem.${x.problem}` as MessageKey)}</span> },
-              { header: t('csv.method'), cell: (x) => <b>{x.method}</b> },
+              { header: t('csv.method'), cell: (x) => <b>{tenderLabel(t, x.method)}</b> },
               { header: t('rep.takenAt'), cell: (x) => <span className="text-muted">{formatDateTime(x.createdAt, lang)}</span> },
               { header: t('rep.shift'), cell: (x) => <Link href={`/shifts/${x.cashierSessionId}`} className="underline"><Serial className="text-ink">{x.registerCode}</Serial> {x.cashierName ?? '—'}</Link> },
               { header: t('rep.amount'), num: true, cell: (x) => <span className="money font-semibold">{peso(x.amount)}</span> },
             ]}
             stacked={{
               title: (x) => t(`rep.problem.${x.problem}` as MessageKey),
-              meta: (x) => <Serial>{x.method} · {x.registerCode} · {formatDateTime(x.createdAt, lang)}</Serial>,
+              meta: (x) => <Serial>{tenderLabel(t, x.method)} · {x.registerCode} · {formatDateTime(x.createdAt, lang)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.amount)}</span>,
             }}
             foot={{

@@ -1,5 +1,7 @@
 import Link from 'next/link';
+import { ReasonAction } from '@/components/actions';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
+import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type Branch, type LegalEntity, type Me, type Register, type Terminal } from '@/lib/api';
 import { formatDateTime, formatTin } from '@/lib/format';
 import { getT } from '@/i18n/server';
@@ -30,6 +32,17 @@ export default async function LocationsPage() {
   const entityName = new Map(entities?.data.map((e) => [e.id, e.registeredName]));
   const branchOf = new Map(branches?.data.map((b) => [b.id, b]));
   const registerOf = new Map(registers?.data.map((r) => [r.id, r]));
+  const entityStatus = (e: LegalEntity) => <span className="tag">{e.archivedAt ? t('common.archived') : t('common.active')}</span>;
+  const entityAction = (e: LegalEntity) =>
+    canManage && !e.archivedAt ? <RowAction url={`/api/v1/legal-entities/${e.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} /> : null;
+  const vat = (e: LegalEntity) => (e.vatStatus === 'VAT' ? t('loc.vatReg') : t('loc.nonVat'));
+  const registerAction = (r: Register) =>
+    r.archivedAt ? <span className="tag">{t('common.archived')}</span> : canManage ? (
+      <span className="inline-flex flex-wrap items-center justify-end gap-2">
+        <EditRegisterForm register={r} />
+        <RowAction url={`/api/v1/registers/${r.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
+      </span>
+    ) : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -43,26 +56,25 @@ export default async function LocationsPage() {
           {canManage && !secondEntityOff && <AddEntityForm />}
           {canManage && secondEntityOff && <p className="max-w-[36rem] text-[0.875rem] text-muted">{t('loc.multiEntityNotOnPlan')}</p>}
         </div>
-        <Note denom="violet" className="overflow-x-auto pr-2">
+        <Note denom="violet" className="pr-2">
           {entities && entities.data.length > 0 ? (
-            <table className="tbl">
-              <thead><tr><th>{t('loc.registeredName')}</th><th>{t('loc.tin')}</th><th>{t('loc.vat')}</th><th>{t('common.status')}</th><th /></tr></thead>
-              <tbody>
-                {entities.data.map((e) => (
-                  <tr key={e.id} className={e.archivedAt ? 'text-muted' : ''}>
-                    <td><Link href={`/locations/entities/${e.id}`} className="font-semibold underline">{e.registeredName}</Link></td>
-                    <td><Serial className="text-ink">{formatTin(e.tin)}</Serial></td>
-                    <td>{e.vatStatus === 'VAT' ? t('loc.vatReg') : t('loc.nonVat')}</td>
-                    <td><span className="tag">{e.archivedAt ? t('common.archived') : t('common.active')}</span></td>
-                    <td className="text-right">
-                      {canManage && !e.archivedAt && (
-                        <RowAction url={`/api/v1/legal-entities/${e.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <RecordTable
+              rows={entities.data}
+              rowKey={(e) => e.id}
+              dimmed={(e) => !!e.archivedAt}
+              columns={[
+                { header: t('loc.registeredName'), cell: (e) => <Link href={`/locations/entities/${e.id}`} className="font-semibold underline">{e.registeredName}</Link> },
+                { header: t('loc.tin'), cell: (e) => <Serial className="text-ink">{formatTin(e.tin)}</Serial> },
+                { header: t('loc.vat'), cell: vat },
+                { header: t('common.status'), cell: entityStatus },
+                { header: '', cell: (e) => <div className="text-right">{entityAction(e)}</div> },
+              ]}
+              stacked={{
+                title: (e) => <Link href={`/locations/entities/${e.id}`} className="underline">{e.registeredName}</Link>,
+                meta: (e) => `TIN ${formatTin(e.tin)} · ${vat(e)}${e.archivedAt ? ` · ${t('common.archived')}` : ''}`,
+                figure: entityAction,
+              }}
+            />
           ) : (
             <Empty>{entities ? t('loc.emptyEntities') : t('common.noAccess')}</Empty>
           )}
@@ -116,28 +128,24 @@ export default async function LocationsPage() {
             <h2 className="section-title">{t('loc.registers')}</h2>
             {canManage && activeBranches.length > 0 && <AddRegisterForm branches={activeBranches} />}
           </div>
-          <Note denom="orange" className="overflow-x-auto pr-2">
+          <Note denom="orange" className="pr-2">
             {registers && registers.data.length > 0 ? (
-              <table className="tbl">
-                <thead><tr><th>{t('loc.registerCode')}</th><th>{t('loc.registerName')}</th><th>{t('loc.branches')}</th><th /></tr></thead>
-                <tbody>
-                  {registers.data.map((r) => (
-                    <tr key={r.id} className={r.archivedAt ? 'text-muted' : ''}>
-                      <td><Serial className="text-ink">{r.code}</Serial></td>
-                      <td>{r.name}</td>
-                      <td>{branchOf.get(r.branchId)?.code ?? '—'}</td>
-                      <td className="text-right">
-                        {r.archivedAt ? <span className="tag">{t('common.archived')}</span> : canManage && (
-                          <span className="inline-flex flex-wrap items-center justify-end gap-2">
-                            <EditRegisterForm register={r} />
-                            <RowAction url={`/api/v1/registers/${r.id}/archive`} label={t('loc.archive')} confirmText={t('common.confirmArchive')} />
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <RecordTable
+                rows={registers.data}
+                rowKey={(r) => r.id}
+                dimmed={(r) => !!r.archivedAt}
+                columns={[
+                  { header: t('loc.registerCode'), cell: (r) => <Serial className="text-ink">{r.code}</Serial> },
+                  { header: t('loc.registerName'), cell: (r) => r.name },
+                  { header: t('loc.branches'), cell: (r) => branchOf.get(r.branchId)?.code ?? '—' },
+                  { header: '', cell: (r) => <div className="text-right">{registerAction(r)}</div> },
+                ]}
+                stacked={{
+                  title: (r) => r.name,
+                  meta: (r) => <Serial>{r.code} · {branchOf.get(r.branchId)?.code ?? '—'}</Serial>,
+                  figure: registerAction,
+                }}
+              />
             ) : (
               <Empty>{!registers ? t('common.noAccess') : activeBranches.length > 0 ? t('loc.emptyRegisters') : t('loc.emptyRegistersNoBranch')}</Empty>
             )}
@@ -149,32 +157,33 @@ export default async function LocationsPage() {
             <h2 className="section-title">{t('loc.terminals')}</h2>
             {canTerminals && activeRegisters.length > 0 && <PairTerminalForm registers={activeRegisters} />}
           </div>
-          <Note denom="orange" className="overflow-x-auto pr-2">
+          <Note denom="orange" className="pr-2">
             {terminals && terminals.data.length > 0 ? (
-              <table className="tbl">
-                <thead><tr><th>{t('loc.terminalName')}</th><th>{t('loc.registers')}</th><th>{t('loc.key')}</th><th>{t('common.status')}</th><th /></tr></thead>
-                <tbody>
-                  {terminals.data.map((x) => (
-                    <tr key={x.id} className={x.status === 'REVOKED' ? 'text-muted' : ''}>
-                      <td>{x.name}</td>
-                      <td>{registerOf.get(x.registerId)?.code ?? '—'}</td>
-                      <td><Serial className="normal-case">…{x.credentialHint}</Serial></td>
-                      <td>
+              <ul data-testid="terminals">
+                {terminals.data.map((x) => (
+                  <li key={x.id} data-terminal={x.id} className={`flex flex-wrap items-start justify-between gap-3 border-b border-hair-soft px-4 py-3 last:border-0 ${x.status === 'REVOKED' ? 'text-muted' : ''}`}>
+                    <div className="min-w-0">
+                      <p className="font-semibold">
+                        {x.name}{' '}
                         {x.status === 'ACTIVE' ? (
-                          <span className="tag">{t('common.active')}</span>
+                          <span className="tag ml-1">{t('common.active')}</span>
                         ) : (
-                          <span className="tag text-red!" title={formatDateTime(x.revokedAt, lang)}>{t('common.revoked')}</span>
+                          <span className="tag ml-1 text-red!" title={formatDateTime(x.revokedAt, lang)}>{t('common.revoked')}</span>
                         )}
-                      </td>
-                      <td className="text-right">
-                        {x.status === 'ACTIVE' && canTerminals && (
-                          <RowAction url={`/api/v1/terminals/${x.id}/revoke`} label={t('loc.revoke')} danger body={{ reason: 'Revoked from admin' }} confirmText={t('common.confirmRevoke')} />
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </p>
+                      <Serial className="mt-1 block">
+                        {registerOf.get(x.registerId)?.code ?? '—'} · {t('loc.key')} <span className="normal-case">…{x.credentialHint}</span>
+                      </Serial>
+                      <p className="mt-1 text-[0.8125rem] text-muted">
+                        {t('loc.terminalId')}: <span className="break-all font-[family-name:var(--font-serial)] text-ink">{x.id}</span>
+                      </p>
+                    </div>
+                    {x.status === 'ACTIVE' && canTerminals && (
+                      <ReasonAction url={`/api/v1/terminals/${x.id}/revoke`} label={t('loc.revoke')} reasonLabel={t('loc.revokeReason')} hint={t('loc.revokeHint')} danger />
+                    )}
+                  </li>
+                ))}
+              </ul>
             ) : (
               <Empty>{!terminals ? t('common.noAccess') : activeRegisters.length > 0 ? t('loc.emptyTerminals') : t('loc.emptyTerminalsNoRegister')}</Empty>
             )}

@@ -276,9 +276,9 @@ try {
   check('by product: the canton, 3 sold, 1 returned', (await shown(`PC-${slug}`)) && (await has('Lucky Me Pancit Canton')));
   await clickText('By tender');
   await waitFor(`location.pathname === '/reports/tenders'`);
-  check('by tender: cash net ₱33.00', (await shown('CASH')) && (await has('₱33.00')));
+  check('by tender: cash, in words, net ₱33.00', (await shown('Cash')) && (await has('₱33.00')));
   const csv = await evaluate(`fetch(document.querySelector('a[download]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), name: r.headers.get('content-disposition'), body: await r.text() }))`);
-  check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('tilvara-tenders-') && csv.body.includes('CASH,1,49.50,1,16.50,33.00'));
+  check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('tilvara-tenders-') && csv.body.includes('Cash,1,49.50,1,16.50,33.00'));
   await clickText('Refund watch');
   await waitFor(`location.pathname === '/reports/refunds'`);
   check('refund watch: the branch refunded ₱16.50 of ₱49.50 (33.3%); one refund of own sales, no flag', (await shown('₱16.50 refunded on ₱49.50 sold (33.3%)')) && !(await evaluate(`document.querySelector('main table .tag-warn')`)));

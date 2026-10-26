@@ -303,7 +303,6 @@ describe('grace period', () => {
 
   it('the built-in accountant role is privileged; the branch manager of a shop is not', async () => {
     const t = await signup(app, 'grace3');
-    await http().patch('/v1/business').set(bearer(t.access)).send({ businessType: 'RETAIL' }).expect(200);
     for (const [role, required] of [['accountant', true], ['branch_manager', false], ['inventory_officer', false], ['admin', true]] as const) {
       const m = await addMember(owner, t.tenantId, role);
       const token = (await login(m.email).expect(200)).body.tokens.accessToken;

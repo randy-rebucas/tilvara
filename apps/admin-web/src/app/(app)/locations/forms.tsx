@@ -205,17 +205,19 @@ export function AddRegisterForm({ branches }: { branches: Branch[] }) {
 }
 
 // ---------------------------------------------------------------- terminal
-function TerminalFields({ close, registers, onSecret }: { close: () => void; registers: Register[]; onSecret: (s: string) => void }) {
+type Paired = { terminalId: string; credential: string };
+
+function TerminalFields({ close, registers, onPaired }: { close: () => void; registers: Register[]; onPaired: (p: Paired) => void }) {
   const { t, lang } = useT();
   const { pending, submit, fieldError, general } = useForm();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     // Not idempotent on purpose: the response carries a one-time secret that must never be stored for replay.
-    const r = await submit<{ credential: string }>('POST', '/api/v1/terminals', { registerId: f.get('registerId'), name: f.get('name') });
+    const r = await submit<{ terminal: { id: string }; credential: string }>('POST', '/api/v1/terminals', { registerId: f.get('registerId'), name: f.get('name') });
     if (r.ok) {
       close();
-      onSecret(r.data.credential);
+      onPaired({ terminalId: r.data.terminal.id, credential: r.data.credential });
     }
   }
   return (
@@ -229,26 +231,38 @@ function TerminalFields({ close, registers, onSecret }: { close: () => void; reg
   );
 }
 
-/** Shows the one-time pairing key exactly once, with a copy action. */
+/** One value the till asks for, with its own copy button. */
+function CopyLine({ label, value }: { label: string; value: string }) {
+  const { t } = useT();
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-2">
+      <div className="text-[0.8125rem] text-muted">{label}</div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <code className="break-all rounded-[4px] border border-hair bg-white px-2 py-1 font-[family-name:var(--font-serial)] text-[0.875rem]">{value}</code>
+        <button type="button" className="btn" onClick={async () => { await navigator.clipboard.writeText(value); setCopied(true); }}>
+          <Copy aria-hidden className="size-4" /> {copied ? t('common.copied') : t('common.copy')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Shows what the desktop till asks for at set-up: the terminal id, and the pairing key exactly once. */
 export function PairTerminalForm({ registers }: { registers: Register[] }) {
   const { t } = useT();
-  const [secret, setSecret] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  if (secret) {
+  const [paired, setPaired] = useState<Paired | null>(null);
+  if (paired) {
     return (
-      <div className="w-full rounded-[5px] border border-[#ead3a6] bg-amber-bg p-4" role="status">
+      <div className="w-full rounded-[5px] border border-[#ead3a6] bg-amber-bg p-4" role="status" data-testid="paired">
         <p className="font-semibold">{t('loc.credentialOnce')}</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <code className="break-all rounded-[4px] border border-hair bg-white px-2 py-1 font-[family-name:var(--font-serial)] text-[0.875rem]">{secret}</code>
-          <button type="button" className="btn" onClick={async () => { await navigator.clipboard.writeText(secret); setCopied(true); }}>
-            <Copy aria-hidden className="size-4" /> {copied ? t('common.copied') : t('common.copy')}
-          </button>
-          <button type="button" className="btn" onClick={() => { setSecret(null); setCopied(false); }}>{t('common.done')}</button>
-        </div>
+        <CopyLine label={t('loc.terminalId')} value={paired.terminalId} />
+        <CopyLine label={t('loc.key')} value={paired.credential} />
+        <button type="button" className="btn mt-3" onClick={() => setPaired(null)}>{t('common.done')}</button>
       </div>
     );
   }
-  return <Disclosure label={t('loc.pair')}>{(close) => <TerminalFields close={close} registers={registers} onSecret={setSecret} />}</Disclosure>;
+  return <Disclosure label={t('loc.pair')}>{(close) => <TerminalFields close={close} registers={registers} onPaired={setPaired} />}</Disclosure>;
 }
 
 /** Small row action (archive / revoke) with confirmation and inline error. */

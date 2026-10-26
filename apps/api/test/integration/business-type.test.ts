@@ -55,10 +55,12 @@ describe('business type', () => {
     }
   });
 
-  it('a business update refuses the removed types, and their routes are gone', async () => {
+  it('a business update never changes the type, and the routes of the removed types are gone', async () => {
     const b = await business('bt-removed', 'RETAIL');
-    for (const businessType of ['SALON', 'PHARMACY', 'GROCERY', 'HYBRID']) {
+    for (const businessType of ['RETAIL', 'SALON', 'PHARMACY', 'GROCERY', 'HYBRID']) {
+      // The type alone is nothing to update; beside a name it is dropped.
       expect(code(await http().patch('/v1/business').set(b.auth).send({ businessType }).expect(400))).toBe('VALIDATION_FAILED');
+      expect((await http().patch('/v1/business').set(b.auth).send({ name: 'Tindahan', businessType }).expect(200)).body.businessType).toBe('RETAIL');
     }
     expect(await typeChanges(b.tenantId)).toEqual([]);
     for (const path of ['/v1/service-staff', '/v1/appointments', '/v1/prescriptions', '/v1/pharmacy/settings', '/v1/reports/tips', '/v1/reports/commissions', '/v1/catalog/equivalents']) {
@@ -74,15 +76,12 @@ describe('business type', () => {
     expect(names).toHaveLength(8);
   });
 
-  it('only tenant.manage changes it; the same type again records nothing; bad input is refused', async () => {
+  it('every member reads it; only tenant.manage updates it; bad input is refused', async () => {
     const b = await business('bt-acl', 'RETAIL');
     const cashier = bearer(await loginToken(app, (await addMember(owner, b.tenantId, 'cashier', { type: 'BRANCH', id: b.branchId })).email));
     // Everyone in the business may read it (the screens need it).
     expect((await http().get('/v1/business').set(cashier).expect(200)).body.businessType).toBe('RETAIL');
-    expect(code(await http().patch('/v1/business').set(cashier).send({ businessType: 'RETAIL' }).expect(403))).toBe('FORBIDDEN');
-    await http().patch('/v1/business').set(b.auth).send({ businessType: 'RETAIL' }).expect(200);
-    expect(await typeChanges(b.tenantId)).toEqual([]);
-    expect(code(await http().patch('/v1/business').set(b.auth).send({ businessType: 'retail' }).expect(400))).toBe('VALIDATION_FAILED');
+    expect(code(await http().patch('/v1/business').set(cashier).send({ name: 'Mine' }).expect(403))).toBe('FORBIDDEN');
     expect(code(await http().patch('/v1/business').set(b.auth).send({}).expect(400))).toBe('VALIDATION_FAILED');
   });
 
@@ -116,8 +115,7 @@ describe('business type', () => {
     expect(renamed.body).toMatchObject({ name: 'Kapehan ni Lola', businessType: 'RETAIL' });
     const me = (await http().get('/v1/me').set(b.auth).expect(200)).body;
     expect(me.memberships.find((m: { tenantId: string }) => m.tenantId === b.tenantId).tenantName).toBe('Kapehan ni Lola');
-    // Name and the same type in one request: the rename is recorded, the type is not.
-    await http().patch('/v1/business').set(b.auth).send({ name: 'Kapehan', businessType: 'RETAIL' }).expect(200);
+    await http().patch('/v1/business').set(b.auth).send({ name: 'Kapehan' }).expect(200);
     // The same name again records nothing.
     await http().patch('/v1/business').set(b.auth).send({ name: 'Kapehan' }).expect(200);
     const renames = await asOwnerInTenant(owner, b.tenantId, async (c) =>

@@ -69,6 +69,12 @@ describe('posting rules', () => {
     expect(DEFAULT_CHART.map((a) => a.key)).not.toEqual(expect.arrayContaining(['PREPAID_SERVICES']));
   });
 
+  it('service charges are gone from new charts (0116); a sale without one posts nothing to 2200', () => {
+    expect(DEFAULT_CHART.map((a) => a.key)).not.toEqual(expect.arrayContaining(['SERVICE_CHARGE_PAYABLE']));
+    const lines = salePosting({ salesExVat: '100.00', vatAmount: '12.00', statutoryDiscount: '0', cash: '112.00', electronic: '0', cogs: '0' });
+    expect(lines.some((l) => l.account === 'SERVICE_CHARGE_PAYABLE')).toBe(false);
+  });
+
   it('goods receipt: owed at cost; a revaluation of units sold short goes to COGS', () => {
     // 5 @ 13.00 = 65.00 owed; the ledger recorded 62.40 (2 units had left at 11.70).
     const lines = goodsReceiptPosting({ stockValue: '62.40', stockAtCost: '65.00', nonStock: '150.00' });

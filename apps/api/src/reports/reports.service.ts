@@ -331,16 +331,13 @@ export class ReportsService extends TenantService {
     });
   }
 
-  /**
-   * SC/PWD sales book (RR 5-2017 §5.9): one row per beneficiary per sale, returns as negative rows.
-   * `purchase_booklet`: on a discount that covered a medicine (sales before 0112 removed pharmacies), whether the booklet was presented.
-   */
+  /** SC/PWD sales book (RR 5-2017 §5.9): one row per beneficiary per sale, returns as negative rows. */
   statutoryBook(auth: AuthContext, range: ReportRange & { scheme?: string }) {
     return this.run(auth, range, async (db, w) => {
       const scheme = range.scheme ? sql`AND b.scheme_code = ${range.scheme}` : sql``;
       const { rows } = await db.execute<Row>(sql`
         SELECT 'SALE' AS document, s.completed_at, (s.completed_at AT TIME ZONE ${w.tz})::date::text AS day, s.sale_number::int AS number, reg.code AS register,
-               b.scheme_code, b.name, b.id_number, b.tin, b.purchase_booklet,
+               b.scheme_code, b.name, b.id_number, b.tin,
                sum(l.vat_exempt_sales + l.zero_rated_sales + l.percentage_tax_sales)::text AS sales,
                sum(l.statutory_discount)::text AS discount, sum(l.amount_due)::text AS net
           FROM sale_beneficiaries b JOIN sales s ON s.id = b.sale_id JOIN sale_lines l ON l.beneficiary_id = b.id
@@ -349,7 +346,7 @@ export class ReportsService extends TenantService {
          GROUP BY s.id, s.completed_at, s.sale_number, reg.code, b.id
         UNION ALL
         SELECT 'RETURN', r.created_at, (r.created_at AT TIME ZONE ${w.tz})::date::text, r.return_number::int, reg.code,
-               b.scheme_code, b.name, b.id_number, b.tin, b.purchase_booklet,
+               b.scheme_code, b.name, b.id_number, b.tin,
                (-sum(rl.vat_exempt_sales + rl.zero_rated_sales + rl.percentage_tax_sales))::text, (-sum(rl.statutory_discount))::text, (-sum(rl.amount_due))::text
           FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id JOIN sale_lines l ON l.id = rl.sale_line_id
           JOIN sale_beneficiaries b ON b.id = l.beneficiary_id JOIN registers reg ON reg.id = r.register_id

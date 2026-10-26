@@ -2918,14 +2918,11 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200
-                  },
-                  "businessType": {
-                    "type": "string",
-                    "enum": [
-                      "RETAIL"
-                    ]
                   }
-                }
+                },
+                "required": [
+                  "name"
+                ]
               }
             }
           }

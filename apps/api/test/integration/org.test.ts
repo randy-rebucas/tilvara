@@ -114,13 +114,17 @@ describe('terminals', () => {
     ).rejects.toThrow(/cannot be reactivated/);
   });
 
-  it('enforces archive order: terminals → registers → branches → legal entities', async () => {
+  it('enforces archive order: terminals and open shift → registers → branches → legal entities', async () => {
     const o = await buildOrg('archive');
     const auth = bearer(o.tenant.access);
     const t = await http().post('/v1/terminals').set(auth).send({ registerId: o.registerId, name: 'T' }).expect(201);
     expect((await http().post(`/v1/branches/${o.branchId}/archive`).set(auth).expect(409)).body.error.code).toBe('HAS_ACTIVE_CHILDREN');
     expect((await http().post(`/v1/registers/${o.registerId}/archive`).set(auth).expect(409)).body.error.code).toBe('HAS_ACTIVE_CHILDREN');
     await http().post(`/v1/terminals/${t.body.terminal.id}/revoke`).set(auth).send({ reason: 'Retired' }).expect(200);
+    // An open drawer keeps the register until its shift is closed.
+    const shift = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId: o.registerId, openingFloat: '0.00' }).expect(201)).body.id as string;
+    expect((await http().post(`/v1/registers/${o.registerId}/archive`).set(auth).expect(409)).body.error.code).toBe('SHIFT_OPEN');
+    await http().post(`/v1/cashier-sessions/${shift}/close`).set(auth).send({ countedCash: '0.00' }).expect(200);
     await http().post(`/v1/registers/${o.registerId}/archive`).set(auth).expect(200);
     const late = await http().post('/v1/terminals').set(auth).send({ registerId: o.registerId, name: 'T2' }).expect(409);
     expect(late.body.error.code).toBe('ARCHIVED');

@@ -1,8 +1,8 @@
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
-import { apiOrNull, type Subscription } from '@/lib/api';
+import { apiOrNull, type Extension, type Subscription } from '@/lib/api';
 import { daysUntil, formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
-import type { MessageKey } from '@/i18n/messages';
+import { en, type MessageKey } from '@/i18n/messages';
 import { SubscriptionTabs } from './tabs';
 import { pageTitle } from '@/i18n/page-title';
 
@@ -14,6 +14,9 @@ const LIMITS: { key: string; label: MessageKey; fill: string }[] = [
   { key: 'maxRegisters', label: 'sub.maxRegisters', fill: 'border-orange-soft bg-orange-soft' },
   { key: 'maxUsers', label: 'sub.maxUsers', fill: 'border-green bg-green' },
 ];
+
+/** As `PLAN_FEATURES` in @1pos/database, in the order an owner meets them. */
+const FEATURES = ['multi_entity', 'advanced_reports', 'api_access'] as const;
 
 export default async function SubscriptionPage() {
   const { t, lang } = await getT();
@@ -27,6 +30,14 @@ export default async function SubscriptionPage() {
     );
   }
   const trialDays = sub.status === 'TRIALING' ? daysUntil(sub.trialEndsAt) : null;
+  // Names as the Extensions tab shows them; that list needs tenant.manage, so a code stands in without it.
+  // An API from before ADR-0026 sends no `extensions`.
+  const planExtensions = sub.plan.extensions ?? [];
+  const catalog = planExtensions.length ? await apiOrNull<Extension[]>('/extensions') : null;
+  const extensionName = (code: string) => {
+    const key = `ext.${code}.name`;
+    return key in en ? t(key as MessageKey) : (catalog?.find((e) => e.code === code)?.name ?? code);
+  };
   const statusKey = `status.${sub.status}` as MessageKey;
 
   return (
@@ -73,6 +84,26 @@ export default async function SubscriptionPage() {
               );
             })}
           </ul>
+        </Note>
+      </section>
+
+      <section>
+        <h2 className="section-title mb-3">{t('sub.included')}</h2>
+        <Note className="px-6 py-5" as="div">
+          <ul className="flex flex-col gap-2" data-testid="plan-features">
+            {FEATURES.map((f) => {
+              const on = sub.plan.features.includes(f);
+              return (
+                <li key={f} data-feature={f} className="flex items-baseline justify-between gap-3 text-[0.9375rem]">
+                  <span className="min-w-0">{t(`sub.feature.${f}`)}</span>
+                  <span className={`serial shrink-0 whitespace-nowrap ${on ? 'font-semibold text-green' : 'text-muted'}`}>{on ? t('sub.yes') : t('sub.no')}</span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-4 border-t border-dashed border-hair pt-3 text-[0.875rem] text-muted">
+            {planExtensions.length ? t('sub.extensions', { names: planExtensions.map(extensionName).join(', ') }) : t('sub.noExtensions')}
+          </p>
         </Note>
       </section>
 

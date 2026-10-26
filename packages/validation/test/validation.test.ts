@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BUSINESS_TYPES, CORE_PERMISSIONS, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
+import { BUSINESS_TYPES, businessUpdateSchema, CORE_PERMISSIONS, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -84,6 +84,9 @@ describe('role templates', () => {
     expect(BUSINESS_TYPES).toEqual(['RETAIL']);
     expect(signupSchema.parse({ email: 'a@b.ph', password: 'correct horse battery', displayName: 'A', businessName: 'B', tenantSlug: 'bb' }).businessType).toBe('RETAIL');
     for (const t of ['SALON', 'PHARMACY', 'GROCERY', 'HYBRID']) expect(signupSchema.safeParse({ email: 'a@b.ph', password: 'correct horse battery', displayName: 'A', businessName: 'B', tenantSlug: 'bb', businessType: t }).success).toBe(false);
+    // The business update renames only (ADR-0026: a trade is an extension, not a type).
+    expect(businessUpdateSchema.parse({ name: ' Tindahan ', businessType: 'RETAIL' })).toEqual({ name: 'Tindahan' });
+    expect(businessUpdateSchema.safeParse({ businessType: 'RETAIL' }).success).toBe(false);
     expect(ROLE_TEMPLATES.map((t) => t.key)).not.toEqual(expect.arrayContaining(['front_desk', 'stylist', 'pharmacist', 'pharmacy_assistant']));
     expect(PERMISSIONS.some((p) => /^(appointments|staff|pharmacy)\./.test(p))).toBe(false);
     expect(roleTemplatesFor()).toEqual(ROLE_TEMPLATES);

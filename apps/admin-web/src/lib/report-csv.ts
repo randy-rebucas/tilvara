@@ -1,4 +1,5 @@
 import type { MessageKey } from '@/i18n/messages';
+import { tenderLabel } from './tenders';
 import type { ByAttribute, ByBranch, ByCategory, DiscountsReport, PaymentExceptions, PromotionsReport, PurchasesBySupplier, RefundWatch } from './api';
 
 /**
@@ -87,7 +88,7 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
     }
     case 'tenders': {
       const r = data as { data: { method: string; tenders: number; collected: string; refundsCount: number; refunded: string; net: string }[] };
-      return [[t('csv.method'), t('csv.count'), t('csv.collected'), t('csv.returnsCount'), t('csv.refunded'), t('csv.net')], ...r.data.map((x) => [x.method, x.tenders, x.collected, x.refundsCount, x.refunded, x.net])];
+      return [[t('csv.method'), t('csv.count'), t('csv.collected'), t('csv.returnsCount'), t('csv.refunded'), t('csv.net')], ...r.data.map((x) => [tenderLabel(t, x.method), x.tenders, x.collected, x.refundsCount, x.refunded, x.net])];
     }
     case 'tax': {
       const r = data as { data: (Omit<Buckets, 'gross' | 'discount'> & { vatStatus: string; vatRate: string })[] };
@@ -149,7 +150,7 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       const r = data as PaymentExceptions;
       return [
         [t('rep.problem'), t('csv.method'), t('rep.takenAt'), t('rep.shift'), t('rep.amount')],
-        ...r.data.map((x) => [t(`rep.problem.${x.problem}` as MessageKey), x.method, x.createdAt, `${x.registerCode} ${x.cashierName ?? ''}`.trim(), x.amount]),
+        ...r.data.map((x) => [t(`rep.problem.${x.problem}` as MessageKey), tenderLabel(t, x.method), x.createdAt, `${x.registerCode} ${x.cashierName ?? ''}`.trim(), x.amount]),
       ];
     }
   }

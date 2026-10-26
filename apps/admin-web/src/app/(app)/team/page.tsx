@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
-import { api, apiOrNull, type Branch, type Invitation, type Me, type Member, type Role } from '@/lib/api';
+import { RecordTable } from '@/components/record-table';
+import { api, apiOrNull, type Branch, type Invitation, type LegalEntity, type Me, type Member, type Role } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { en, type MessageKey } from '@/i18n/messages';
@@ -14,12 +15,13 @@ type List<T> = { data: T[] };
 
 export default async function TeamPage() {
   const { t, lang } = await getT();
-  const [me, members, roles, invites, branches] = await Promise.all([
+  const [me, members, roles, invites, branches, entities] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<List<Member>>('/members'),
     apiOrNull<List<Role>>('/roles'),
     apiOrNull<List<Invitation>>('/invitations'),
     apiOrNull<List<Branch>>('/branches'),
+    apiOrNull<List<LegalEntity>>('/legal-entities'),
   ]);
   const perms = me.activeTenant?.permissions ?? [];
   const canManage = perms.includes('members.manage');
@@ -27,11 +29,35 @@ export default async function TeamPage() {
   const roleName = new Map(roles?.data.map((r) => [r.key, r.name]));
   const roleById = new Map(roles?.data.map((r) => [r.id, r.name]));
   const branchCode = new Map(branches?.data.map((b) => [b.id, b.code]));
+  const entityName = new Map(entities?.data.map((e) => [e.id, e.registeredName]));
   const status = (s: string) => {
     const key = `status.${s}`;
     return key in en ? t(key as MessageKey) : s;
   };
-  const scopeLabel = (type: string, id: string | null) => (type === 'TENANT' ? t('team.wholeBusiness') : branchCode.get(id ?? '') ?? type);
+  const scopeLabel = (type: string, id: string | null) =>
+    type === 'TENANT'
+      ? t('team.wholeBusiness')
+      : type === 'LEGAL_ENTITY'
+        ? t('team.legalEntity', { name: entityName.get(id ?? '') ?? '—' })
+        : (branchCode.get(id ?? '') ?? '—');
+  const memberRoles = (m: Member) => m.roles.map((r) => roleName.get(r.roleKey) ?? r.roleKey).join(', ') || '—';
+  const memberScopes = (m: Member) => m.roles.map((r) => scopeLabel(r.scopeType, r.scopeId)).join(', ') || '—';
+  const memberActions = (m: Member) => {
+    if (!canManage || m.user.id === me.userId) return null;
+    return (
+      <span className="inline-flex flex-wrap justify-end gap-1.5">
+        {m.status === 'ACTIVE' && <RowAction url={`/api/v1/members/${m.membershipId}/suspend`} label={t('team.suspend')} />}
+        {m.status === 'SUSPENDED' && <RowAction url={`/api/v1/members/${m.membershipId}/reactivate`} label={t('team.reactivate')} />}
+        {m.status !== 'REMOVED' && <RowAction url={`/api/v1/members/${m.membershipId}/remove`} label={t('team.remove')} danger confirmText={t('common.confirmArchive')} />}
+      </span>
+    );
+  };
+  const memberName = (m: Member) => (
+    <Link href={`/team/members/${m.membershipId}`} className="underline">{m.user.displayName}{m.user.id === me.userId ? ` ${t('team.you')}` : ''}</Link>
+  );
+  const inviteRoles = (i: Invitation) => i.roles.map((r) => roleById.get(r.roleId) ?? '—').join(', ');
+  const revoke = (i: Invitation) =>
+    canManage && i.status === 'PENDING' ? <RowAction url={`/api/v1/invitations/${i.id}/revoke`} label={t('team.revokeInvite')} danger /> : null;
 
   return (
     <div className="flex flex-col gap-8">
@@ -44,42 +70,42 @@ export default async function TeamPage() {
       <section>
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <h2 className="section-title pt-2">{t('team.members')}</h2>
-          {canManage && roles && <InviteForm roles={roles.data} branches={(branches?.data ?? []).filter((b) => !b.archivedAt)} />}
+          {canManage && roles && <InviteForm roles={roles.data.filter((r) => !r.archivedAt)} branches={(branches?.data ?? []).filter((b) => !b.archivedAt)} />}
         </div>
-        <Note denom="green" className="overflow-x-auto pr-2">
+        <Note denom="green" className="pr-2">
           {members && members.data.length > 0 ? (
-            <table className="tbl">
-              <thead><tr><th>{t('team.name')}</th><th>{t('team.role')}</th><th>{t('team.scope')}</th><th>{t('common.status')}</th><th /></tr></thead>
-              <tbody>
-                {members.data.map((m) => {
-                  const isMe = m.user.id === me.userId;
-                  return (
-                    <tr key={m.membershipId} className={m.status !== 'ACTIVE' ? 'text-muted' : ''}>
-                      <td>
-                        <Link href={`/team/members/${m.membershipId}`} className="block font-semibold underline">{m.user.displayName}{isMe ? ` ${t('team.you')}` : ''}</Link>
-                        <span className="text-[0.8125rem] text-muted">{m.user.email}</span>
-                      </td>
-                      <td>{m.roles.map((r) => roleName.get(r.roleKey) ?? r.roleKey).join(', ') || '—'}</td>
-                      <td><Serial className="text-ink">{m.roles.map((r) => scopeLabel(r.scopeType, r.scopeId)).join(', ') || '—'}</Serial></td>
-                      <td><span className="tag">{status(m.status)}</span></td>
-                      <td className="text-right whitespace-nowrap">
-                        {canManage && !isMe && m.status === 'ACTIVE' && (
-                          <RowAction url={`/api/v1/members/${m.membershipId}/suspend`} label={t('team.suspend')} />
-                        )}
-                        {canManage && !isMe && m.status === 'SUSPENDED' && (
-                          <RowAction url={`/api/v1/members/${m.membershipId}/reactivate`} label={t('team.reactivate')} />
-                        )}{' '}
-                        {canManage && !isMe && m.status !== 'REMOVED' && (
-                          <RowAction url={`/api/v1/members/${m.membershipId}/remove`} label={t('team.remove')} danger confirmText={t('common.confirmArchive')} />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+            <RecordTable
+              rows={members.data}
+              rowKey={(m) => m.membershipId}
+              dimmed={(m) => m.status !== 'ACTIVE'}
+              columns={[
+                {
+                  header: t('team.name'),
+                  cell: (m) => (
+                    <>
+                      <span className="block font-semibold">{memberName(m)}</span>
+                      <span className="text-[0.8125rem] text-muted">{m.user.email}</span>
+                    </>
+                  ),
+                },
+                { header: t('team.role'), cell: memberRoles },
+                { header: t('team.scope'), cell: (m) => <Serial className="text-ink">{memberScopes(m)}</Serial> },
+                { header: t('common.status'), cell: (m) => <span className="tag">{status(m.status)}</span> },
+                { header: '', cell: (m) => <div className="text-right whitespace-nowrap">{memberActions(m)}</div> },
+              ]}
+              stacked={{
+                title: memberName,
+                meta: (m) => (
+                  <>
+                    <span className="block break-all">{m.user.email}</span>
+                    <span className="block">{memberRoles(m)} · {memberScopes(m)} · {status(m.status)}</span>
+                  </>
+                ),
+                figure: memberActions,
+              }}
+            />
           ) : (
-            <Empty>{members ? t('loc.empty') : t('common.noAccess')}</Empty>
+            <Empty>{members ? t('team.noMembers') : t('common.noAccess')}</Empty>
           )}
         </Note>
       </section>
@@ -89,26 +115,32 @@ export default async function TeamPage() {
           <div className="mb-3 flex min-h-9 items-center">
             <h2 className="section-title">{t('team.invitations')}</h2>
           </div>
-          <Note denom="green" className="overflow-x-auto pr-2">
+          <Note denom="green" className="pr-2">
             {invites && invites.data.length > 0 ? (
-              <table className="tbl">
-                <thead><tr><th>{t('auth.email')}</th><th>{t('team.role')}</th><th>{t('common.status')}</th><th /></tr></thead>
-                <tbody>
-                  {invites.data.map((i) => (
-                    <tr key={i.id} className={i.status !== 'PENDING' ? 'text-muted' : ''}>
-                      <td>
+              <RecordTable
+                rows={invites.data}
+                rowKey={(i) => i.id}
+                dimmed={(i) => i.status !== 'PENDING'}
+                columns={[
+                  {
+                    header: t('auth.email'),
+                    cell: (i) => (
+                      <>
                         <span className="block">{i.email}</span>
                         <span className="text-[0.8125rem] text-muted">{formatDateTime(i.createdAt, lang)}</span>
-                      </td>
-                      <td>{i.roles.map((r) => roleById.get(r.roleId) ?? '—').join(', ')}</td>
-                      <td><span className="tag">{status(i.status)}</span></td>
-                      <td className="text-right">
-                        {canManage && i.status === 'PENDING' && <RowAction url={`/api/v1/invitations/${i.id}/revoke`} label={t('team.revokeInvite')} danger />}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </>
+                    ),
+                  },
+                  { header: t('team.role'), cell: inviteRoles },
+                  { header: t('common.status'), cell: (i) => <span className="tag">{status(i.status)}</span> },
+                  { header: '', cell: (i) => <div className="text-right">{revoke(i)}</div> },
+                ]}
+                stacked={{
+                  title: (i) => <span className="break-all">{i.email}</span>,
+                  meta: (i) => `${inviteRoles(i)} · ${status(i.status)} · ${formatDateTime(i.createdAt, lang)}`,
+                  figure: revoke,
+                }}
+              />
             ) : (
               <Empty>{invites ? t('team.emptyInvites') : t('common.noAccess')}</Empty>
             )}

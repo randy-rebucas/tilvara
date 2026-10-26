@@ -575,7 +575,7 @@ export class SyncService extends TenantService {
   }
 
   /**
-   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED, PRESCRIPTION_REVIEW on sales before 0112, and
+   * `flags`: what the recorded sale was flagged with (PRICE_CHANGED, SNAPSHOT_EXPIRED, CLOCK_ADJUSTED, and
    * EXPIRED_STOCK when it drew expired or held lots); [] otherwise.
    * `recordedAt`: when the sale counts as having happened (the device time, clamped into the shift); `occurredAt` is
    * what the till's clock said.

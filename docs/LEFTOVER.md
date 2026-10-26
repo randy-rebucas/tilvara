@@ -38,7 +38,8 @@ Latent: none of these has a row on the dev DB, and there is no production DB yet
 Clean-up left:
 - ⬜ `journal_entries_source_check` (and the TS schema) still allows `SALE_TIP_REFUND`, though 0113 deleted every such entry; drop it with the next migration that touches the check.
 - ⬜ No integration test returns an old sale paid with a retired tender (`TENDER_RETIRED`, unit test only) or an old sale with `sale_charges`.
-- ⬜ Kept as scaffolding: the business-type change path (`business.service.ts`; superseded by extensions, ADR-0026: drop it with the column when nothing reads `businessType`), `PERSONAL_KEYS` for retired fields (over-redaction is harmless), account 2200 in new charts, the sale-side `serviceCharge` in `salePosting`.
+- ✅ The business-type change path is gone (session 36): `PATCH /v1/business` renames only; a `businessType` beside a name is dropped, alone it is 400.
+- ⬜ Kept as scaffolding: `PERSONAL_KEYS` for retired fields (over-redaction is harmless), the sale-side `serviceCharge` in `salePosting`.
 
 ## Extensions (session 35, ADR-0026)
 - ⬜ No extension ships yet; pharmacy is the first planned (its own slice: manifest, migration, module, screens, guide, E2E).
@@ -46,6 +47,20 @@ Clean-up left:
 - ⬜ The till takes its extension list from `/me` at sign-in; the snapshot's `extensions` is not read by the till yet (nothing offline depends on it until an extension's till screen does).
 - ⬜ A plan downgrade or an extension withdrawn from the catalog does not bump the catalog version (switching does), so a till shows the extension's screens until its next snapshot refresh (≤ 10 minutes online); its writes are refused by the server meanwhile.
 - ⬜ `tenants.business_type` (always RETAIL) and `businessType` on `/me` are kept for older tills; drop them in a later migration.
+
+## Retail fit audit, per area (session 36, 2026-10-26)
+The user audits one area at a time for what does not fit a retail shop.
+- ✅ Subscription (Plan, Business, Extensions, Your records, Support access, Integrations; copy, guide, API, plans, scopes, topics, export lists): nothing left from the removed industries. Fixed: the business-type update path; the Plan tab now lists what the plan includes (features and allowed extensions; `GET /v1/subscription` adds `plan.extensions`); the tabs show only what the person may read.
+- ⬜ The Subscription band item needs `subscription.manage` or `tenant.manage`: a member with only `integrations.manage` cannot reach Integrations from the band.
+- ✅ Team (members, invitations, roles, member and role pages, forms, permission catalog and role templates, copy, guide, audit filter): nothing left from the removed industries. Fixed: the invite form no longer offers archived roles; a member with access to one legal entity shows its name (was `LEGAL_ENTITY`); the access hint names legal entities; Members and Invitations use `RecordTable` (stacked on a phone).
+- ⬜ By design (0112): 8 dev businesses keep "Pharmacist" / "Pharmacy Assistant" as their own custom roles because members hold them (retail codes only now); the owner may rename or archive them. The audit log keeps entries of the removed industries as history (append-only).
+- ✅ Locations (entities, branches, registers, terminals, entity page and tax registration, forms, schemas, tables, copy, guide): nothing left from the removed industries. Fixed: the pairing panel and the terminals list show the terminal id the desktop till asks for (the admin showed only the key, so a till could not be set up from the admin alone); a register with an open shift cannot be archived (409 `SHIFT_OPEN`); revoking a terminal asks why (was a fixed "Revoked from admin"); entities and registers on `RecordTable`, terminals as rows.
+- ✅ Offline sales (page, till health, review tabs, envelope schema, flags, copy, guide): the `PRESCRIPTION_REVIEW` flag removed from the page, EN/FIL copy and the API comment (the server cannot give it; no sale carries it). A refusal code the screen has no words for now reads `off.why.other` in the reader's language with the server's detail; `ARCHIVED` and `TAX_PROFILE_MISSING` got words though neither is reachable today (archive order + open-shift guard; every entity has a profile). Kept on purpose: the envelope's retired fields (tips, staff, prescriptions) → VALIDATION_FAILED.
+- ⬜ The `off.why.other` fallback was not seen rendered: no reachable code produces it on the dev DB (editing a quarantined row by hand was declined).
+- ✅ Reports (all 15 reports, chrome, CSV export, API queries, copy, guide): retail. Tender methods now read in words everywhere (`tenderLabel`, `apps/admin-web/src/lib/tenders.ts`, `tender.*` EN/FIL: By tender, Payments to check, Z-reading, the sale page, CSVs), retired ROOM_CHARGE / JOB_DEPOSIT as "… (no longer offered)"; the guide lists Promotions and Sizes and colours; the SC/PWD book no longer returns `purchase_booklet`. Kept as history: By product's service-charge line (only when old charges fall in range), the ROOM_CHARGE refund share in `refund-parts.ts`, the `purchase_booklet` column and its receipt field.
+- ✅ Books (journal, trial balance, chart, periods, entry page, forms, ledger): migration 0116 deleted the lodging/laundry accounts no chart posted to (1,724 on the dev DB; 4110 Cancellation fees everywhere) and archived the 82 that were posted to (balances and history stay in the trial balance; they leave the pickers); 2200 Service charge payable left `DEFAULT_CHART`, deleted where unused (283), active in the 25 charts that took charges. History entries already read "(retired)".
+- ⬜ No way to archive an account: the API has `POST /v1/accounts` only (offered to the user as an optional addition, not built).
+- ⬜ Next areas to audit: the user's call.
 
 ## Session 33 — retail only (2026-10-25)
 The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migration 0112): salons, recipes, tips and prescriptions went with them; packs, expiry lots, lot codes, lot holds, the batch trace and the expired-stock rule stay for every shop.

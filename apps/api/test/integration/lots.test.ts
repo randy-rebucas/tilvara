@@ -37,10 +37,9 @@ afterAll(async () => {
 /** A date `days` from today in Manila (the branches' default timezone). */
 const day = (days: number) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(Date.now() + days * 86_400_000));
 
-async function store(prefix: string, businessType?: string) {
+async function store(prefix: string) {
   const t = await signup(app, prefix);
   const auth = bearer(t.access);
-  if (businessType) await http().patch('/v1/business').set(auth).send({ businessType }).expect(200);
   const le = await http().post('/v1/legal-entities').set(auth).send({ registeredName: `${prefix} Store`, vatStatus: 'VAT' }).expect(201);
   const branchId = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le.body.id, code: 'B1', name: 'One' }).expect(201)).body.id as string;
   const branch2 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: le.body.id, code: 'B2', name: 'Two', birBranchCode: '00001' }).expect(201)).body.id as string;

@@ -22,7 +22,7 @@ describe('report CSV', () => {
 
   it('keeps exact decimal strings: tender report', () => {
     const rows = reportRows('tenders', { data: [{ method: 'CASH', tenders: 2, collected: '60.80', refundsCount: 1, refunded: '22.40', net: '38.40' }] }, t);
-    expect(rows).toEqual([['Method', 'Count', 'Collected', 'Returns count', 'Refunded', 'Net'], ['CASH', 2, '60.80', 1, '22.40', '38.40']]);
+    expect(rows).toEqual([['Method', 'Count', 'Collected', 'Returns count', 'Refunded', 'Net'], ['Cash', 2, '60.80', 1, '22.40', '38.40']]);
   });
 
   it('sales summary: three rows per day (sales, returns, net) in the receipt buckets', () => {
