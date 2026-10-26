@@ -147,7 +147,7 @@ function AddCombinationsFields({ close, product }: { close: () => void; product:
     <div className="flex flex-col gap-4">
       <p className="-mt-2 text-[0.875rem] text-muted">{t('vgrid.pageHint')}</p>
       <fieldset disabled={plan !== null} className="flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 @lg:grid-cols-3">
         <TextField label={t('vgrid.baseSku')} value={base} onChange={(e) => setBase(e.target.value)} hint={t('vgrid.baseSkuHint')} />
         <TextField label={`${t('prod.price')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} error={priceOk ? undefined : t('vgrid.badAmount')} />
         <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={cost} onChange={(e) => setCost(e.target.value)} error={costOk ? undefined : t('vgrid.badAmount')} />
@@ -176,5 +176,5 @@ function AddCombinationsFields({ close, product }: { close: () => void; product:
 
 export function AddCombinations({ product }: { product: ProductDetail }) {
   const { t } = useT();
-  return <Disclosure label={t('vgrid.addTitle')}>{(close) => <AddCombinationsFields close={close} product={product} />}</Disclosure>;
+  return <Disclosure wide label={t('vgrid.addTitle')}>{(close) => <AddCombinationsFields close={close} product={product} />}</Disclosure>;
 }

@@ -31,7 +31,7 @@ await receive('12', '12.50'); // ₱150.00
 
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9356 });
-const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScroll } = b;
+const { evaluate, viewport, waitFor, go, fill, clickText, openSheet, sheetShown, shot, noHorizontalScroll } = b;
 const text = () => evaluate('document.body.innerText');
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
 const submitVisible = (label) => evaluate(`[...document.querySelectorAll('form button')].filter((x) => x.getClientRects().length && x.textContent.trim() === ${JSON.stringify(label)}).at(-1).click()`);
@@ -54,7 +54,7 @@ try {
   await fill('supplier', sup.id);
   await clickText('Find receipts');
   await waitFor(`location.search.includes('supplier=')`);
-  await clickText('Enter a supplier invoice');
+  await openSheet('Enter a supplier invoice');
   await waitFor(`document.querySelector('input[name="invoiceNumber"]')`);
   check('both uninvoiced receipts are offered with what they hold', /₱288\.00/.test(await text()) && /₱150\.00/.test(await text()));
   // Tick both receipts.
@@ -148,6 +148,7 @@ try {
   await clickText('Show open invoices');
   await waitFor(`location.search.includes('pay=')`);
   await waitFor(`document.body.innerText.includes('SI-901')`);
+  await sheetShown();
   // "Still owed" fills each line with its balance.
   await evaluate(`[...document.querySelectorAll('form button')].filter((x) => x.getClientRects().length && x.textContent.trim() === 'Still owed').forEach((x) => x.click())`);
   check('the payment adds up both open balances', await shown('Payment total: ₱156.80'));

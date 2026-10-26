@@ -38,7 +38,7 @@ function EntityFields({ close }: { close: () => void }) {
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('loc.registeredName')} name="registeredName" required autoFocus error={fieldError('registeredName')} />
       <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} error={fieldError('tin')} />
       <SelectField label={t('loc.vat')} name="vatStatus" defaultValue="VAT">
@@ -74,7 +74,7 @@ function EditEntityFields({ close, entity }: { close: () => void; entity: LegalE
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <TextField label={t('loc.registeredName')} name="registeredName" required autoFocus defaultValue={entity.registeredName} error={fieldError('registeredName')} />
       <TextField label={`${t('loc.tradeName')} (${t('common.optional')})`} name="tradeName" defaultValue={entity.tradeName ?? ''} error={fieldError('tradeName')} />
       <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} defaultValue={entity.tin ?? ''} error={fieldError('tin')} />
@@ -108,7 +108,7 @@ function BranchFields({ close, entities }: { close: () => void; entities: LegalE
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-4" noValidate>
       <SelectField label={t('loc.entityOne')} name="legalEntityId">
         {entities.map((e) => <option key={e.id} value={e.id}>{e.registeredName}</option>)}
       </SelectField>
@@ -188,7 +188,7 @@ function RegisterFields({ close, branches }: { close: () => void; branches: Bran
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <SelectField label={t('loc.branchOne')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
@@ -221,7 +221,7 @@ function TerminalFields({ close, registers, onPaired }: { close: () => void; reg
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <SelectField label={t('loc.registerOne')} name="registerId">
         {registers.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
       </SelectField>

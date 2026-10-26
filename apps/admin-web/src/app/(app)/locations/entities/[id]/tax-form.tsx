@@ -32,7 +32,7 @@ function Fields({ close, legalEntityId, current }: { close: () => void; legalEnt
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <p className="col-span-full -mt-1 text-[0.875rem] text-muted">{t('tax.changeHint')}</p>
       <SelectField label={t('loc.vat')} name="vatStatus" defaultValue={current === 'VAT' ? 'NON_VAT' : 'VAT'}>
         <option value="VAT">{t('tax.vatOption')}</option>

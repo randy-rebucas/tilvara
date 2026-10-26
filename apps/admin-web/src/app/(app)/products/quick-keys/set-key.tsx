@@ -12,7 +12,7 @@ function Fields({ close, options, taken }: { close: () => void; options: { id: s
   const free = Array.from({ length: 48 }, (_, i) => i + 1).filter((n) => !taken[n]);
   return (
     <form
-      className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
+      className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
       noValidate
       onSubmit={async (e) => {
         e.preventDefault();

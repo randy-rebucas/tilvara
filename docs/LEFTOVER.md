@@ -50,6 +50,10 @@ Clean-up left:
 - ⬜ A plan downgrade or an extension withdrawn from the catalog does not bump the catalog version (switching does), so a till shows the extension's screens until its next snapshot refresh (≤ 10 minutes online); its writes are refused by the server meanwhile.
 - ⬜ `tenants.business_type` (always RETAIL) and `businessType` on `/me` are kept for older tills; drop them in a later migration.
 
+## Admin forms in slide-over sheets (session 36, 2026-10-26)
+- Open: the E2E suites not yet run against the sheets: smoke, integrations, onboarding, security, account and offline. Run them with the API at `RATE_LIMITS_ENABLED=false` and the worker. A script that clicks a sheet's button right after a full page load should use `openSheet()` (`e2e/cdp.mjs`).
+- Choice: the business-name form (Subscription → Business) and Take Z-reading stay on the page, because each is the page's only control. Move them into sheets if wanted.
+
 ## Retail fit audit, per area (session 36, 2026-10-26)
 The user audits one area at a time for what does not fit a retail shop.
 - ✅ Subscription (Plan, Business, Extensions, Your records, Support access, Integrations; copy, guide, API, plans, scopes, topics, export lists): nothing left from the removed industries. Fixed: the business-type update path; the Plan tab now lists what the plan includes (features and allowed extensions; `GET /v1/subscription` adds `plan.extensions`); the tabs show only what the person may read.

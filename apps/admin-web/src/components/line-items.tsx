@@ -46,7 +46,7 @@ export function LineItems({
   return (
     <div className="col-span-full flex flex-col gap-2">
       {rows.map((row, i) => (
-        <div key={row} className="grid gap-2 rounded-[5px] border border-hair-soft p-2 sm:border-0 sm:p-0 sm:[grid-template-columns:var(--cols)]" style={{ '--cols': cols } as React.CSSProperties}>
+        <div key={row} className="grid gap-2 rounded-[5px] border border-hair-soft p-2 @lg:border-0 @lg:p-0 @lg:[grid-template-columns:var(--cols)]" style={{ '--cols': cols } as React.CSSProperties}>
           {fields.map((f) => {
             const name = `lines.${i}.${f.name}`;
             const id = `${base}-${row}-${f.name}`;
@@ -54,7 +54,7 @@ export function LineItems({
             const value = initial?.[row]?.[f.name] ?? '';
             return (
               <div key={f.name} className="field min-w-0">
-                <label htmlFor={id} className={i > 0 ? 'sm:sr-only' : undefined}>{f.label}</label>
+                <label htmlFor={id} className={i > 0 ? '@lg:sr-only' : undefined}>{f.label}</label>
                 {f.kind === 'select' ? (
                   <select id={id} name={name} className="input" defaultValue={value} aria-invalid={error ? true : undefined}>
                     <option value="" disabled>—</option>
@@ -67,7 +67,7 @@ export function LineItems({
               </div>
             );
           })}
-          <div className={`flex items-end ${i === 0 ? 'sm:pt-[1.55rem]' : ''}`}>
+          <div className={`flex items-end ${i === 0 ? '@lg:pt-[1.55rem]' : ''}`}>
             <button
               type="button"
               className="btn h-[2.4rem] px-2.5"

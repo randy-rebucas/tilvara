@@ -18,6 +18,15 @@ Runbooks: `docs/operations/README.md`. Privacy pack: `docs/compliance/privacy/RE
 
 The exit criterion is judged on real pilot days and needs the user's decisions D1–D6 (listed in the ADR and in "Next task"). **Slices 1–6 and 8 are done** (below), and the slice 8 privacy gaps that need no decision were closed in session 14. Next: slice 7 (deployment) needs D1 and D3; slice 9 (UAT and pilot) needs D4–D6. The privacy pack waits on the DPO's review (G6), and so do the purge and anonymisation jobs (they need the retention periods). Other open LEFTOVER items that need no decision can go on meanwhile.
 
+## Session 36 — admin forms in slide-over sheets (2026-10-26)
+The user asked for every admin form to open as a modal sliding in from the right.
+- `Sheet` (`apps/admin-web/src/components/sheet.tsx`): native `<dialog>` with `showModal()`, so focus stays inside it and the page behind can't be used. It closes on save, Cancel, ×, Esc or a click on the dimmed page, and focus goes back to the button that opened it. Page scroll is locked while it is open. It is 36rem wide, or 56rem with `wide` (forms with line items or many columns), and full width on a phone.
+- `Disclosure` (58 add/edit forms), `ReasonAction` (reverse, reopen, release, anonymise…), the new/copy promotion form and the batch supplier payment (opens itself once the open invoices are shown) all use it. Search and filter forms stay on the page. Sign-in and other account pages stay as full pages, and so do the business-name and Z-reading forms.
+- Form layouts inside sheets use container queries (`@lg:`/`@2xl:`/`@3xl:` in place of `sm:`/`md:`/`lg:`), so they follow the sheet's width, not the window's. New copy: `common.close` (EN/FIL). DESIGN.md has the new rule: sheets, no centred modals.
+- E2E: `cdp.mjs` gains `openSheet(label)`, which clicks again if the first click lands before hydration, and `sheetShown()`; `payables.mjs` uses them.
+
+**Verified:** `pnpm --filter @1pos/admin-web typecheck` and `pnpm lint` clean, `pnpm --filter @1pos/admin-web test` 55/55. E2E against `next dev` (setup API on :4322 with `RATE_LIMITS_ENABLED=false`): backoffice 57/57, payables 36/36, packs 36/36, stock 22/22, retail 20/20, customers 21/21, inventory-extras 13/13, drawers 19/19, extensions 13/13, analysis 12/12, guide 19/19. These failed on the first run and passed on a rerun: packs, at the Release button; stock, at the count sheet and the Filipino step. Not run: smoke (the admin's sign-up hit the rate limit of the API on :4320), integrations, onboarding, security, account and offline (they need the worker or a fresh setup).
+
 ## Session 36 — retail fit audit: Subscription (2026-10-26)
 The user audits the app one area at a time for what does not fit a retail shop, starting with Subscription (all six tabs, their components, copy, guide part, API, plans, API-key scopes, webhook topics, export lists).
 - **Found:** nothing left from the removed industries on screen or in the plans. The leftovers and gaps fixed:

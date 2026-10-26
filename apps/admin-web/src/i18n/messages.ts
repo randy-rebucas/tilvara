@@ -485,6 +485,7 @@ export const en = {
 
   'common.save': 'Save',
   'common.cancel': 'Cancel',
+  'common.close': 'Close',
   'common.create': 'Create',
   'common.status': 'Status',
   'common.active': 'Active',
@@ -2629,6 +2630,7 @@ export const fil: Record<MessageKey, string> = {
 
   'common.save': 'I-save',
   'common.cancel': 'Kanselahin',
+  'common.close': 'Isara',
   'common.create': 'Gumawa',
   'common.status': 'Katayuan',
   'common.active': 'Aktibo',

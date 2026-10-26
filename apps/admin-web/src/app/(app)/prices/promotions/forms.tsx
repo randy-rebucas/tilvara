@@ -4,6 +4,7 @@ import { Plus, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
+import { Sheet } from '@/components/sheet';
 import { FormError, SelectField, TextField } from '@/components/fields';
 import { ItemPicker, variantLabel, type PickProduct } from '@/components/item-picker';
 import { useFormKey, useSubmit } from '@/components/use-submit';
@@ -128,7 +129,7 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @lg:grid-cols-2">
         <TextField label={t('promo.name')} name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t('promo.nameHint')} error={fieldError('name')} />
         <SelectField label={t('promo.kind')} value={kind} onChange={(e) => setKind(e.target.value as PromotionKind)}>
           {KINDS.map((k) => <option key={k} value={k}>{t(`promo.kind.${k}` as MessageKey)}</option>)}
@@ -139,13 +140,13 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
         <legend className="mb-1 font-semibold">{t('promo.terms')}</legend>
         <p className="-mt-1 text-[0.875rem] text-muted">{t(`promo.explain.${kind}` as MessageKey)}</p>
         {kind === 'MULTI_BUY' && (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
             <TextField label={t('promo.quantity')} inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} error={fieldError('quantity')} />
             <TextField label={t('promo.price')} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} hint={t('promo.priceHint')} error={fieldError('price')} />
           </div>
         )}
         {kind === 'BUY_X_GET_Y' && (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
             <TextField label={t('promo.buy')} inputMode="numeric" value={buy} onChange={(e) => setBuy(e.target.value)} error={fieldError('buyQuantity')} />
             <TextField label={t('promo.get')} inputMode="numeric" value={get} onChange={(e) => setGet(e.target.value)} error={fieldError('getQuantity')} />
             <SelectField label={t('promo.getAt')} value={free ? 'free' : 'off'} onChange={(e) => setFree(e.target.value === 'free')}>
@@ -158,7 +159,7 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
         {kind === 'QUANTITY_BREAK' && (
           <div className="flex flex-col gap-2">
             {tiers.map((tier, i) => (
-              <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2 sm:max-w-[520px]">
+              <div key={i} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-end gap-2 @lg:max-w-[520px]">
                 <TextField label={t('promo.tierMin')} labelClassName={i > 0 ? 'sr-only' : undefined} inputMode="decimal" value={tier.min} onChange={(e) => setTiers((all) => all.map((x, k) => (k === i ? { ...x, min: e.target.value } : x)))} error={fieldError(`tiers.${i}.minQuantity`)} />
                 <TextField label={t('promo.percentOff')} labelClassName={i > 0 ? 'sr-only' : undefined} inputMode="decimal" value={tier.pct} onChange={(e) => setTiers((all) => all.map((x, k) => (k === i ? { ...x, pct: e.target.value } : x)))} error={fieldError(`tiers.${i}.rate`)} />
                 <button type="button" className="btn h-[2.4rem] px-2.5" aria-label={t('promo.removeTier', { n: i + 1 })} disabled={tiers.length <= 1} onClick={() => setTiers((all) => all.filter((_, k) => k !== i))}>
@@ -241,7 +242,7 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
         </fieldset>
       )}
 
-      <fieldset className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <fieldset className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3">
         <legend className="mb-1 font-semibold">{t('promo.when')}</legend>
         <SelectField label={t('promo.starts')} value={startLater ? 'later' : 'now'} onChange={(e) => setStartLater(e.target.value === 'later')}>
           <option value="now">{t('promo.startNow')}</option>
@@ -274,18 +275,15 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
 export function NewPromotion({ products, branches, copyOf }: { products: PickProduct[]; branches: { id: string; code: string; name: string }[]; copyOf: Promotion | null }) {
   const { t } = useT();
   const [open, setOpen] = useState(!!copyOf);
-  if (!open) {
-    return (
-      <button type="button" className="btn" onClick={() => setOpen(true)}>
+  return (
+    <>
+      <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         <Plus aria-hidden className="size-4" /> {t('promo.new')}
       </button>
-    );
-  }
-  return (
-    <div className="w-full rounded-[5px] border border-hair bg-white p-4">
-      <p className="mb-3 font-semibold">{copyOf ? t('promo.copyTitle', { name: copyOf.name }) : t('promo.new')}</p>
-      <PromotionFields close={() => setOpen(false)} products={products} branches={branches} copyOf={copyOf} />
-    </div>
+      <Sheet open={open} wide title={copyOf ? t('promo.copyTitle', { name: copyOf.name }) : t('promo.new')} onClose={() => setOpen(false)}>
+        <PromotionFields close={() => setOpen(false)} products={products} branches={branches} copyOf={copyOf} />
+      </Sheet>
+    </>
   );
 }
 
@@ -304,7 +302,7 @@ function RenameFields({ close, promotion }: { close: () => void; promotion: { id
   const { pending, submit, fieldError, error } = useSubmit();
   return (
     <form
-      className="grid gap-3 sm:grid-cols-2"
+      className="grid gap-3 @lg:grid-cols-2"
       noValidate
       onSubmit={async (e) => {
         e.preventDefault();

@@ -49,7 +49,7 @@ function SupplierFields({ close, supplier }: { close: () => void; supplier?: Sup
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
       <TextField label={t('pur.supplierName')} name="name" required autoFocus defaultValue={supplier?.name} error={fieldError('name')} />
       <TextField label={t('pur.supplierCode')} name="code" required placeholder="SUP-01" defaultValue={supplier?.code} error={fieldError('code')} />
       <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" defaultValue={supplier?.tin ?? ''} error={fieldError('tin')} />
@@ -95,7 +95,7 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
       <SelectField label={t('pur.supplierOne')} name="supplierId">
         {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
       </SelectField>
@@ -122,7 +122,7 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
 
 export function NewOrderForm(props: { branches: Branch[]; suppliers: Supplier[]; variants: VariantOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('pur.newOrder')}>{(close) => <OrderFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('pur.newOrder')}>{(close) => <OrderFields close={close} {...props} />}</Disclosure>;
 }
 
 /** A draft's supplier, date, reference and lines; the lines sent replace all lines. */
@@ -144,7 +144,7 @@ function DraftFields({ close, order, suppliers, variants }: { close: () => void;
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
       <SelectField label={t('pur.supplierOne')} name="supplierId" defaultValue={order.supplierId}>
         {[...suppliers.filter((s) => s.id !== order.supplierId), order.supplier].map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
       </SelectField>
@@ -169,7 +169,7 @@ function DraftFields({ close, order, suppliers, variants }: { close: () => void;
 
 export function EditDraftForm(props: { order: PurchaseOrder; suppliers: Supplier[]; variants: VariantOption[] }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('pur.editDraft')}>{(close) => <DraftFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide kind="edit" label={t('pur.editDraft')}>{(close) => <DraftFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- supplier return
@@ -206,7 +206,7 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
       <TextField label={t('common.reason')} name="reason" required autoFocus error={fieldError('reason')} />
       <ul className="flex flex-col gap-3">
         {open.map((l, i) => (
-          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] sm:items-end">
+          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] @lg:items-end">
             <div className="min-w-0">
               <div className="font-semibold">{names[l.variantId]?.name ?? '—'}</div>
               <div className="serial text-[0.8125rem] text-muted">
@@ -224,7 +224,7 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
 
 export function ReturnForm(props: { receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }> }) {
   const { t } = useT();
-  return <Disclosure label={t('pur.returnToSupplier')}>{(close) => <ReturnFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('pur.returnToSupplier')}>{(close) => <ReturnFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- receiving
@@ -269,13 +269,13 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.receiveHint')}{open.some((l) => l.tracksExpiry) ? ` ${t('pur.expiresHint')}` : ''}</p>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @lg:grid-cols-2">
         <TextField label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
         <TextField label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
       </div>
       <ul className="flex flex-col gap-3">
         {open.map((l, i) => (
-          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))] lg:items-end">
+          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-2 @3xl:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))] @3xl:items-end">
             <div className="min-w-0">
               <div className="font-semibold">{l.name}</div>
               <div className="serial text-[0.8125rem] text-muted">{l.sku} · {t('pur.remaining')} {qty(l.remainingQuantity)}</div>
@@ -300,7 +300,7 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
 
 export function ReceiveForm({ order }: { order: PurchaseOrder }) {
   const { t } = useT();
-  return <Disclosure label={t('pur.receive')}>{(close) => <ReceiveFields close={close} order={order} />}</Disclosure>;
+  return <Disclosure wide label={t('pur.receive')}>{(close) => <ReceiveFields close={close} order={order} />}</Disclosure>;
 }
 
 /**
@@ -329,7 +329,7 @@ function UnorderedReceiptFields({ close, branches, suppliers, variants, dated }:
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
       <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('pur.receiveNoOrderHint')}{dated ? ` ${t('pur.expiresHint')}` : ''}</p>
       <SelectField label={t('pur.supplierOne')} name="supplierId">
         {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
@@ -363,7 +363,7 @@ function UnorderedReceiptFields({ close, branches, suppliers, variants, dated }:
 
 export function UnorderedReceiptForm(props: { branches: Branch[]; suppliers: Supplier[]; variants: VariantOption[]; dated: boolean }) {
   const { t } = useT();
-  return <Disclosure label={t('pur.receiveNoOrder')}>{(close) => <UnorderedReceiptFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('pur.receiveNoOrder')}>{(close) => <UnorderedReceiptFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- supplier catalog (session 20)
@@ -387,9 +387,9 @@ function SupplierItemFields({ close, supplierId, variants, item }: { close: () =
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
       {!item && (
-        <div className="sm:col-span-2">
+        <div className="@lg:col-span-2">
           <SelectField label={t('common.item')} name="variantId">
             {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
           </SelectField>

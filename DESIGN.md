@@ -178,7 +178,7 @@ components:
 
 The admin reads like Philippine currency. On a banknote, the colour tells you the denomination at a glance and the serial number tells you exactly which note you're holding. Here, a record's denomination colour shows what kind of record it is (catalog, location, register, team), and a tracked, tabular serial line shows which one it is (SKU, branch code, TIN, count). An owner should be able to tell what kind of record a panel holds, and which one, before reading its title.
 
-The surface is warm note-paper. Records sit on it as pure white "notes". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and inline forms that keep a task on the page instead of moving it into a modal. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.
+The surface is warm note-paper. Records sit on it as pure white "notes". Each note has a faint inner frame (a double hairline, like the guilloche border on a banknote) and a coloured denomination stripe down its right edge. A ₱1000-blue band with faint diagonal security lines runs across the top of every page. Density suits laptop work: 15px body text, compact tables, and forms in a sheet that slides in from the right over the list it changes, so the list stays in view behind it. The world deliberately rejects the grey-sidebar-plus-blue-button SaaS default.
 
 This identity is **provisional**. Tilvara has no logo, brand colours or brand fonts yet (PRODUCT.md, confirmed 2026-10-15). Salapi is the visual world set in code, and a real brand may replace it. Until then, every new admin surface follows it.
 
@@ -189,7 +189,7 @@ This identity is **provisional**. Tilvara has no logo, brand colours or brand fo
 - Serial line in tracked narrow caps with tabular numerals, placed below the title.
 - Money in Archivo Narrow with tabular numerals, right-aligned, never wrapped.
 - Blue band with diagonal security lines across the top.
-- Inline disclosure forms. No modals.
+- Forms in a right-hand slide-over sheet. No centred modals.
 - Bilingual EN/FIL. All copy comes from the message catalog.
 
 ## Colors
@@ -266,7 +266,7 @@ A nested row of tabs (Reports → group → report) is `SubNav level={2}`: small
 
 **Empty lists** (`Empty`) are left-aligned like the rows they stand in for. They say what belongs there in the owner's terms, or what must exist first (a branch needs a legal entity, a register needs a branch), and carry the way to it when there is one (`action`, e.g. `ToLocations`). "Nothing here yet." is only the fallback. Record links inside notes keep a hairline underline that darkens on hover; table rows take the `table-head` fill on hover.
 
-Forms are inline. A "+ Add …" secondary button expands in place into a white bordered panel holding the fields, and it collapses on save or cancel. The task stays in the context of the list it changes.
+Forms open in a sheet (`Sheet`, `components/sheet.tsx`; `Disclosure` and `ReasonAction` use it). A "+ Add …" or "Edit …" secondary button slides a white panel in from the right edge over the dimmed page; its title is the button's label, and it closes on save, Cancel, the × button, Esc or a click on the dimmed page, returning focus to the button. The panel is 36rem wide, or 56rem (`wide`) for forms with line items or many columns, and the full width below that. Form layouts inside it respond to the sheet's width with container queries (`@lg:` ≈ the old `sm:`, `@3xl:` ≈ the old `lg:`), never to the window's. Filters and searches stay inline on the page.
 
 ## Elevation & Depth
 
@@ -289,7 +289,7 @@ Corners are slightly rounded, like trimmed banknote stock: notes 6px, buttons, i
 Restrained and solid: a white secondary button is the default, and blue is reserved for the single next action.
 - **Shape:** gently rounded (5px), 36px tall, 600 weight at 0.875rem, a 6px icon gap, nowrap.
 - **Primary:** Note Blue fill with white text. Used once per view, for the next action (for example "Price your products" or "Sign in"). It may be full width inside a rail note.
-- **Secondary (default):** white with a hairline border and ink text. Opens disclosures with a leading `+` icon. Used for Archive.
+- **Secondary (default):** white with a hairline border and ink text. Opens form sheets with a leading `+` (or pencil) icon. Used for Archive.
 - **Danger:** a secondary button with red text. On hover the border turns red over a faint red wash. Row actions use a compact 32px size.
 - **Hover / Focus:** 120ms ease-out colour transitions. Secondary hover darkens the border to `#b6ae98`. Focus is a 2px blue outline with a 2px offset. Disabled is 55% opacity.
 
@@ -337,7 +337,7 @@ Page content reveals over 380ms (`cubic-bezier(0.16, 1, 0.3, 1)`), rising 4px fr
 - **Do** set every peso amount with the money style, `₱` and centavos from the decimal string, right-aligned and nowrap.
 - **Do** keep panels pure white (`#ffffff`) on note paper (`#f4f1e8`), with the double hairline frame.
 - **Do** use the blue band with diagonal security lines as the top of every page, auth pages included.
-- **Do** add records with an inline disclosure panel that expands in place.
+- **Do** add and edit records in a right-hand sheet (`Disclosure` / `Sheet`), with the list still visible behind it.
 - **Do** turn a table into stacked rows below 768px whenever its key figure would scroll off-screen.
 - **Do** route every string through the EN/FIL message catalog (`src/i18n/messages.ts`).
 - **Do** use blue for status ticks, the "next" marker and selection.
@@ -346,7 +346,7 @@ Page content reveals over 380ms (`cubic-bezier(0.16, 1, 0.3, 1)`), rising 4px fr
 - **Don't** use red for anything other than destructive actions, errors, revoked or read-only states, and exhausted limits.
 - **Don't** use green for success or completion. Green means team.
 - **Don't** put an uppercase tracked line (an eyebrow or kicker) above a heading. Section titles are themselves the `h2`.
-- **Don't** open modals for create or edit flows.
+- **Don't** open centred modals, or put a filter or search in a sheet.
 - **Don't** hard-code UI copy in components, or ship a string in only one language.
 - **Don't** tint panels or float them with hard or offset shadows.
 - **Don't** fall back to a grey sidebar with a generic blue button.

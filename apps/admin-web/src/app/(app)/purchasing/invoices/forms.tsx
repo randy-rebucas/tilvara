@@ -1,8 +1,10 @@
 'use client';
 
+import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
+import { Sheet } from '@/components/sheet';
 import { FormError, SelectField, TextField } from '@/components/fields';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
@@ -69,7 +71,7 @@ function InvoiceFields({ close, supplierId, receipts, today }: { close: () => vo
         <p className="text-[0.875rem]">{t('ap.selectedValue', { amount: peso(selectedValue) })}</p>
         <FormError message={fieldError('goodsReceiptIds')} />
       </fieldset>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3">
         <TextField label={t('ap.invoiceNo')} name="invoiceNumber" required autoFocus error={fieldError('invoiceNumber')} />
         <TextField label={t('ap.invoiceDate')} name="invoiceDate" type="date" required defaultValue={today} max={today} error={fieldError('invoiceDate')} />
         <TextField label={`${t('ap.dueDate')} (${t('common.optional')})`} name="dueDate" type="date" hint={t('ap.dueDateHint')} error={fieldError('dueDate')} />
@@ -88,7 +90,7 @@ function InvoiceFields({ close, supplierId, receipts, today }: { close: () => vo
 
 export function NewInvoiceForm(props: { supplierId: string; receipts: UninvoicedReceipt[]; today: string }) {
   const { t } = useT();
-  return <Disclosure label={t('ap.new')}>{(close) => <InvoiceFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('ap.new')}>{(close) => <InvoiceFields close={close} {...props} />}</Disclosure>;
 }
 
 const METHODS = ['BANK_TRANSFER', 'CHECK', 'OTHER'] as const;
@@ -141,7 +143,7 @@ function PaymentFields({ close, invoiceId, balance, today, drawers }: { close: (
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
       <TextField label={t('ap.amount')} name="amount" inputMode="decimal" required autoFocus defaultValue={balance} error={fieldError('amount')} />
       <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
       <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
@@ -156,7 +158,7 @@ function PaymentFields({ close, invoiceId, balance, today, drawers }: { close: (
 
 export function PaymentForm(props: { invoiceId: string; balance: string; today: string; drawers: DrawerOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('ap.pay')}>{(close) => <PaymentFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('ap.pay')}>{(close) => <PaymentFields close={close} {...props} />}</Disclosure>;
 }
 
 /**
@@ -181,7 +183,7 @@ function NoteFields({ close, invoiceId, today }: { close: () => void; invoiceId:
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
       <p className="col-span-full text-[0.875rem] text-muted">{t('ap.noteHint')}</p>
       <SelectField label={t('ap.noteKind')} name="kind" defaultValue="CREDIT">
         {(['CREDIT', 'DEBIT'] as const).map((k) => <option key={k} value={k}>{t(`ap.noteKind.${k}`)}</option>)}
@@ -202,11 +204,29 @@ function NoteFields({ close, invoiceId, today }: { close: () => void; invoiceId:
 
 export function NoteForm(props: { invoiceId: string; today: string }) {
   const { t } = useT();
-  return <Disclosure label={t('ap.newNote')}>{(close) => <NoteFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('ap.newNote')}>{(close) => <NoteFields close={close} {...props} />}</Disclosure>;
 }
 
-/** One payment over several open invoices of a supplier (session 22): an amount per invoice, at most its balance. */
-export function BatchPaymentForm({ supplierId, invoices, today, drawers }: { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string; drawers: DrawerOption[] }) {
+type BatchPaymentProps = { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string; drawers: DrawerOption[] };
+
+/** One payment over several open invoices of a supplier (session 22); its sheet opens as soon as the invoices are shown. */
+export function BatchPaymentForm(props: BatchPaymentProps) {
+  const { t } = useT();
+  const [open, setOpen] = useState(true);
+  return (
+    <div>
+      <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Plus aria-hidden className="size-4" /> {t('ap.payMany')}
+      </button>
+      <Sheet open={open} wide title={t('ap.payMany')} onClose={() => setOpen(false)}>
+        <BatchPaymentFields {...props} close={() => setOpen(false)} />
+      </Sheet>
+    </div>
+  );
+}
+
+/** An amount per invoice, at most its balance. */
+function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: BatchPaymentProps & { close: () => void }) {
   const { t, lang } = useT();
   const router = useRouter();
   const key = useFormKey();
@@ -245,12 +265,13 @@ export function BatchPaymentForm({ supplierId, invoices, today, drawers }: { sup
       </ul>
       <p className="text-[0.9375rem] font-semibold">{t('ap.payManyTotal', { amount: peso(total) })}</p>
       <FormError message={fieldError('allocations')} />
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 @lg:grid-cols-3">
         <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
         <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <button className="btn btn-primary" disabled={pending || chosen.length === 0}>{t('ap.payManyRecord')}</button>
+        <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
       </div>
     </form>

@@ -59,7 +59,7 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
   const difference = sumDecimal([totals.debit, `-${totals.credit}`.replace('--', '')]);
   const balanced = signOf(difference) === 0 && signOf(totals.debit) > 0;
   return (
-    <form onSubmit={onSubmit} onInput={onInput} className="grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)]" noValidate>
+    <form onSubmit={onSubmit} onInput={onInput} className="grid gap-3 @lg:grid-cols-[12rem_minmax(0,1fr)]" noValidate>
       <TextField label={t('common.date')} name="entryDate" type="date" defaultValue={todayManila()} error={fieldError('entryDate')} />
       <TextField label={t('books.memo')} name="memo" required error={fieldError('memo')} />
       <LineItems
@@ -87,7 +87,7 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
 
 export function ManualEntryForm(props: { legalEntityId: string; accounts: VariantOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('books.newEntry')}>{(close) => <EntryFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('books.newEntry')}>{(close) => <EntryFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- account
@@ -101,7 +101,7 @@ function AccountFields({ close, legalEntityId }: { close: () => void; legalEntit
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('books.code')} name="code" required placeholder="6100" error={fieldError('code')} />
       <TextField label={t('books.accountName')} name="name" required error={fieldError('name')} />
       <SelectField label={t('books.type')} name="type" defaultValue="EXPENSE">
@@ -127,7 +127,7 @@ function CloseFields({ close, legalEntityId, defaultMonth }: { close: () => void
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('books.month')} name="month" type="month" defaultValue={defaultMonth} error={fieldError('month')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('books.closeMonth')} close={close} />
     </form>

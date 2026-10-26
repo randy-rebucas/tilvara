@@ -30,7 +30,7 @@ function GrantFields({ close }: { close: () => void }) {
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
       <TextField label={t('support.purpose')} name="purpose" required autoFocus maxLength={500} hint={t('support.purposeHint')} error={fieldError('purpose')} />
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @lg:grid-cols-2">
         <SelectField label={t('support.hours')} name="hours" defaultValue="24">
           {HOURS.map((h) => <option key={h} value={h}>{t('support.hoursN', { n: h })}</option>)}
         </SelectField>

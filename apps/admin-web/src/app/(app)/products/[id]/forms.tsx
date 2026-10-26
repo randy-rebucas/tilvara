@@ -43,7 +43,7 @@ function ProductFields({ close, product, taxes, categories }: { close: () => voi
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <TextField label={t('prod.name')} name="name" required autoFocus defaultValue={product.name} error={fieldError('name')} />
       <SelectField label={t('prod.tax')} name="taxCategoryId" defaultValue={product.taxCategoryId}>
         {taxes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
@@ -54,17 +54,17 @@ function ProductFields({ close, product, taxes, categories }: { close: () => voi
           {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </SelectField>
       )}
-      <div className="sm:col-span-2">
+      <div className="@lg:col-span-2">
         <TextField label={`${t('prod.description')} (${t('common.optional')})`} name="description" defaultValue={product.description ?? ''} error={fieldError('description')} />
       </div>
       {product.productType === 'STANDARD' && (
-        <label className="flex items-start gap-2 text-[0.9375rem] sm:col-span-2">
+        <label className="flex items-start gap-2 text-[0.9375rem] @lg:col-span-2">
           <input type="checkbox" name="trackInventory" defaultChecked={product.trackInventory} className="mt-1 size-4 accent-[var(--color-blue)]" />
           <span>{t('prod.trackInventory')}<span className="block text-[0.8125rem] text-muted">{t('prod.trackInventoryHint')}</span></span>
         </label>
       )}
       {product.productType === 'STANDARD' && (
-        <label className="flex items-start gap-2 text-[0.9375rem] sm:col-span-2">
+        <label className="flex items-start gap-2 text-[0.9375rem] @lg:col-span-2">
           <input type="checkbox" name="tracksExpiry" checked={expiry} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
           <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
         </label>
@@ -99,7 +99,7 @@ function AddVariantFields({ close, productId }: { close: () => void; productId: 
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-5" noValidate>
       <TextField label={t('prod.variantName')} name="name" required autoFocus placeholder={t('prod.variantNameHint')} error={fieldError('name')} />
       <TextField label={t('prod.sku')} name="sku" required error={fieldError('sku') ?? (error?.code === 'SKU_TAKEN' ? error.message : undefined)} />
       <TextField label={`${t('prod.barcode')} (${t('common.optional')})`} name="barcode" inputMode="numeric" error={fieldError('barcodes.0') ?? (error?.code === 'BARCODE_TAKEN' ? error.message : undefined)} />
@@ -129,7 +129,7 @@ function VariantFields({ close, variant }: { close: () => void; variant: Variant
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <TextField label={`${t('prod.variantName')} (${t('common.optional')})`} name="name" autoFocus defaultValue={variant.name ?? ''} error={fieldError('name')} />
       <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
@@ -200,7 +200,7 @@ function PackLinkFields({ close, variants, packVariantId }: { close: () => void;
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
       <SelectField label={t('prod.packItem')} name="packVariantId" defaultValue={packVariantId}>
         {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
       </SelectField>

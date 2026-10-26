@@ -35,14 +35,14 @@ function RoleFields({ close, role, extensions }: { close: () => void; role?: Rol
   }
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 @lg:grid-cols-2">
         <TextField label={t('team.roleName')} name="name" required autoFocus defaultValue={role?.name} error={fieldError('name')} />
         {!role && <TextField label={t('team.roleKey')} name="key" required hint={t('team.roleKeyHint')} error={fieldError('key')} />}
       </div>
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 text-[0.875rem] font-semibold">{t('team.permissions')}</legend>
         <p className="text-[0.8125rem] text-muted">{t('team.privilegedNote')}</p>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 @2xl:grid-cols-2">
           {permissionGroupsFor(extensions, role?.permissions).map((g) => (
             <div key={g.key} className="rounded-[5px] border border-hair-soft p-3">
               <p className="mb-2 text-[0.8125rem] font-semibold uppercase tracking-[0.06em] text-muted">{t(`permGroup.${g.key}` as MessageKey)}</p>
@@ -76,12 +76,12 @@ function RoleFields({ close, role, extensions }: { close: () => void; role?: Rol
 /** `extensions`: the business's usable extensions (their permission areas show in the editor). */
 export function NewRoleForm({ extensions }: { extensions: string[] }) {
   const { t } = useT();
-  return <Disclosure label={t('team.newRole')}>{(close) => <RoleFields close={close} extensions={extensions} />}</Disclosure>;
+  return <Disclosure wide label={t('team.newRole')}>{(close) => <RoleFields close={close} extensions={extensions} />}</Disclosure>;
 }
 
 export function EditRoleForm({ role, extensions }: { role: Role; extensions: string[] }) {
   const { t } = useT();
-  return <Disclosure kind="edit" label={t('team.editRole')}>{(close) => <RoleFields close={close} role={role} extensions={extensions} />}</Disclosure>;
+  return <Disclosure wide kind="edit" label={t('team.editRole')}>{(close) => <RoleFields close={close} role={role} extensions={extensions} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- member access
@@ -111,15 +111,15 @@ function AccessFields({ close, member, roles, branches, entities }: { close: () 
     <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate>
       <p className="-mt-1 text-[0.875rem] text-muted">{t('team.accessHint')}</p>
       {rows.map((r, i) => (
-        <div key={r.key} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+        <div key={r.key} className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] @lg:items-end">
           <div className="field min-w-0">
-            <label htmlFor={`role-${r.key}`} className={i > 0 ? 'sm:sr-only' : undefined}>{t('team.role')}</label>
+            <label htmlFor={`role-${r.key}`} className={i > 0 ? '@lg:sr-only' : undefined}>{t('team.role')}</label>
             <select id={`role-${r.key}`} className="input" value={r.roleId} onChange={(e) => update(r.key, { roleId: e.target.value })}>
               {roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}
             </select>
           </div>
           <div className="field min-w-0">
-            <label htmlFor={`scope-${r.key}`} className={i > 0 ? 'sm:sr-only' : undefined}>{t('team.scope')}</label>
+            <label htmlFor={`scope-${r.key}`} className={i > 0 ? '@lg:sr-only' : undefined}>{t('team.scope')}</label>
             <select id={`scope-${r.key}`} className="input" value={r.scope} onChange={(e) => update(r.key, { scope: e.target.value })}>
               <option value="TENANT">{t('team.wholeBusiness')}</option>
               {entities.map((le) => <option key={le.id} value={`LEGAL_ENTITY:${le.id}`}>{t('team.legalEntity', { name: le.registeredName })}</option>)}
@@ -168,7 +168,7 @@ function InviteFields({ close, roles, branches, onSent }: { close: () => void; r
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('auth.email')} name="email" type="email" required autoFocus error={fieldError('email')} />
       <SelectField label={t('team.role')} name="roleId" defaultValue={roles.find((r) => r.key === 'cashier')?.id}>
         {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}

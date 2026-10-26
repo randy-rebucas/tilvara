@@ -2,22 +2,20 @@
 
 import { Pencil, Plus } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
+import { Sheet } from './sheet';
 
-/** An inline "add" (or "edit") panel: the task stays in context instead of a modal. */
-export function Disclosure({ label, children, kind = 'add' }: { label: string; children: (close: () => void) => ReactNode; kind?: 'add' | 'edit' }) {
+/** An "add" (or "edit") button that opens its form in a sheet sliding in from the right. */
+export function Disclosure({ label, children, kind = 'add', wide = false }: { label: string; children: (close: () => void) => ReactNode; kind?: 'add' | 'edit'; wide?: boolean }) {
   const [open, setOpen] = useState(false);
-  if (!open) {
-    const Icon = kind === 'edit' ? Pencil : Plus;
-    return (
-      <button type="button" className="btn" onClick={() => setOpen(true)}>
+  const Icon = kind === 'edit' ? Pencil : Plus;
+  return (
+    <>
+      <button type="button" className="btn" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         <Icon aria-hidden className="size-4" /> {label}
       </button>
-    );
-  }
-  return (
-    <div className="w-full rounded-[5px] border border-hair bg-white p-4">
-      <p className="mb-3 font-semibold">{label}</p>
-      {children(() => setOpen(false))}
-    </div>
+      <Sheet open={open} title={label} wide={wide} onClose={() => setOpen(false)}>
+        {children(() => setOpen(false))}
+      </Sheet>
+    </>
   );
 }

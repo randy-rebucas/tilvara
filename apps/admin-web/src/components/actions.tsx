@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { FormError, SelectField, TextField } from './fields';
+import { Sheet } from './sheet';
 import { useFormKey, useSubmit } from './use-submit';
 import { useT } from '@/i18n/client';
 
@@ -26,8 +27,8 @@ export function ActionButton({ url, label, body, primary = false, confirmText, r
 }
 
 /**
- * An action that needs a reason (cancel, close, reverse, reopen): the button opens an inline
- * panel with the reason field. `idempotent` pins one key per open panel (financial writes).
+ * An action that needs a reason (cancel, close, reverse, reopen): the button opens a sheet
+ * with the reason field. `idempotent` pins one key per open panel (financial writes).
  */
 export function ReasonAction({
   url,
@@ -52,14 +53,16 @@ export function ReasonAction({
   choice?: { name: string; label: string; options: { value: string; label: string }[] };
 }) {
   const [open, setOpen] = useState(false);
-  if (!open) {
-    return (
-      <button type="button" className={`btn ${danger ? 'btn-danger' : ''}`} onClick={() => setOpen(true)}>
+  return (
+    <>
+      <button type="button" className={`btn ${danger ? 'btn-danger' : ''}`} aria-haspopup="dialog" onClick={() => setOpen(true)}>
         {label}
       </button>
-    );
-  }
-  return <ReasonPanel {...{ url, label, reasonLabel, hint, field, body, danger, idempotent, choice }} close={() => setOpen(false)} />;
+      <Sheet open={open} title={label} onClose={() => setOpen(false)}>
+        <ReasonPanel {...{ url, label, reasonLabel, hint, field, body, danger, idempotent, choice }} close={() => setOpen(false)} />
+      </Sheet>
+    </>
+  );
 }
 
 function ReasonPanel({
@@ -77,9 +80,8 @@ function ReasonPanel({
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} noValidate className="flex w-full flex-col gap-3 rounded-[5px] border border-hair bg-white p-4">
-      <p className="font-semibold">{label}</p>
-      {hint && <p className="-mt-2 text-[0.875rem] text-muted">{hint}</p>}
+    <form onSubmit={onSubmit} noValidate className="flex w-full flex-col gap-3">
+      {hint && <p className="text-[0.875rem] text-muted">{hint}</p>}
       <TextField label={reasonLabel} name={field} required autoFocus error={fieldError(field)} />
       {choice && (
         <SelectField label={choice.label} name={choice.name} error={fieldError(choice.name)}>

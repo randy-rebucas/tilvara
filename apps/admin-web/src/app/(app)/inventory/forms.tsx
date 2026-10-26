@@ -54,7 +54,7 @@ function AdjustFields({ close, branchId, variants, dated }: { close: () => void;
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('inv.adjustHint')}</p>
       <SelectField label={t('inv.adjustKind')} name="kind">
         <option value="ADJUSTMENT">{t('inv.adjustKind.ADJUSTMENT')}</option>
@@ -85,7 +85,7 @@ function AdjustFields({ close, branchId, variants, dated }: { close: () => void;
 
 export function AdjustStockForm(props: { branchId: string; variants: VariantOption[]; dated: boolean }) {
   const { t } = useT();
-  return <Disclosure label={t('inv.adjust')}>{(close) => <AdjustFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('inv.adjust')}>{(close) => <AdjustFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- reorder point
@@ -104,8 +104,8 @@ function ReorderFields({ close, branchId, variants }: { close: () => void; branc
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      <div className="sm:col-span-2">
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+      <div className="@lg:col-span-2">
         <SelectField label={t('common.item')} name="variantId">
           {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
         </SelectField>
@@ -164,7 +164,7 @@ function TransferFields({ close, from, destinations, variants }: { close: () => 
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       {/* The source is the branch picked above the list; name it so stock never leaves the wrong branch. */}
       <p className="serial col-span-full -mt-2 text-[0.8125rem] text-muted">
         {t('inv.sendFrom')} <span className="font-semibold text-violet">{from.code}</span> · {from.name}
@@ -190,7 +190,7 @@ function TransferFields({ close, from, destinations, variants }: { close: () => 
 
 export function TransferForm(props: { from: Branch; destinations: Branch[]; variants: VariantOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('inv.newTransfer')}>{(close) => <TransferFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('inv.newTransfer')}>{(close) => <TransferFields close={close} {...props} />}</Disclosure>;
 }
 
 function ReceiveTransferFields({ close, transfer }: { close: () => void; transfer: Transfer }) {
@@ -216,7 +216,7 @@ function ReceiveTransferFields({ close, transfer }: { close: () => void; transfe
       <p className="-mt-2 text-[0.875rem] text-muted">{t('inv.receiveHint')}</p>
       <ul className="flex flex-col gap-3">
         {transfer.lines.map((l, i) => (
-          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)] sm:items-end">
+          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)] @lg:items-end">
             <div className="min-w-0">
               <div className="font-semibold">{l.name}</div>
               <div className="serial text-[0.8125rem] text-muted">{l.sku} · {t('inv.sent')} {qty(l.quantity)}</div>
@@ -234,7 +234,7 @@ function ReceiveTransferFields({ close, transfer }: { close: () => void; transfe
 
 export function ReceiveTransferForm({ transfer }: { transfer: Transfer }) {
   const { t } = useT();
-  return <Disclosure label={t('inv.receiveTransfer')}>{(close) => <ReceiveTransferFields close={close} transfer={transfer} />}</Disclosure>;
+  return <Disclosure wide label={t('inv.receiveTransfer')}>{(close) => <ReceiveTransferFields close={close} transfer={transfer} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- count
@@ -258,7 +258,7 @@ function CountFields({ close, branchId, variants }: { close: () => void; branchI
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('inv.countHint')}</p>
       <LineItems
         fields={[
@@ -280,7 +280,7 @@ function CountFields({ close, branchId, variants }: { close: () => void; branchI
 
 export function CountForm(props: { branchId: string; variants: VariantOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('inv.newCount')}>{(close) => <CountFields close={close} {...props} />}</Disclosure>;
+  return <Disclosure wide label={t('inv.newCount')}>{(close) => <CountFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- reservations (session 20)
@@ -303,15 +303,15 @@ function ReserveFields({ close, branchId, variants }: { close: () => void; branc
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      <div className="sm:col-span-2">
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+      <div className="@lg:col-span-2">
         <SelectField label={t('common.item')} name="variantId">
           {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
         </SelectField>
       </div>
       <TextField label={t('common.quantity')} name="quantity" inputMode="decimal" required error={fieldError('quantity')} />
       <TextField label={`${t('inv.reserveUntil')} (${t('common.optional')})`} name="expiresOn" type="date" error={fieldError('expiresAt')} />
-      <div className="sm:col-span-2 lg:col-span-4">
+      <div className="@lg:col-span-2 @3xl:col-span-4">
         <TextField label={t('inv.reserveFor')} name="note" required maxLength={200} placeholder={t('inv.reserveForHint')} error={fieldError('note')} />
       </div>
       <Actions pending={pending} general={general(error)} submitLabel={t('inv.reserve')} close={close} />
@@ -364,8 +364,8 @@ function OpenPackFields({ close, branchId, links }: { close: () => void; branchI
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      <div className="sm:col-span-2">
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+      <div className="@lg:col-span-2">
         <SelectField label={t('packs.link')} name="conversionId">
           {links.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
         </SelectField>
@@ -393,7 +393,7 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
       {(close) => (
         <form
           noValidate
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+          className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4"
           onSubmit={async (e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
@@ -408,7 +408,7 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
             if (r.ok) close();
           }}
         >
-          <div className="sm:col-span-2">
+          <div className="@lg:col-span-2">
             <SelectField label={t('common.item')} name="variantId" defaultValue={initial?.variantId ?? ''} error={fieldError('variantId')}>
               <option value="" disabled>—</option>
               {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
@@ -419,7 +419,7 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
             <option value="">{t('rep.allBranches')}</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
           </SelectField>
-          <div className="sm:col-span-2">
+          <div className="@lg:col-span-2">
             <TextField label={t('common.reason')} name="reason" required maxLength={200} placeholder={t('lot.holdReasonHint')} error={fieldError('reason')} />
           </div>
           <TextField label={`${t('lot.holdReference')} (${t('common.optional')})`} name="reference" maxLength={100} placeholder="FDA Advisory 2026-123" error={fieldError('reference')} />

@@ -125,6 +125,18 @@ async function attach({ base, out, port, child, tries, isApp = () => true }) {
     if (!b) throw new Error('no button: ${text}');
     b.click();
   })()`);
+  /** Open a form sheet by its button; clicks again if the first click landed before hydration. */
+  async function openSheet(text, ms = 15000) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      await clickText(text);
+      const open = await waitFor(`document.querySelector('dialog.sheet[open]')`, 1500).then(() => true, () => false);
+      if (open) return;
+    }
+    throw new Error(`no sheet opened by: ${text}`);
+  }
+  /** Wait for a sheet that opens by itself (e.g. after "Show open invoices"). */
+  const sheetShown = (ms) => waitFor(`document.querySelector('dialog.sheet[open]')`, ms);
   const shot = async (file, full = true) => {
     // A sticky header would be painted at the current scroll offset in a full-page capture.
     if (full) { await evaluate('window.scrollTo(0, 0)'); await sleep(100); }
@@ -149,7 +161,7 @@ async function attach({ base, out, port, child, tries, isApp = () => true }) {
   await send('Runtime.enable');
 
   return {
-    send, evaluate, viewport, waitFor, go, fill, finishSteps, clickText, shot, bff, noHorizontalScroll,
+    send, evaluate, viewport, waitFor, go, fill, finishSteps, clickText, openSheet, sheetShown, shot, bff, noHorizontalScroll,
     child,
     close() { ws.close(); child.kill(); },
   };

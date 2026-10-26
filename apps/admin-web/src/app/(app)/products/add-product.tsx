@@ -50,8 +50,8 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
     ? rowIssues.map((i) => `${grid.list[Number(i.path.split('.')[1])]?.sku ?? i.path}: ${i.message}`).join(' · ')
     : null;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      <div className="sm:col-span-2"><TextField label={t('prod.name')} name="name" required autoFocus error={fieldError('name')} /></div>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+      <div className="@lg:col-span-2"><TextField label={t('prod.name')} name="name" required autoFocus error={fieldError('name')} /></div>
       <TextField
         label={sized ? t('vgrid.baseSku') : t('prod.sku')}
         name="sku"
@@ -119,5 +119,5 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
 
 export function AddProduct({ uoms, taxes, categories = [] }: { uoms: Uom[]; taxes: TaxCategory[]; categories?: CategoryOption[] }) {
   const { t } = useT();
-  return <Disclosure label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} />}</Disclosure>;
+  return <Disclosure wide label={t('prod.add')}>{(close) => <Fields close={close} uoms={uoms} taxes={taxes} categories={categories} />}</Disclosure>;
 }

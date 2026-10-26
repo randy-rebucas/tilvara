@@ -49,7 +49,7 @@ function AddFields({ close, parents, parentId }: { close: () => void; parents: O
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('cat.name')} name="name" required autoFocus maxLength={200} error={fieldError('name')} />
       {!parentId && <ParentField parents={parents} value="" error={fieldError('parentId')} />}
       <TextField label={`${t('cat.sortOrder')} (${t('common.optional')})`} name="sortOrder" inputMode="numeric" placeholder="0" hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />
@@ -87,7 +87,7 @@ function EditFields({ close, category, parents }: { close: () => void; category:
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
       <TextField label={t('cat.name')} name="name" required autoFocus maxLength={200} defaultValue={category.name} error={fieldError('name')} />
       <ParentField parents={parents} value={category.parentId ?? ''} error={fieldError('parentId')} />
       <TextField label={t('cat.sortOrder')} name="sortOrder" inputMode="numeric" defaultValue={String(category.sortOrder)} hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />

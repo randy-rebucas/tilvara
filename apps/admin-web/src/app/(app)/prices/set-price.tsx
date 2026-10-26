@@ -34,8 +34,8 @@ function Fields({ close, listId, variants }: { close: () => void; listId: string
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
-      <div className="sm:col-span-2">
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+      <div className="@lg:col-span-2">
         <SelectField label={t('common.item')} name="variantId">
           {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
         </SelectField>
@@ -82,7 +82,7 @@ function ListFields({ close, list }: { close: () => void; list?: { id: string; n
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
       <TextField label={t('price.listName')} name="name" required autoFocus defaultValue={list?.name} placeholder={list ? undefined : t('price.listNameHint')} error={fieldError('name')} />
       {!list && (
         <div className="flex flex-col justify-end gap-2 pb-1">
