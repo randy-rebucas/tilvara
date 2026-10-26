@@ -81,6 +81,8 @@ The user audits one area at a time for what does not fit a retail shop.
 - ✅ Help (the admin guide): nothing left from the removed industries; every quoted label matches its screen (EN and FIL). Fixed: the Reports part's line on opening a sale or shift.
 - ✅ The till (screens, copy, guide, desktop shell, offline engine, sync protocol, receipts, API, dev data): retail apart from history on old sales. Fixed: old sales paid with a retired tender print it in words marked retired and list it as no longer offered; they offer no void/return/exchange and say why (EN/FIL); the offline receipt on screen matches its print; the set-up hint and guide give the real pairing path and call the key "Pairing key" as the admin does; four guide/copy lines corrected (This shift, refunds, the expired chip). Kept as history: old service charges on receipts, the envelope's retired fields.
 - ✅ A receipt prints "Tendered" only for cash handed over (not a card, store credit or an exchange's refund) and "Change" whenever there was cash; `sales.amount_tendered` is unchanged.
+- ✅ Inventory tabs follow what the shop uses: Expiry, Lot holds, Batch trace (and the expired-stock settings) only once an item keeps expiry dates or lots exist; Packs only once a pack is linked or opened (`GET /v1/stock/in-use`). The features stay for every shop (tingi, dated goods, recalls).
+- ⬜ By design: the product page still offers "Keeps expiry dates" and "Packs and pieces" to every shop: that is how a shop starts using them, so it stays.
 - ⬜ Next areas to audit: the user's call (every area is ✅; a second pass only if asked).
 
 ## Session 33 — retail only (2026-10-25)

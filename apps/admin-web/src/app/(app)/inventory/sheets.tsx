@@ -201,7 +201,8 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
 
 const POLICIES: NegativeStockPolicy[] = ['ALLOW', 'ALLOW_WITH_FLAG', 'BLOCK'];
 
-export function InventorySettingsForm({ settings, canEdit }: { settings: InventorySettings; canEdit: boolean }) {
+/** `dated`: the shop uses expiry dates; else the expired-stock rule and expiry alerts are hidden and left as they are. */
+export function InventorySettingsForm({ settings, canEdit, dated }: { settings: InventorySettings; canEdit: boolean; dated: boolean }) {
   const { t } = useT();
   const { pending, submit, error, fieldError } = useSubmit();
   const [done, setDone] = useState(false);
@@ -216,9 +217,9 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
         const r = await submit('PUT', `/api/v1/branches/${settings.branchId}/inventory-settings`, {
           negativeStockPolicy: f.get('negativeStockPolicy'),
           lowStockAlerts: f.get('lowStockAlerts') === 'on',
-          ...(String(f.get('expiryAlertDays') ?? '').trim() !== '' ? { expiryAlertDays: Number(f.get('expiryAlertDays')) } : {}),
+          ...(dated && String(f.get('expiryAlertDays') ?? '').trim() !== '' ? { expiryAlertDays: Number(f.get('expiryAlertDays')) } : {}),
           // Two choices; a branch never set reads as Allow (`expiredStockRule`) and is saved as such.
-          expiredStock: f.get('expiredStock') === 'BLOCK' ? 'BLOCK' : 'ALLOW',
+          ...(dated ? { expiredStock: f.get('expiredStock') === 'BLOCK' ? 'BLOCK' : 'ALLOW' } : {}),
         });
         if (r.ok) setDone(true);
       }}
@@ -244,22 +245,26 @@ export function InventorySettingsForm({ settings, canEdit }: { settings: Invento
           </span>
         </label>
       </fieldset>
-      <fieldset className="flex flex-col gap-3" disabled={!canEdit}>
-        <legend className="mb-1 font-semibold">{t('invset.expired')}</legend>
-        {(['ALLOW', 'BLOCK'] as const).map((v) => (
-          <label key={v} className="flex items-start gap-2">
-            <input type="radio" name="expiredStock" value={v} defaultChecked={(settings.expiredStockRule ?? 'ALLOW') === v} className="mt-1" />
-            <span>
-              {t(`invset.expired.${v}`)}
-              <span className="block text-[0.8125rem] text-muted">{t(`invset.expired.${v}.hint`)}</span>
-            </span>
-          </label>
-        ))}
-        <p className="text-[0.875rem] text-muted">{t('invset.expiredHolds')}</p>
-      </fieldset>
-      <fieldset disabled={!canEdit} className="max-w-[320px]">
-        <TextField label={t('invset.expiryDays')} name="expiryAlertDays" type="number" min={0} max={365} inputMode="numeric" defaultValue={String(settings.expiryAlertDays ?? 30)} hint={t('invset.expiryDaysHint')} error={fieldError('expiryAlertDays')} />
-      </fieldset>
+      {dated && (
+        <>
+          <fieldset className="flex flex-col gap-3" disabled={!canEdit}>
+            <legend className="mb-1 font-semibold">{t('invset.expired')}</legend>
+            {(['ALLOW', 'BLOCK'] as const).map((v) => (
+              <label key={v} className="flex items-start gap-2">
+                <input type="radio" name="expiredStock" value={v} defaultChecked={(settings.expiredStockRule ?? 'ALLOW') === v} className="mt-1" />
+                <span>
+                  {t(`invset.expired.${v}`)}
+                  <span className="block text-[0.8125rem] text-muted">{t(`invset.expired.${v}.hint`)}</span>
+                </span>
+              </label>
+            ))}
+            <p className="text-[0.875rem] text-muted">{t('invset.expiredHolds')}</p>
+          </fieldset>
+          <fieldset disabled={!canEdit} className="max-w-[320px]">
+            <TextField label={t('invset.expiryDays')} name="expiryAlertDays" type="number" min={0} max={365} inputMode="numeric" defaultValue={String(settings.expiryAlertDays ?? 30)} hint={t('invset.expiryDaysHint')} error={fieldError('expiryAlertDays')} />
+          </fieldset>
+        </>
+      )}
       {canEdit ? (
         <div className="flex flex-wrap items-center gap-3">
           <button className="btn btn-primary" disabled={pending}>{t('common.save')}</button>

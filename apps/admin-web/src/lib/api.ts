@@ -841,6 +841,12 @@ export interface StockLot {
   /** A hold (recall, advisory) covers the lot (ADR-0025 §5). */
   held?: boolean;
 }
+/** `GET /stock/in-use`: whether the business uses dated stock (expiry dates, lots, holds) and packs. */
+export interface StockInUse {
+  expiry: boolean;
+  packs: boolean;
+}
+
 export interface Expiring {
   withinDays: number;
   data: StockLot[];

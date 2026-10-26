@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Empty, Note, PageHeader, ToLocations } from '@/components/note';
 import { ScopePicker, SubNav } from '@/components/scope';
-import { apiOrNull, type Branch } from '@/lib/api';
+import { apiOrNull, type Branch, type StockInUse } from '@/lib/api';
 import { getT } from '@/i18n/server';
 
 export type InventoryTab = 'stock' | 'expiry' | 'holds' | 'batches' | 'packs' | 'reservations' | 'transfers' | 'counts' | 'movements' | 'settings';
@@ -21,6 +21,9 @@ const PATHS: Record<InventoryTab, string> = {
 /** Tabs that cover every branch at once (holds on a lot, the batch trace): no branch picker. */
 const EVERY_BRANCH: readonly InventoryTab[] = ['holds', 'batches'];
 
+/** Shown only to a shop that uses dated stock (expiry dates, lots, holds) or packs; the tab in view always shows. */
+const DATED: readonly InventoryTab[] = ['expiry', 'holds', 'batches'];
+
 /** `?branch=all` on the stock page: every branch side by side. */
 export const ALL = 'all';
 
@@ -34,12 +37,17 @@ export async function inventoryBranch(param: string | undefined) {
 /**
  * Page header, section tabs and branch picker shared by the inventory pages. `all`: the stock page's
  * "All branches" view (ADR-0021 §5), offered there when there is more than one branch. Holds and
- * the batch trace cover every branch, so they show no picker.
+ * the batch trace cover every branch, so they show no picker. Expiry, Lot holds and Batch trace show once an
+ * item keeps expiry dates (or lots exist from before), Packs once a pack is linked; all tabs when that is
+ * unknown (no inventory.read).
  */
 export async function InventoryChrome({ tab, branches, branch, all = false, children }: { tab: InventoryTab; branches: Branch[]; branch: Branch | undefined; all?: boolean; children: ReactNode }) {
   const { t } = await getT();
   const q = branch ? `?branch=${branch.id}` : '';
   const everyBranch = EVERY_BRANCH.includes(tab);
+  const inUse = await apiOrNull<StockInUse>('/stock/in-use');
+  const shown = (key: InventoryTab) =>
+    key === tab || !inUse || (DATED.includes(key) ? inUse.expiry : key === 'packs' ? inUse.packs : true);
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('inv.title')} lede={t('inv.lede')} />
@@ -57,7 +65,7 @@ export async function InventoryChrome({ tab, branches, branch, all = false, chil
           { key: 'counts', href: `${PATHS.counts}${q}`, label: t('inv.tab.counts') },
           { key: 'movements', href: `${PATHS.movements}${q}`, label: t('inv.tab.movements') },
           { key: 'settings', href: `${PATHS.settings}${q}`, label: t('inv.tab.settings') },
-        ]}
+        ].filter((i) => shown(i.key as InventoryTab))}
       />
       {!everyBranch && (
         <ScopePicker

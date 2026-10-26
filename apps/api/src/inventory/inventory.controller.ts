@@ -262,6 +262,11 @@ export class InventoryController {
     return this.inventory.setItemLocations(auth, body);
   }
 
+  @Get('stock/in-use')
+  inUse(@Auth() auth: AuthContext) {
+    return this.inventory.inUse(auth);
+  }
+
   @Get('stock/balances/by-branch')
   stockByBranch(@Auth() auth: AuthContext) {
     return this.inventory.stockByBranch(auth);

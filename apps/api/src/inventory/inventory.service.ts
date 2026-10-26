@@ -701,6 +701,25 @@ export class InventoryService extends TenantService {
    * Stock of every branch the person may read inventory at, item by item (ADR-0021 §5): items with a
    * balance at one of those branches, active ones first by SKU. At most 2,000 items.
    */
+  /**
+   * Whether the business uses dated stock (an item keeping expiry dates, or lots and holds from before) and
+   * packs (a pack link or an opening). The admin shows the Expiry, Lot holds, Batch trace and Packs tabs
+   * only when they are, so a shop without them is not shown four empty tabs.
+   */
+  inUse(auth: AuthContext) {
+    return this.read(auth, async (db) => {
+      // Two yes/no answers about the whole business: inventory.read at any scope may see them.
+      if (!tenantOf(auth).grants.some((g) => g.permission === 'inventory.read')) {
+        throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing: ['inventory.read'] });
+      }
+      const { rows } = await db.execute<{ expiry: boolean; packs: boolean }>(sql`
+        SELECT (EXISTS (SELECT 1 FROM products WHERE tracks_expiry AND archived_at IS NULL)
+                OR EXISTS (SELECT 1 FROM stock_lots) OR EXISTS (SELECT 1 FROM lot_holds)) AS expiry,
+               (EXISTS (SELECT 1 FROM pack_conversions) OR EXISTS (SELECT 1 FROM pack_openings)) AS packs`);
+      return { expiry: rows[0]?.expiry ?? false, packs: rows[0]?.packs ?? false };
+    });
+  }
+
   stockByBranch(auth: AuthContext) {
     return this.read(auth, async (db) => {
       const all = await db.select({ id: branches.id, code: branches.code, name: branches.name, legalEntityId: branches.legalEntityId }).from(branches).where(isNull(branches.archivedAt));

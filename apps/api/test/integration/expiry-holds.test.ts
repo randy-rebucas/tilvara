@@ -226,3 +226,28 @@ describe('box, strip and piece', () => {
     expect(saleRow).not.toHaveProperty('prescriptionIds');
   });
 });
+
+describe('whether a shop uses dated stock and packs', () => {
+  it('reads false for a new shop, then true once an item keeps expiry dates or a pack is linked; needs inventory.read', async () => {
+    const t = await signup(app, 'in-use');
+    const auth = bearer(t.access);
+    expect((await http().get('/v1/stock/in-use').set(auth).expect(200)).body).toEqual({ expiry: false, packs: false });
+    const taxes = Object.fromEntries(((await http().get('/v1/tax-categories').set(auth)).body.data as { id: string; code: string }[]).map((x) => [x.code, x.id]));
+    const uoms = Object.fromEntries(((await http().get('/v1/uoms').set(auth)).body.data as { id: string; code: string }[]).map((u) => [u.code, u.id]));
+    const product = async (name: string, tracksExpiry: boolean) =>
+      (await http().post('/v1/products').set(auth).send({
+        name, uomId: uoms.PC, taxCategoryId: taxes.VAT, trackInventory: true, tracksExpiry, variants: [{ sku: uniq('SKU'), price: '10.00' }],
+      }).expect(201)).body.variants[0].id as string;
+    const box = await product('Soap box', false);
+    const bar = await product('Soap bar', false);
+    expect((await http().get('/v1/stock/in-use').set(auth).expect(200)).body).toEqual({ expiry: false, packs: false });
+    await http().post('/v1/pack-conversions').set(auth).send({ packVariantId: box, pieceVariantId: bar, piecesPerPack: '12' }).expect(201);
+    expect((await http().get('/v1/stock/in-use').set(auth).expect(200)).body).toEqual({ expiry: false, packs: true });
+    await product('Milk', true);
+    expect((await http().get('/v1/stock/in-use').set(auth).expect(200)).body).toEqual({ expiry: true, packs: true });
+
+    const cashier = await addMember(owner, t.tenantId, 'cashier');
+    const cashierAuth = bearer(await loginToken(app, cashier.email));
+    await http().get('/v1/stock/in-use').set(cashierAuth).expect(403);
+  });
+});
