@@ -243,9 +243,9 @@ export function supplierNotePosting(a: SupplierNoteAmounts, branchId?: string | 
       ]);
 }
 
-/** Supplier payment: the payable settled from the bank. */
-export function supplierPaymentPosting(amount: Amount, branchId?: string | null): PostingLine[] {
-  return balanced([dr('ACCOUNTS_PAYABLE', amount, branchId), cr('CASH_IN_BANK', amount, branchId)]);
+/** Supplier payment: the payable settled from the bank, or with cash from a till's drawer (session 36). */
+export function supplierPaymentPosting(amount: Amount, branchId?: string | null, from: 'BANK' | 'DRAWER' = 'BANK'): PostingLine[] {
+  return balanced([dr('ACCOUNTS_PAYABLE', amount, branchId), cr(from === 'DRAWER' ? 'CASH_ON_HAND' : 'CASH_IN_BANK', amount, branchId)]);
 }
 
 /** Adjustment, waste or count: Σ signed movement values against the matching expense account. */

@@ -603,7 +603,8 @@ export interface CashierSession {
   closedAt: string | null;
   expectedCash: string;
   movements: { type: string; total: string; count: number }[];
-  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null; createdBy: string; createdAt: string }[];
+  /** `SUPPLIER_PAYMENT`: a supplier paid from the drawer (negative) or that cash put back on a void (positive); `supplierPaymentId` names it. */
+  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'SUPPLIER_PAYMENT'; amount: string; reason: string | null; supplierPaymentId?: string | null; createdBy: string; createdAt: string }[];
   sales: { count: number; total: string };
   /** Names travel with the shift (a branch manager may not read /members). */
   openedByName: string | null;
@@ -665,7 +666,8 @@ export interface SupplierInvoice extends Omit<SupplierInvoiceRow, 'paidAmount' |
   /** Credit and debit notes (session 22). */
   adjustments: SupplierNote[];
 }
-export type SupplierPaymentMethod = 'BANK_TRANSFER' | 'CHECK' | 'OTHER';
+/** CASH_DRAWER: cash taken from a till's drawer during an open shift (session 36). */
+export type SupplierPaymentMethod = 'BANK_TRANSFER' | 'CHECK' | 'OTHER' | 'CASH_DRAWER';
 export interface SupplierNote {
   id: string;
   supplierInvoiceId: string;
@@ -700,6 +702,9 @@ export interface SupplierPayment {
   allocations: { supplierInvoiceId: string; invoiceNumber: string; branchId: string; amount: string }[];
   journalEntryId: string | null;
   reversalEntryId: string | null;
+  /** Cash from a drawer: the shift that paid it, and the one that took it back when the payment was voided. */
+  paidFromSessionId?: string | null;
+  returnedToSessionId?: string | null;
 }
 export interface UninvoicedReceipt {
   id: string;

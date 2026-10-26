@@ -4,9 +4,9 @@ import { ReasonAction } from '@/components/actions';
 import { Callout, Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, type Branch, type Me, type SupplierInvoice } from '@/lib/api';
+import { api, apiOrNull, type Branch, type CashierSessionRow, type Me, type Register, type SupplierInvoice } from '@/lib/api';
 import { formatDate, formatDateTime, peso, signOf } from '@/lib/format';
-import { branchLabel, docNo, isUuid } from '@/lib/options';
+import { branchLabel, docNo, drawerOptions, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { NoteForm, PaymentForm } from '../forms';
 import { pageTitle } from '@/i18n/page-title';
@@ -18,10 +18,13 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [me, invoice, branches] = await Promise.all([
+  const [me, invoice, branches, openShifts, registers] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<SupplierInvoice>(`/supplier-invoices/${id}`),
     apiOrNull<{ data: Branch[] }>('/branches'),
+    // Shifts whose drawer can pay in cash (listed only to people who may see them).
+    apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=OPEN'),
+    apiOrNull<{ data: Register[] }>('/registers'),
   ]);
   if (!invoice) notFound();
   const permissions = me.activeTenant?.permissions ?? [];
@@ -80,7 +83,7 @@ export default async function SupplierInvoicePage({ params }: { params: Promise<
       <div className="flex flex-wrap items-start gap-2">
         {invoice.journalEntryId && <Link href={books(invoice.journalEntryId)} className="btn">{t('common.journalEntry')}</Link>}
         {invoice.reversalEntryId && <Link href={books(invoice.reversalEntryId)} className="btn">{t('ap.reversal')}</Link>}
-        {canPay && <PaymentForm invoiceId={invoice.id} balance={invoice.balance} today={today} />}
+        {canPay && <PaymentForm invoiceId={invoice.id} balance={invoice.balance} today={today} drawers={drawerOptions(openShifts?.data, registers?.data, branches?.data, (amount) => t('ap.inDrawer', { amount }), [invoice.branchId])} />}
         {canNote && <NoteForm invoiceId={invoice.id} today={today} />}
         {canCancel && (
           <ReasonAction url={`/api/v1/supplier-invoices/${invoice.id}/cancel`} label={t('ap.cancel')} reasonLabel={t('common.reason')} hint={t('ap.cancelHint')} danger idempotent />

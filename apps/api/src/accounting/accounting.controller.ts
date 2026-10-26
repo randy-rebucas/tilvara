@@ -44,6 +44,18 @@ export class AccountingController {
     return this.accounting.createAccount(auth, body);
   }
 
+  @HttpCode(200)
+  @Post('accounts/:id/archive')
+  archiveAccount(@Auth() auth: AuthContext, @Param('id', id) accountId: string) {
+    return this.accounting.setAccountArchived(auth, accountId, true);
+  }
+
+  @HttpCode(200)
+  @Post('accounts/:id/restore')
+  restoreAccount(@Auth() auth: AuthContext, @Param('id', id) accountId: string) {
+    return this.accounting.setAccountArchived(auth, accountId, false);
+  }
+
   @Get('journal-entries')
   listEntries(@Auth() auth: AuthContext, @Query(new ZodPipe(journalListQuerySchema)) q: JournalListQuery) {
     return this.accounting.listEntries(auth, q);

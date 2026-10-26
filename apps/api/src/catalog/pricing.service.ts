@@ -95,6 +95,30 @@ export class PricingService extends TenantService {
     });
   }
 
+  /**
+   * Take a list out of use (one made by mistake, a season that is over). Its prices stay as history. Not the default
+   * list (make another the default first), nor one an open branch uses (send that branch back to the default first).
+   */
+  archivePriceList(auth: AuthContext, id: string) {
+    this.assertCan(auth, 'prices.manage');
+    return this.mutate(auth, async (db) => {
+      const list = await this.activeList(db, id);
+      if (list.isDefault) throw new AppError('PRICE_LIST_DEFAULT', 'This is the default price list: make another list the default first', HttpStatus.CONFLICT);
+      const users = await db
+        .select({ code: branches.code })
+        .from(branchPriceLists)
+        .innerJoin(branches, and(eq(branches.tenantId, branchPriceLists.tenantId), eq(branches.id, branchPriceLists.branchId)))
+        // An archived branch's assignment does not count: nothing sells there.
+        .where(and(eq(branchPriceLists.priceListId, id), isNull(branches.archivedAt)));
+      if (users.length) {
+        throw new AppError('PRICE_LIST_IN_USE', 'Branches use this price list: give them another list first', HttpStatus.CONFLICT, { branches: users.map((b) => b.code).sort() });
+      }
+      const [row] = await db.update(priceLists).set({ archivedAt: new Date() }).where(eq(priceLists.id, id)).returning();
+      await this.audit(db, auth, 'price_list.archived', 'price_list', id, { name: list.name });
+      return row!;
+    });
+  }
+
   assignBranchPriceList(auth: AuthContext, branchId: string, input: AssignPriceListInput) {
     this.assertCan(auth, 'prices.manage');
     return this.mutate(auth, async (db) => {

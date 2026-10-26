@@ -1,14 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { useT } from '../i18n';
+import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
 import { peso } from '../lib/money';
+import { RETIRED_TENDERS } from '../lib/printing';
 import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } from '../types';
 import type { ExchangeStart } from './CounterTools';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { Callout, Empty, Field, Money, Note } from './ui';
 
-const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr' | 'pay.storeCredit'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr', EWALLET: 'pay.qr', STORE_CREDIT: 'pay.storeCredit' };
+/** A tender in words; ROOM_CHARGE and JOB_DEPOSIT (old sales, retired with lodging and laundry) read as no longer offered. */
+const METHOD: Record<string, MessageKey> = {
+  CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr', EWALLET: 'pay.qr', STORE_CREDIT: 'pay.storeCredit',
+  ROOM_CHARGE: 'pay.roomCharge', JOB_DEPOSIT: 'pay.jobDeposit',
+};
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 
 /**
@@ -31,6 +36,8 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   const canVoid = permissions.includes('sales.void');
   const canReturn = permissions.includes('sales.refund');
   const canExchange = canReturn && permissions.includes('sales.create') && Boolean(onExchange);
+  // Paid with a tender no longer offered: the server refuses a void, return or exchange (TENDER_RETIRED), so none is offered.
+  const retired = Boolean(selected?.receipt.tenders.some((tn) => RETIRED_TENDERS.includes(tn.method)));
 
   const load = () =>
     api<{ data: SaleSummary[] }>('GET', `/v1/sales?cashierSessionId=${shift.sessionId}`)
@@ -173,13 +180,17 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
         {message && <Callout kind={message.kind}>{message.text}</Callout>}
         {selected && (
           <>
+            {retired ? (
+              (canVoid || canReturn) && <div className="no-print"><Callout kind="info">{t('history.retiredTender')}</Callout></div>
+            ) : (
             <div className="no-print flex flex-wrap gap-2">
               {canVoid && <button className="btn btn-danger" aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
               {canReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
               {canExchange && <button className="btn" aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
               {!canVoid && !canReturn && <Callout kind="info">{t('history.managerOnly')}</Callout>}
             </div>
-            {mode && (
+            )}
+            {mode && !retired && (
               <Note className="no-print p-5">
                 <form className="grid gap-3" onSubmit={submit}>
                   {mode !== 'void' &&

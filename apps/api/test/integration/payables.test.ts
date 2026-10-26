@@ -342,6 +342,54 @@ describe('supplier payments over several invoices, and voids (session 22)', () =
   });
 });
 
+describe('a supplier paid in cash from a till drawer (session 36)', () => {
+  it('settles the invoice, takes the cash out of the open drawer and posts payables against cash on hand; a void puts it back', async () => {
+    const s = await shop('ap-drawer');
+    const register = (await http().post('/v1/registers').set(s.auth).send({ branchId: s.branchId, code: 'R1', name: 'Counter' }).expect(201)).body.id as string;
+    const shift = (await http().post('/v1/cashier-sessions').set(s.auth).send({ registerId: register, openingFloat: '1000.00' }).expect(201)).body.id as string;
+    const r = await receive(s, [{ variantId: s.cola, quantity: '10', unitCost: '10.00' }]);
+    const inv = (await invoice(s, { invoiceNumber: 'D-1', invoiceDate: day(-2), goodsReceiptIds: [r.id], netAmount: '100.00', vatAmount: '12.00' }).expect(201)).body;
+    const expected = async () => (await http().get(`/v1/cashier-sessions/${shift}`).set(s.auth).expect(200)).body as { expectedCash: string; payInOut: { type: string; amount: string; supplierPaymentId: string | null }[] };
+
+    // Refusals: no shift named, a shift with a bank transfer, not today, more than the drawer holds.
+    expect((await pay(inv.id, { amount: '112.00', method: 'CASH_DRAWER' }, s.accountant).expect(400)).body.error.code).toBe('VALIDATION_FAILED');
+    await pay(inv.id, { amount: '112.00', method: 'BANK_TRANSFER', cashierSessionId: shift }, s.accountant).expect(400);
+    expect((await pay(inv.id, { amount: '112.00', method: 'CASH_DRAWER', cashierSessionId: shift, paidOn: day(-1) }, s.accountant).expect(422)).body.error.code).toBe('DRAWER_PAID_TODAY');
+    await http().post(`/v1/cashier-sessions/${shift}/movements`).set(s.auth).send({ type: 'PAY_OUT', amount: '950.00', reason: 'To the bank' }).expect(201);
+    expect((await pay(inv.id, { amount: '112.00', method: 'CASH_DRAWER', cashierSessionId: shift }, s.accountant).expect(422)).body.error)
+      .toMatchObject({ code: 'INSUFFICIENT_DRAWER_CASH', details: { available: '50.00' } });
+    await http().post(`/v1/cashier-sessions/${shift}/movements`).set(s.auth).send({ type: 'PAY_IN', amount: '950.00', reason: 'Back from the bank' }).expect(201);
+
+    const paid = (await pay(inv.id, { amount: '112.00', method: 'CASH_DRAWER', cashierSessionId: shift }, s.accountant).expect(201)).body;
+    expect(paid).toMatchObject({ status: 'PAID', balance: '0.00' });
+    const payment = (await http().get(`/v1/supplier-payments/${paid.payments[0].id}`).set(s.auth).expect(200)).body;
+    expect(payment).toMatchObject({ method: 'CASH_DRAWER', paidFromSessionId: shift, returnedToSessionId: null });
+    expect(await entryNet(s, payment.journalEntryId)).toEqual({ ACCOUNTS_PAYABLE: '112.00', CASH_ON_HAND: '-112.00' });
+    const after = await expected();
+    expect(after.expectedCash).toBe('888.00');
+    expect(after.payInOut.filter((m) => m.type === 'SUPPLIER_PAYMENT')).toEqual([expect.objectContaining({ amount: '-112.00', supplierPaymentId: payment.id })]);
+
+    // A void names the open drawer that takes the cash back; the cash and the payable come back.
+    expect((await voidPayment(payment.id, s.accountant).expect(422)).body.error.code).toBe('DRAWER_REQUIRED');
+    const voided = (await http().post(`/v1/supplier-payments/${payment.id}/void`).set(s.accountant).set('Idempotency-Key', randomUUID())
+      .send({ reason: 'Supplier gave the cash back', cashierSessionId: shift }).expect(200)).body;
+    expect(voided).toMatchObject({ status: 'VOIDED', returnedToSessionId: shift });
+    expect(await entryNet(s, voided.reversalEntryId)).toEqual({ ACCOUNTS_PAYABLE: '-112.00', CASH_ON_HAND: '112.00' });
+    expect((await expected()).expectedCash).toBe('1000.00');
+    expect(await getInvoice(s, inv.id)).toMatchObject({ status: 'OPEN', balance: '112.00' });
+    // Only once each way (the payment is voided once; the DB keeps one movement per direction).
+    expect(await tryAs(s, `INSERT INTO cash_movements (tenant_id, cashier_session_id, type, amount, supplier_payment_id, created_by)
+      SELECT tenant_id, cashier_session_id, 'SUPPLIER_PAYMENT', 1, supplier_payment_id, created_by FROM cash_movements WHERE supplier_payment_id = '${payment.id}' LIMIT 1`)).toMatch(/duplicate key/);
+    expect(await tryAs(s, `INSERT INTO cash_movements (tenant_id, cashier_session_id, type, amount, created_by)
+      SELECT tenant_id, cashier_session_id, 'SUPPLIER_PAYMENT', -1, created_by FROM cash_movements WHERE supplier_payment_id = '${payment.id}' LIMIT 1`)).toMatch(/cash_movements_supplier_payment_link/);
+
+    // A closed shift pays nothing; the drawer stays square at the count.
+    await http().post(`/v1/cashier-sessions/${shift}/close`).set(s.auth).send({ countedCash: '1000.00' }).expect(200);
+    expect((await pay(inv.id, { amount: '112.00', method: 'CASH_DRAWER', cashierSessionId: shift }, s.accountant).expect(409)).body.error.code).toBe('SESSION_NOT_OPEN');
+    expect(await audit(s)).toEqual(CLEAN);
+  });
+});
+
 describe('supplier credit and debit notes (session 22)', () => {
   it('a return after invoicing is credited: the stranded GRNI cleared, the VAT given back; an allowance is a variance; a debit note owes more', async () => {
     const s = await shop('ap-notes');

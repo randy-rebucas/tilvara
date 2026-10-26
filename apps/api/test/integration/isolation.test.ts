@@ -432,6 +432,7 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/barcodes/:id/archive': () => http().post(`/v1/barcodes/${a.barcodeId}/archive`).set(auth),
     'GET /v1/variants/:id/price-history': () => http().get(`/v1/variants/${a.variantId}/price-history`).set(auth),
     'PATCH /v1/price-lists/:id': () => http().patch(`/v1/price-lists/${a.priceListId}`).set(auth).send({ name: 'pwned' }),
+    'POST /v1/price-lists/:id/archive': () => http().post(`/v1/price-lists/${a.priceListId}/archive`).set(auth),
     'GET /v1/price-lists/:id/prices': () => http().get(`/v1/price-lists/${a.priceListId}/prices`).set(auth),
     'POST /v1/price-lists/:id/prices': () =>
       http().post(`/v1/price-lists/${a.priceListId}/prices`).set(auth).send({ items: [{ variantId: b.variantId, amount: '0.01' }] }),
@@ -495,6 +496,8 @@ function attackMatrix(): Record<string, () => request.Test> {
     'GET /v1/branches/:id/inventory-settings': () => http().get(`/v1/branches/${a.branchId}/inventory-settings`).set(auth),
     'PUT /v1/branches/:id/inventory-settings': () => http().put(`/v1/branches/${a.branchId}/inventory-settings`).set(auth).send({ negativeStockPolicy: 'BLOCK', lowStockAlerts: false }),
     'GET /v1/stock/adjustments/:id': () => http().get(`/v1/stock/adjustments/${a.adjustmentId}`).set(auth),
+    'POST /v1/accounts/:id/archive': () => http().post(`/v1/accounts/${a.cashAccountId}/archive`).set(auth),
+    'POST /v1/accounts/:id/restore': () => http().post(`/v1/accounts/${a.cashAccountId}/restore`).set(auth),
     'GET /v1/journal-entries/:id': () => http().get(`/v1/journal-entries/${a.journalEntryId}`).set(auth),
     'POST /v1/journal-entries/:id/reverse': () => http().post(`/v1/journal-entries/${a.journalEntryId}/reverse`).set(auth).set('Idempotency-Key', randomUUID()).send({ memo: 'sabotage' }),
     'POST /v1/support-access/:id/revoke': () => http().post(`/v1/support-access/${a.supportGrantId}/revoke`).set(auth).send({ reason: 'sabotage' }),

@@ -21,7 +21,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { packConversions, productPrices, productVariants, promotions } from './catalog.js';
 import { stockAdjustments, stockCountLines, stockTransferLines } from './inventory.js';
-import { goodsReceiptLines, supplierReturnLines } from './purchasing.js';
+import { goodsReceiptLines, supplierPayments, supplierReturnLines } from './purchasing.js';
 import { branches, legalEntities, registers, terminals } from './organization.js';
 import { tenants } from './platform.js';
 import { taxProfiles } from './tax.js';
@@ -69,8 +69,11 @@ export const cashierSessions = pgTable(
   ],
 );
 
-/** Tips (TIP, TIP_REFUND, TIP_PAYOUT) were removed with their rows on 2026-10-25 (migrations 0112–0113). */
-export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND'] as const;
+/**
+ * Tips (TIP, TIP_REFUND, TIP_PAYOUT) were removed with their rows on 2026-10-25 (migrations 0112–0113).
+ * SUPPLIER_PAYMENT (0120): a supplier paid in cash from the drawer (negative), or that cash put back when the payment is voided (positive).
+ */
+export const CASH_MOVEMENT_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'SUPPLIER_PAYMENT'] as const;
 export type CashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
 
 /** Append-only drawer ledger; expected cash = Σ amount (signed: + into the drawer). */
@@ -85,21 +88,26 @@ export const cashMovements = pgTable(
     reason: text('reason'),
     saleId: uuid('sale_id'),
     saleReturnId: uuid('sale_return_id'),
+    supplierPaymentId: uuid('supplier_payment_id'),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t): PgTableExtraConfigValue[] => [
     unique('cash_movements_tenant_id_id_unique').on(t.tenantId, t.id),
+    foreignKey({ columns: [t.tenantId, t.supplierPaymentId], foreignColumns: [supplierPayments.tenantId, supplierPayments.id] }),
+    // A drawer pays a supplier once, and gets that cash back at most once (when the payment is voided).
+    uniqueIndex('cash_movements_supplier_payment_unique').on(t.tenantId, t.supplierPaymentId, sql`(${t.amount} > 0)`).where(sql`${t.supplierPaymentId} IS NOT NULL`),
     foreignKey({ columns: [t.tenantId, t.cashierSessionId], foreignColumns: [cashierSessions.tenantId, cashierSessions.id] }),
     // Declared later in this file; resolved lazily.
     foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
     index('cash_movements_session_idx').on(t.tenantId, t.cashierSessionId),
-    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND')`),
+    check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND','SUPPLIER_PAYMENT')`),
     check(
       'cash_movements_sign_check',
-      sql`(${t.type} IN ('PAY_OUT','REFUND') AND ${t.amount} < 0) OR (${t.type} = 'PAY_IN' AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0)`,
+      sql`(${t.type} IN ('PAY_OUT','REFUND') AND ${t.amount} < 0) OR (${t.type} = 'PAY_IN' AND ${t.amount} > 0) OR (${t.type} IN ('OPENING_FLOAT','SALE') AND ${t.amount} >= 0) OR (${t.type} = 'SUPPLIER_PAYMENT' AND ${t.amount} <> 0)`,
     ),
     check('cash_movements_refund_link', sql`(${t.type} = 'REFUND') = (${t.saleReturnId} IS NOT NULL)`),
+    check('cash_movements_supplier_payment_link', sql`(${t.type} = 'SUPPLIER_PAYMENT') = (${t.supplierPaymentId} IS NOT NULL)`),
     check('cash_movements_reason_check', sql`${t.type} NOT IN ('PAY_IN','PAY_OUT') OR length(trim(coalesce(${t.reason}, ''))) > 0`),
   ],
 );
@@ -418,8 +426,9 @@ export const paymentIntents = pgTable(
   },
   (t) => [
     unique('payment_intents_tenant_id_id_unique').on(t.tenantId, t.id),
-    // NOT VALID in 0111: payments of removed industries stand, a new one is for a sale.
-    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE')`),
+    // Payments of removed features stand and may still take the provider's answer (0119); a new one is for a sale
+    // (trigger app_payment_intent_new_purpose).
+    check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE','TIP','FOLIO','JOB_ORDER')`),
     check(
       'payment_intents_consumer_check',
       sql`(${t.saleId} IS NULL OR ${t.purpose} IN ('SALE'))`,

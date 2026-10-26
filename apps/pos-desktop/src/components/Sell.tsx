@@ -216,12 +216,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     const sellable = item.sellable?.sellable;
     const already = cart.filter((l) => l.variantId === item.variantId).reduce((a, l) => a.plus(l.quantity), toDec('0'));
     if (sellable !== undefined && toDec(sellable).lt(already.plus(n))) setNotice({ kind: 'warn', text: t('sell.expiredWarn', { n: sellable, name: item.name }) });
-    const med = sellable !== undefined ? { sellable } : {};
+    const limit = sellable !== undefined ? { sellable } : {};
     setCart((c) => {
       // Never into a discounted or manager-priced line: the approval was for what was on it then.
       const existing = c.find((l) => l.variantId === item.variantId && !l.statutory && !l.discount && !l.override && l.wholeUnits);
-      if (existing) return c.map((l) => (l === existing ? { ...l, ...med, quantity: toDec(l.quantity).plus(n).toString() } : l));
-      return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: toDec(n).toString(), wholeUnits, ...med }];
+      if (existing) return c.map((l) => (l === existing ? { ...l, ...limit, quantity: toDec(l.quantity).plus(n).toString() } : l));
+      return [...c, { id: uuid(), variantId: item.variantId, sku: item.sku, name: item.name, quantity: toDec(n).toString(), wholeUnits, ...limit }];
     });
   }
 

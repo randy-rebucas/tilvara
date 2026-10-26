@@ -31,10 +31,12 @@ export default async function PurchasingPage({ searchParams }: { searchParams: P
   const canReceive = canManage || permissions.includes('inventory.adjust');
   const activeSuppliers = suppliers?.data.filter((s) => !s.archivedAt) ?? [];
   const activeBranches = branches?.data.filter((b) => !b.archivedAt) ?? [];
-  // Goods receipts and returns to suppliers, newest first, across the branches this person can see (listed per branch by the API).
+  // Goods receipts and returns to suppliers, newest first, across the branches this person can see (listed per branch by the API),
+  // archived ones included: their documents stay part of the record.
+  const allBranches = branches?.data ?? [];
   const [receiptLists, returnLists] = await Promise.all([
-    Promise.all(activeBranches.map((b) => apiOrNull<List<GoodsReceiptRow>>(`/goods-receipts?branchId=${b.id}`))),
-    Promise.all(activeBranches.map((b) => apiOrNull<List<Omit<SupplierReturn, 'lines' | 'creditValue'>>>(`/supplier-returns?branchId=${b.id}`))),
+    Promise.all(allBranches.map((b) => apiOrNull<List<GoodsReceiptRow>>(`/goods-receipts?branchId=${b.id}`))),
+    Promise.all(allBranches.map((b) => apiOrNull<List<Omit<SupplierReturn, 'lines' | 'creditValue'>>>(`/supplier-returns?branchId=${b.id}`))),
   ]);
   const receipts = receiptLists.flatMap((l) => l?.data ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
   const returns = returnLists.flatMap((l) => l?.data ?? []).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);

@@ -5,7 +5,7 @@ import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, ApiError, type Member } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
-import type { MessageKey } from '@/i18n/messages';
+import { en, type MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { pageTitle } from '@/i18n/page-title';
 
@@ -105,6 +105,12 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
   }
   const members = await apiOrNull<{ data: Member[] }>('/members');
   const typeName = (type: string) => (RECORD_TYPES.has(type) ? t(`audit.type.${type}` as MessageKey) : type);
+  // What happened, in words; an action of the removed trades (history) keeps its code. The code stays in the tooltip.
+  const actionName = (code: string) => (`audit.action.${code}` in en ? t(`audit.action.${code}` as MessageKey) : null);
+  const what = (code: string) => {
+    const name = actionName(code);
+    return name ? <span className="text-ink" title={code}>{name}</span> : <Serial className="text-ink">{code}</Serial>;
+  };
   const filtered = [...q.keys()].some((k) => !['limit', 'cursor'].includes(k));
   const keep = (extra: Record<string, string>) => {
     const p = new URLSearchParams(Object.entries(sp).filter(([k, v]) => k !== 'cursor' && v) as [string, string][]);
@@ -155,7 +161,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
             columns={[
               { header: t('audit.when'), cell: (r) => <span className="whitespace-nowrap text-muted">{formatDateTime(r.occurredAt, lang)}</span> },
               { header: t('audit.who'), cell: (r) => (r.actorType === 'SUPPORT' ? <span className="text-orange">{t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') })}</span> : r.actorUserId ? <Link href={keep({ actor: r.actorUserId })} className="underline">{r.actorName ?? '—'}</Link> : <span className="text-muted">{t('audit.system')}</span>) },
-              { header: t('audit.what'), cell: (r) => <Serial className="text-ink">{r.action}</Serial> },
+              { header: t('audit.what'), cell: (r) => what(r.action) },
               {
                 header: t('audit.record'),
                 cell: (r) => {
@@ -171,7 +177,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
               { header: t('audit.details'), cell: (r) => <span className="text-[0.8125rem] text-muted">{details(r.metadata)}</span> },
             ]}
             stacked={{
-              title: (r) => <Serial className="text-ink">{r.action}</Serial>,
+              title: (r) => what(r.action),
               meta: (r) => <span className="text-[0.8125rem] text-muted">{formatDateTime(r.occurredAt, lang)} · {r.actorType === 'SUPPORT' ? t('audit.supportActor', { name: String(r.metadata.staffName ?? '—') }) : (r.actorName ?? t('audit.system'))} · {typeName(r.resourceType)}</span>,
             }}
           />

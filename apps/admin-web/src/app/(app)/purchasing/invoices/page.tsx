@@ -2,9 +2,9 @@ import Link from 'next/link';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { ScopePicker } from '@/components/scope';
-import { api, apiOrNull, type Branch, type LegalEntity, type Me, type PayablesAging, type Supplier, type SupplierInvoiceRow, type SupplierInvoiceStatus, type UninvoicedReceipt } from '@/lib/api';
+import { api, apiOrNull, type Branch, type CashierSessionRow, type LegalEntity, type Me, type PayablesAging, type Register, type Supplier, type SupplierInvoiceRow, type SupplierInvoiceStatus, type UninvoicedReceipt } from '@/lib/api';
 import { formatDate, peso, signOf, subtractQty } from '@/lib/format';
-import { branchLabel, docNo, isUuid } from '@/lib/options';
+import { branchLabel, docNo, drawerOptions, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { BatchPaymentForm, NewInvoiceForm } from './forms';
 import { pageTitle } from '@/i18n/page-title';
@@ -47,11 +47,13 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
     return `/purchasing/invoices?${p.toString()}`;
   };
 
-  const [invoices, aging, uninvoiced, payable] = await Promise.all([
+  const [invoices, aging, uninvoiced, payable, openShifts, registers] = await Promise.all([
     entity ? apiOrNull<{ data: SupplierInvoiceRow[] }>(`/supplier-invoices?legalEntityId=${entity.id}${status ? `&status=${status}` : ''}${supplierFilter ? `&supplierId=${supplierFilter}` : ''}`) : null,
     entity ? apiOrNull<PayablesAging>(`/reports/payables-aging?legalEntityId=${entity.id}`) : null,
     canEnter && pickBranch && pickSupplier ? apiOrNull<{ data: UninvoicedReceipt[] }>(`/uninvoiced-receipts?branchId=${pickBranch.id}&supplierId=${pickSupplier.id}`) : null,
     entity && paySupplier ? apiOrNull<{ data: SupplierInvoiceRow[] }>(`/supplier-invoices?legalEntityId=${entity.id}&supplierId=${paySupplier.id}&status=OPEN`) : null,
+    paySupplier ? apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=OPEN') : null,
+    paySupplier ? apiOrNull<{ data: Register[] }>('/registers') : null,
   ]);
   const today = aging?.asOf ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
   const ledgerDiffers = aging && signOf(subtractQty(aging.ledgerBalance, aging.totals.total)) !== 0;
@@ -112,7 +114,8 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
               </form>
               {payable && paySupplier && (
                 payable.data.length > 0
-                  ? <BatchPaymentForm key={paySupplier.id} supplierId={paySupplier.id} today={today} invoices={payable.data.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, balance: i.balance }))} />
+                  ? <BatchPaymentForm key={paySupplier.id} supplierId={paySupplier.id} today={today} invoices={payable.data.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, balance: i.balance }))}
+                      drawers={drawerOptions(openShifts?.data, registers?.data, branches?.data, (amount) => t('ap.inDrawer', { amount }), [...new Set(payable.data.map((i) => i.branchId))])} />
                   : <Callout>{t('ap.payManyNone')}</Callout>
               )}
             </section>

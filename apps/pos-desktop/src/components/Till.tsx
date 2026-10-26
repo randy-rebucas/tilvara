@@ -6,7 +6,7 @@ import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
 import { offlineReceiptToPrintable } from '../lib/printing';
 import { useTill } from '../lib/till';
 import { AuthStub } from './AuthNote';
-import { Callout, Field, Money, Note } from './ui';
+import { Callout, Field, Note } from './ui';
 
 const when = (ms: number | string) => new Date(ms).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -172,19 +172,18 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
   const ref = useRef<HTMLDivElement>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const dateTime = when(data.occurredAt);
+  // The screen shows what the printer gets: same totals and payments, in the same words.
+  const doc = offlineReceiptToPrintable(data, dateTime);
   const print = async () => {
     if (!ref.current) return;
     setPrintError(null);
     try {
-      await printer.print(ref.current, offlineReceiptToPrintable(data, dateTime));
+      await printer.print(ref.current, doc);
     } catch (e) {
       setPrintError((e as Error).message);
     }
   };
   const isVat = data.seller.vatStatus === 'VAT';
-  const totals: [string, string][] = isVat
-    ? [['VATable sales', data.totals.vatableSales], ['VAT', data.totals.vatAmount], ['VAT-exempt sales', data.totals.vatExemptSales], ['Zero-rated sales', data.totals.zeroRatedSales]]
-    : [['Sales subject to percentage tax', data.totals.percentageTaxSales], ['Exempt sales', data.totals.vatExemptSales]];
   return (
     <div className="grid content-start gap-3">
       <div className="mx-auto w-full max-w-[420px]">
@@ -211,14 +210,14 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
           ))}
         </ul>
         <dl className="mt-3 grid gap-0.5 border-t border-dashed border-hair pt-2">
-          {totals.filter(([, v]) => !/^0(\.0+)?$/.test(v)).map(([k, v]) => (
-            <div key={k} className="flex justify-between"><dt>{k}</dt><dd><Money value={v} /></dd></div>
+          {doc.totals.map((r) => (
+            <div key={r.label} className={`flex justify-between ${r.emphasis ? 'text-[1rem] font-semibold' : ''}`}><dt>{r.label}</dt><dd className="money">{r.amount}</dd></div>
           ))}
-          <div className="flex justify-between text-[1rem] font-semibold"><dt>Total due</dt><dd><Money value={data.totals.amountDue} /></dd></div>
         </dl>
         <div className="mt-2 grid gap-0.5 border-t border-dashed border-hair pt-2">
-          <p className="flex justify-between"><span>CASH</span><Money value={data.tendered} /></p>
-          <p className="flex justify-between font-semibold"><span>Change</span><Money value={data.change} /></p>
+          {doc.payments.map((r) => (
+            <p key={r.label} className={`flex justify-between ${r.label === 'Change' ? 'font-semibold' : ''}`}><span>{r.label}</span><span className="money">{r.amount}</span></p>
+          ))}
         </div>
         <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.cashierName} · {data.register.name}</p>
       </div>

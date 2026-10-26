@@ -59,6 +59,19 @@ describe('buildReceipt', () => {
     expect(buildReceipt({ ...base, invoicingMode: 'DEV_SERIES' }).notice).toBe(DEV_SERIES_NOTICE);
   });
 
+  it('prints Tendered and Change for cash handed over only, never for a card or an exchange refund', () => {
+    expect(buildReceipt(base).totals).toMatchObject({ tendered: '1000.00', change: '177.60' });
+    const card = buildReceipt({ ...base, sale: { ...base.sale, amountTendered: '822.40', changeDue: '0.00' }, tenders: [{ method: 'CARD', amount: '822.40', tendered: '822.40', change: '0.00' }] });
+    expect(card.totals).not.toHaveProperty('tendered');
+    expect(card.totals).not.toHaveProperty('change');
+    const split = buildReceipt({ ...base, tenders: [{ method: 'CARD', amount: '322.40', tendered: '322.40', change: '0.00' }, { method: 'CASH', amount: '500.00', tendered: '500.00', change: '0.00' }], sale: { ...base.sale, amountTendered: '822.40', changeDue: '0.00' } });
+    expect(split.totals).toMatchObject({ tendered: '500.00', change: '0.00' });
+    // An exchange whose refund (₱900) is more than the new items: no cash tendered, the difference given back as change.
+    const exchange = buildReceipt({ ...base, tenders: [{ method: 'CASH', amount: '822.40', tendered: '900.00', change: '77.60', exchangeReturnNumber: 3 }], sale: { ...base.sale, amountTendered: '900.00', changeDue: '77.60' } });
+    expect(exchange.totals).not.toHaveProperty('tendered');
+    expect(exchange.totals).toMatchObject({ change: '77.60' });
+  });
+
   it('shows the VAT REG TIN with branch code, local time and a register-scoped reference', () => {
     const r = buildReceipt(base);
     expect(r.seller).toMatchObject({ name: 'Tindahan ni Aling Nena', tinLabel: 'VAT REG TIN', tin: '123-456-789-00000', address: 'Cubao, QC' });

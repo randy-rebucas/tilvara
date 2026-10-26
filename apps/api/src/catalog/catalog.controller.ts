@@ -246,6 +246,12 @@ export class CatalogController {
     return this.pricing.updatePriceList(auth, listId, body);
   }
 
+  @HttpCode(200)
+  @Post('price-lists/:id/archive')
+  archivePriceList(@Auth() auth: AuthContext, @Param('id', id) listId: string) {
+    return this.pricing.archivePriceList(auth, listId);
+  }
+
   @Get('price-lists/:id/prices')
   currentPrices(@Auth() auth: AuthContext, @Param('id', id) listId: string) {
     return this.pricing.currentPrices(auth, listId);

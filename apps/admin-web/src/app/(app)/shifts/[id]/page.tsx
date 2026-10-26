@@ -14,7 +14,7 @@ import { pageTitle } from '@/i18n/page-title';
 export const generateMetadata = pageTitle('shifts.item');
 
 /** Cash movement types as the API names them; the last three are history of the removed lodging and laundry (no longer made). */
-const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT'] as const;
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'SUPPLIER_PAYMENT', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT'] as const;
 
 /** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {
@@ -117,12 +117,16 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
               {shift.payInOut.map((m) => (
                 <li key={m.id} id={`movement-${m.id}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-hair-soft px-4 py-3 last:border-b-0">
                   <div className="min-w-0">
-                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : 'doc.payOut')}: {m.reason ?? ''}</p>
+                    <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : m.type === 'SUPPLIER_PAYMENT' ? 'doc.supplierPaid' : 'doc.payOut')}: {m.reason ?? ''}</p>
                     <Serial>{person(m.createdBy)} · {formatDateTime(m.createdAt, lang)}</Serial>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="money font-semibold">{peso(m.amount)}</span>
-                    {journal(m.id) && <Link href={journal(m.id)!} className="btn">{t('common.journalEntry')}</Link>}
+                    {m.supplierPaymentId ? (
+                      <Link href={`/purchasing/payments/${m.supplierPaymentId}`} className="btn">{t('doc.openPayment')}</Link>
+                    ) : (
+                      journal(m.id) && <Link href={journal(m.id)!} className="btn">{t('common.journalEntry')}</Link>
+                    )}
                   </div>
                 </li>
               ))}

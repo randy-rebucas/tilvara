@@ -1,5 +1,6 @@
+import { redirect } from 'next/navigation';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
-import { apiOrNull, type Extension, type Subscription } from '@/lib/api';
+import { apiOrNull, type Extension, type Me, type Subscription } from '@/lib/api';
 import { daysUntil, formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { en, type MessageKey } from '@/i18n/messages';
@@ -20,6 +21,11 @@ const FEATURES = ['multi_entity', 'advanced_reports', 'api_access'] as const;
 
 export default async function SubscriptionPage() {
   const { t, lang } = await getT();
+  // A member who may manage integrations but not the plan comes here from the band: their tab is Integrations.
+  const permissions = (await apiOrNull<Me>('/me'))?.activeTenant?.permissions;
+  if (permissions && !permissions.some((p) => p === 'subscription.manage' || p === 'tenant.manage') && permissions.includes('integrations.manage')) {
+    redirect('/subscription/integrations');
+  }
   const sub = await apiOrNull<Subscription>('/subscription');
   if (!sub) {
     return (

@@ -32,7 +32,10 @@ export const apiKeys = pgTable(
     unique('api_keys_tenant_id_id_unique').on(t.tenantId, t.id),
     uniqueIndex('api_keys_prefix_unique').on(t.prefix),
     check('api_keys_name_check', sql`length(trim(${t.name})) BETWEEN 1 AND 100`),
-    check('api_keys_scopes_check', sql`cardinality(${t.scopes}) > 0 AND ${t.scopes} <@ ARRAY['org.read','catalog.read','sales.read','inventory.read','reports.read','customers.read']::text[]`),
+    // A key keeps the scopes it was made with: the three of removed features (0110–0112) stay allowed on old keys, where they
+    // grant nothing (AuthGuard keeps known permission codes only), so such a key can still be used for its other scopes and revoked.
+    // New keys take API_KEY_SCOPES only (validation).
+    check('api_keys_scopes_check', sql`cardinality(${t.scopes}) > 0 AND ${t.scopes} <@ ARRAY['org.read','catalog.read','sales.read','inventory.read','reports.read','customers.read','lodging.read','laundry.read','appointments.read']::text[]`),
     check('api_keys_revoked_check', sql`(${t.revokedAt} IS NULL) = (${t.revokedBy} IS NULL)`),
   ],
 );

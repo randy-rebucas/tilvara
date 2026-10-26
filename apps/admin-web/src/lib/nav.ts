@@ -25,7 +25,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/offline-sales', key: 'nav.offline', needs: ['cash.reconcile'] },
   { href: '/locations', key: 'nav.locations', needs: ['org.read', 'terminals.manage'] },
   { href: '/team', key: 'nav.team', needs: ['members.read'] },
-  { href: '/subscription', key: 'nav.subscription', needs: ['subscription.manage', 'tenant.manage'] },
+  { href: '/subscription', key: 'nav.subscription', needs: ['subscription.manage', 'tenant.manage', 'integrations.manage'] },
 ];
 
 /** The business has the extension this area belongs to, if any (`/me` → `activeTenant.extensions`). */

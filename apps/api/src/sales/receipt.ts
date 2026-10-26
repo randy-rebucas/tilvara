@@ -175,6 +175,12 @@ export function buildReturnReceipt(r: ReturnReceiptInput) {
   };
 }
 
+/** The cash the customer handed over across the sale's cash tenders, or null when none was (card, store credit, an exchange's refund). */
+function cashHandedOver(tenders: ReceiptInput['tenders']): string | null {
+  const cash = tenders.filter((t) => t.method === 'CASH' && !t.exchangeReturnNumber);
+  return cash.length ? cash.reduce((a, t) => a.plus(t.tendered), toDec('0')).toFixed(2) : null;
+}
+
 export function buildReceipt(r: ReceiptInput) {
   const isVat = r.seller.vatStatus === 'VAT';
   const local = new Intl.DateTimeFormat('en-PH', {
@@ -266,8 +272,10 @@ export function buildReceipt(r: ReceiptInput) {
         : { salesSubjectToPercentageTax: r.sale.percentageTaxSales, exemptSales: r.sale.vatExemptSales }),
       ...(positive(r.sale.statutoryDiscount) && { statutoryDiscount: r.sale.statutoryDiscount }),
       amountDue: r.sale.amountDue,
-      tendered: r.sale.amountTendered,
-      change: r.sale.changeDue,
+      // "Tendered" is the cash handed over (never a card, store credit or an exchange's refund). Change follows cash,
+      // including an exchange's refund larger than the new items (given back in cash).
+      ...(cashHandedOver(r.tenders) !== null && { tendered: cashHandedOver(r.tenders)! }),
+      ...(r.tenders.some((t) => t.method === 'CASH') && { change: r.sale.changeDue }),
     },
     tenders: r.tenders.map((t) => ({ method: t.method, amount: t.amount, ...(t.method === 'CASH' && { tendered: t.tendered, change: t.change }), ...(t.exchangeReturnNumber && { exchangeReturnNumber: t.exchangeReturnNumber }) })),
     statutory,

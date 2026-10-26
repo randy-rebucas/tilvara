@@ -4,9 +4,9 @@ import { ReasonAction } from '@/components/actions';
 import { Callout, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, type Branch, type Me, type SupplierPayment } from '@/lib/api';
+import { api, apiOrNull, type Branch, type CashierSessionRow, type Me, type Register, type SupplierPayment } from '@/lib/api';
 import { formatDate, formatDateTime, peso } from '@/lib/format';
-import { branchLabel, docNo, isUuid } from '@/lib/options';
+import { branchLabel, docNo, drawerOptions, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
 import { pageTitle } from '@/i18n/page-title';
 
@@ -20,13 +20,19 @@ export default async function SupplierPaymentPage({ params }: { params: Promise<
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [me, payment, branches] = await Promise.all([
+  const [me, payment, branches, registers] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<SupplierPayment>(`/supplier-payments/${id}`),
     apiOrNull<{ data: Branch[] }>('/branches'),
+    apiOrNull<{ data: Register[] }>('/registers'),
   ]);
   if (!payment) notFound();
   const canVoid = (me.activeTenant?.permissions ?? []).includes('accounting.post') && payment.status === 'RECORDED' && !me.support;
+  // Cash from a drawer goes back into an open drawer of the payment's branch when voided.
+  const fromDrawer = payment.method === 'CASH_DRAWER';
+  const openShifts = fromDrawer && canVoid ? await apiOrNull<{ data: CashierSessionRow[] }>('/cashier-sessions?status=OPEN') : null;
+  const backTo = fromDrawer ? drawerOptions(openShifts?.data, registers?.data, branches?.data, (amount) => t('ap.inDrawer', { amount }), [payment.branchId]) : [];
+  const shiftLink = (sessionId: string | null | undefined) => (sessionId ? <Link href={`/shifts/${sessionId}`} className="underline">{t('doc.shift')}</Link> : '—');
   const books = (entryId: string) => `/books/entries/${entryId}?entity=${payment.legalEntityId}`;
 
   return (
@@ -46,12 +52,24 @@ export default async function SupplierPaymentPage({ params }: { params: Promise<
         <Figure label={t('ap.paidOn')}>{formatDate(payment.paidOn, lang)}</Figure>
         <Figure label={t('ap.method')}>{t(`ap.method.${payment.method}`)}</Figure>
         <Figure label={t('ap.reference')}>{payment.reference ?? '—'}</Figure>
+        {fromDrawer && <Figure label={t('ap.paidFrom')}>{shiftLink(payment.paidFromSessionId)}</Figure>}
+        {fromDrawer && payment.returnedToSessionId && <Figure label={t('ap.returnedTo')}>{shiftLink(payment.returnedToSessionId)}</Figure>}
       </Note>
 
       <div className="flex flex-wrap items-start gap-2">
         {payment.journalEntryId && <Link href={books(payment.journalEntryId)} className="btn">{t('common.journalEntry')}</Link>}
         {payment.reversalEntryId && <Link href={books(payment.reversalEntryId)} className="btn">{t('ap.reversal')}</Link>}
-        {canVoid && <ReasonAction url={`/api/v1/supplier-payments/${payment.id}/void`} label={t('ap.voidPayment')} reasonLabel={t('common.reason')} hint={t('ap.voidHint')} danger idempotent />}
+        {canVoid && (
+          <ReasonAction
+            url={`/api/v1/supplier-payments/${payment.id}/void`}
+            label={t('ap.voidPayment')}
+            reasonLabel={t('common.reason')}
+            hint={fromDrawer && backTo.length === 0 ? `${t('ap.voidHint')} ${t('ap.noDrawerOpen')}` : t('ap.voidHint')}
+            danger
+            idempotent
+            {...(fromDrawer && { choice: { name: 'cashierSessionId', label: t('ap.drawerBack'), options: backTo } })}
+          />
+        )}
       </div>
 
       <section>

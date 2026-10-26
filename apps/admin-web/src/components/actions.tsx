@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { FormError, TextField } from './fields';
+import { FormError, SelectField, TextField } from './fields';
 import { useFormKey, useSubmit } from './use-submit';
 import { useT } from '@/i18n/client';
 
@@ -38,6 +38,7 @@ export function ReasonAction({
   body = {},
   danger = false,
   idempotent = false,
+  choice,
 }: {
   url: string;
   label: string;
@@ -47,6 +48,8 @@ export function ReasonAction({
   body?: Record<string, unknown>;
   danger?: boolean;
   idempotent?: boolean;
+  /** A pick-list sent with the reason under `name` (e.g. the open shift whose drawer takes cash back). */
+  choice?: { name: string; label: string; options: { value: string; label: string }[] };
 }) {
   const [open, setOpen] = useState(false);
   if (!open) {
@@ -56,19 +59,21 @@ export function ReasonAction({
       </button>
     );
   }
-  return <ReasonPanel {...{ url, label, reasonLabel, hint, field, body, danger, idempotent }} close={() => setOpen(false)} />;
+  return <ReasonPanel {...{ url, label, reasonLabel, hint, field, body, danger, idempotent, choice }} close={() => setOpen(false)} />;
 }
 
 function ReasonPanel({
-  url, label, reasonLabel, hint, field, body, danger, idempotent, close,
-}: { url: string; label: string; reasonLabel: string; hint?: string; field: string; body: Record<string, unknown>; danger: boolean; idempotent: boolean; close: () => void }) {
+  url, label, reasonLabel, hint, field, body, danger, idempotent, choice, close,
+}: { url: string; label: string; reasonLabel: string; hint?: string; field: string; body: Record<string, unknown>; danger: boolean; idempotent: boolean; choice?: { name: string; label: string; options: { value: string; label: string }[] }; close: () => void }) {
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, error, fieldError } = useSubmit();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const reason = String(new FormData(e.currentTarget).get(field) ?? '').trim();
-    const r = await submit('POST', url, { ...body, [field]: reason }, idempotent ? { idempotencyKey: key } : {});
+    const f = new FormData(e.currentTarget);
+    const reason = String(f.get(field) ?? '').trim();
+    const picked = choice ? { [choice.name]: String(f.get(choice.name) ?? '') } : {};
+    const r = await submit('POST', url, { ...body, ...picked, [field]: reason }, idempotent ? { idempotencyKey: key } : {});
     if (r.ok) close();
   }
   return (
@@ -76,8 +81,13 @@ function ReasonPanel({
       <p className="font-semibold">{label}</p>
       {hint && <p className="-mt-2 text-[0.875rem] text-muted">{hint}</p>}
       <TextField label={reasonLabel} name={field} required autoFocus error={fieldError(field)} />
+      {choice && (
+        <SelectField label={choice.label} name={choice.name} error={fieldError(choice.name)}>
+          {choice.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </SelectField>
+      )}
       <div className="flex flex-wrap items-center gap-2">
-        <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} disabled={pending}>{label}</button>
+        <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} disabled={pending || (choice !== undefined && choice.options.length === 0)}>{label}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />
       </div>

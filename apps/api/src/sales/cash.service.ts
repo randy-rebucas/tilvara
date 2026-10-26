@@ -320,11 +320,12 @@ export class CashService extends TenantService {
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
     const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy]);
-    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry).
+    // Pay-ins, pay-outs and suppliers paid from the drawer, one by one (each with a reason; a pay-in/out is its own
+    // document with a journal entry, a supplier payment's entry is the payment's).
     const payInOut = await db
-      .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
+      .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, supplierPaymentId: cashMovements.supplierPaymentId, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
       .from(cashMovements)
-      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT'])))
+      .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT', 'SUPPLIER_PAYMENT'])))
       .orderBy(cashMovements.createdAt, cashMovements.id);
     return {
       ...base,

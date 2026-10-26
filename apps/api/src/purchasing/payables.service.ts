@@ -5,6 +5,7 @@ import {
   asc,
   branches,
   eq,
+  cashMovements,
   goodsReceiptLines,
   goodsReceipts,
   inArray,
@@ -45,6 +46,7 @@ import { emitEvent } from '../outbox/outbox.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { profilesInForce } from '../tax/tax-profiles.js';
 import { branchScope } from './purchase-orders.service.js';
+import { expectedCash, loadSession } from '../sales/cash.service.js';
 
 type InvoiceRow = typeof supplierInvoices.$inferSelect;
 type Scope = { branchId?: string; legalEntityId: string };
@@ -278,6 +280,16 @@ export class PayablesService extends TenantService {
     }
 
     const amount = allocations.reduce((s, a) => s.plus(a.amount), new Dec(0));
+    // Cash from a till's drawer: an open shift at the invoices' branch (each branch's books stay balanced), paid
+    // today, and no more than the drawer holds. The shift is locked as a pay-out locks it.
+    const drawer = input.method === 'CASH_DRAWER' ? await this.openDrawer(db, input.cashierSessionId!, first.branchId) : null;
+    if (drawer) {
+      const strays = invoices.filter((i) => i.branchId !== first.branchId).map((i) => i.id);
+      if (strays.length) throw unprocessable('DRAWER_OTHER_BRANCH', 'Cash from a drawer pays invoices of that drawer’s branch only', { supplierInvoiceIds: strays });
+      if (input.paidOn !== today) throw unprocessable('DRAWER_PAID_TODAY', 'Cash from a drawer is paid today', { today });
+      const available = toDec(await expectedCash(db, drawer.id));
+      if (available.lt(amount)) throw unprocessable('INSUFFICIENT_DRAWER_CASH', 'Not enough cash in this drawer for that', { available: available.toFixed(2) });
+    }
     const tenantId = first.tenantId;
     const paymentNumber = await nextNumber(db, tenantId, entity, 'SUPPLIER_PAYMENT');
     const [payment] = await db
@@ -297,6 +309,12 @@ export class PayablesService extends TenantService {
       })
       .returning();
     await db.insert(supplierPaymentAllocations).values(allocations.map((a) => ({ tenantId, supplierPaymentId: payment!.id, supplierInvoiceId: a.supplierInvoiceId, amount: toDec(a.amount).toFixed(4) })));
+    if (drawer) {
+      await db.insert(cashMovements).values({
+        tenantId, cashierSessionId: drawer.id, type: 'SUPPLIER_PAYMENT', amount: amount.negated().toFixed(4), supplierPaymentId: payment!.id,
+        reason: `Supplier payment #${paymentNumber} (${supplier.name})`, createdBy: auth.userId,
+      });
+    }
     // Each branch's payables settled by its own lines, so every branch stays balanced.
     const byBranch = new Map<string, Dec>();
     for (const [k, a] of allocations.entries()) byBranch.set(invoices[k]!.branchId, (byBranch.get(invoices[k]!.branchId) ?? new Dec(0)).plus(a.amount));
@@ -309,13 +327,15 @@ export class PayablesService extends TenantService {
       sourceType: 'SUPPLIER_PAYMENT',
       sourceId: payment!.id,
       memo: `Payment #${paymentNumber} of supplier invoice${invoices.length > 1 ? 's' : ''} ${numbers}${input.reference ? ` (${input.reference})` : ''}`,
-      lines: [...byBranch].flatMap(([branchId, v]) => supplierPaymentPosting(money(v), branchId)),
+      lines: [...byBranch].flatMap(([branchId, v]) => supplierPaymentPosting(money(v), branchId, drawer ? 'DRAWER' : 'BANK')),
       createdBy: auth.userId,
     });
 
     await this.audit(db, auth, 'supplier_payment.recorded', 'supplier_payment', payment!.id, {
       paymentNumber,
       amount: money(amount),
+      method: input.method,
+      ...(drawer && { cashierSessionId: drawer.id }),
       allocations: allocations.map((a) => ({ supplierInvoiceId: a.supplierInvoiceId, amount: money(a.amount) })),
     });
     await emitEvent(db, { tenantId, topic: 'supplier_payment.recorded', payload: { supplierPaymentId: payment!.id, supplierInvoiceIds: allocations.map((a) => a.supplierInvoiceId) }, correlationId: auth.correlationId });
@@ -332,6 +352,11 @@ export class PayablesService extends TenantService {
       if (!payment) throw notFound('Supplier payment');
       this.assertCan(auth, 'accounting.post', { legalEntityId: payment.legalEntityId });
       if (payment.voidedAt) throw new AppError('ALREADY_VOIDED', 'This payment is already voided', HttpStatus.CONFLICT);
+      // Cash paid from a drawer goes back into an open drawer of the same branch (the reversal debits cash on hand).
+      if ((payment.method === 'CASH_DRAWER') !== Boolean(input.cashierSessionId)) {
+        throw unprocessable('DRAWER_REQUIRED', payment.method === 'CASH_DRAWER' ? 'Choose the open shift whose drawer takes the cash back' : 'Only a payment from a drawer puts cash back into one');
+      }
+      const drawer = input.cashierSessionId ? await this.openDrawer(db, input.cashierSessionId, payment.branchId) : null;
       const [voided] = await db
         .update(supplierPayments)
         .set({ voidedBy: auth.userId, voidedAt: sql`now()`, voidReason: input.reason })
@@ -349,6 +374,12 @@ export class PayablesService extends TenantService {
           memo: `Supplier payment #${payment.paymentNumber} voided: ${input.reason}`,
           lines: reversalOf(lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }))),
           createdBy: auth.userId,
+        });
+      }
+      if (drawer) {
+        await db.insert(cashMovements).values({
+          tenantId: payment.tenantId, cashierSessionId: drawer.id, type: 'SUPPLIER_PAYMENT', amount: toDec(payment.amount).toFixed(4), supplierPaymentId: id,
+          reason: `Supplier payment #${payment.paymentNumber} voided: ${input.reason}`, createdBy: auth.userId,
         });
       }
       await this.audit(db, auth, 'supplier_payment.voided', 'supplier_payment', id, { paymentNumber: payment.paymentNumber, amount: money(payment.amount), reason: input.reason });
@@ -460,6 +491,14 @@ export class PayablesService extends TenantService {
     });
   }
 
+  /** An open shift whose drawer pays (or takes back) a supplier's cash: locked, and at the payment's branch. */
+  private async openDrawer(db: Database, sessionId: string, branchId: string) {
+    const { session } = await loadSession(db, sessionId, true);
+    if (session.status !== 'OPEN') throw new AppError('SESSION_NOT_OPEN', 'This cashier session is not open', HttpStatus.CONFLICT);
+    if (session.branchId !== branchId) throw unprocessable('DRAWER_OTHER_BRANCH', 'The drawer must be at the branch of the invoices', { branchId: session.branchId });
+    return session;
+  }
+
   /** One payment (the journal links a SUPPLIER_PAYMENT entry here), with the invoices it settles. */
   getPayment(auth: AuthContext, id: string) {
     return this.read(auth, async (db) => {
@@ -483,6 +522,10 @@ export class PayablesService extends TenantService {
       await db.select({ id: journalEntries.id }).from(journalEntries).where(and(eq(journalEntries.sourceType, 'SUPPLIER_PAYMENT'), eq(journalEntries.sourceId, p.id))),
     ];
     const [reversal] = entry ? await db.select({ id: journalEntries.id }).from(journalEntries).where(eq(journalEntries.reversesEntryId, entry.id)) : [];
+    // Cash from a drawer: the shift that paid it, and the one that took it back when voided.
+    const drawer = p.method === 'CASH_DRAWER'
+      ? await db.select({ cashierSessionId: cashMovements.cashierSessionId, amount: cashMovements.amount }).from(cashMovements).where(eq(cashMovements.supplierPaymentId, p.id))
+      : [];
     return {
       id: p.id,
       legalEntityId: p.legalEntityId,
@@ -505,6 +548,8 @@ export class PayablesService extends TenantService {
       invoiceNumber: allocations.length === 1 ? allocations[0]!.invoiceNumber : null,
       journalEntryId: entry?.id ?? null,
       reversalEntryId: reversal?.id ?? null,
+      paidFromSessionId: drawer.find((d) => toDec(d.amount).isNegative())?.cashierSessionId ?? null,
+      returnedToSessionId: drawer.find((d) => toDec(d.amount).isPositive())?.cashierSessionId ?? null,
     };
   }
 

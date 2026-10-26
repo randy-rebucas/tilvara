@@ -69,6 +69,29 @@ describe('chart of accounts', () => {
     const err = await asOwnerInTenant(owner, s.tenantId, (c) => c.query(`UPDATE accounts SET archived_at = now() WHERE system_key = 'SALES'`)).then(() => null, (e: Error) => e.message);
     expect(err).toMatch(/cannot be archived/);
   });
+
+  it('archives and restores an own account: no manual entry while archived, history kept; system accounts never', async () => {
+    const s = await shop('gl-archive');
+    const list = async () => (await http().get('/v1/accounts').query({ legalEntityId: s.le }).set(s.accountant).expect(200)).body.data as { id: string; systemKey: string | null; archivedAt: string | null }[];
+    const cash = (await list()).find((a) => a.systemKey === 'CASH_ON_HAND')!.id;
+    const rent = (await http().post('/v1/accounts').set(s.accountant).send({ legalEntityId: s.le, code: '6100', name: 'Rent', type: 'EXPENSE' }).expect(201)).body.id as string;
+    const manual = () => http().post('/v1/journal-entries').set(s.accountant).set('Idempotency-Key', randomUUID())
+      .send({ legalEntityId: s.le, entryDate: new Date().toISOString().slice(0, 10), memo: 'Rent paid', lines: [{ accountId: rent, debit: '500.00' }, { accountId: cash, credit: '500.00' }] });
+    await manual().expect(201);
+    const sys = await http().post(`/v1/accounts/${cash}/archive`).set(s.accountant);
+    expect([sys.status, sys.body.error?.code]).toEqual([409, 'ACCOUNT_SYSTEM']);
+    await http().post(`/v1/accounts/${rent}/archive`).set(s.manager).expect(403);
+    expect((await http().post(`/v1/accounts/${rent}/archive`).set(s.accountant).expect(200)).body.archivedAt).toBeTruthy();
+    await http().post(`/v1/accounts/${rent}/archive`).set(s.accountant).expect(409);
+    const refused = await manual();
+    expect([refused.status, refused.body.error?.code]).toEqual([409, 'ACCOUNT_ARCHIVED']);
+    // Its balance stays in the trial balance while archived.
+    const today = new Date().toISOString().slice(0, 10);
+    const tb = (await http().get('/v1/reports/trial-balance').query({ legalEntityId: s.le, from: today, to: today }).set(s.accountant).expect(200)).body;
+    expect(JSON.stringify(tb)).toContain(rent);
+    expect((await http().post(`/v1/accounts/${rent}/restore`).set(s.accountant).expect(200)).body.archivedAt).toBeNull();
+    await manual().expect(201);
+  });
 });
 
 describe('a day in the books', () => {

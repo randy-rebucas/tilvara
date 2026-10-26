@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { Empty, Note, Serial } from '@/components/note';
+import { ActionButton } from '@/components/actions';
 import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type Account, type Me } from '@/lib/api';
 import { getT } from '@/i18n/server';
@@ -14,6 +15,15 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const { entities, entity } = await booksEntity((await searchParams).entity);
   const [me, accounts] = await Promise.all([api<Me>('/me'), entity ? apiOrNull<{ data: Account[] }>(`/accounts?legalEntityId=${entity.id}`) : null]);
   const canPost = me.activeTenant?.permissions.includes('accounting.post') ?? false;
+  // The business's own accounts can be archived and restored; system accounts never (the books post to them).
+  const toggle = (a: Account) =>
+    canPost && !a.systemKey ? (
+      a.archivedAt ? (
+        <ActionButton url={`/api/v1/accounts/${a.id}/restore`} label={t('books.restore')} />
+      ) : (
+        <ActionButton url={`/api/v1/accounts/${a.id}/archive`} label={t('books.archive')} confirmText={t('books.archiveConfirm', { code: a.code, name: a.name })} />
+      )
+    ) : null;
 
   return (
     <BooksChrome tab="accounts" entities={entities} entity={entity}>
@@ -32,11 +42,13 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
                 { header: t('books.code'), cell: (a) => <Serial className="font-semibold text-ink">{a.code}</Serial> },
                 { header: t('books.accountName'), cell: (a) => <Link href={`/books?entity=${entity?.id}&account=${a.id}`} className="underline">{a.name}</Link> },
                 { header: t('books.type'), cell: (a) => t(`acct.${a.type}`) },
-                { header: '', cell: (a) => (a.systemKey ? <span className="tag" title={a.systemKey}>{t('books.system')}</span> : null) },
+                { header: '', cell: (a) => (a.systemKey ? <span className="tag" title={a.systemKey}>{t('books.system')}</span> : a.archivedAt ? <span className="tag">{t('common.archived')}</span> : null) },
+                ...(canPost ? [{ header: '', cell: toggle }] : []),
               ]}
               stacked={{
                 title: (a) => a.name,
-                meta: (a) => <Serial>{a.code} · {t(`acct.${a.type}`)}{a.systemKey ? ` · ${t('books.system')}` : ''}</Serial>,
+                meta: (a) => <Serial>{a.code} · {t(`acct.${a.type}`)}{a.systemKey ? ` · ${t('books.system')}` : a.archivedAt ? ` · ${t('common.archived')}` : ''}</Serial>,
+                figure: toggle,
               }}
             />
           ) : (

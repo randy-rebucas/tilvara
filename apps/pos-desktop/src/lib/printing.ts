@@ -84,6 +84,20 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
   };
 }
 
+/**
+ * Tenders as a receipt words them. ROOM_CHARGE and JOB_DEPOSIT stay on old sales (retired with lodging
+ * and laundry, migrations 0110–0111) and reprint marked retired; a code this build has no words for prints as stored.
+ */
+const RECEIPT_TENDERS: Record<string, string> = {
+  STORE_CREDIT: 'STORE CREDIT',
+  EWALLET: 'E-WALLET',
+  ROOM_CHARGE: 'ROOM CHARGE (RETIRED)',
+  JOB_DEPOSIT: 'LAUNDRY DOWN PAYMENT (RETIRED)',
+};
+
+/** Tender methods of features no longer offered: a sale paid with one cannot be voided or returned (`TENDER_RETIRED`). */
+export const RETIRED_TENDERS: readonly string[] = ['ROOM_CHARGE', 'JOB_DEPOSIT'];
+
 /** How a tender reads on a receipt: an exchange credit names the return it came from. */
 export const tenderLabel = (t: { method: string; exchangeReturnNumber?: number }) =>
-  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : t.method === 'STORE_CREDIT' ? 'STORE CREDIT' : t.method;
+  t.exchangeReturnNumber ? `EXCHANGE CREDIT (RETURN #${String(t.exchangeReturnNumber).padStart(6, '0')})` : (RECEIPT_TENDERS[t.method] ?? t.method);

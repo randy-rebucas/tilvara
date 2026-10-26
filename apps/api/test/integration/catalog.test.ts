@@ -293,6 +293,27 @@ describe('pricing & POS lookup', () => {
     await http().post('/v1/products').set(token).send(product(s)).expect(403);
   });
 
+  it('archives a price list no open branch uses; never the default or one in use; an archived list takes no prices', async () => {
+    const def = await http().post(`/v1/price-lists/${s.defaultListId}/archive`).set(s.auth);
+    expect([def.status, def.body.error?.code]).toEqual([409, 'PRICE_LIST_DEFAULT']);
+    const season = (await http().post('/v1/price-lists').set(s.auth).send({ name: 'Summer sale' }).expect(201)).body as { id: string };
+    await http().post(`/v1/price-lists/${season.id}/prices`).set(s.auth).send({ items: [{ variantId, amount: '18.00' }] }).expect(201);
+    await http().put(`/v1/branches/${s.branchId}/price-list`).set(s.auth).send({ priceListId: season.id }).expect(200);
+    const used = await http().post(`/v1/price-lists/${season.id}/archive`).set(s.auth);
+    expect([used.status, used.body.error?.code, used.body.error?.details?.branches]).toEqual([409, 'PRICE_LIST_IN_USE', ['B1']]);
+    await http().put(`/v1/branches/${s.branchId}/price-list`).set(s.auth).send({ priceListId: null }).expect(200);
+    const archived = await http().post(`/v1/price-lists/${season.id}/archive`).set(s.auth).expect(200);
+    expect(archived.body.archivedAt).toBeTruthy();
+    // Out of use: no new prices, no branch, and the lookup keeps the default price.
+    await http().post(`/v1/price-lists/${season.id}/prices`).set(s.auth).send({ items: [{ variantId, amount: '17.00' }] }).expect(409);
+    await http().put(`/v1/branches/${s.branchId}/price-list`).set(s.auth).send({ priceListId: season.id }).expect(409);
+    const price = await http().get('/v1/catalog/lookup').query({ code: barcode, branchId: s.branchId }).set(s.auth).expect(200);
+    expect(price.body.price.amount).toBe('20.0000');
+    await http().post(`/v1/price-lists/${season.id}/archive`).set(s.auth).expect(409);
+    const cashier = bearer(await loginToken(app, (await addMember(owner, s.t.tenantId, 'cashier')).email));
+    await http().post(`/v1/price-lists/${s.defaultListId}/archive`).set(cashier).expect(403);
+  });
+
   it('cashiers can look up and browse but not edit the catalog or prices', async () => {
     const cashier = await addMember(owner, s.t.tenantId, 'cashier');
     const token = bearer(await loginToken(app, cashier.email));

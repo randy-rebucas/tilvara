@@ -1,4 +1,20 @@
-import type { Branch, Product } from './api';
+import type { Branch, CashierSessionRow, Product, Register } from './api';
+import { peso } from './format';
+
+/**
+ * Open shifts whose drawer can pay a supplier (or take that cash back): "R1 · Cubao · ₱1,250.00 in the drawer".
+ * `branchIds` keeps the drawers of those branches (a drawer pays invoices of its own branch only).
+ */
+export function drawerOptions(sessions: CashierSessionRow[] | undefined, registers: Register[] | undefined, branches: Branch[] | undefined, inDrawer: (amount: string) => string, branchIds?: readonly string[]) {
+  return (sessions ?? [])
+    .filter((s) => s.status === 'OPEN' && (!branchIds || branchIds.includes(s.branchId)))
+    .map((s) => ({
+      value: s.id,
+      branchId: s.branchId,
+      label: `${registers?.find((r) => r.id === s.registerId)?.code ?? '—'} · ${branches?.find((b) => b.id === s.branchId)?.name ?? '—'} · ${inDrawer(peso(s.expectedCash))}`,
+    }));
+}
+export type DrawerOption = ReturnType<typeof drawerOptions>[number];
 
 /**
  * Selectable items for document lines; `stocked` keeps only items that track inventory; `units`

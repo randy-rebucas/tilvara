@@ -40,6 +40,15 @@ await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Open
 await call('PATCH', `/v1/variants/${socks}`, tk, { quickKeyPosition: 1 });
 const teesPromo = await call('POST', '/v1/promotions', tk, { name: '3 tees for 800', kind: 'MULTI_BUY', quantity: 3, price: '800.00', variantIds: [small, medium] }, idem());
 const socksPromo = await call('POST', '/v1/promotions', tk, { name: 'Socks 2+1', kind: 'BUY_X_GET_Y', buyQuantity: 2, getQuantity: 1, getRate: '1', variantIds: [socks] }, idem());
+// A dated item with one batch on hold (a recall): 3 on hand, 2 sellable at the counter (ADR-0020).
+const SUN = `SUN-${slug}`.toUpperCase();
+const sun = (await call('POST', '/v1/products', tk, { name: 'Sunscreen 50ml', taxCategoryId: vat, uomId: pc, tracksExpiry: true, variants: [{ sku: SUN, price: '300.00' }] }, idem())).variants[0].id;
+const inDays = (n) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+await call('POST', '/v1/stock/adjustments', tk, { branchId: br.id, reason: 'Delivery', items: [
+  { variantId: sun, quantity: '2', unitCost: '200.00', expiresOn: inDays(200), lotCode: 'SUN-A' },
+  { variantId: sun, quantity: '1', unitCost: '200.00', expiresOn: inDays(300), lotCode: 'SUN-B' },
+] }, idem());
+await call('POST', '/v1/stock/lot-holds', tk, { variantId: sun, lotCode: 'SUN-B', reason: 'Supplier recall' }, idem());
 
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT, port: 9346 });
@@ -115,6 +124,19 @@ try {
   await sleep(400);
   check('phone width: no horizontal scroll with quick keys and the cart', await noHorizontalScroll());
   await shot('retail-390.png', false);
+
+  // The dated item: a line asking for more than is sellable shows the chip, and the sale is refused in words.
+  await viewport(1440, 900);
+  await pay('1000');
+  await waitFor(`document.body.innerText.includes('New sale')`, 8000);
+  await clickText('New sale');
+  await waitFor(`document.getElementById('scan')`);
+  await scan(`3*${SUN}`);
+  check('a line beyond what is sellable warns before payment', await shown('Only 2 of Sunscreen 50ml can be sold here'));
+  check('the line shows the chip “Expired or on hold · 2 sellable”', await waitFor(`document.querySelector('[data-testid=line-expired]')?.innerText.includes('Expired or on hold · 2 sellable')`, 8000).then(() => true, () => false));
+  await shot('retail-expired-chip.png', false);
+  await pay('1000');
+  check('completing is refused: not enough sellable stock, lower the quantity', await shown('Not enough sellable stock for Sunscreen 50ml (2 sellable)'));
   b.close();
 } catch (e) {
   console.error(e);

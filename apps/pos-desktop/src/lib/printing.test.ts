@@ -2,7 +2,7 @@ import { encodeEscPos, toText } from '@1pos/escpos';
 import { describe, expect, it } from 'vitest';
 import type { Receipt } from '../types';
 import { escposDrawer, escposPrinter } from './devices';
-import { offlineReceiptToPrintable, receiptToPrintable, tenderLabel } from './printing';
+import { offlineReceiptToPrintable, receiptToPrintable, RETIRED_TENDERS, tenderLabel } from './printing';
 
 const receipt: Receipt = {
   notice: 'THIS IS NOT AN OFFICIAL INVOICE',
@@ -100,6 +100,11 @@ describe('tender labels (session 20)', () => {
     expect(tenderLabel({ method: 'CASH', exchangeReturnNumber: 12 })).toBe('EXCHANGE CREDIT (RETURN #000012)');
     expect(tenderLabel({ method: 'STORE_CREDIT' })).toBe('STORE CREDIT');
     expect(tenderLabel({ method: 'CARD' })).toBe('CARD');
+    // Old sales keep tenders of removed features: they reprint in words, marked retired.
+    expect(tenderLabel({ method: 'EWALLET' })).toBe('E-WALLET');
+    expect(tenderLabel({ method: 'ROOM_CHARGE' })).toBe('ROOM CHARGE (RETIRED)');
+    expect(tenderLabel({ method: 'JOB_DEPOSIT' })).toBe('LAUNDRY DOWN PAYMENT (RETIRED)');
+    expect(RETIRED_TENDERS).toEqual(['ROOM_CHARGE', 'JOB_DEPOSIT']);
   });
 
   it('prints the customer on the receipt when the sale has one', () => {

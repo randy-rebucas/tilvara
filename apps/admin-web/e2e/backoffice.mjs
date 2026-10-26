@@ -248,11 +248,12 @@ try {
   await go('/team');
   await clickHref('/audit');
   await waitFor(`location.pathname === '/audit'`);
-  check('audit log lists the role changes, newest first, with who did them', (await shown('role.updated')) && (await has('role.created', 'Nena Reyes')));
+  // Actions read in words (session 36); the code stays in the tooltip.
+  check('audit log lists the role changes, newest first, with who did them', (await shown('Role changed')) && (await has('Role added', 'Nena Reyes')));
   await fill('action', 'role');
   await evaluate(`document.querySelector('form[action="/audit"]').requestSubmit()`);
   await waitFor(`location.search.includes('action=role')`);
-  check('filtered to roles: only role.* entries', await evaluate(`(() => { const a = [...document.querySelectorAll('main table tbody tr td:nth-child(3)')].map((td) => td.innerText.trim().toLowerCase()); return a.length >= 2 && a.every((x) => x.startsWith('role.')); })()`));
+  check('filtered to roles: only role.* entries', await evaluate(`(() => { const a = [...document.querySelectorAll('main table tbody tr td:nth-child(3) [title]')].map((e) => e.getAttribute('title')); return a.length >= 2 && a.every((x) => x.startsWith('role.')); })()`));
   await shot('bo-audit.png');
 
   // 9. Tax registration history: schedule a change.

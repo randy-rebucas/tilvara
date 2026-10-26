@@ -171,6 +171,9 @@ try {
   await clickText('₱50.00');
   await clickEnabled('Record cash sale offline');
   await check('offline receipt 2 kept on the till', await shown('R1-T') && /000002/.test(await text()));
+  // The screen reads as the print does: the cash applied, then what was handed over and the change.
+  await check('offline receipt on screen: CASH ₱38.90, Tendered ₱50.00, Change ₱11.10', /CASH\s+₱38\.90\s+Tendered\s+₱50\.00\s+Change\s+₱11\.10/.test(await text()));
+  await shot('offline-receipt.png');
   await clickText('New sale');
   await check('band: 2 to send', await shown('2 to send'));
   await shot('offline-band.png', false);

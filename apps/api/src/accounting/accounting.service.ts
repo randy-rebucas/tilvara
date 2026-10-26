@@ -55,6 +55,28 @@ export class AccountingService extends TenantService {
     });
   }
 
+  /**
+   * Take one of the business's own accounts out of the pickers (manual entries refuse it). Its lines and balance stay
+   * in the journal and the trial balance; restoring brings it back. System accounts (the ones the books post to by
+   * themselves, and those of removed features) are never archived or restored here (DB: accounts_system_protected).
+   */
+  setAccountArchived(auth: AuthContext, id: string, archive: boolean) {
+    return this.mutate(auth, async (db) => {
+      const [account] = await db.select().from(accounts).where(eq(accounts.id, id));
+      if (!account) throw notFound('Account');
+      await this.entity(db, auth, account.legalEntityId, 'accounting.post');
+      if (account.systemKey) {
+        throw new AppError('ACCOUNT_SYSTEM', 'The books post to this account by themselves: it cannot be archived or restored', HttpStatus.CONFLICT);
+      }
+      if (Boolean(account.archivedAt) === archive) {
+        throw new AppError('INVALID_STATE', archive ? 'This account is already archived' : 'This account is not archived', HttpStatus.CONFLICT);
+      }
+      const [row] = await db.update(accounts).set({ archivedAt: archive ? new Date() : null }).where(eq(accounts.id, id)).returning();
+      await this.audit(db, auth, archive ? 'account.archived' : 'account.restored', 'account', id, { code: account.code });
+      return row!;
+    });
+  }
+
   listEntries(auth: AuthContext, q: JournalListQuery) {
     return this.read(auth, async (db) => {
       await this.entity(db, auth, q.legalEntityId, 'accounting.read');

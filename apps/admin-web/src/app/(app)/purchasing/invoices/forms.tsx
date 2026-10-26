@@ -7,6 +7,7 @@ import { FormError, SelectField, TextField } from '@/components/fields';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { UninvoicedReceipt } from '@/lib/api';
+import type { DrawerOption } from '@/lib/options';
 import { formatDate, formatDateTime, peso, signOf, sumDecimal } from '@/lib/format';
 import { docNo } from '@/lib/options';
 
@@ -92,8 +93,39 @@ export function NewInvoiceForm(props: { supplierId: string; receipts: Uninvoiced
 
 const METHODS = ['BANK_TRANSFER', 'CHECK', 'OTHER'] as const;
 
+/**
+ * How the supplier was paid; "Cash from a till's drawer" (offered while a shift is open at the branch) picks the
+ * drawer and is paid today. Returns the fields to send.
+ */
+function MethodFields({ drawers, today, fieldError }: { drawers: DrawerOption[]; today: string; fieldError: (k: string) => string | undefined }) {
+  const { t } = useT();
+  const [method, setMethod] = useState<string>('BANK_TRANSFER');
+  const drawer = method === 'CASH_DRAWER';
+  return (
+    <>
+      <TextField label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} readOnly={drawer} key={drawer ? 'today' : 'any'} error={fieldError('paidOn')} hint={drawer ? t('ap.drawerToday') : undefined} />
+      <SelectField label={t('ap.method')} name="method" value={method} onChange={(e) => setMethod(e.target.value)}>
+        {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
+        {drawers.length > 0 && <option value="CASH_DRAWER">{t('ap.method.CASH_DRAWER')}</option>}
+      </SelectField>
+      {drawer && (
+        <SelectField label={t('ap.drawer')} name="cashierSessionId" error={fieldError('cashierSessionId')}>
+          {drawers.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+        </SelectField>
+      )}
+    </>
+  );
+}
+
+/** The method and, for cash from a drawer, its shift (and today as the date). */
+const methodBody = (f: FormData) => ({
+  paidOn: text(f, 'paidOn'),
+  method: f.get('method'),
+  ...(f.get('method') === 'CASH_DRAWER' ? { cashierSessionId: text(f, 'cashierSessionId') } : {}),
+});
+
 /** Pay part or all of the open balance (never more: the API refuses an overpayment). */
-function PaymentFields({ close, invoiceId, balance, today }: { close: () => void; invoiceId: string; balance: string; today: string }) {
+function PaymentFields({ close, invoiceId, balance, today, drawers }: { close: () => void; invoiceId: string; balance: string; today: string; drawers: DrawerOption[] }) {
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, fieldError, error } = useSubmit();
@@ -103,8 +135,7 @@ function PaymentFields({ close, invoiceId, balance, today }: { close: () => void
     const reference = text(f, 'reference');
     const r = await submit('POST', `/api/v1/supplier-invoices/${invoiceId}/payments`, {
       amount: text(f, 'amount'),
-      paidOn: text(f, 'paidOn'),
-      method: f.get('method'),
+      ...methodBody(f),
       ...(reference ? { reference } : {}),
     }, { idempotencyKey: key });
     if (r.ok) close();
@@ -112,10 +143,7 @@ function PaymentFields({ close, invoiceId, balance, today }: { close: () => void
   return (
     <form onSubmit={onSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" noValidate>
       <TextField label={t('ap.amount')} name="amount" inputMode="decimal" required autoFocus defaultValue={balance} error={fieldError('amount')} />
-      <TextField label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} error={fieldError('paidOn')} />
-      <SelectField label={t('ap.method')} name="method">
-        {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
-      </SelectField>
+      <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
       <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
       <div className="col-span-full flex flex-wrap items-center gap-2">
         <button className="btn btn-primary" disabled={pending}>{t('ap.pay')}</button>
@@ -126,7 +154,7 @@ function PaymentFields({ close, invoiceId, balance, today }: { close: () => void
   );
 }
 
-export function PaymentForm(props: { invoiceId: string; balance: string; today: string }) {
+export function PaymentForm(props: { invoiceId: string; balance: string; today: string; drawers: DrawerOption[] }) {
   const { t } = useT();
   return <Disclosure label={t('ap.pay')}>{(close) => <PaymentFields close={close} {...props} />}</Disclosure>;
 }
@@ -178,7 +206,7 @@ export function NoteForm(props: { invoiceId: string; today: string }) {
 }
 
 /** One payment over several open invoices of a supplier (session 22): an amount per invoice, at most its balance. */
-export function BatchPaymentForm({ supplierId, invoices, today }: { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string }) {
+export function BatchPaymentForm({ supplierId, invoices, today, drawers }: { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string; drawers: DrawerOption[] }) {
   const { t, lang } = useT();
   const router = useRouter();
   const key = useFormKey();
@@ -193,8 +221,7 @@ export function BatchPaymentForm({ supplierId, invoices, today }: { supplierId: 
     const reference = text(f, 'reference');
     const r = await submit<{ id: string }>('POST', '/api/v1/supplier-payments', {
       supplierId,
-      paidOn: text(f, 'paidOn'),
-      method: f.get('method'),
+      ...methodBody(f),
       ...(reference ? { reference } : {}),
       allocations: chosen.map((i) => ({ supplierInvoiceId: i.id, amount: amounts[i.id]!.trim() })),
     }, { idempotencyKey: key, refresh: false });
@@ -219,10 +246,7 @@ export function BatchPaymentForm({ supplierId, invoices, today }: { supplierId: 
       <p className="text-[0.9375rem] font-semibold">{t('ap.payManyTotal', { amount: peso(total) })}</p>
       <FormError message={fieldError('allocations')} />
       <div className="grid gap-3 sm:grid-cols-3">
-        <TextField label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} error={fieldError('paidOn')} />
-        <SelectField label={t('ap.method')} name="method">
-          {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
-        </SelectField>
+        <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
         <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
       </div>
       <div className="flex flex-wrap items-center gap-2">

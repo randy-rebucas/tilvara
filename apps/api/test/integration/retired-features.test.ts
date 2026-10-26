@@ -68,3 +68,54 @@ describe('tips and service packages are gone (0112–0113)', () => {
     } else expect(tip.status).toBe(400);
   });
 });
+
+/**
+ * History of the removed features a test DB migrated from scratch never holds: staged as the migrator, with what keeps
+ * new rows current (NOT VALID checks, the new-payment trigger) set aside for the insert and put back exactly as it was.
+ */
+describe('old sales and payments of removed features', () => {
+  it('a sale paid with a retired tender (ROOM_CHARGE) cannot be returned or voided: TENDER_RETIRED', async () => {
+    const s = await shop('retired-tender');
+    const item = await s.product('Mango shake', '150.00');
+    const sale = await s.sell(item.variants[0]!.id);
+    await asOwnerInTenant(owner, s.tenantId, async (c) => {
+      await c.query(`ALTER TABLE sale_tenders DROP CONSTRAINT sale_tenders_method_check, DROP CONSTRAINT sale_tenders_intent_check`);
+      await c.query(`INSERT INTO sale_tenders (tenant_id, sale_id, method, amount, tendered, change) VALUES ($1, $2, 'ROOM_CHARGE', 0, 0, 0)`, [s.tenantId, sale.id]);
+      await c.query(`ALTER TABLE sale_tenders ADD CONSTRAINT sale_tenders_method_check CHECK (method IN ('CASH','CARD','QR','EWALLET','STORE_CREDIT')) NOT VALID,
+                     ADD CONSTRAINT sale_tenders_intent_check CHECK ((method IN ('CASH','STORE_CREDIT')) = (payment_intent_id IS NULL)) NOT VALID`);
+    });
+    for (const body of [{ kind: 'RETURN', lines: [{ saleLineId: sale.lines[0]!.id, quantity: '1', disposition: 'RESTOCK' }] }, { kind: 'VOID' }]) {
+      const r = await http().post(`/v1/sales/${sale.id}/returns`).set(s.auth).set('Idempotency-Key', randomUUID())
+        .send({ cashierSessionId: s.session, reason: 'Customer changed their mind', ...body });
+      expect([r.status, r.body.error?.code], JSON.stringify(r.body)).toEqual([409, 'TENDER_RETIRED']);
+    }
+    // The receipt still names it, as stored (the counter and the admin word it).
+    const receipt = await http().get(`/v1/sales/${sale.id}/receipt`).set(s.auth).expect(200);
+    expect((receipt.body.tenders as { method: string }[]).map((t) => t.method)).toContain('ROOM_CHARGE');
+  });
+
+  it('a laundry down payment left without an answer can be checked, and then no longer holds the shift open (0119)', async () => {
+    const s = await shop('retired-intent');
+    const id = await asOwnerInTenant(owner, s.tenantId, async (c) => {
+      await c.query(`ALTER TABLE payment_intents DISABLE TRIGGER payment_intents_new_purpose`);
+      const { rows } = await c.query<{ id: string }>(
+        `INSERT INTO payment_intents (tenant_id, branch_id, register_id, cashier_session_id, client_transaction_id, request_key, provider, method, amount, currency, status, created_by, purpose)
+         SELECT tenant_id, branch_id, register_id, id, gen_random_uuid(), gen_random_uuid(), 'dev', 'CARD', 50, 'PHP', 'UNKNOWN', opened_by, 'JOB_ORDER'
+           FROM cashier_sessions WHERE id = $1 RETURNING id`, [s.session]);
+      await c.query(`ALTER TABLE payment_intents ENABLE TRIGGER payment_intents_new_purpose`);
+      return rows[0]!.id;
+    });
+    const blocked = await http().post(`/v1/cashier-sessions/${s.session}/close`).set(s.auth).send({ countedCash: '1150.00' });
+    expect([blocked.status, blocked.body.error?.code]).toEqual([409, 'PAYMENTS_OUTSTANDING']);
+    // The provider never had it: it settles as FAILED (before 0119 the trigger refused any change to it).
+    const checked = await http().post(`/v1/payment-intents/${id}/reconcile`).set(s.auth).expect(200);
+    expect(checked.body.status).toBe('FAILED');
+    const closed = await http().post(`/v1/cashier-sessions/${s.session}/close`).set(s.auth).send({ countedCash: '1000.00' }).expect(200);
+    expect(closed.body.status).toBe('RECONCILED');
+    // A new payment is still for a sale only.
+    await expect(asOwnerInTenant(owner, s.tenantId, (c) => c.query(`UPDATE payment_intents SET purpose = 'SALE' WHERE id = $1`, [id]))).rejects.toThrow(/immutable/);
+    await expect(asOwnerInTenant(owner, s.tenantId, (c) => c.query(
+      `INSERT INTO payment_intents (tenant_id, branch_id, register_id, cashier_session_id, client_transaction_id, request_key, provider, method, amount, currency, status, created_by, purpose)
+       SELECT tenant_id, branch_id, register_id, cashier_session_id, gen_random_uuid(), gen_random_uuid(), 'dev', 'CARD', 5, 'PHP', 'PROCESSING', created_by, 'FOLIO' FROM payment_intents WHERE id = $1`, [id]))).rejects.toThrow(/for a sale/);
+  });
+});

@@ -280,7 +280,7 @@ Retail only (sessions 32–33, 2026-10-25): ✅ laundry, lodging and restaurants
 
 Extensions (session 35, 2026-10-26, ADR-0026): ✅ framework — retail is the base; industry modules declared in `EXTENSIONS` + the `extensions` catalog, allowed per plan (`plans.extensions`), switched on/off by the owner (Subscription → Extensions), `@RequiresExtension` / `assertExtension`, `/me` and the snapshot carry the usable list, admin nav/guide/role editor and till tabs/guide filter by it; proven with test-only fixtures (migrations 0114–0115). ⬜ Next: pharmacy as the first extension (its own slice, `docs/architecture/extensions.md`).
 
-Retail fit audit, per area (session 36, 2026-10-26): ✅ Subscription, ✅ Team, ✅ Locations, ✅ Offline sales, ✅ Reports, ✅ Books, ✅ Purchasing, ✅ Inventory, ✅ Prices, ✅ Products, ✅ Overview, ✅ Sales and Shifts, ✅ Customers, ✅ Audit (see LEFTOVER). ⬜ The other areas, one at a time as the user picks them.
+Retail fit audit, per area (session 36, 2026-10-26): ✅ Subscription, ✅ Team, ✅ Locations, ✅ Offline sales, ✅ Reports, ✅ Books, ✅ Purchasing, ✅ Inventory, ✅ Prices, ✅ Products, ✅ Overview, ✅ Sales and Shifts, ✅ Customers, ✅ Audit, ✅ Help, ✅ the till (see LEFTOVER). Every area done; its open items then worked through (migrations 0119–0120, supplier cash from a till drawer, archiving accounts and price lists).
 
 Audit 2026-10-21 (session 31): second full audit, `docs/AUDIT-2026-10-21.md`. ✅ Every defect and work item fixed, decisions A1–A6 taken as recommended; all gates, integration (608 tests) and 33 E2E suites pass. Open items are in `LEFTOVER.md`.
 

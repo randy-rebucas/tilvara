@@ -205,12 +205,26 @@ export type UninvoicedReceiptsQuery = z.infer<typeof uninvoicedReceiptsQuerySche
 export const cancelSupplierInvoiceSchema = z.object({ reason });
 export type CancelSupplierInvoiceInput = z.infer<typeof cancelSupplierInvoiceSchema>;
 
-export const createSupplierPaymentSchema = z.object({
-  amount: peso.refine((v) => Number(v) > 0, 'More than zero'),
-  paidOn: z.iso.date(),
-  method: z.enum(['BANK_TRANSFER', 'CHECK', 'OTHER']),
-  reference: optionalText(100),
-});
+/**
+ * How a supplier is paid. CASH_DRAWER: cash taken from a till's drawer during an open shift (`cashierSessionId`); it is
+ * paid today and the drawer's expected cash drops by it (session 36).
+ */
+export const SUPPLIER_PAYMENT_METHODS = ['BANK_TRANSFER', 'CHECK', 'OTHER', 'CASH_DRAWER'] as const;
+const drawerShift = <T extends { method: string; cashierSessionId?: string | undefined }>(v: T, ctx: z.RefinementCtx) => {
+  if ((v.method === 'CASH_DRAWER') !== Boolean(v.cashierSessionId)) {
+    ctx.addIssue({ code: 'custom', path: ['cashierSessionId'], message: v.method === 'CASH_DRAWER' ? 'Choose the open shift whose drawer pays' : 'Only cash from a drawer names a shift' });
+  }
+};
+
+export const createSupplierPaymentSchema = z
+  .object({
+    amount: peso.refine((v) => Number(v) > 0, 'More than zero'),
+    paidOn: z.iso.date(),
+    method: z.enum(SUPPLIER_PAYMENT_METHODS),
+    cashierSessionId: z.uuid().optional(),
+    reference: optionalText(100),
+  })
+  .superRefine(drawerShift);
 export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
 
 /** One payment to a supplier spread over several of its open invoices (session 22); Σ amounts = the payment. */
@@ -218,7 +232,8 @@ export const createSupplierBatchPaymentSchema = z
   .object({
     supplierId: z.uuid(),
     paidOn: z.iso.date(),
-    method: z.enum(['BANK_TRANSFER', 'CHECK', 'OTHER']),
+    method: z.enum(SUPPLIER_PAYMENT_METHODS),
+    cashierSessionId: z.uuid().optional(),
     reference: optionalText(100),
     allocations: z
       .array(z.object({ supplierInvoiceId: z.uuid(), amount: peso.refine((v) => Number(v) > 0, 'More than zero') }))
@@ -229,10 +244,12 @@ export const createSupplierBatchPaymentSchema = z
     if (new Set(v.allocations.map((a) => a.supplierInvoiceId)).size !== v.allocations.length) {
       ctx.addIssue({ code: 'custom', path: ['allocations'], message: 'Each invoice once' });
     }
+    drawerShift(v, ctx);
   });
 export type CreateSupplierBatchPaymentInput = z.infer<typeof createSupplierBatchPaymentSchema>;
 
-export const voidSupplierPaymentSchema = z.object({ reason });
+/** `cashierSessionId`: for a payment made with cash from a drawer, the open shift whose drawer takes the cash back. */
+export const voidSupplierPaymentSchema = z.object({ reason, cashierSessionId: z.uuid().optional() });
 export type VoidSupplierPaymentInput = z.infer<typeof voidSupplierPaymentSchema>;
 
 /** A supplier's credit note (owed goes down) or debit note (owed goes up) against one invoice (session 22). */

@@ -337,7 +337,8 @@ export const supplierPayments = pgTable(
     index('supplier_payments_invoice_idx').on(t.tenantId, t.supplierInvoiceId),
     index('supplier_payments_supplier_idx').on(t.tenantId, t.supplierId),
     check('supplier_payments_amount_check', sql`${t.amount} > 0`),
-    check('supplier_payments_method_check', sql`${t.method} IN ('BANK_TRANSFER','CHECK','OTHER')`),
+    // CASH_DRAWER (0120): cash taken from a till's drawer; its cash_movements row names this payment.
+    check('supplier_payments_method_check', sql`${t.method} IN ('BANK_TRANSFER','CHECK','OTHER','CASH_DRAWER')`),
     check('supplier_payments_void_check', sql`(${t.voidedAt} IS NULL) = (${t.voidedBy} IS NULL) AND (${t.voidedAt} IS NULL) = (${t.voidReason} IS NULL) AND (${t.voidReason} IS NULL OR length(trim(${t.voidReason})) > 0)`),
   ],
 );

@@ -73,6 +73,8 @@ export default async function PricesPage({ searchParams }: { searchParams: Promi
                 <SetPrice listId={selected.id} variants={variants} />
                 <RenamePriceList list={selected} />
                 {!selected.isDefault && <ActionButton url={`/api/v1/price-lists/${selected.id}`} method="PATCH" body={{ isDefault: true }} label={t('price.makeDefault')} confirmText={t('price.makeDefaultConfirm', { name: selected.name })} />}
+                {/* Only a list no open branch uses: such a branch is first sent back to the default list (below). */}
+                {!selected.isDefault && usedBy.length === 0 && <ActionButton url={`/api/v1/price-lists/${selected.id}/archive`} label={t('price.archive')} confirmText={t('price.archiveConfirm', { name: selected.name })} />}
               </div>
             )}
           </div>

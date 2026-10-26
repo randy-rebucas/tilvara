@@ -12,7 +12,8 @@ interface SessionView {
   status: string;
   expectedCash: string;
   reconciliation: { expectedCash: string; countedCash: string; variance: string } | null;
-  payInOut?: { id: string; type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string | null }[];
+  /** SUPPLIER_PAYMENT: a supplier paid from this drawer in the back office (or that cash put back on a void). */
+  payInOut?: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'SUPPLIER_PAYMENT'; amount: string; reason: string | null }[];
 }
 
 /**
@@ -51,7 +52,7 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
         <ul className="grid gap-1 text-[0.9375rem]">
           {items.map((m) => (
             <li key={m.id} className="flex items-baseline justify-between gap-3">
-              <span>{t(m.type === 'PAY_IN' ? 'payio.in' : 'payio.out')} · <span className="text-muted">{m.reason}</span></span>
+              <span>{t(m.type === 'PAY_IN' ? 'payio.in' : m.type === 'SUPPLIER_PAYMENT' ? 'payio.supplier' : 'payio.out')} · <span className="text-muted">{m.reason}</span></span>
               <Money value={m.amount} />
             </li>
           ))}
