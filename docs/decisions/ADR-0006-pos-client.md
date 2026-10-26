@@ -1,6 +1,6 @@
 # ADR-0006: POS client — React/Vite first, Tauri + SQLite shell later
 
-- Status: Accepted (2026-10-15)
+- Status: Accepted (2026-10-15). Amended: Rust was installed in session 8 and the Tauri 2 shell is built (`apps/pos-desktop/src-tauri`); the till's SQLite goes through one `rusqlite` connection, not the Tauri SQL plugin (ADR-0015).
 
 ## Context
 Tauri needs a Rust toolchain (not installed on the dev machine) and real hardware to validate printer/drawer/scale adapters. The transaction engine and UX can be built and tested before that.
@@ -12,7 +12,7 @@ Tauri needs a Rust toolchain (not installed on the dev machine) and real hardwar
 - Browser mode is never advertised as having offline or hardware parity.
 
 ## Prerequisite
-Install Rust (rustup) and the Tauri Windows prerequisites (WebView2, MSVC build tools) before Phase 5.
+Install Rust (rustup) and the Tauri Windows prerequisites (WebView2, MSVC build tools) before Phase 5. *(Done, session 8.)*
 
 ## Amendment (session 16): customer display and scale labels
 - **Customer display** (browser mode): the till opens a second window (`?display=customer`) and feeds it over a `BroadcastChannel` in the same browser: idle → the priced lines and total → "Thank you" with the change. No token, no network, no sign-in in that window; a newly opened display asks for the current state. The desktop till would need a second Tauri window (not built).

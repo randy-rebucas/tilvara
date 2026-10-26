@@ -20,7 +20,7 @@ Integration tests auto-migrate `onepos_test` as `onepos_migrator`, then connect 
 3. **Concurrency suite** — last-unit race (N parallel checkouts, policy BLOCK → exactly one succeeds), simultaneous invoice number allocation (no duplicates, no gaps beyond documented cases), concurrent refunds (never exceed refundable), competing stock adjustments.
 4. **Ledger integrity** — every journal entry balanced; Σ stock movements = balances; reports reconcile to source rows.
 5. **Failure injection** — provider timeout with late success, lost response, duplicate webhooks, worker crash mid-batch (outbox reclaimed), DB connection drop mid-checkout, app restart with local queue (Phase 5), printer failure (sale still committed, reprint available).
-6. **E2E scenarios** — retail and restaurant scenarios from spec §15.
+6. **E2E scenarios** — retail scenarios from spec §15.
 
 ## Rules
 - A feature is "done" only with its tests passing in CI. Reports state the exact commands run and their results.

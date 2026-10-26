@@ -60,7 +60,7 @@ the scope, prevent further harm, or restore the system's integrity); the DPO rec
 
 Answer, with evidence, in the breach entry:
 
-1. **Whose data?** Which businesses; which groups (members, SC/PWD beneficiaries, takeaway customers,
+1. **Whose data?** Which businesses; which groups (members, SC/PWD beneficiaries,
    supplier contacts, Tilvara staff); how many people. The processing register names the data in each group;
    security-incident.md §3 has the queries.
 2. **What data?** Name it per category. In Tilvara the most serious are:

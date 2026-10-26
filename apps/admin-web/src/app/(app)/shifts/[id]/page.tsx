@@ -57,7 +57,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
         <Figure label={t('doc.expectedCash')}>{peso(rec?.expectedCash ?? shift.expectedCash)}</Figure>
       </Note>
 
-      {/* Every kind of cash in or out of the drawer (an older shift may also show tips taken, given back and paid out). */}
+      {/* Every kind of cash in or out of the drawer. */}
       {shift.movements.length > 0 && (
         <section>
           <h2 className="section-title mb-3">{t('doc.drawerMovements')}</h2>

@@ -220,7 +220,7 @@ export class CashService extends TenantService {
         .where(
           and(
             eq(paymentIntents.cashierSessionId, id),
-            // Only a sale's or a tip's payment waits for a sale; one of a purpose no longer offered (a laundry
+            // Only a sale's payment waits for a sale; one of a purpose no longer offered (a laundry
             // down payment before 0110, a folio payment before 0111) was settled by its own document (same rule as the trigger).
             or(inArray(paymentIntents.status, ['PROCESSING', 'UNKNOWN']), and(eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId), eq(paymentIntents.purpose, 'SALE'))),
           ),
@@ -320,8 +320,7 @@ export class CashService extends TenantService {
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
     const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy]);
-    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry; tips
-    // paid out on shifts before 0112 removed tips show among them).
+    // Pay-ins and pay-outs one by one (each is its own document with a reason and a journal entry).
     const payInOut = await db
       .select({ id: cashMovements.id, type: cashMovements.type, amount: cashMovements.amount, reason: cashMovements.reason, createdBy: cashMovements.createdBy, createdAt: cashMovements.createdAt })
       .from(cashMovements)

@@ -73,9 +73,6 @@ controller; Tilvara is its processor. The business decides the final text with i
 > details with each discounted sale for our tax records. We do not record your condition or any other
 > detail from your ID. We keep these records for as long as tax law requires (at least 5 years).
 >
-> **Takeaway orders.** If you give a name for your order, we use it only to call your order. [Keep for:
-> the period the business sets; Tilvara cannot clear these names automatically yet (retention schedule).]
->
 > **Card and QR payments.** Your card or wallet details are handled by our payment provider; we never see
 > or keep your card number.
 >

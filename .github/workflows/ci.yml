@@ -1,5 +1,6 @@
 # Continuous integration (LEFTOVER Phase 0; ADR-0016 slice 7 runs the security gates here too).
-# Not yet run on GitHub: the remote repository is decision D3. Mirrors the local gate in
+# Not yet run on GitHub: the remote exists; the first run was not started because the GitHub
+# account is locked for billing. Mirrors the local gate in
 # docs/STATUS.md: build, typecheck, lint, unit, integration (one suite at a time), security audit,
 # bundle secret scan. The dev compose file gives Postgres 18 with the cluster roles (init script)
 # and Redis 7 on the same ports as a developer machine, so .env.example works unchanged.

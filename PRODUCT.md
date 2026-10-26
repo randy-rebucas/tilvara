@@ -14,7 +14,7 @@ web
 
 ## Product Purpose
 
-Tilvara is a multi-tenant POS and business-operations SaaS for the Philippines. The admin web is where a business is set up (legal entity, branches, registers/terminals), its team and permissions are managed, its catalog and prices are maintained, and later its sales, inventory, cash and financial records are reviewed and reconciled. Success: an owner configures the business without help and trusts that every figure shown reconciles to underlying records.
+Tilvara is a multi-tenant POS and business-operations SaaS for the Philippines. The admin web is where a business is set up (legal entity, branches, registers/terminals), its team and permissions are managed, its catalog and prices are maintained, and its sales, inventory, cash and financial records are reviewed and reconciled. Success: an owner configures the business without help and trusts that every figure shown reconciles to underlying records.
 
 ## Positioning
 
@@ -22,14 +22,14 @@ Retail operations on one foundation (retail only for now: restaurants, lodging, 
 
 ## Operating Context
 
-- Owners set up the business once, then return for team changes, catalog/price updates, and (later phases) daily/period reviews.
+- Owners set up the business once, then return for team changes, catalog/price updates, and daily/period reviews.
 - Business hierarchy the UI must reflect: Tenant → Legal entity (taxpayer, TIN, VAT status) → Branch (BIR branch code) → Register → Terminal.
 - Access is role- and scope-based (tenant / legal entity / branch / register); users only see what their grants allow.
 - Subscription states: trial, active, past-due grace, read-only. Read-only businesses still see all records.
 
 ## Capabilities and Constraints
 
-- Built today (API): sign-up/onboarding with a 14-day Growth trial, sign-in with tenant selection, legal entities/branches/registers/terminals, team invitations and roles with anti-escalation, catalog (products, variants, barcodes, categories, units, tax categories), price lists with scheduled prices, subscription view.
+- Built today: set-up and team, catalog and prices, promotions, counter and offline sales, returns and exchanges, inventory (counts, packs, expiry lots, lot holds), purchasing and payables, cash drawers, the books, reports, customers and store credit, integrations, account security. [docs/STATUS.md](docs/STATUS.md) says what is built and verified.
 - Money is always exact decimal text from the API (e.g. "49.7500"); display in PHP with centavos.
 - Invoicing/BIR features are disabled until compliance review; the UI must not imply compliance or accreditation.
 - Billing (PayMongo) is not integrated yet; plan prices are placeholders and must not be shown as real prices.

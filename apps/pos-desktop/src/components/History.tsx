@@ -8,7 +8,7 @@ import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { Callout, Empty, Field, Money, Note } from './ui';
 
-const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr' };
+const METHOD: Record<string, 'pay.cash' | 'pay.card' | 'pay.qr' | 'pay.storeCredit'> = { CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr', EWALLET: 'pay.qr', STORE_CREDIT: 'pay.storeCredit' };
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 
 /**
@@ -153,7 +153,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
                   {/* Time tells two similar amounts apart before a void; the tender, how it was paid. */}
                   <span className="serial block text-[0.75rem] text-muted">
                     {timeAt(s.completedAt, shift.branch.timezone)}
-                    {s.tenderMethods?.length ? ` · ${s.tenderMethods.map((m) => t(METHOD[m] ?? 'pay.cash')).join(' + ')}` : ''}
+                    {s.tenderMethods?.length ? ` · ${s.tenderMethods.map((m) => (METHOD[m] ? t(METHOD[m]) : m)).join(' + ')}` : ''}
                   </span>
                 </span>
                 <span className="flex flex-col items-end gap-1">

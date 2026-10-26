@@ -6,7 +6,7 @@ Status: Phase 0 baseline (2026-10-15). Living document — update it when the im
 
 - Repository: **empty** at start (greenfield, initialised 2026-10-15 at `~/projects/1pos`).
 - Tooling available on the dev machine: Node 24.12, pnpm 10.33, Docker 29, psql 16 client, git 2.51.
-- **Not available:** Rust/cargo — required for the Tauri desktop shell (Phase 5). The POS UI is built as a React app first; Tauri packaging is a later step (see ADR-0006).
+- Rust/cargo was not available at the start; it was installed in session 8 and the Tauri 2 desktop shell is built (`apps/pos-desktop/src-tauri`, ADR-0006, ADR-0015).
 - No external credentials (payment providers, BIR EIS, SMTP, S3). Every such integration starts as an adapter interface plus a clearly labelled `Dev*` implementation.
 
 ## 2. Architectural style
@@ -24,7 +24,7 @@ Status: Phase 0 baseline (2026-10-15). Living document — update it when the im
                │                    apps/api (NestJS)                   │
                │  auth · tenancy · catalog · pricing · tax · checkout   │
                │  payments · invoicing · inventory · purchasing ·       │
-               │  restaurant · cash · accounting · customers · reports  │
+               │  cash · accounting · customers · reports               │
                │  sync · integrations · platform-admin · audit          │
                └───────────────┬───────────────────────┬────────────────┘
                                │ SQL (RLS, tx-scoped   │ outbox rows
@@ -59,30 +59,31 @@ apps/
   api/            NestJS composition root: HTTP controllers, guards, module wiring
   workers/        outbox relay, reconciliation, report jobs (same modules, no HTTP)   [Phase 1+]
   admin-web/      Next.js App Router back office                                      [Phase 1]
-  pos-desktop/    React POS, browser mode built (Phase 2); Tauri shell + SQLite later  [Phase 2/5]
+  pos-desktop/    React POS: browser mode, and a Tauri 2 shell (src-tauri; SQLite through one rusqlite connection) [Phase 2/5 — built]
   mobile/         Expo, only when justified                                            [Phase 6+]
 packages/
   money/          exact decimal Money/Quantity, allocation, rounding  (pure, no deps but decimal.js)
   config/         env schema + validation (pure)
   database/       Drizzle schema, migrations, tenant-scoped transaction helper
   tax/            versioned tax rules, PH VAT / SC-PWD computations (pure)             [Phase 2 — built]
-  pricing/        price resolution, discounts, promotions (pure)                       [Phase 2]
-  inventory/      (costing lives in the stock-ledger trigger, ADR-0012 — no package needed)
+  pricing/        promotions (`applyPromotions`, pure; ADR-0021)                       [built]
   accounting/     posting rules, balance validation, default chart (pure)              [Phase 3 — built]
   sync-protocol/  offline envelope, snapshot and result types shared by POS and API    [Phase 5 — built]
   pos-offline/    the till's offline engine: SQLite store, durable queue, sync (no React) [Phase 5 — built]
-  validation/     zod request/response contracts shared with clients                     [Phase 1]
-  ui/             shared React components (shadcn-based)                                 [Phase 1]
-  hardware-adapters/ printer/drawer/scanner/scale interfaces + dev impls                [Phase 5]
+  validation/     zod request/response contracts shared with clients                     [Phase 1 — built]
+  escpos/         ESC/POS receipt rendering for the till's printer                       [built]
+  observability/  structured logging (`createLogger`, log context, redaction)            [built]
 ```
+
+Stock costing lives in the stock-ledger trigger (ADR-0012), so there is no inventory package.
 
 Packages are created **when first needed**, not as empty shells.
 
 Dependency rules (enforced by review now, by lint rule later):
-1. Pure calculation packages (`money`, `tax`, `pricing`, `inventory`, `accounting`) never import `database`, Nest, or I/O.
+1. Pure calculation packages (`money`, `tax`, `pricing`, `accounting`) never import `database`, Nest, or I/O.
 2. `apps/*` may depend on `packages/*`; packages never depend on apps.
 3. Inside `apps/api`, a module may call another module only through that module's exported service. Cross-module table access is forbidden.
-4. Clients (`admin-web`, `pos-desktop`) depend only on `validation`, `money`, `tax`, `ui`, `sync-protocol`, `pos-offline` — never on `database`.
+4. Clients (`admin-web`, `pos-desktop`) depend only on `validation`, `money`, `tax`, `pricing`, `escpos`, `sync-protocol`, `pos-offline` — never on `database`.
 
 ## 5. Core technical decisions (summary — see `docs/decisions/`)
 
@@ -101,8 +102,18 @@ Dependency rules (enforced by review now, by lint rule later):
 | 0011 | Voids/returns | Append-only return documents with exact proration; cash refunds only until the PayMongo adapter |
 | 0012 | Inventory costing | Weighted average per branch × item, computed by the ledger trigger under the balance lock; Σ movement value = balance value |
 | 0013 | Double-entry ledger | Books per legal entity; every operational document posts one balanced entry in its own transaction; periods, reversals, manual entries |
-| 0014 | Restaurant | Orders are operational; a frozen bill is paid by checks through the one checkout path; recipes consume at checkout |
+| 0014 | Restaurant | **Withdrawn 2026-10-25** (migrations 0111, 0112; recipes too). Was: orders, checks, recipes consumed at checkout |
 | 0015 | Offline sync | Terminal-authenticated snapshot + sync; offline cash sales re-priced as of the snapshot and recorded once; quarantine for managers |
+| 0016 | Pilot readiness | Account security, rate limits, monitoring, backups and restore drills, load tests, onboarding, support access, data export |
+| 0017 | Counter controls | Line discounts, price overrides approved by a second person, held carts, exchanges |
+| 0018 | Customers | Customers, marketing consent events, store credit per legal entity |
+| 0019 | API keys, webhooks | GET-only API keys with scopes; outbound webhooks carrying ids only, delivered by the worker |
+| 0020 | Packs and expiry | Packs and pieces opened at the sale, expiry lots drawn first-expiry-first, alerts, write-offs (§1 GROCERY type withdrawn 2026-10-25) |
+| 0021 | Promotions, shelves | `@1pos/pricing` promotions on both sides, sizes and colours, quick keys, labels, shelf locations |
+| 0022 | Salons | **Withdrawn 2026-10-25** (migration 0112) |
+| 0023 | Lodging | **Withdrawn 2026-10-25** (migration 0111) |
+| 0024 | Laundry | **Withdrawn 2026-10-25** (migration 0110) |
+| 0025 | Pharmacies | **Withdrawn 2026-10-25** (migration 0112), except §4 expired-stock rule, §5 lot codes, holds and batch trace, §7 box → strip → piece, kept for every shop |
 
 ## 6. Transaction engine (checkout) — as built (Phase 2)
 
@@ -128,13 +139,13 @@ The failure behaviour is drilled in `apps/api/test/integration/failure-drills.te
 
 ## 7. Inventory and books (as built, Phase 3)
 
-Authoritative history = `stock_movements` (append-only). A `BEFORE INSERT` trigger owned by `onepos_platform` locks the item's `stock_balances` row, costs the movement (weighted average, ADR-0012) and updates quantity, value and average — the app role can read balances but never write them. Movement types and their source documents: `SALE`/`RETURN` (sale lines), `RECEIPT` (goods receipt lines), `SUPPLIER_RETURN`, `TRANSFER_OUT`/`TRANSFER_IN` (transfer lines), `COUNT` (count lines; quantity computed by the trigger), `ADJUSTMENT`, `WASTE`. Multi-item documents insert in variant order (no deadlocks). The negative-stock policy is per branch (`ALLOW`, `ALLOW_WITH_FLAG`, `BLOCK` refusing counter sales); the trigger marks movements that go below zero and writes `stock.low` / `stock.below_zero` outbox events on the crossing. Count sheets freeze on hand, are counted (blind) and post `counted − frozen` (ADR-0012 amendment).
+Authoritative history = `stock_movements` (append-only). A `BEFORE INSERT` trigger owned by `onepos_platform` locks the item's `stock_balances` row, costs the movement (weighted average, ADR-0012) and updates quantity, value and average — the app role can read balances but never write them. Movement types and their source documents: `SALE`/`RETURN` (sale lines), `RECEIPT` (goods receipt lines), `SUPPLIER_RETURN`, `TRANSFER_OUT`/`TRANSFER_IN` (transfer lines), `COUNT` (count lines; quantity computed by the trigger), `ADJUSTMENT`, `WASTE`, `UNPACK_OUT`/`UNPACK_IN` (pack openings, ADR-0020). Multi-item documents insert in variant order (no deadlocks). The negative-stock policy is per branch (`ALLOW`, `ALLOW_WITH_FLAG`, `BLOCK` refusing counter sales); the trigger marks movements that go below zero and writes `stock.low` / `stock.below_zero` outbox events on the crossing. Count sheets freeze on hand, are counted (blind) and post `counted − frozen` (ADR-0012 amendment).
 
 Purchasing: suppliers → purchase orders (DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED / CANCELLED; stock never moves on an order) → goods receipts (accepted vs rejected, never above what was ordered) → supplier returns.
 
 Every operational document also posts one balanced journal entry in the same transaction (ADR-0013), so stock value, cash, VAT and revenue in the books always equal their evidence tables (`ledger.test.ts`).
 
-## 8. Offline-first POS (Phase 5 — server and engine built; desktop shell pending Rust)
+## 8. Offline-first POS (Phase 5 — server, engine and Tauri desktop shell built)
 
 ```
 till (OfflineEngine, SQLite)                         API

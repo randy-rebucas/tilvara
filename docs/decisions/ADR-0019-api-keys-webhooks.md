@@ -25,4 +25,4 @@
 - Write access through API keys, OAuth apps, or keys scoped to one branch.
 - Per-key rate limits beyond the existing per-IP limits.
 - Pinning the resolved address for the connection itself. Between the worker's DNS check and `fetch`'s own lookup, a DNS answer can change (rebinding, a time-of-check/time-of-use gap). This is recorded in LEFTOVER, to be closed with a custom lookup/agent before production.
-- Webhooks for other topics (purchasing, books, restaurant checks).
+- Webhooks for other topics (purchasing, books).

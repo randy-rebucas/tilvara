@@ -3,6 +3,5 @@ packages:
   - "packages/*"
 
 onlyBuiltDependencies:
-  - argon2
   - "@nestjs/core"
   - esbuild

@@ -190,7 +190,7 @@ system fault: remind the branch manager (variance approval needs a different use
 
 ### OneposRefundRefusals
 Many returns or voids were refused in an hour: `sum by (code) (increase(onepos_refund_refusals_total[1h]))`.
-`FORBIDDEN` or `NOT_SESSION_OWNER` in bulk can mean someone probing; `INSUFFICIENT_CASH` or
+`FORBIDDEN` or `NOT_SESSION_OWNER` in bulk can mean someone probing; `INSUFFICIENT_DRAWER_CASH` or
 `VOID_OUTSIDE_SESSION` usually means training. Check the audit log of the branch concerned.
 
 ### OneposInventoryConflicts

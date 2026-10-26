@@ -17,7 +17,7 @@
   - SC/PWD (the statutory discount wins, never stacked; tax adviser to confirm, LEFTOVER);
   - or, for `MULTI_BUY`/`BUY_X_GET_Y`, a quantity that is not whole (only whole units are counted).
   
-  Restaurant checks are not promoted: a bill keeps its own order discount (ADR-0014).
+  Restaurant checks were not promoted: a bill kept its own order discount (ADR-0014, withdrawn 2026-10-25).
 - **One promotion per line, the customer's best**: each promotion is evaluated on the lines not yet claimed. The one giving the largest discount is applied (ties go to the earlier start, then the id), and every line that took part in it is claimed (including a multi-buy's units that paid full price). This repeats until nothing more applies.
 - **Units**: lines are expanded into units sorted by unit price (highest first, then line order). `MULTI_BUY` takes groups of `quantity` from the top, and each group's discount is `max(0, Σ prices − price)`. `BUY_X_GET_Y` takes groups of `buy + get`, and the last `get` units of each group are discounted. A group's discount is split over its lines in proportion to their amounts, rounded to centavos with the largest remainder, so the parts add up exactly.
 - **What it produces**: per line, a `discount` amount and the `promotionId`. The discount enters the tax engine exactly as an ordinary line discount, so VAT, sales buckets, the ledger (revenue is net of ordinary discounts), returns (pro rata of the line) and reports need no new rule. `sale_lines.promotion_id` records which promotion priced the line. No permission is needed at the till (a promotion is not cashier discretion).
@@ -47,7 +47,7 @@
 - New snapshot fields: `promotions`, and each item's `quickKey`. An older till ignores them, but then it rings promoted items at full price and the server refuses the total (`TOTAL_MISMATCH` → quarantined, not lost), so tills update with the server.
 
 ## Not covered (LEFTOVER)
-- Promotions by category, cart-level offers ("₱100 off ₱1,000"), coupons and loyalty, and promotions on restaurant checks.
+- Promotions by category, cart-level offers ("₱100 off ₱1,000"), coupons and loyalty.
 - A promotion that cheapens a different item set ("buy a shirt, socks half price").
 - Choosing per sale between a promotion and SC/PWD: the statutory discount always wins, and the tax adviser should confirm (RA 9994 IRR: no double discount).
 - Bin-level stock (quantities per shelf), label printers driven by the till, and serial numbers.

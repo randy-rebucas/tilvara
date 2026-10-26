@@ -1,10 +1,8 @@
 /** Shapes returned by the Tilvara API that the counter uses (see docs/api/openapi.json). */
-export type BusinessType = 'RETAIL';
-
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  activeTenant: { tenantId: string; businessType?: BusinessType; permissions: string[] } | null;
+  activeTenant: { tenantId: string; permissions: string[] } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
 

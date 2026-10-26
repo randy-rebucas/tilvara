@@ -90,7 +90,7 @@ export const categories = pgTable(
   ],
 );
 
-/** PACKAGE: prepaid sessions of services (ADR-0022 §6). */
+/** SERVICE: never stock-counted. PACKAGE (prepaid sessions) was removed in 0112; 0113 made the archived ones SERVICE. */
 export const PRODUCT_TYPES = ['STANDARD', 'SERVICE'] as const;
 export type ProductType = (typeof PRODUCT_TYPES)[number];
 export const SOLD_BY = ['UNIT', 'WEIGHT'] as const;

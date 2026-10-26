@@ -11,7 +11,7 @@ object to, erase or block, or take a copy of their personal data (Data Privacy A
 | Request about | Controller | Tilvara does |
 |---|---|---|
 | Their Tilvara account (email, name, sign-in, security events) | **Tilvara** | Answer it (section 3) |
-| A business's records about them: an SC/PWD discount record, a takeaway name, a supplier record, their work as a cashier | **That business** | Forward it to the business's owner within 2 working days, tell the person it was forwarded, and help the business (section 4). Do not answer it ourselves |
+| A business's records about them: an SC/PWD discount record, a supplier record, their work as a cashier | **That business** | Forward it to the business's owner within 2 working days, tell the person it was forwarded, and help the business (section 4). Do not answer it ourselves |
 | Both | Both | Split it |
 
 Log every request (date, person, what was asked, controller, outcome, date closed) in the DPO's register.
@@ -62,9 +62,7 @@ Tell the business what the person asked, and how Tilvara can help:
   number on a recorded sale cannot be changed in place; until a correction document exists, the business
   keeps a written note of the correction with its SC/PWD book and the DPO records the limitation.
 - **Erasure / objection**: SC/PWD records are kept because tax rules require them; the business explains
-  this to the person and the record is anonymised when the period ends. A takeaway name has no such
-  reason: there is no way to clear it yet (LEFTOVER), so the business notes the request and Tilvara clears
-  it when the tool exists.
+  this to the person and the record is anonymised when the period ends.
 
 ## 5. Replies to adapt
 

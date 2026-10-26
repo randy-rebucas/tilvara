@@ -18,12 +18,9 @@ Session 20 built customers (ADR-0018), the till controls (held carts, exchanges,
 - ⬜ Held carts are never discarded automatically: a cart parked and forgotten keeps its lines (and any SC/PWD name and ID) until someone resumes or discards it. Proposed: discard after 7 days (processing register, retention row "Held carts"; DPO to confirm the period).
 - ⬜ Customers are never anonymised automatically (proposed 2 years after the last purchase; waits on the DPO like the other purge jobs).
 - ⏳ `webhook_deliveries` is never purged (proposed 30 days after delivered/dead; retention schedule) — waits on the DPO's periods like the other purge jobs.
-- ✅ Restaurant: a pending item's choices change in place (session 25, `PATCH /v1/order-items/:id { modifierOptionIds }`). ⬜ Comps use `sales.discount`; a separate comp permission or a comp reason report is not built (reasons are in the `order.billed` audit row).
-- ⬜ Shift close with open bills (session 21): the admin has no shift-close screen, so the manager override exists only at the till. (`test:e2e:pos` 41/41 and `test:e2e:service` 22/22 re-run in session 22 against the refusal.)
-- ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: multi_entity, advanced_reports; Enterprise: all three; `restaurant` dropped 2026-10-25).
+- ⬜ Plan prices are still placeholders (`0.0000`); the plan contents were decided in session 21 (Starter: none; Growth: multi_entity, advanced_reports; Enterprise: all three).
 - ⬜ Watch: `offline-sync.test.ts` failed once with `TAX_PROFILE_MISSING` in a full gate run (session 20) and passed on its own. The likely cause is the Docker VM clock running ~1 s off the host around a profile's effective time. Two billing tests failed the same way and their tolerance was widened. If it recurs, give the fixture's tax profile an earlier effective time.
 - ⬜ Offline sales after a lapse (session 21): a till that stays offline keeps selling on its last writable snapshot for up to `OFFLINE_WINDOW_HOURS` after a lapse or suspension, and those sales are recorded (audited `offline_sale.recorded_while_read_only`); that bound is the posture accepted. Snapshots issued before migration 0080 count as not writable.
-- ⬜ CI scope once it runs: no E2E suites, restore drill or `cargo test` in `ci.yml`.
 - ⬜ Weighing-scale and barcode-scanner adapters (§5.2; manual weight, scale labels and keyboard-wedge work today).
 
 ## Audit 2026-10-21 (session 31)
@@ -32,14 +29,22 @@ Full write-up: [AUDIT-2026-10-21.md](AUDIT-2026-10-21.md). Every defect (§2) an
 - ✅ A1 is moot: service notes and appointments were removed on 2026-10-25 (session 33; migration 0112); question 8 is marked moot.
 - ✅ A3 for laundry is moot: laundry was removed on 2026-10-25 (session 32), so `laundry.dispose` no longer exists and HYBRID branch managers need no two-step sign-in for it.
 - ⏳ A5: a return of a sale paid partly with store credit gives credit back in proportion to what credit paid, not credit first. The accountant to confirm: question 13 in `accounting/ACCOUNTANT_REVIEW_REQUEST.md`.
-- ⬜ The night audit still runs in the API process with a cross-tenant scan granted to `onepos_app` (A6, documented in ADR-0023). Move it into the worker if another scheduled posting needs the tax and ledger code there.
+
+## Audit and cleanup (session 34, 2026-10-26)
+Latent: none of these has a row on the dev DB, and there is no production DB yet. Fix with a migration only if one appears.
+- ⬜ `api_keys_scopes_check` was re-added `NOT VALID` (0110–0112), but Postgres checks it on every UPDATE: a key made before 0110 still listing `laundry.read`, `lodging.read` or `appointments.read` would fail `auth_api_key` (it notes `last_used_at`) and could not be revoked. Fix: revoke such keys and allow retired scopes on revoked rows only.
+- ⬜ A JOB_ORDER or FOLIO payment intent from before 0110/0111 still PROCESSING/UNKNOWN can be neither reconciled (the transition trigger refuses non-SALE purposes) nor cancelled, and blocks its shift's close; a SUCCEEDED one never used by its document cannot be cancelled either.
+- ⬜ An offline envelope recorded before 0111 whose answer never reached the till, re-sent by an updated till, loses `choices`/`kitchenNote`/`menuVersionId`/`pickupName` when parsed, so its hash differs: answered REJECTED `TXN_ID_REUSED` instead of RECORDED. A till still holding a pre-0112 snapshot could sell an archived package item offline until the snapshot refreshes.
+Clean-up left:
+- ⬜ `journal_entries_source_check` (and the TS schema) still allows `SALE_TIP_REFUND`, though 0113 deleted every such entry; drop it with the next migration that touches the check.
+- ⬜ No integration test returns an old sale paid with a retired tender (`TENDER_RETIRED`, unit test only) or an old sale with `sale_charges`.
+- ⬜ Kept as scaffolding for a future type: the business-type change path (`business.service.ts`, `roleTemplatesFor`), `PERSONAL_KEYS` for retired fields (over-redaction is harmless), account 2200 in new charts, the sale-side `serviceCharge` in `salePosting`.
 
 ## Session 33 — retail only (2026-10-25)
 The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migration 0112): salons, recipes, tips and prescriptions went with them; packs, expiry lots, lot codes, lot holds, the batch trace and the expired-stock rule stay for every shop.
 - ✅ Tips and prepaid packages still owed from before: the user chose to remove the history too (migration 0113): tip and package rows deleted, old journal entries rewritten without them, accounts 2210/2310 deleted.
 - ⬜ Drawer counts closed before 0113 on shifts with cash tips keep the expected cash and variance recorded at the time; their drawer movements no longer include the tips, so Σ movements no longer equals that recorded expected cash (dev data only).
 - ⬜ Held former Pharmacist / Pharmacy Assistant roles (8 on the dev DB) stay as each business's own roles with what they had left; nothing uses them.
-- ⬜ Docs still describing removed features (left by session 32 too): `docs/architecture/DOMAIN_MODEL.md` (restaurant invariants, consumption reconciliation), `docs/database/DATA_MODEL.md` (Phase 4 restaurant and recipe tables), the ADR table in `docs/architecture/ARCHITECTURE.md` (recipes; no rows after 0015), ADR-0016's "8 café items".
 - ⬜ A worker integration test for the `stock.expired_sold` mail (the builder `expiredSoldMail` is untested; the event is checked in `expiry-holds.test.ts`).
 - ⬜ Choosing the lot at the till; cost per lot. The expiry date is taken as entered (a month-only date is not read as its last day).
 - ⬜ The till does not show a pack's chain ("1 box = 10 strips = 100 pieces"). Thermal receipts put the lots on one wrapped detail line, so a lot code can break across lines.
@@ -58,14 +63,14 @@ The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migrati
 
 ## Session 26 — retail stores and boutiques (ADR-0021)
 - ⏳ Tax adviser: SC/PWD always wins over a promotion on the same line (no double discount, RA 9994 IRR). Whether the beneficiary may instead choose the promotion when it is larger is for the adviser; today the statutory discount applies.
-- ⬜ Promotions by category, cart-level offers ("₱100 off ₱1,000"), coupons and loyalty, a set that cheapens a different set ("buy a shirt, socks half price"), and promotions on restaurant checks.
+- ⬜ Promotions by category, cart-level offers ("₱100 off ₱1,000"), coupons and loyalty, a set that cheapens a different set ("buy a shirt, socks half price").
 - ⬜ One promotion per line: a line with 5 units where 3 make a multi-buy is wholly claimed by it, so the other 2 cannot join another promotion. Splitting lines per promotion would lift this.
 - ⬜ A till older than this server ignores the snapshot's promotions and rings promoted items at full price; the server then refuses the total (`TOTAL_MISMATCH` → quarantined for a manager, not lost). Tills must update with the server.
 - ⬜ A partial return of a promoted line refunds its share pro rata (as for any line discount); a partial return that breaks the group does not claw back the promotion.
 - ⬜ Shelf locations are labels only; quantities stay per branch. Bin-level stock (quantities per shelf, moves between shelves) is not built.
 - ⬜ Labels print through the browser's dialog and were checked on screen only (scale and margins on a real printer and label stock are untested). A label printer driven by the till (ZPL/ESC-POS), and the price from a scheduled price change, are not built.
 - ⬜ Serial numbers, consignment, and layaway with deposits (only stock reservations exist).
-- ⬜ The admin band is full (twelve tabs fit at 1440 px): Promotions, Quick keys and Labels are tabs inside Prices and Products.
+- ⬜ The admin band is full (eleven tabs fit at 1440 px): Promotions, Quick keys and Labels are tabs inside Prices and Products.
 - ⬜ `backup.test.ts` was not re-run in session 26 (the Docker CLI on this machine stopped answering); re-run it when Docker is back.
 
 ## Session 25 — restaurants, cafés and food trucks (ADR-0014 amendment)
@@ -76,7 +81,7 @@ The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migrati
 - ✅ A sale opens up to three levels (box → strip → piece, session 30; kept for every shop in 0112). Manual openings work at any level.
 - ⬜ A purchase-order line is received with one expiry date per receipt (the receipt takes each order line once). Two dates in one delivery of an ordered item need two receipts; items off the order can be repeated on one receipt.
 - ⬜ No dates on count sheets or supplier returns: a count surplus is undated, and a supplier return draws by the rule (undated first, then first-expiry-first). A damaged customer return goes back to its sale's lot, but its WASTE then draws undated stock first.
-- ⬜ The till shows nothing of either feature: no "Open a pack" at the counter, no warning when expired stock is sold, and the counter guide has no tingi line (sales open packs on the server, so the till needs none of this to work).
+- ⬜ The till has no "Open a pack" at the counter and the counter guide has no tingi line (it does warn when only part of a quantity is sellable: expired or held) (sales open packs on the server, so the till needs none of this to work).
 - ⬜ Sample items are untracked, so a trial shows neither packs nor expiry until the owner adds real stock-counted items (the GROCERY type and its sample set were removed in 0112).
 - ⬜ Turning off "Keeps expiry dates" keeps the item's lots; they are drawn as stock goes out but no new dates come in.
 
@@ -86,14 +91,10 @@ The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migrati
 - ⬜ Counter "+"/"−" and rescans have no E2E check.
 
 ## Phase 0 — Repository & architecture
-- ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux)
+- ⏳ CI: `.github/workflows/ci.yml` is written (session 16) and main is pushed to `origin` (github.com/randy-rebucas/tilvara, public). Pre-flight checked locally on 2026-10-19 (lockfile, LF line endings, compose container name for the backup test, `onepos_test` from the init script, `.env.example` = dev `.env`, `security:audit` clean; added `libarchive-tools` so the export ZIP cross-check runs). The first run (29f537a, run 39193648120) was **not started by GitHub: the account is locked for a billing issue**. Clear it in GitHub → Settings → Billing, then re-run the job; expect to adjust the workflow on its first real run. Still open: a `cargo test` job for `src-tauri` (needs the webkit2gtk packages on Linux), the E2E suites and the restore drill
 
 ## Business types (session 17)
-- ✅ Sample items follow the type (session 22): a RETAIL trial gets shop items, the others the café set.
-- ✅ Role templates follow the type (session 22): a RETAIL sign-up gets no Restaurant Manager / Kitchen Crew; changing to RESTAURANT/HYBRID adds them. ⬜ Cashier and branch-manager templates still hold `restaurant.orders`/`kitchen.operate` in a retail shop (harmless; the role editor lists them), and existing RETAIL businesses keep the restaurant roles they were given.
-- ✅ `/me` carries the plan's `features` (session 22); the admin hides the Restaurant area, its guide part, a second legal entity and integrations the plan lacks, with the reason; the till hides the kitchen display and server mode. ⬜ The till's Tables tab stays for a restaurant-type business after a downgrade on purpose (printed bills must still be paid).
-- ✅ Moot since 2026-10-25: the race between opening an order and switching to RETAIL went with table service.
-- ✅ Selling by weight was refused for RESTAURANT businesses (session 25; the type was removed on 2026-10-25). ⬜ Scale-label lookups still resolve a WEIGHT product created before (or under another type).
+- ✅ Retail only since 2026-10-25 (migrations 0110–0112): the type, role templates, sample items and plan-aware screens left for other types went with them. The `business_type` column stays so a type can come back.
 
 ## User guide (session 18)
 - ✅ Drawer variance approval has a screen (session 18, second part): admin Drawer counts (`/shifts`) and the shift page; see STATUS.
@@ -104,9 +105,9 @@ The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migrati
 
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
-- ⬜ Catalog: bundles/composites; product images (needs S3 adapter); batch/expiry & serial tracking and UoM conversions (see Phase 3)
+- ⬜ Catalog: bundles/composites; product images (needs S3 adapter); serial tracking and UoM conversions (see Phase 3)
 - ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once multi-entity features exist; per-tenant entitlement overrides
-- ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft, Takeaway are kept in English on purpose until reviewed)
+- ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft are kept in English on purpose until reviewed)
 - ⏳ OTel SDK + exporter — D1 (hosting)
 - ⬜ Typed OpenAPI response schemas
 
@@ -147,13 +148,12 @@ Phase-level:
   - ⏳ EWT / BIR 2307 (accountant)
   - ⬜ A note cannot be cancelled (an opposite note corrects it), and an invoice with notes cannot be cancelled; a credit note's GRNI is computed per invoice, not linked to a particular return. Accountant to confirm the treatment (question 12 in ACCOUNTANT_REVIEW_REQUEST)
 - ⬜ UoM conversions and purchase units
-- ⬜ Batch/expiry and serial tracking
 - ⬜ Landed cost
 - ⬜ Financial exports beyond the journal CSV (e.g. a ready-made import for a given accounting package)
 - ⏳ Accountant review of the default chart and posting policies
 
 ## Phase 4 — Restaurant
-- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111). Recipes stay for salons; earlier sales keep their service charges and choice lines.
+- ✅ All items closed by removal: the user removed restaurants (all table service) and lodging on 2026-10-25 (session 32; migration 0111). Recipes went with salons in 0112; earlier sales keep their service charges and choice lines.
 
 ## Phase 5 — Offline & integrations
 Slice 6 (deferred by the user's decision):

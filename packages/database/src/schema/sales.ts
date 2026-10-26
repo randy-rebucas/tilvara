@@ -658,8 +658,6 @@ export const saleReturnCharges = pgTable(
 
 // ------------------------------------------------------------------ stock
 
-export const STOCK_MOVEMENT_TYPES = ['SALE', 'ADJUSTMENT', 'RETURN'] as const;
-
 /**
  * Opening packs into pieces (ADR-0020 §2): by hand, or by a sale short of pieces (`sale_id`). Its
  * movements are UNPACK_OUT (the packs) and UNPACK_IN (the pieces, at the packs' cost). Append-only.

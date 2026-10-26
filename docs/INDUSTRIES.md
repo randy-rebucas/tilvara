@@ -1,3 +1,5 @@
+> Since 2026-10-25 Tilvara supports retail shops only (sari-sari stores and groceries are retail shops). The other industries below were built and then withdrawn (ADR-0014, ADR-0022–ADR-0025; migrations 0110–0112). The list is kept as the market it came from.
+
 Retail Stores & Boutiques: Clothing shops, convenience stores, and specialty retail stores need a POS for barcode scanning, quick checkouts, multi-item pricing, and tracking stock levels across shelves.
 
 Restaurants, Cafes & Food Trucks: Food service businesses require POS systems designed for table management, kitchen ticket routing, order customizations, split bills, and fast counter checkout.

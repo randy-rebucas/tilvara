@@ -23,7 +23,7 @@ SPEC §12 requires versioned tax rules with effective dates, VAT / VAT-exempt / 
 5. **Gate**: schemes with `review_status = PENDING_PROFESSIONAL_REVIEW` compute normally, but results flag `requiresProfessionalReview`; checkout will refuse them in production until the platform marks the scheme `APPROVED` after sign-off.
 
 ## Not decided / out of scope (tracked in BACKLOG)
-5 % BNPC discount (cap unverified), NAAC and Solo Parent schemes (VAT treatment unverified), group-meal proration and MEMC base (restaurant phase), service charge interaction, invoice-level rounding, withholding/ewt.
+5 % BNPC discount (cap unverified), NAAC and Solo Parent schemes (VAT treatment unverified), group-meal proration and MEMC base (restaurant phase), service charge interaction (both moot while retail-only: no restaurant checks or service charges since 2026-10-25), invoice-level rounding, withholding/ewt.
 
 ## Consequences
 - Changing a rate or registration never rewrites history; reports read snapshots, not current config.

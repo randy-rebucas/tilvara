@@ -549,6 +549,8 @@ export interface Sale extends Buckets {
   })[];
   /** SC/PWD beneficiaries. */
   beneficiaries?: { id: string; schemeCode: string; name: string; idNumber: string; tin: string | null }[];
+  /** Service charges of restaurant checks rung before 0111 (none since); the lines and these add up to `amountDue`. */
+  charges: { id: string; kind: string; rate: string; amountDue: string }[];
   tenders: { id: string; method: string; amount: string; tendered: string; change: string }[];
   /** The customer it was rung up for (ADR-0018). */
   customerId?: string | null;
@@ -864,6 +866,8 @@ export interface SalesSummary {
 }
 export interface ByProduct {
   data: { variantId: string; sku: string; name: string; quantitySold: string; quantityReturned: string; netQuantity: string; sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string }[];
+  /** Service charges of sales before 0111, listed apart so Σ products + Σ charges = the summary. */
+  charges: { kind: string; charged: string; returned: string; net: string; netExVat: string }[];
 }
 export interface ByCashier {
   data: { userId: string; displayName: string | null; salesCount: number; sales: string; returnsProcessed: number; returns: string }[];

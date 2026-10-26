@@ -23,7 +23,7 @@ company's documents. It answers SPEC "Privacy" and ADR-0016 slice 8, and covers 
 
 Under the Data Privacy Act of 2012 (RA 10173), its IRR and NPC circulars:
 
-- **For a business's own records** (its sales, SC/PWD beneficiaries, takeaway names, suppliers, its staff
+- **For a business's own records** (its sales, SC/PWD beneficiaries, suppliers, its staff
   records), **the business is the personal information controller (PIC)** and **Tilvara is its personal
   information processor (PIP)**. Tilvara processes these only to run the service the business signed up for.
 - **For Tilvara accounts** (everyone who signs in: owners, staff, Tilvara support), **Tilvara is the PIC**: it

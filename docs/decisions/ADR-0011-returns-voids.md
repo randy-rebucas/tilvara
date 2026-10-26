@@ -12,6 +12,6 @@
 7. **Evidence.** Audit `sale.voided` / `sale.returned`, outbox events of the same names; required Idempotency-Key.
 
 ## Amendment (2026-10-20, session 23) — stock follows the sale; damaged goods are waste
-- What comes back is decided by what the sale took: a line with a `SALE` movement gets a `RETURN` movement, whatever the product's `track_inventory` says now; a line without one (sold untracked, or made from a recipe) gets none. Before, the flag was read at return time, so switching it between sale and return created or lost stock.
+- What comes back is decided by what the sale took: a line with a `SALE` movement gets a `RETURN` movement, whatever the product's `track_inventory` says now; a line without one (sold untracked, or made from a recipe — recipes were withdrawn 2026-10-25, migration 0112; old sales keep this rule) gets none. Before, the flag was read at return time, so switching it between sale and return created or lost stock.
 - `DAMAGED` lines of such items also come back (`RETURN`, which credits COGS at the sale's cost), then leave at once in a `WASTE` stock adjustment posted to Spoilage and waste (`recordPreparedWaste`); the return's audit row carries `wasteAdjustmentId`. Stock nets to what it was, and the loss shows as waste instead of staying in COGS.
-- A whole-unit item (`soldBy` UNIT, unit without fractions) is returned in whole units, except the exact rest of a line (a restaurant check's share, e.g. 0.3333): `QUANTITY_NOT_ALLOWED`.
+- A whole-unit item (`soldBy` UNIT, unit without fractions) is returned in whole units, except the exact rest of a line (a restaurant check's share, e.g. 0.3333; history: checks were withdrawn 2026-10-25, migration 0111): `QUANTITY_NOT_ALLOWED`.

@@ -22,7 +22,7 @@ says what to do in each situation. The browser POS does not work offline.
 - the offline receipt, which has a local reference such as `R1-TAbCd-000003` and is not an invoice.
 
 **What does not work** (it needs the server): card and QR, SC/PWD and other discounts, returns and voids,
-opening or closing a shift, and table service.
+and opening or closing a shift.
 
 **Do:** keep selling cash. The till sends the sales by itself when the connection is back, oldest first.
 Nobody needs to press anything.

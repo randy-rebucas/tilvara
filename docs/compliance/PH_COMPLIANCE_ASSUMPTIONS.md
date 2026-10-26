@@ -174,14 +174,14 @@ percentage tax computed on 896.00 (3%) = 26.88
 - `DiscountScheme` table (effective-dated): `code` (SC, PWD, NAAC, SOLO_PARENT, SC_5PCT_BNPC), `rate`, `vat_exempt` (bool), `base` (`VAT_EXCLUSIVE` | `GROSS`), `eligible_item_categories`, `weekly_cap`, `requires_id`, `requires_signature` (in-store yes, online no), `requires_tin_if_any`, `stackable_with_promo` (default false, "choose higher").
 - Line-level allocation: the cashier selects which lines (or which share for group meals) belong to each discount holder; supports modes `ITEMIZED`, `PRORATED_BY_HEADCOUNT`, `MEMC_BASE_VALUE`.
 - Compute in integer centavos; rounding rule **configurable** (per line vs per invoice; half-up) — **rounding is unverified, needs tax adviser.**
-- Interaction with **service charge** (is SC/PWD's share of service charge discounted/VAT-exempt?) — **unverified; tax-adviser question.**
+- Interaction with **service charge** (is SC/PWD's share of service charge discounted/VAT-exempt?) — **unverified; tax-adviser question.** *(moot while retail-only: no service charges are created since 2026-10-25)*
 - Manager PIN override, mandatory capture of ID number + name per beneficiary, signature line printed; SC/PWD/NAAC/SP sales books in back office; Z-reading shows discount totals by type and VAT-exempt sales.
 - Reject double-application on the same line; enforce "exclusive use" by requiring line assignment.
 
 ## 8. Service charge — RA 11360 (2019) — **Partially verified**
 - Service charges collected by hotels, restaurants, and similar establishments must be distributed **100%** **equally** among covered (non-managerial) employees (previously 85/15). DOLE **DO 242-2024** (effective 1 Feb 2024) replaced DO 206-2019: distribution at least twice a month, no more than 16 days apart; reportedly covers agency/contractual workers and distribution by actual hours/days worked.
 - Tips/gratuities voluntarily given are separate (not "service charge") — treatment **unverified**. *(2026-10-25: tips are no longer taken; old tips stay as recorded.)*
-- **Tilvara implication:** service charge is a separate, configurable charge line (rate, applies to dine-in/takeout, taxable VAT status configurable — VAT on service charge commonly applied; **confirm**), never merged into item price; report "service charge collected per period" to support DOLE distribution; optional per-employee hours import for distribution calculation (P2).
+- **Tilvara implication:** service charge is a separate, configurable charge line (rate, applies to dine-in/takeout, taxable VAT status configurable — VAT on service charge commonly applied; **confirm**), never merged into item price; report "service charge collected per period" to support DOLE distribution; optional per-employee hours import for distribution calculation (P2). *(moot while retail-only: no service charges are created since 2026-10-25)*
 
 ## 9. Data Privacy Act of 2012 (RA 10173) and NPC rules — **Partially verified**
 - Tilvara is a **Personal Information Processor (PIP)** for merchants' customer data (and a Personal Information Controller for its own users/billing data). Merchants are PICs. SC/PWD ID numbers, names, signatures, and **PWD disability info** — PWD status may be **sensitive personal information** (health-related) → minimize: store ID number + name only, never disability type.
@@ -221,7 +221,7 @@ Tilvara records what the rules below seem to need. None of it is confirmed with 
 4. Which of our planned release changes are "**major enhancements**" requiring re-accreditation? Can we accredit a frozen fiscal core and iterate UI freely?
 5. Exact Z-reading / X-reading / eJournal / backend report **field formats** (the TWG Functional & Technical Evaluation Checklist), Accumulated Grand Total digit length, and eJournal file format.
 6. **Rounding** rule for SC/PWD computations (per line vs per invoice; centavo rounding).
-7. SC/PWD discount interaction with **service charge**, delivery fees, packaging fees, and **promo/bundle** prices; current group-meal rule for **dine-in** full-service restaurants vs QSR MEMC.
+7. SC/PWD discount interaction with **service charge**, delivery fees, packaging fees, and **promo/bundle** prices; current group-meal rule for **dine-in** full-service restaurants vs QSR MEMC. *(Service charge and dine-in parts moot while retail-only: no service charges or restaurant checks since 2026-10-25.)*
 8. NAAC: VAT-exempt or not? Computation base?
 9. Current **5% BNPC** cap and covered item list for SC/PWD (post JAO 24-02).
 10. Is the ₱500 non-VAT invoice threshold "more than ₱500" or "₱500 or more", and has the CPI adjustment been applied (next ~Jan 2027)?

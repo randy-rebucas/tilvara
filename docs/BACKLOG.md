@@ -4,7 +4,7 @@ Legend: ✅ done & verified · 🟡 partial · ⬜ not started. Update this file
 Open items left by finished slices and phases live in [LEFTOVER.md](LEFTOVER.md); this file keeps the plan.
 
 ## MVP definition
-**MVP = single-tenant-usable, multi-tenant-safe retail POS for a PH VAT-registered or non-VAT shop**, online browser-mode POS, cash + one e-payment adapter (dev), cashier sessions with reconciliation, returns/refunds, stock ledger, basic reports. Restaurant, offline, and BIR-live invoicing follow.
+**MVP = single-tenant-usable, multi-tenant-safe retail POS for a PH VAT-registered or non-VAT shop**, online browser-mode POS, cash + one e-payment adapter (dev), cashier sessions with reconciliation, returns/refunds, stock ledger, basic reports. Offline and BIR-live invoicing follow.
 
 ### MVP acceptance criteria
 1. Two tenants configured side by side; cross-tenant suite green.
@@ -61,7 +61,7 @@ Slice 5 — admin UI (session 5): ✅ Purchasing (suppliers, POs with lines, app
 Exit review (session 5): ✅ traceability audit both ways (`traceability-audit.ts`: movement → document → entry, entry → document, per-document/branch value ties, transit clearing) — clean on a mixed day, in every drill, and over all 54 dev tenants; mutation-tested; ✅ defect fixed: multi-item stock adjustments had no document (only the first movement traced to the entry) → `stock_adjustments` (0031, back-filled) + `GET /v1/stock/adjustments[/:id]` + admin page; ✅ defect fixed: a posting could land in a month being closed (unlocked check) → period row held FOR SHARE (0032), drill fails on the old trigger; ✅ drills: connection killed mid-receipt, DB unreachable (receipt/transfer/count), double-click receive, 5 concurrent receivers of one transfer, 4 concurrent supplier returns of the last units, mixed receipts/transfers/counts/adjustments on the same items (no deadlock, books = stock), 4 concurrent reversals, close vs posting both orders; ✅ inventory officers see their own branches in `/v1/branches` (admin pickers); ✅ design finish review: 8 fixes applied; ✅ accountant review request written (`docs/accounting/ACCOUNTANT_REVIEW_REQUEST.md`). **Exit: ✅ met 2026-10-16**, with the accountant's answers pending before customers rely on the books.
 
 ## Phase 4 — Restaurant (plan: ADR-0014)
-❌ Removed on 2026-10-25 (session 32): table service is no longer offered (migration 0111); §4 recipes stay for salons. The record below is history.
+❌ Removed on 2026-10-25 (session 32): table service is no longer offered (migration 0111); §4 recipes went with salons in 0112. The record below is history.
 Slice 1 — recipes + consumption (session 6): ✅ done.
 - ✅ `recipe_versions` / `recipe_ingredients` (append-only, effective-dated, no backdating, tracked-ingredient / untracked-item triggers).
 - ✅ `CONSUMPTION` movements at checkout (per line and ingredient, costed at average, in the sale's COGS and its one entry).
@@ -199,7 +199,7 @@ Slice 5 — performance (session 11): ✅ done (ADR-0016 "As built — slice 5")
 Slice 6 — onboarding and support (session 12): ✅ done (ADR-0016 "As built — slice 6"; audit log reader and MFA resets were pulled forward in session 10).
 - ✅ Support access: business-given, read-only, ≤ 72 h grants (`support_grants`, DB cap + immutable terms), ops-managed staff (`platform_staff`, `support staff-add|disable|list`), support tokens re-checked every request, every write refused, every request in the business's audit log; admin Subscription → Support access, staff `/support` with a read-only banner.
 - ✅ Data export: worker-made ZIP of CSVs from one snapshot (every tenant table, no credential hashes), `DevFileStorage`, 10-minute HMAC links, 7-day files swept hourly, all steps audited; works for read-only businesses; admin Subscription → Your records.
-- ✅ Sample items for trials (8 labelled café items, before the first sale; removable by archiving); overview card and product tag.
+- ✅ Sample items for trials (8 labelled sample items, shop items since 2026-10-25, before the first sale; removable by archiving); overview card and product tag.
 - ✅ Runbooks `docs/operations/tenant-offboarding.md`, `docs/operations/support-access.md`.
 - ✅ Tests: `support-onboarding.test.ts` (17), worker `data-export.test.ts` (3), unit (ZIP vs bsdtar, CSV, storage, links, barcodes), schema guard (worker reads, function grants), isolation (+5 routes, 2 tables), `test:e2e:web:onboarding` (23).
 - ⬜ First-sale walkthrough; anonymisation job (LEFTOVER).
@@ -212,7 +212,7 @@ Slice 8 — runbooks and privacy pack (session 13): ✅ done (ADR-0016 "As built
 - ⏳ DPO review (G6); gaps found while writing it are in LEFTOVER (purges, anonymisation, corrections, …).
 - ✅ Follow-up (session 14, the gaps that need no decision; ADR-0016 "As built — slice 8 follow-up"): personal-field log redaction with tests; own name and sign-in email (`/account`, `/confirm-email`); account closure (block now; anonymisation waits on the DPO); audited `support account-disable|account-enable`; `MFA_ENCRYPTION_KEY` rotation (`mfa-rekey`); error references on admin and POS error screens. Migrations 0056/0057.
 LEFTOVER items closed in session 15 (no decision needed): one query at a time per transaction (`inSequence`, guarded in the API integration setup); sync budget from request arrival; outbox lease renewal for long handlers (migration 0058); intermittent outbox/reliability tests made order-independent; `pnpm test:db:reset`; KDS un-bump (ADR-0014 amendment, migration 0059); long business names in the band; a "First sale" step on the overview; `pnpm security:pages` (server-rendered admin pages); stale items closed (POS menu pricing already batched, card/QR checks already in the POS).
-Business types (session 17): ✅ RETAIL / RESTAURANT / HYBRID per business decide which features show (RETAIL also refused restaurant writes); chosen at sign-up, changed under Subscription → Business; follow-ups in LEFTOVER.
+Business types (session 17; retail only since 2026-10-25, migration 0112): ✅ RETAIL / RESTAURANT / HYBRID per business decide which features show (RETAIL also refused restaurant writes); chosen at sign-up, changed under Subscription → Business; follow-ups in LEFTOVER.
 ⬜ Slice 9 — UAT scripts, compliance release review, pilot runbook + daily reconciliation report (needs D4–D6).
 Decisions waiting on the user: D1 hosting provider/region, D2 email provider, D4 pilot businesses, D5 invoicing during the pilot (tax adviser), D6 PayMongo keys.
 
@@ -239,14 +239,14 @@ Audit gaps (session 20): ✅ done, in the audit's order. The user chose: mobile 
 Audit decisions (session 21): ✅ done. The user chose the recommended option for each.
 - ✅ Offline sales after a lapse or suspension: recorded when rung on a snapshot issued while the business could write and within its window (migration 0080 `terminal_snapshots.business_writable`); the others wait with `SUBSCRIPTION_READ_ONLY`/`TENANT_SUSPENDED`, now worded in the admin.
 - ✅ Plan contents kept as seeded and enforced: `advanced_reports` (the five analysis reports) and `multi_entity` (a second legal entity) on Growth and Enterprise, `api_access` on Enterprise.
-- ✅ Shift close with open restaurant bills: refused (`OPEN_BILLS`, listed at the till); a manager overrides with a reason, audited.
+- ❌ (removed with table service, 2026-10-25) Shift close with open restaurant bills: refused (`OPEN_BILLS`, listed at the till); a manager overrides with a reason, audited.
 
 Audit remainder (session 22): ✅ done — every audit item that needed no decision. Migrations 0081–0083.
 
 Till quantities and stock movements audit (session 23): ✅ done — returns follow the sale's stock, damaged returns as waste, approved prices carry a quantity, split-check recipe rounding, one waste per voided choice, till quantity controls. Migration 0084. Open items: `docs/LEFTOVER.md` (session 23).
 - ✅ Supplier credit/debit notes, one payment over several invoices, voiding a mistaken payment; no manual reversal of payment or note entries (ADR-0013 amendment); admin invoice page, payment page, "Pay several invoices".
-- ✅ Restaurant: "Change" on a pending item at the till; per-item discounts and comps on the bill (ADR-0014 amendment).
-- ✅ Business rename; Senior Cashier and Purchasing Officer roles (back-filled); RETAIL gets no restaurant roles until it changes type; sample items follow the type; `/me` plan `features` and screens gated on them.
+- ❌ (removed with table service, 2026-10-25) Restaurant: "Change" on a pending item at the till; per-item discounts and comps on the bill (ADR-0014 amendment).
+- ✅ Business rename; Senior Cashier and Purchasing Officer roles (back-filled); RETAIL gets no restaurant roles until it changes type and sample items follow the type (moot since retail only); `/me` plan `features` and screens gated on them.
 - ✅ Webhook delivery pinned to the checked address (DNS rebinding); API-key expiry in the admin.
 - ✅ Tests: integration `payables` (+4), `bills`, `orders`, `business-type` (+3), `integrations`, `support-onboarding`, `isolation`, workers `webhooks` (+2), accounting/validation/admin/POS unit; E2E `payables` 36, `tables` 37, `integrations` 37, and the stale `guide`/`onboarding` expectations fixed.
 - ⬜ Still waiting on someone else: mobile app (user), customer VAT treatment (tax adviser), EWT (accountant), purge periods (DPO), hardware adapters, CI (billing lock).
@@ -258,7 +258,15 @@ Sari-sari stores and groceries (session 24, ADR-0020): the GROCERY business type
 - ✅ Guide part "Tingi and expiry dates" (EN/FIL); OpenAPI regenerated.
 - ✅ Tests: integration `packs` (5), `lots` (5), `business-type` (+1), `isolation` (+3 id routes, +8 smuggling cases, 4 tables), `rls-catalog` (worker function); unit accounting (+1), validation, admin guide; E2E `test:e2e:web:grocery`.
 
-Restaurants, cafés and food trucks (session 25, ADR-0014 amendment): ❌ removed on 2026-10-25 (session 32) with all table service, at the user's request (migration 0111; recipes and tips stay for salons). Built earlier as follows: The user chose pay-first counter service, network ESC/POS kitchen printers from the desktop till, offline counter service only, and all four small gaps (the recommended option each time). Migrations 0091–0092. Open items: `docs/LEFTOVER.md` (session 25).
+Restaurants, cafés and food trucks (session 25, ADR-0014 amendment): ❌ removed on 2026-10-25 (session 32) with all table service, at the user's request (migration 0111; recipes and tips went with salons in 0112, tip history in 0113). Built earlier as follows: The user chose pay-first counter service, network ESC/POS kitchen printers from the desktop till, offline counter service only, and all four small gaps (the recommended option each time). Migrations 0091–0092. Open items: `docs/LEFTOVER.md` (session 25).
+- ❌ Counter service per branch: choices and kitchen notes on the Sell screen, priced choices as lines under their item, a pickup name; paying sends the menu items to the kitchen as a COUNTER order (fired at once, settled with the sale); call number on the receipt and the KDS; "Handed over" on the KDS; a void takes unserved items off the kitchen screen.
+- ❌ Offline counter service: snapshot `counter` (menu version, choices, stations); the till engine expands and prices choices, prints the kitchen tickets itself; the server records the kitchen copy as printed and served.
+- ❌ Kitchen printing: terminal claim/printed/release routes with a 60 s lease, reprint from the KDS or floor, Till settings → Kitchen printers per station (network or Windows ESC/POS).
+- ❌ Tips: cash or card, outside the sale (`sale_tips`, `TIPS_PAYABLE` 2210), given back by a void, paid out from the drawer (`TIP_PAYOUT`), tips report with CSV, sale page and shift page in the admin, traceability audit rule.
+- ❌ Changing a pending item's choices in place; free choices in item performance; no selling by weight for a restaurant (API).
+- ❌ Admin: counter-service switch, tips report, free choices, movement labels, sale tip and call number, guide lines; counter guide lines (EN/FIL).
+- ❌ Tests: integration `counter-service` (10), `isolation` (+3 id routes, `sale_tips` fixture), `ledger` (tips evidence, chart), offline engine (+1); E2E `test:e2e:pos:counter` (21) and updated `web:restaurant`, `web:reports`.
+- ❌ Second round, on the user's decisions (migrations 0093–0095): a void cancels a card tip's charge (`sale_tip_refunds`, journal source `SALE_TIP_REFUND`, retry route and till button); offline cash tips; the till's call number kept on offline counter orders; held carts keep choices; intent `purpose`. Tests: `counter-service` (+3), `isolation` (+1 id route, card-tip void fixture), `ledger`, offline engine (+1), E2E `pos:counter` 25.
 
 Beauty salons, spas and barber shops (session 27, ADR-0022): ❌ removed on 2026-10-25 (session 33) at the user's request, with recipes and tips; ADR-0022 withdrawn, migration 0112 drops it. Built earlier as follows: The user chose the recommended option each time (a service-staff list that need not sign in, packages owed until used, booking by staff only) and all four extras (supplies used per service, commissions, tips per staff, email reminders). Business type SALON; migrations 0098–0100. Open items: `docs/LEFTOVER.md` (session 27).
 Hotels, resorts and transient houses (session 28, ADR-0023): ❌ removed on 2026-10-25 (session 32) at the user's request; ADR-0023 withdrawn, migration 0111 drops it. Built earlier as follows: The user chose the recommended option each time (a light PMS built in plus a read API and webhooks, outlet sales charged to the room as a tender, room nights each night by the night audit) and all four extras (deposits, guest registry, local accommodation tax, housekeeping). Business type LODGING; migrations 0101–0102. Open items: `docs/LEFTOVER.md` (session 28).
@@ -267,14 +275,8 @@ Laundromats and laundry shops (session 29, ADR-0024): ❌ removed on 2026-10-25 
 Pharmacies and drugstores (session 30, ADR-0025): ❌ removed on 2026-10-25 (session 33) at the user's request; lot holds, the batch trace, the expired-stock rule (default now ALLOW) and the box → strip → piece chain stay for every shop. Migration 0112. Built earlier as follows: The user chose the recommended option each time (never sell expired stock, offline flagged; prescriptions required by class, dangerous drugs by a licensed pharmacist with a yellow form and never offline; box → strip → piece chains at the sale). Business type PHARMACY; migrations 0105–0106. Open items: `docs/LEFTOVER.md` (session 30).
 
 Retail stores and boutiques (session 26, ADR-0021): ✅ done. The user chose all five fixes with the recommended option each time: SC/PWD wins over a promotion, promotions offline via the snapshot, a shelf field plus an all-branch view (not bin-level stock), printable label sheets from the admin. New package `@1pos/pricing`; migrations 0096–0097. Open items: `docs/LEFTOVER.md` (session 26).
-- ✅ Counter service per branch: choices and kitchen notes on the Sell screen, priced choices as lines under their item, a pickup name; paying sends the menu items to the kitchen as a COUNTER order (fired at once, settled with the sale); call number on the receipt and the KDS; "Handed over" on the KDS; a void takes unserved items off the kitchen screen.
-- ✅ Offline counter service: snapshot `counter` (menu version, choices, stations); the till engine expands and prices choices, prints the kitchen tickets itself; the server records the kitchen copy as printed and served.
-- ✅ Kitchen printing: terminal claim/printed/release routes with a 60 s lease, reprint from the KDS or floor, Till settings → Kitchen printers per station (network or Windows ESC/POS).
-- ✅ Tips: cash or card, outside the sale (`sale_tips`, `TIPS_PAYABLE` 2210), given back by a void, paid out from the drawer (`TIP_PAYOUT`), tips report with CSV, sale page and shift page in the admin, traceability audit rule.
-- ✅ Changing a pending item's choices in place; free choices in item performance; no selling by weight for a restaurant (API).
-- ✅ Admin: counter-service switch, tips report, free choices, movement labels, sale tip and call number, guide lines; counter guide lines (EN/FIL).
-- ✅ Tests: integration `counter-service` (10), `isolation` (+3 id routes, `sale_tips` fixture), `ledger` (tips evidence, chart), offline engine (+1); E2E `test:e2e:pos:counter` (21) and updated `web:restaurant`, `web:reports`.
-- ✅ Second round, on the user's decisions (migrations 0093–0095): a void cancels a card tip's charge (`sale_tip_refunds`, journal source `SALE_TIP_REFUND`, retry route and till button); offline cash tips; the till's call number kept on offline counter orders; held carts keep choices; intent `purpose`. Tests: `counter-service` (+3), `isolation` (+1 id route, card-tip void fixture), `ledger`, offline engine (+1), E2E `pos:counter` 25.
+
+Retail only (sessions 32–33, 2026-10-25): ✅ laundry, lodging and restaurants (0110–0111), then grocery, salons, pharmacies, HYBRID, recipes, tips, packages and prescriptions (0112) and the tip and package history (0113) removed at the user's request; packs, expiry lots, lot holds, the batch trace and the expired-stock rule kept for every shop.
 
 Audit 2026-10-21 (session 31): second full audit, `docs/AUDIT-2026-10-21.md`. ✅ Every defect and work item fixed, decisions A1–A6 taken as recommended; all gates, integration (608 tests) and 33 E2E suites pass. Open items are in `LEFTOVER.md`.
 

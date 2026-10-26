@@ -17,8 +17,8 @@ can be built and tested now. The shell later only supplies the SQLite driver and
 
 ### 1. What works offline (MVP)
 - **Cash retail sales** on a shift that was **opened online** on the terminal's register, by the user who
-  opened it. Opening and closing a shift, returns, voids, card/QR, discounts (ordinary and SC/PWD) and
-  restaurant orders need the server. ★
+  opened it. Opening and closing a shift, returns, voids, card/QR, discounts (ordinary and SC/PWD)
+  need the server (restaurant orders too, until they were withdrawn on 2026-10-25). ★
 - The POS shows the outage, disables what is not allowed, and shows how many sales wait to sync.
 
 ### 2. Terminal identity

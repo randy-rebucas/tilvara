@@ -6,7 +6,7 @@ import { useT } from '@/i18n/client';
 import { send } from '@/lib/client-api';
 import { HelpLink } from './help-link';
 
-export function UserMenu({ tenantName, userName, multiple}: { tenantName: string; userName: string; multiple: boolean }) {
+export function UserMenu({ tenantName, userName, multiple }: { tenantName: string; userName: string; multiple: boolean }) {
   const { t } = useT();
   const router = useRouter();
   async function signOut() {

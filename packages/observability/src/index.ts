@@ -70,12 +70,6 @@ export function maskEmail(email: string): string {
   return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
 }
 
-/** `***-***-4567`: the last four digits, enough to tell two numbers apart in a log, not to call the person. */
-export function maskPhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  return digits.length > 4 ? `***${digits.slice(-4)}` : '***';
-}
-
 export interface CreateLoggerOptions {
   service: string;
   level?: LogLevel;

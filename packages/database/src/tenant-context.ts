@@ -44,9 +44,6 @@ export interface TxOptions {
   userId?: string;
 }
 
-/** @deprecated alias kept for readability at call sites */
-export type TenantTxOptions = TxOptions;
-
 export interface Tx {
   db: Database;
   client: PoolClient;

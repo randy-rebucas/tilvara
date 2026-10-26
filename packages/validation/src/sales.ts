@@ -4,9 +4,6 @@ import { oneDiscountRefinement, quantitySchema, rateSchema, taxQuoteLineObject }
 
 const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
-/** Client-generated reference (transaction ids, beneficiary refs). */
-export const clientRefSchema = ref;
-
 /** One tender. */
 export const tenderSchema = z.discriminatedUnion('method', [
   z.object({ method: z.literal('CASH'), tendered: amountSchema }),

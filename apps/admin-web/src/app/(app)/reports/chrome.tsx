@@ -96,9 +96,9 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
   // reason. From /me, so everyone sees it (not only those who may read the subscription).
   const notOnPlan = group === 'analysis' && tenant?.features !== undefined && !tenant.features.includes('advanced_reports');
   const error = notOnPlan ? t('rep.notOnPlan') : reportError;
-  const params = (k: ReportTab, extra: Record<string, string> = {}) =>
+  const params = (extra: Record<string, string> = {}) =>
     new URLSearchParams({ ...(branch && { branch: branch.id }), from, to, ...extra });
-  const keep = (k: ReportTab) => `${PATHS[k]}?${params(k)}`;
+  const keep = (k: ReportTab) => `${PATHS[k]}?${params()}`;
   const today = todayManila();
   return (
     <div className="flex flex-col gap-6">
@@ -134,7 +134,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
             )}
             {!UNDATED.includes(tab) && <button className="btn">{t('common.show')}</button>}
             {!error && tab !== 'z' && (
-              <a href={`/reports/export?${params(tab, { ...extra, report: tab })}`} className="btn" download>
+              <a href={`/reports/export?${params({ ...extra, report: tab })}`} className="btn" download>
                 <Download aria-hidden className="size-4" /> {t('rep.csv')}
               </a>
             )}

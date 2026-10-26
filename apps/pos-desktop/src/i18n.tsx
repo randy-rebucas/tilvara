@@ -2,7 +2,6 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 
 /** EN + FIL. Filipino is a first translation and needs native-speaker review (as in admin-web). */
 const en = {
-  'app.title': 'Tilvara Counter',
   'app.browserMode': 'Browser mode · online only · no printer or drawer',
   'a11y.language': 'Language',
   'a11y.counterNav': 'Counter',
@@ -74,6 +73,7 @@ const en = {
   'pay.cash': 'Cash',
   'pay.card': 'Card',
   'pay.qr': 'QR / e-wallet',
+  'pay.storeCredit': 'Store credit',
   'pay.tendered': 'Cash received',
   'pay.change': 'Change',
   'pay.shortLabel': 'Short by',
@@ -81,7 +81,6 @@ const en = {
   'pay.paidElectronic': 'Paid by {method}',
   'pay.notCharged': '{method} — not charged',
   'pay.notConfirmed': '{method} — not confirmed',
-  'pay.takeCard': 'Charge {amount} by {method}',
   'pay.declined': 'Declined — not charged. Ask for another card or take cash.',
   'pay.status.PROCESSING': 'Waiting',
   'pay.status.UNKNOWN': 'No answer',
@@ -98,7 +97,6 @@ const en = {
   'pay.intentUnconfirmed': 'Could not confirm the payment. Press the same payment button again — it will not charge twice.',
   'pay.synced': 'Payments for this sale were refreshed from the server. Check them before charging again.',
   'pay.remaining': 'Remaining',
-  'receipt.title': 'Receipt',
   'receipt.print': 'Print',
   'receipt.reprint': 'Print again',
   'receipt.printFailed': 'The printer did not print this receipt. The sale is recorded; check the printer and print again.',
@@ -355,7 +353,6 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const fil: Record<MessageKey, string> = {
-  'app.title': 'Tilvara Counter',
   'app.browserMode': 'Browser mode · online lang · walang printer o drawer',
   'a11y.language': 'Wika',
   'a11y.counterNav': 'Kaha',
@@ -427,6 +424,7 @@ const fil: Record<MessageKey, string> = {
   'pay.cash': 'Cash',
   'pay.card': 'Card',
   'pay.qr': 'QR / e-wallet',
+  'pay.storeCredit': 'Store credit',
   'pay.tendered': 'Natanggap na cash',
   'pay.change': 'Sukli',
   'pay.shortLabel': 'Kulang ng',
@@ -434,7 +432,6 @@ const fil: Record<MessageKey, string> = {
   'pay.paidElectronic': 'Bayad sa {method}',
   'pay.notCharged': '{method} — hindi nasingil',
   'pay.notConfirmed': '{method} — hindi pa kumpirmado',
-  'pay.takeCard': 'Singilin ang {amount} sa {method}',
   'pay.declined': 'Tinanggihan — hindi nasingil. Humingi ng ibang card o tumanggap ng cash.',
   'pay.status.PROCESSING': 'Hinihintay',
   'pay.status.UNKNOWN': 'Walang sagot',
@@ -451,7 +448,6 @@ const fil: Record<MessageKey, string> = {
   'pay.intentUnconfirmed': 'Hindi makumpirma ang bayad. Pindutin ulit ang parehong button — hindi ito sisingilin nang dalawang beses.',
   'pay.synced': 'Kinuha ulit sa server ang mga bayad para sa bentang ito. Suriin muna bago singilin ulit.',
   'pay.remaining': 'Natitira',
-  'receipt.title': 'Resibo',
   'receipt.print': 'I-print',
   'receipt.reprint': 'I-print ulit',
   'receipt.printFailed': 'Hindi na-print ng printer ang resibong ito. Naitala na ang benta; tingnan ang printer at i-print ulit.',

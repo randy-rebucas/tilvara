@@ -29,7 +29,7 @@ agreement can be a schedule to the subscription terms, accepted at sign-up.
 
 Do **not** commit to, until built:
 - deletion on request before the retention period ends (tax law prevents it; offer blocking);
-- automatic clearing of takeaway names or a configurable retention per business;
+- a configurable retention per business;
 - a fixed recovery point better than the last daily backup (point-in-time recovery comes with D1);
 - card refunds or card-data handling beyond "Tilvara never receives card numbers" (D6).
 

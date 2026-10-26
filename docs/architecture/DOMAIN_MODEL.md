@@ -17,10 +17,9 @@ Bounded contexts, their aggregates, invariants and state machines. Tables are in
 | Invoicing | invoice sequences, invoices, credit notes, invoice events | Numbering server-controlled, gap-auditable, per registered series |
 | Inventory | items, locations, movements, balances, reservations, transfers, counts | Every stock change = a movement with a source document; balance = Σ movements |
 | Purchasing | suppliers, POs, goods receipts, supplier returns | Stock increases only on goods receipt, not PO creation |
-| Restaurant | menus, modifiers, areas, tables, orders, tickets, KDS, recipes | Operational order lifecycle separate from financial sale lifecycle |
 | Cash | cashier sessions, cash movements, reconciliations | Expected cash = float + cash sales − cash refunds + cash-in − cash-out |
 | Accounting | accounts, journal entries/lines, periods | Σ debit = Σ credit per entry; posted entries immutable; closed periods reject postings |
-| Customers | customers, loyalty, store credit, consents | Marketing consent separate from transactional processing |
+| Customers | customers, store credit, consents | Marketing consent separate from transactional processing |
 | Reporting | read models, exports | Every figure traceable to source rows; estimates labelled |
 | Sync | terminals' sync batches/events | Idempotent on (terminal, terminal_txn_id); server re-validates |
 
@@ -41,22 +40,8 @@ No persisted checkout state machine: a sale is one transaction (ARCHITECTURE §6
 ### Invoice
 `DRAFT (never numbered) → ISSUED (number allocated, immutable) → [TRANSMITTED → ACKNOWLEDGED | REJECTED]`; cancellation/correction via credit note or cancellation event per the applicable rules — never by edit.
 
-### Restaurant order (operational)
-As built (ADR-0014 §6, §7):
-- **Order**: `OPEN → BILLED → SETTLED`, `BILLED → OPEN` (bill reopened), `OPEN → CANCELLED | MERGED` (trigger). Closed orders never change. At most one live (OPEN/BILLED) order per table.
-- **Order item**: `PENDING → FIRED → IN_PREP → READY → SERVED` (forward, skipping allowed) or `→ VOIDED` from any fired state. PENDING items are edited or removed; fired items are frozen.
-- How far food got (sent, partly served) is derived from the items, not stored on the order.
-
-- **Bill**: `ACTIVE → SETTLED` (the last share paid) or `ACTIVE → VOIDED` (reopened before any check; trigger).
-
-Settling creates **Sales** (checks) via the checkout engine (`SalesService.createFromBill`). Voiding after settlement requires a Return/Refund, never an edit of the sale.
-
-**Restaurant invariants** (asserted by `bills.test.ts`, `orders.test.ts`, `recipes.test.ts`):
-1. **Bill = Σ checks**: per line, per bucket and for the service charge, centavo for centavo. A line is never paid beyond the whole (exact fractions, DB guard).
-2. **Sale header = Σ lines + Σ charges** (retail sales have no charges). Returns give charges back in proportion, the last return taking the rest.
-3. **Books**: Sales = items ex VAT; `SERVICE_CHARGE_PAYABLE` = Σ charges ex VAT − charges returned; output VAT includes the charge's VAT.
-4. **Stock**: each dish consumes its recipe exactly once across its checks; a wasted void is one WASTE document; the traceability audit stays clean.
-5. **Reports**: Σ by-product net + Σ charges net = sales summary net; a dish's COGS includes its ingredients.
+### Restaurant order (history)
+Restaurants and table service were removed on 2026-10-25 (ADR-0014 withdrawn, migration 0111 dropped orders, bills and tickets). Old checks keep their `sale_charges`, so a sale header = Σ lines + Σ charges still adds up, and a return gives a charge back in proportion; nothing creates new charges.
 
 ### Purchase order
 `DRAFT → APPROVED → SENT → PARTIALLY_RECEIVED → RECEIVED → CLOSED | CANCELLED`.
@@ -86,24 +71,6 @@ For any set of sales and returns (`sales.test.ts`, `reports.test.ts`, `reconcili
 5. **Traceability both ways** (Phase 3 exit review, `traceability-audit.ts`, run by `traceability.test.ts`, every drill in `inventory-drills.test.ts`, and once over the dev database): every stock movement belongs to exactly one document (sale, return, goods receipt, supplier return, transfer, count, or **stock adjustment** — a document since migration 0031); every document that moved value has exactly one entry (a zero-value document posts none); every non-manual entry names a document that exists, in the same legal entity; per document and branch, the entry's inventory lines = the value of that document's movements; goods in transit clear to zero when a transfer is received. The audit is mutation-tested (a forged entry is reported).
 6. **Periods**: a posting and a close of the same month take turns (period row held `FOR SHARE` by every journal insert, migration 0032); nothing lands in a month after it was closed.
 
-## Phase 4 invariants (restaurant, ADR-0014 §10, asserted by tests)
-
-1. **Bill = Σ checks**: per line, per bucket, and for the service charge, including its base (`bills.test.ts`). The check that settles a bill takes the exact remainder of everything.
-2. **Every fired item is accounted for exactly once**: it is paid in full by the checks of its settled order's bill, voided (with a WASTE document if thrown away; then it is on no bill), or still on a live order (`restaurant-reports.test.ts`).
-3. **Consumption reconciles**: per ingredient, Σ `CONSUMPTION` = Σ over sale lines of quantity × the recipe in force at the sale (`restaurant-reports.test.ts`).
-4. **Restaurant reports reconcile to evidence** (`restaurant-reports.test.ts`):
-   - item performance (items + nested modifiers) = by-product = Σ sale lines − Σ return lines;
-   - ingredient usage columns = stock movements by type (recipe = CONSUMPTION; prepared waste = WASTE documents linked from voided order items);
-   - the waste value of a void = its WASTE entry in the books;
-   - distributable service charge = Σ charges ex VAT − Σ returned = the credit to `SERVICE_CHARGE_PAYABLE`.
-5. **Traceability**: `CONSUMPTION` maps to its SALE; wasted voids are stock adjustments; the audit stays clean after every restaurant scenario.
-6. **Under concurrency** (`restaurant-drills.test.ts`, Phase 4 exit review): checks lock session → bill → order, reopening locks bill → order, and every order change locks the order first, so:
-   - two tills paying shares of one bill at once both record and the later one settles; a share that turns out to be the last is refused as `TOTAL_CHANGED` with its new amount instead of charging a total the diner was not shown;
-   - the same line at two tills, or "pay the rest" twice, is paid once; a card authorized for the losing check stays unconsumed and blocks the shift close until cancelled;
-   - a void and the bill, or a reopen and a check, serialize: one wins, and the other is refused with a state code;
-   - a check whose connection dies leaves nothing behind, and its retry with the same key pays once.
-7. **Audit rules** (`traceability-audit.ts`, also run over the dev DB by `apps/api/test/dev-audit.ts`): a settled bill's checks add up to it, no bill line is paid beyond the whole, no check pays a voided bill or another branch's bill, and an order's state follows its bill (settled ⇔ settled bill; billed ⇔ an active bill; open/cancelled/merged ⇒ no live bill).
-
 ### Purchase order (as built)
 `DRAFT → APPROVED → PARTIALLY_RECEIVED → RECEIVED → CLOSED`; `DRAFT | APPROVED (nothing received) → CANCELLED`; `PARTIALLY_RECEIVED → CLOSED` (close short with a reason). Trigger-enforced; lines editable only in DRAFT.
 
@@ -112,13 +79,14 @@ For any set of sales and returns (`sales.test.ts`, `reports.test.ts`, `reconcili
 
 ## Inventory policy
 
-- Movement types (built): `SALE, RETURN, RECEIPT, SUPPLIER_RETURN, TRANSFER_OUT, TRANSFER_IN, COUNT, ADJUSTMENT, WASTE, CONSUMPTION` (Phase 4: ingredients of a sold recipe item, part of the SALE document, ADR-0014 §4; recipes were withdrawn on 2026-10-25, so no new ones are made and old ones stay). `UNPACK_OUT`/`UNPACK_IN` open packs (ADR-0020). Later: `RESERVATION`/`RESERVATION_RELEASE`.
-- `available = on_hand − reserved − (quarantined/damaged when tracked)`.
+- Movement types (built): `SALE, RETURN, RECEIPT, SUPPLIER_RETURN, TRANSFER_OUT, TRANSFER_IN, COUNT, ADJUSTMENT, WASTE, UNPACK_OUT, UNPACK_IN` (`UNPACK_*` open packs, ADR-0020). Old `CONSUMPTION` movements (recipe ingredients, withdrawn 2026-10-25) stay as history; no new ones are made.
+- Reservations are `stock_reservations` rows (session 20), not movements: they move no stock and post nothing; `ACTIVE → RELEASED` once, or they stop counting at `expires_at`.
+- `available = on_hand − active reservations`.
 - Weighted average cost: on receipt `new_avg = (on_hand × avg + qty_in × unit_cost) / (on_hand + qty_in)` (when on_hand ≤ 0, avg = unit_cost). Outbound movements carry the current avg as their cost. Transfers move cost at source avg. Returns to stock at the original sale's recorded cost.
 - Negative-stock policy per branch (`inventory_settings`): `ALLOW | ALLOW_WITH_FLAG | BLOCK`; BLOCK refuses counter sales only (ADR-0012 amendment, session 16).
 
 ## Philippine-specific domain rules (to verify — see compliance doc)
 
 - Senior Citizen / PWD discount: 20% discount and VAT exemption on qualifying sales for the qualifying person's exclusive use; requires ID capture; modelled as a **tax treatment + discount** pair, not a plain discount. Per the research (`docs/compliance` §7, RR 5-2017): VAT seller → remove VAT first, then 20% off the VAT-exclusive price (₱1,120 → ₱1,000 → ₱800 due). Non-VAT seller → 20% off gross. One 20% discount per qualifying line (no stacking). SC/PWD log row (name, ID no., gross, discount, invoice no.) is mandatory. Group-meal proration methods are configurable (partially verified; needs professional sign-off).
-- Service charge distribution (RA 11360) tracked separately from sales revenue.
+- Service charge (RA 11360): history only. Old restaurant checks carry it on `SERVICE_CHARGE_PAYABLE`; none are created since 2026-10-25.
 - VAT-registered vs non-VAT legal entities; VAT-exempt and zero-rated lines; tax-inclusive shelf pricing typical.

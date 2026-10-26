@@ -135,8 +135,6 @@ export interface MfaChallenge {
 
 export type LoginResponse = AuthResponse | MfaChallenge;
 
-export const isMfaChallenge = (r: LoginResponse): r is MfaChallenge => 'mfaRequired' in r && r.mfaRequired === true;
-
 /** What /me says about two-step sign-in. */
 export interface MfaStatus {
   enabled: boolean;

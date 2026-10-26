@@ -125,8 +125,7 @@ read. Run `pnpm security:audit` and `pnpm security:bundles` on the fixed build.
 
 Answer these in the incident log, with the query or log search that answered each:
 
-1. Which businesses? Which people (members, staff), and roughly how many customers (SC/PWD beneficiaries,
-   takeaway names)?
+1. Which businesses? Which people (members, staff), and roughly how many customers (SC/PWD beneficiaries)?
 2. Which data? Use the processing register to name the categories
    ([processing-register.md](../compliance/privacy/processing-register.md)).
 3. Seen only, or also changed or taken? Exports and downloads leave `data_export.*` rows; support reads
@@ -142,7 +141,6 @@ BEGIN;
 SELECT set_config('app.tenant_id', '<tenant id>', true);
 SELECT count(*) AS sale_rows FROM sale_beneficiaries b JOIN sales s ON s.tenant_id = b.tenant_id AND s.id = b.sale_id
  WHERE s.completed_at BETWEEN '<from>' AND '<to>';
-SELECT count(*) AS bill_rows FROM order_bill_beneficiaries;
 COMMIT;
 ```
 

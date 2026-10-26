@@ -6,7 +6,6 @@ export const VAT_STATUSES = ['VAT', 'NON_VAT'] as const;
 export type VatStatus = (typeof VAT_STATUSES)[number];
 export const PRICE_DISPLAY_MODES = ['TAX_INCLUSIVE', 'TAX_EXCLUSIVE'] as const;
 export type PriceDisplayMode = (typeof PRICE_DISPLAY_MODES)[number];
-export const ROUNDING_MODES = ['HALF_UP', 'HALF_EVEN'] as const;
 /**
  * DISABLED: no invoice numbers issued (default). DEV_SERIES: test numbering clearly
  * marked non-official. A production mode is deliberately absent until the compliance

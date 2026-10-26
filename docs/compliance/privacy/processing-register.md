@@ -55,7 +55,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Source | The cashier, from the customer's ID at the counter |
 | Basis | For the business: legal obligation (Sec. 12(c)); if sensitive (README §2), processing provided for by law (Sec. 13(b)). Tilvara: processing on the business's instructions |
 | Recipients | The business's authorised staff; its accountant through reports and exports; the BIR when the business files |
-| Tables | `sale_beneficiaries`, `order_bill_beneficiaries` (append-only); for 24 hours, copies of API answers in `idempotency_records`; while a cart is parked at a register, `held_carts.beneficiaries` (session 20: cleared the moment the cart is resumed or discarded) |
+| Tables | `sale_beneficiaries` (append-only; the restaurant bill copies in `order_bill_beneficiaries` were deleted with the table, migration 0111); for 24 hours, copies of API answers in `idempotency_records`; while a cart is parked at a register, `held_carts.beneficiaries` (session 20: cleared the moment the cart is resumed or discarded) |
 | Retention | Fiscal records: at least 5 years (schedule), then anonymised (job not built). A held cart's copy: until it is resumed or discarded (enforced by the database); a cart left open stays until someone discards it |
 | Notes | Price changes at the counter (`price_overrides`, session 20) record which staff member asked and which approved, by account id, with the reason typed; the approver's email and password are checked once and never stored |
 

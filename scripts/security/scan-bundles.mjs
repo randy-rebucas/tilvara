@@ -126,8 +126,8 @@ if (process.argv.includes('--self-test')) {
 }
 
 /** Pages an owner sees, server-rendered with a real session. */
-const LIVE_PAGES = ['/', '/products', '/prices', '/inventory', '/purchasing', '/books', '/restaurant', '/reports/sales', '/offline-sales',
-  '/locations', '/team', '/subscription', '/audit', '/account', '/security'];
+const LIVE_PAGES = ['/', '/products', '/prices', '/inventory', '/purchasing', '/books', '/reports', '/reports/sales', '/offline-sales',
+  '/customers', '/shifts', '/help', '/locations', '/team', '/subscription', '/audit', '/account', '/security'];
 
 async function scanLive(adminUrl, apiUrl, env) {
   const values = secretValues(env);

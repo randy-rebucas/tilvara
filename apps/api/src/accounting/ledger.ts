@@ -109,10 +109,3 @@ export async function post(db: Database, input: PostInput) {
   );
   return entry!;
 }
-
-/** Σ signed values of the given stock movements (by id), for postings built from the ledger. */
-export async function movementValue(db: Database, ids: string[]) {
-  if (!ids.length) return '0';
-  const { rows } = await db.execute<{ v: string }>(sql`SELECT coalesce(sum(value), 0)::text AS v FROM stock_movements WHERE id IN ${ids}`);
-  return rows[0]!.v;
-}

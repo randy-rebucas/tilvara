@@ -12,7 +12,7 @@ It is a modular monolith:
 | `apps/admin-web` | The back office for owners and managers | Next.js 16 (App Router), Tailwind |
 | `apps/pos-desktop` | The till: in a browser, or as a Windows desktop app that keeps selling cash during an outage | React + Vite; Tauri 2 for desktop |
 
-Shared code lives in `packages/` (`money`, `tax`, `accounting`, `validation`, `database`, `config`,
+Shared code lives in `packages/` (`money`, `tax`, `pricing`, `accounting`, `validation`, `database`, `config`,
 `observability`, `escpos`, `sync-protocol`, `pos-offline`).
 
 > **Status:** pre-pilot (Phase 6). Tilvara is **not** BIR-accredited, and invoice issuance is disabled.

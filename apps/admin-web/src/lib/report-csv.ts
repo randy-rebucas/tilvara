@@ -67,10 +67,11 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       ];
     }
     case 'products': {
-      const r = data as { data: { sku: string; name: string; quantitySold: string; quantityReturned: string; netQuantity: string; sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string }[] };
+      const r = data as { data: { sku: string; name: string; quantitySold: string; quantityReturned: string; netQuantity: string; sales: string; returns: string; netSales: string; revenueExVat: string; cogs: string; grossProfit: string }[]; charges?: { kind: string; charged: string; returned: string; net: string; netExVat: string }[] };
       return [
         ['SKU', t('common.item'), t('csv.qtySold'), t('csv.qtyReturned'), t('csv.netQty'), t('csv.sales'), t('csv.returns'), t('rep.netSales'), t('rep.revenueExVat'), t('rep.cogs'), t('rep.grossProfit')],
         ...r.data.map((x) => [x.sku, x.name, x.quantitySold, x.quantityReturned, x.netQuantity, x.sales, x.returns, x.netSales, x.revenueExVat, x.cogs, x.grossProfit]),
+        ...(r.charges ?? []).map((c) => ['', t('doc.serviceCharge'), '', '', '', c.charged, c.returned, c.net, c.netExVat, '', '']),
       ];
     }
     case 'cashiers': {

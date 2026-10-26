@@ -105,7 +105,7 @@ export const inventorySettingsSchema = z.object({
   lowStockAlerts: z.boolean(),
   /** Mail about lots expiring within this many days; 0 turns it off (ADR-0020 §3). Left out: as it is. */
   expiryAlertDays: z.number().int().min(0).max(365).optional(),
-  /** Expired or held lots may be sold (ALLOW) or not (BLOCK); null = the business type's default (ADR-0025 §4). Left out: as it is. */
+  /** Expired or held lots may be sold (ALLOW) or not (BLOCK); null = ALLOW (ADR-0025 §4). Left out: as it is. */
   expiredStock: z.enum(['ALLOW', 'BLOCK']).nullable().optional(),
 });
 export type InventorySettingsInput = z.infer<typeof inventorySettingsSchema>;

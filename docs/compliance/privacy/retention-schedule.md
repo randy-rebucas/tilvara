@@ -24,7 +24,7 @@ period, counted from the end of the taxable year the record belongs to.
 | Data | Where | Kept for | Why | Enforced |
 |---|---|---|---|---|
 | Sales, returns, voids, tenders, payment events, cash movements and counts | Sales tables (append-only) | Fiscal period, then anonymise staff and customer fields | Tax records | ◐ Kept (cannot be deleted); anonymisation job ○ |
-| SC/PWD beneficiary name, ID number, TIN | `sale_beneficiaries`, `order_bill_beneficiaries` | Fiscal period, then anonymise | RR 5-2017 SC/PWD sales book | ◐ Kept; anonymisation ○ |
+| SC/PWD beneficiary name, ID number, TIN | `sale_beneficiaries` (the restaurant bill copies in `order_bill_beneficiaries` were deleted with the table, migration 0111) | Fiscal period, then anonymise | RR 5-2017 SC/PWD sales book | ◐ Kept; anonymisation ○ |
 | Customers: name, contact details, TIN, notes | `customers` | *Proposed:* 2 years after the last purchase, then anonymised (not while store credit is owed) | Purchase history, store credit, offers by consent | ◐ Manual "Remove personal details" ●; automatic anonymisation ○ |
 | Marketing consent history | `customer_consent_events` | As long as the customer row, plus the fiscal period (proof of consent) | Accountability for offers sent | ◐ Kept (append-only) |
 | Store credit entries | `customer_credit_entries` | Fiscal period (they post to the books) | Liability to the customer | ◐ Kept (append-only) |
@@ -67,7 +67,7 @@ backups until those backups age out. The earliest end date is recorded in the of
 When the fiscal period of a business's records ends (confirmed by the DPO and the tax adviser), the
 anonymisation job, once built:
 - replaces SC/PWD names, ID numbers and TINs with a fixed marker, keeping scheme and amounts;
-- clears takeaway names and free-text notes;
+- clears free-text notes;
 - replaces supplier contact fields;
 - replaces member identities on records with a stable pseudonym per person (so "one cashier" is still
   visible), and anonymises the account itself when it has no other business;
