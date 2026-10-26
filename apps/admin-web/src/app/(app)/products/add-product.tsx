@@ -50,9 +50,17 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
     ? rowIssues.map((i) => `${grid.list[Number(i.path.split('.')[1])]?.sku ?? i.path}: ${i.message}`).join(' · ')
     : null;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <div className="@lg:col-span-2"><TextField label={t('prod.name')} name="name" required autoFocus error={fieldError('name')} /></div>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span={categories.length > 0 ? 'half' : 'full'} label={t('prod.name')} name="name" required autoFocus error={fieldError('name')} />
+      {/* Sales are grouped by it in Reports → By category. */}
+      {categories.length > 0 && (
+        <SelectField span="half" label={`${t('prod.category')} (${t('common.optional')})`} name="categoryId" defaultValue="" error={fieldError('categoryId')}>
+          <option value="">{t('prod.noCategory')}</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </SelectField>
+      )}
       <TextField
+        span="quarter"
         label={sized ? t('vgrid.baseSku') : t('prod.sku')}
         name="sku"
         required
@@ -61,42 +69,35 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
         hint={sized ? t('vgrid.baseSkuHint') : undefined}
         error={sized ? undefined : (fieldError('variants.0.sku') ?? (error?.code === 'SKU_TAKEN' ? error.message : undefined))}
       />
-      {!sized && <TextField label={t('prod.barcode')} name="barcode" inputMode="numeric" error={fieldError('variants.0.barcodes.0') ?? (error?.code === 'BARCODE_TAKEN' ? error.message : undefined)} />}
-      <TextField label={t('prod.price')} name="price" inputMode="decimal" placeholder="0.00" hint={sized ? t('vgrid.priceHint') : undefined} error={fieldError('variants.0.price')} />
-      {sized && <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" placeholder="0.00" error={fieldError('variants.0.referenceCost')} />}
-      <SelectField label={t('prod.unit')} name="uomId" defaultValue={uoms.find((u) => u.code === 'PC')?.id}>
+      {!sized && <TextField span="quarter" label={t('prod.barcode')} name="barcode" inputMode="numeric" error={fieldError('variants.0.barcodes.0') ?? (error?.code === 'BARCODE_TAKEN' ? error.message : undefined)} />}
+      <TextField span="quarter" label={t('prod.price')} name="price" inputMode="decimal" placeholder="0.00" hint={sized ? t('vgrid.priceHint') : undefined} error={fieldError('variants.0.price')} />
+      {sized && <TextField span="quarter" label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" placeholder="0.00" error={fieldError('variants.0.referenceCost')} />}
+      <SelectField span="quarter" label={t('prod.unit')} name="uomId" defaultValue={uoms.find((u) => u.code === 'PC')?.id}>
         {uoms.map((u) => <option key={u.id} value={u.id}>{u.code} · {u.name}</option>)}
       </SelectField>
-      <SelectField label={t('prod.soldBy')} name="soldBy" defaultValue="UNIT">
+      <SelectField span="half" label={t('prod.soldBy')} name="soldBy" defaultValue="UNIT">
         <option value="UNIT">{t('prod.byUnit')}</option>
         <option value="WEIGHT">{t('prod.byWeight')}</option>
       </SelectField>
-      <SelectField label={t('prod.tax')} name="taxCategoryId" defaultValue={taxes.find((x) => x.code === 'VAT')?.id}>
+      <SelectField span="half" label={t('prod.tax')} name="taxCategoryId" defaultValue={taxes.find((x) => x.code === 'VAT')?.id}>
         {taxes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </SelectField>
-      {/* Sales are grouped by it in Reports → By category. */}
-      {categories.length > 0 && (
-        <SelectField label={`${t('prod.category')} (${t('common.optional')})`} name="categoryId" defaultValue="" error={fieldError('categoryId')}>
-          <option value="">{t('prod.noCategory')}</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-        </SelectField>
-      )}
       {/* Off for a fee, gift wrapping or anything not counted on a shelf. */}
-      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
-        <input type="checkbox" name="trackInventory" checked={stocked} onChange={(e) => setStocked(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
-        <span>{t('prod.trackInventory')}<span className="block text-[0.8125rem] text-muted">{t('prod.trackInventoryHint')}</span></span>
+      <label className="check">
+        <input type="checkbox" name="trackInventory" checked={stocked} onChange={(e) => setStocked(e.target.checked)} />
+        <span>{t('prod.trackInventory')}<span className="hint">{t('prod.trackInventoryHint')}</span></span>
       </label>
       {/* ADR-0020: dated stock (expiry lots) for any counted item. */}
-      <label className={`col-span-full flex items-start gap-2 text-[0.9375rem] ${stocked ? '' : 'text-muted'}`}>
-        <input type="checkbox" name="tracksExpiry" checked={stocked && expiry} disabled={!stocked} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
-        <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
+      <label className={`check ${stocked ? '' : 'text-muted'}`}>
+        <input type="checkbox" name="tracksExpiry" checked={stocked && expiry} disabled={!stocked} onChange={(e) => setExpiry(e.target.checked)} />
+        <span>{t('prod.tracksExpiry')}<span className="hint">{t('prod.tracksExpiryHint')}</span></span>
       </label>
-      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
-        <input type="checkbox" checked={sized} onChange={(e) => setSized(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
-        <span>{t('vgrid.toggle')}<span className="block text-[0.8125rem] text-muted">{t('vgrid.toggleHint')}</span></span>
+      <label className="check">
+        <input type="checkbox" checked={sized} onChange={(e) => setSized(e.target.checked)} />
+        <span>{t('vgrid.toggle')}<span className="hint">{t('vgrid.toggleHint')}</span></span>
       </label>
       {sized && (
-        <div className="col-span-full flex flex-col gap-3 rounded-[5px] border border-hair-soft p-3">
+        <div className="flex flex-col gap-3 rounded-[5px] border border-hair-soft p-3">
           <p className="font-semibold">{t('vgrid.title')}</p>
           <OptionsEditor rows={rows} onChange={setRows} />
           {grid.tooMany ? (
@@ -108,7 +109,7 @@ function Fields({ close, uoms, taxes, categories }: { close: () => void; uoms: U
           <FormError message={gridMessage} />
         </div>
       )}
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || (sized && (grid.tooMany || grid.list.length === 0))}>{sized && grid.list.length ? t('vgrid.createN', { n: grid.list.length }) : t('common.create')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && !['VALIDATION_FAILED', 'BARCODE_TAKEN', ...(sized ? [] : ['SKU_TAKEN'])].includes(error.code) ? error.message : error?.code === 'VALIDATION_FAILED' && sized && !gridMessage && !fieldError('name') ? t('vgrid.err') : null} />

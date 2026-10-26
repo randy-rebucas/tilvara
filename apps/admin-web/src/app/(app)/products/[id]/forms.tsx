@@ -16,7 +16,7 @@ const general = (e: { code: string; message: string } | null, own: string[] = []
 function Actions({ pending, label, close, error }: { pending: boolean; label: string; close: () => void; error: string | null }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{label}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={error} />
@@ -43,30 +43,28 @@ function ProductFields({ close, product, taxes, categories }: { close: () => voi
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('prod.name')} name="name" required autoFocus defaultValue={product.name} error={fieldError('name')} />
-      <SelectField label={t('prod.tax')} name="taxCategoryId" defaultValue={product.taxCategoryId}>
+      <SelectField span={categories.length > 0 || product.categoryId ? 'half' : 'full'} label={t('prod.tax')} name="taxCategoryId" defaultValue={product.taxCategoryId}>
         {taxes.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </SelectField>
       {(categories.length > 0 || product.categoryId) && (
-        <SelectField label={t('prod.category')} name="categoryId" defaultValue={product.categoryId ?? ''} hint={t('prod.categoryHint')} error={fieldError('categoryId')}>
+        <SelectField span="half" label={t('prod.category')} name="categoryId" defaultValue={product.categoryId ?? ''} hint={t('prod.categoryHint')} error={fieldError('categoryId')}>
           <option value="">{t('prod.noCategory')}</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </SelectField>
       )}
-      <div className="@lg:col-span-2">
-        <TextField label={`${t('prod.description')} (${t('common.optional')})`} name="description" defaultValue={product.description ?? ''} error={fieldError('description')} />
-      </div>
+      <TextField label={`${t('prod.description')} (${t('common.optional')})`} name="description" defaultValue={product.description ?? ''} error={fieldError('description')} />
       {product.productType === 'STANDARD' && (
-        <label className="flex items-start gap-2 text-[0.9375rem] @lg:col-span-2">
-          <input type="checkbox" name="trackInventory" defaultChecked={product.trackInventory} className="mt-1 size-4 accent-[var(--color-blue)]" />
-          <span>{t('prod.trackInventory')}<span className="block text-[0.8125rem] text-muted">{t('prod.trackInventoryHint')}</span></span>
+        <label className="check">
+          <input type="checkbox" name="trackInventory" defaultChecked={product.trackInventory} />
+          <span>{t('prod.trackInventory')}<span className="hint">{t('prod.trackInventoryHint')}</span></span>
         </label>
       )}
       {product.productType === 'STANDARD' && (
-        <label className="flex items-start gap-2 text-[0.9375rem] @lg:col-span-2">
-          <input type="checkbox" name="tracksExpiry" checked={expiry} onChange={(e) => setExpiry(e.target.checked)} className="mt-1 size-4 accent-[var(--color-blue)]" />
-          <span>{t('prod.tracksExpiry')}<span className="block text-[0.8125rem] text-muted">{t('prod.tracksExpiryHint')}</span></span>
+        <label className="check">
+          <input type="checkbox" name="tracksExpiry" checked={expiry} onChange={(e) => setExpiry(e.target.checked)} />
+          <span>{t('prod.tracksExpiry')}<span className="hint">{t('prod.tracksExpiryHint')}</span></span>
         </label>
       )}
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
@@ -99,12 +97,12 @@ function AddVariantFields({ close, productId }: { close: () => void; productId: 
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-5" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('prod.variantName')} name="name" required autoFocus placeholder={t('prod.variantNameHint')} error={fieldError('name')} />
-      <TextField label={t('prod.sku')} name="sku" required error={fieldError('sku') ?? (error?.code === 'SKU_TAKEN' ? error.message : undefined)} />
-      <TextField label={`${t('prod.barcode')} (${t('common.optional')})`} name="barcode" inputMode="numeric" error={fieldError('barcodes.0') ?? (error?.code === 'BARCODE_TAKEN' ? error.message : undefined)} />
-      <TextField label={`${t('prod.price')} (${t('common.optional')})`} name="price" inputMode="decimal" placeholder="0.00" error={fieldError('price')} />
-      <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" placeholder="0.00" error={fieldError('referenceCost')} />
+      <TextField span="half" label={t('prod.sku')} name="sku" required error={fieldError('sku') ?? (error?.code === 'SKU_TAKEN' ? error.message : undefined)} />
+      <TextField span="half" label={t('prod.barcode')} name="barcode" inputMode="numeric" error={fieldError('barcodes.0') ?? (error?.code === 'BARCODE_TAKEN' ? error.message : undefined)} />
+      <TextField span="half" label={`${t('prod.price')} (${t('common.optional')})`} name="price" inputMode="decimal" placeholder="0.00" error={fieldError('price')} />
+      <TextField span="half" label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" placeholder="0.00" error={fieldError('referenceCost')} />
       <Actions pending={pending} label={t('common.create')} close={close} error={general(error, ['SKU_TAKEN', 'BARCODE_TAKEN'])} />
     </form>
   );
@@ -129,9 +127,9 @@ function VariantFields({ close, variant }: { close: () => void; variant: Variant
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <TextField label={`${t('prod.variantName')} (${t('common.optional')})`} name="name" autoFocus defaultValue={variant.name ?? ''} error={fieldError('name')} />
-      <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={`${t('prod.variantName')} (${t('common.optional')})`} name="name" autoFocus defaultValue={variant.name ?? ''} error={fieldError('name')} />
+      <TextField span="half" label={`${t('prod.refCost')} (${t('common.optional')})`} name="referenceCost" inputMode="decimal" defaultValue={variant.referenceCost ?? ''} hint={t('prod.refCostHint')} error={fieldError('referenceCost')} />
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );
@@ -200,7 +198,7 @@ function PackLinkFields({ close, variants, packVariantId }: { close: () => void;
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <SelectField label={t('prod.packItem')} name="packVariantId" defaultValue={packVariantId}>
         {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
       </SelectField>
@@ -209,8 +207,8 @@ function PackLinkFields({ close, variants, packVariantId }: { close: () => void;
         {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
       </SelectField>
       <TextField label={t('prod.piecesPerPack')} name="piecesPerPack" inputMode="decimal" placeholder="20" required error={fieldError('piecesPerPack') ?? (error?.code === 'FRACTIONAL_PIECES' ? error.message : undefined)} />
-      <label className="col-span-full flex items-start gap-2 text-[0.9375rem]">
-        <input type="checkbox" name="autoOpen" defaultChecked className="mt-1 size-4 accent-[var(--color-blue)]" />
+      <label className="check">
+        <input type="checkbox" name="autoOpen" defaultChecked />
         <span>{t('prod.autoOpen')}</span>
       </label>
       <Actions pending={pending} label={t('common.add')} close={close} error={general(error, ['FRACTIONAL_PIECES']) ?? fieldError('pieceVariantId') ?? null} />

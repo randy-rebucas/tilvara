@@ -12,7 +12,7 @@ function Fields({ close, options, taken }: { close: () => void; options: { id: s
   const free = Array.from({ length: 48 }, (_, i) => i + 1).filter((n) => !taken[n]);
   return (
     <form
-      className="grid gap-3 @lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
+      className="form-grid"
       noValidate
       onSubmit={async (e) => {
         e.preventDefault();
@@ -24,16 +24,16 @@ function Fields({ close, options, taken }: { close: () => void; options: { id: s
         if (r.ok) close();
       }}
     >
-      <SelectField label={t('common.item')} name="variantId" defaultValue="">
+      <SelectField span="twoThirds" label={t('common.item')} name="variantId" defaultValue="">
         <option value="" disabled>—</option>
         {options.map((o) => (
           <option key={o.id} value={o.id}>{o.position ? `${o.label} (${t('qk.keyN', { n: o.position })})` : o.label}</option>
         ))}
       </SelectField>
-      <SelectField label={t('qk.position')} name="position" defaultValue={String(free[0] ?? '')} hint={t('qk.positionHint')} error={fieldError('quickKeyPosition')}>
+      <SelectField span="third" label={t('qk.position')} name="position" defaultValue={String(free[0] ?? '')} hint={t('qk.positionHint')} error={fieldError('quickKeyPosition')}>
         {free.map((n) => <option key={n} value={n}>{n}</option>)}
       </SelectField>
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || free.length === 0}>{t('qk.set')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={free.length === 0 ? t('qk.full') : error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

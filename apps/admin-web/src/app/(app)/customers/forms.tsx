@@ -42,21 +42,19 @@ function CustomerFields({ customer, close }: { customer?: Customer; close: () =>
   }
   const optional = (label: string) => `${label} (${t('common.optional')})`;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('cust.name')} name="displayName" required autoFocus maxLength={200} defaultValue={customer?.displayName} error={fieldError('displayName')} />
-      <TextField label={optional(t('cust.phone'))} name="phone" type="tel" defaultValue={customer?.phone ?? ''} error={fieldError('phone')} />
-      <TextField label={optional(t('auth.email'))} name="email" type="email" defaultValue={customer?.email ?? ''} error={fieldError('email')} />
-      <TextField label={optional(t('cust.code'))} name="code" maxLength={40} defaultValue={customer?.code ?? ''} hint={t('cust.codeHint')} error={fieldError('code')} />
-      <TextField label={optional(t('loc.tin'))} name="tin" inputMode="numeric" defaultValue={customer?.tin ?? ''} hint={t('cust.tinHint')} error={fieldError('tin')} />
+      <TextField span="half" label={optional(t('cust.phone'))} name="phone" type="tel" defaultValue={customer?.phone ?? ''} error={fieldError('phone')} />
+      <TextField span="half" label={optional(t('auth.email'))} name="email" type="email" defaultValue={customer?.email ?? ''} error={fieldError('email')} />
+      <TextField span="half" label={optional(t('cust.code'))} name="code" maxLength={40} defaultValue={customer?.code ?? ''} hint={t('cust.codeHint')} error={fieldError('code')} />
+      <TextField span="half" label={optional(t('loc.tin'))} name="tin" inputMode="numeric" defaultValue={customer?.tin ?? ''} hint={t('cust.tinHint')} error={fieldError('tin')} />
       <TextField label={optional(t('cust.address'))} name="address" maxLength={500} defaultValue={customer?.address ?? ''} error={fieldError('address')} />
-      <div className="@lg:col-span-2 @3xl:col-span-3">
-        <TextField label={optional(t('cust.notes'))} name="notes" maxLength={1000} defaultValue={customer?.notes ?? ''} hint={t('cust.notesHint')} error={fieldError('notes')} />
-      </div>
+      <TextField label={optional(t('cust.notes'))} name="notes" maxLength={1000} defaultValue={customer?.notes ?? ''} hint={t('cust.notesHint')} error={fieldError('notes')} />
       {!customer && (
-        <fieldset className="grid gap-2 rounded-[5px] border border-hair p-3 @lg:col-span-2 @3xl:col-span-3">
+        <fieldset className="grid gap-2 rounded-[5px] border border-hair p-3">
           <legend className="px-1 text-[0.875rem] font-semibold">{t('cust.consentTitle')}</legend>
-          <label className="flex items-start gap-2 text-[0.9375rem]">
-            <input type="checkbox" name="marketingConsent" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+          <label className="check">
+            <input type="checkbox" name="marketingConsent" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
             <span>{t('cust.consentLabel')}</span>
           </label>
           <p className="text-[0.8125rem] text-muted">{t('cust.consentHint')}</p>
@@ -69,7 +67,7 @@ function CustomerFields({ customer, close }: { customer?: Customer; close: () =>
           )}
         </fieldset>
       )}
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{customer ? t('common.save') : t('common.create')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />

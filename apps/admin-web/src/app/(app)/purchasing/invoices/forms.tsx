@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Disclosure } from '@/components/disclosure-form';
 import { Sheet } from '@/components/sheet';
-import { FormError, SelectField, TextField } from '@/components/fields';
+import { FormError, SelectField, TextField, type FieldSpan } from '@/components/fields';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { UninvoicedReceipt } from '@/lib/api';
@@ -50,7 +50,7 @@ function InvoiceFields({ close, supplierId, receipts, today }: { close: () => vo
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-[0.875rem] text-muted">{t('ap.pickReceipts')}</legend>
         {receipts.map((r) => (
@@ -71,15 +71,13 @@ function InvoiceFields({ close, supplierId, receipts, today }: { close: () => vo
         <p className="text-[0.875rem]">{t('ap.selectedValue', { amount: peso(selectedValue) })}</p>
         <FormError message={fieldError('goodsReceiptIds')} />
       </fieldset>
-      <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3">
-        <TextField label={t('ap.invoiceNo')} name="invoiceNumber" required autoFocus error={fieldError('invoiceNumber')} />
-        <TextField label={t('ap.invoiceDate')} name="invoiceDate" type="date" required defaultValue={today} max={today} error={fieldError('invoiceDate')} />
-        <TextField label={`${t('ap.dueDate')} (${t('common.optional')})`} name="dueDate" type="date" hint={t('ap.dueDateHint')} error={fieldError('dueDate')} />
-        <TextField label={t('ap.net')} name="netAmount" inputMode="decimal" required placeholder="0.00" error={fieldError('netAmount')} />
-        <TextField label={t('ap.vat')} name="vatAmount" inputMode="decimal" placeholder="0.00" error={fieldError('vatAmount')} />
-        <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <TextField span="third" label={t('ap.invoiceNo')} name="invoiceNumber" required autoFocus error={fieldError('invoiceNumber')} />
+      <TextField span="third" label={t('ap.invoiceDate')} name="invoiceDate" type="date" required defaultValue={today} max={today} error={fieldError('invoiceDate')} />
+      <TextField span="third" label={`${t('ap.dueDate')} (${t('common.optional')})`} name="dueDate" type="date" hint={t('ap.dueDateHint')} error={fieldError('dueDate')} />
+      <TextField span="quarter" label={t('ap.net')} name="netAmount" inputMode="decimal" required placeholder="0.00" error={fieldError('netAmount')} />
+      <TextField span="quarter" label={t('ap.vat')} name="vatAmount" inputMode="decimal" placeholder="0.00" error={fieldError('vatAmount')} />
+      <TextField span="half" label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || picked.length === 0}>{t('ap.record')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
@@ -99,14 +97,14 @@ const METHODS = ['BANK_TRANSFER', 'CHECK', 'OTHER'] as const;
  * How the supplier was paid; "Cash from a till's drawer" (offered while a shift is open at the branch) picks the
  * drawer and is paid today. Returns the fields to send.
  */
-function MethodFields({ drawers, today, fieldError }: { drawers: DrawerOption[]; today: string; fieldError: (k: string) => string | undefined }) {
+function MethodFields({ drawers, today, fieldError, span }: { drawers: DrawerOption[]; today: string; fieldError: (k: string) => string | undefined; span: FieldSpan }) {
   const { t } = useT();
   const [method, setMethod] = useState<string>('BANK_TRANSFER');
   const drawer = method === 'CASH_DRAWER';
   return (
     <>
-      <TextField label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} readOnly={drawer} key={drawer ? 'today' : 'any'} error={fieldError('paidOn')} hint={drawer ? t('ap.drawerToday') : undefined} />
-      <SelectField label={t('ap.method')} name="method" value={method} onChange={(e) => setMethod(e.target.value)}>
+      <TextField span={span} label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} readOnly={drawer} key={drawer ? 'today' : 'any'} error={fieldError('paidOn')} hint={drawer ? t('ap.drawerToday') : undefined} />
+      <SelectField span={span} label={t('ap.method')} name="method" value={method} onChange={(e) => setMethod(e.target.value)}>
         {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
         {drawers.length > 0 && <option value="CASH_DRAWER">{t('ap.method.CASH_DRAWER')}</option>}
       </SelectField>
@@ -143,11 +141,11 @@ function PaymentFields({ close, invoiceId, balance, today, drawers }: { close: (
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <TextField label={t('ap.amount')} name="amount" inputMode="decimal" required autoFocus defaultValue={balance} error={fieldError('amount')} />
-      <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="third" label={t('ap.amount')} name="amount" inputMode="decimal" required autoFocus defaultValue={balance} error={fieldError('amount')} />
+      <MethodFields drawers={drawers} today={today} fieldError={fieldError} span="third" />
       <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('ap.pay')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
@@ -183,17 +181,17 @@ function NoteFields({ close, invoiceId, today }: { close: () => void; invoiceId:
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
-      <p className="col-span-full text-[0.875rem] text-muted">{t('ap.noteHint')}</p>
-      <SelectField label={t('ap.noteKind')} name="kind" defaultValue="CREDIT">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('ap.noteHint')}</p>
+      <SelectField span="third" label={t('ap.noteKind')} name="kind" defaultValue="CREDIT">
         {(['CREDIT', 'DEBIT'] as const).map((k) => <option key={k} value={k}>{t(`ap.noteKind.${k}`)}</option>)}
       </SelectField>
-      <TextField label={t('ap.noteNo')} name="noteNumber" required autoFocus error={fieldError('noteNumber')} />
-      <TextField label={t('ap.noteDate')} name="noteDate" type="date" required defaultValue={today} max={today} error={fieldError('noteDate')} />
-      <TextField label={t('ap.net')} name="netAmount" inputMode="decimal" required placeholder="0.00" error={fieldError('netAmount')} />
-      <TextField label={t('ap.vat')} name="vatAmount" inputMode="decimal" placeholder="0.00" error={fieldError('vatAmount')} />
-      <TextField label={t('ap.noteReason')} name="reason" required maxLength={500} error={fieldError('reason')} />
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <TextField span="third" label={t('ap.noteNo')} name="noteNumber" required autoFocus error={fieldError('noteNumber')} />
+      <TextField span="third" label={t('ap.noteDate')} name="noteDate" type="date" required defaultValue={today} max={today} error={fieldError('noteDate')} />
+      <TextField span="quarter" label={t('ap.net')} name="netAmount" inputMode="decimal" required placeholder="0.00" error={fieldError('netAmount')} />
+      <TextField span="quarter" label={t('ap.vat')} name="vatAmount" inputMode="decimal" placeholder="0.00" error={fieldError('vatAmount')} />
+      <TextField span="half" label={t('ap.noteReason')} name="reason" required maxLength={500} error={fieldError('reason')} />
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('ap.recordNote')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
@@ -249,7 +247,7 @@ function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: Bat
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <ul className="flex flex-col gap-2">
         {invoices.map((i) => (
           <li key={i.id} className="flex flex-wrap items-center gap-3 rounded-[5px] border border-hair-soft p-3">
@@ -265,11 +263,9 @@ function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: Bat
       </ul>
       <p className="text-[0.9375rem] font-semibold">{t('ap.payManyTotal', { amount: peso(total) })}</p>
       <FormError message={fieldError('allocations')} />
-      <div className="grid gap-3 @lg:grid-cols-3">
-        <MethodFields drawers={drawers} today={today} fieldError={fieldError} />
-        <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <MethodFields drawers={drawers} today={today} fieldError={fieldError} span="half" />
+      <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || chosen.length === 0}>{t('ap.payManyRecord')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />

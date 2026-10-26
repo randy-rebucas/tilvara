@@ -13,7 +13,7 @@ const general = (e: { code: string; message: string } | null) => (e && e.code !=
 function Actions({ pending, label, close, error }: { pending: boolean; label: string; close: () => void; error: string | null }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{label}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={error} />
@@ -24,7 +24,7 @@ function Actions({ pending, label, close, error }: { pending: boolean; label: st
 function ParentField({ parents, value, error }: { parents: Option[]; value: string; error?: string }) {
   const { t } = useT();
   return (
-    <SelectField label={t('cat.parent')} name="parentId" defaultValue={value} error={error}>
+    <SelectField span="half" label={t('cat.parent')} name="parentId" defaultValue={value} error={error}>
       <option value="">{t('cat.top')}</option>
       {parents.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
     </SelectField>
@@ -49,10 +49,10 @@ function AddFields({ close, parents, parentId }: { close: () => void; parents: O
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
-      <TextField label={t('cat.name')} name="name" required autoFocus maxLength={200} error={fieldError('name')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span={parentId ? 'half' : 'full'} label={t('cat.name')} name="name" required autoFocus maxLength={200} error={fieldError('name')} />
       {!parentId && <ParentField parents={parents} value="" error={fieldError('parentId')} />}
-      <TextField label={`${t('cat.sortOrder')} (${t('common.optional')})`} name="sortOrder" inputMode="numeric" placeholder="0" hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />
+      <TextField span="half" label={`${t('cat.sortOrder')} (${t('common.optional')})`} name="sortOrder" inputMode="numeric" placeholder="0" hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />
       <Actions pending={pending} label={t('common.create')} close={close} error={general(error)} />
     </form>
   );
@@ -65,7 +65,7 @@ export function AddCategory({ parents }: { parents: Option[] }) {
 
 export function AddSubCategory({ parentId, parentName }: { parentId: string; parentName: string }) {
   const { t } = useT();
-  return <Disclosure label={t('cat.addSub')}>{(close) => <><p className="-mt-2 mb-3 text-[0.875rem] text-muted">{t('cat.under', { name: parentName })}</p><AddFields close={close} parents={[]} parentId={parentId} /></>}</Disclosure>;
+  return <Disclosure label={t('cat.addSub')}>{(close) => <><p className="form-lede mb-4">{t('cat.under', { name: parentName })}</p><AddFields close={close} parents={[]} parentId={parentId} /></>}</Disclosure>;
 }
 
 /** Rename, move under another category (never under itself or one of its own), or reorder; only changed fields are sent. */
@@ -87,10 +87,10 @@ function EditFields({ close, category, parents }: { close: () => void; category:
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('cat.name')} name="name" required autoFocus maxLength={200} defaultValue={category.name} error={fieldError('name')} />
       <ParentField parents={parents} value={category.parentId ?? ''} error={fieldError('parentId')} />
-      <TextField label={t('cat.sortOrder')} name="sortOrder" inputMode="numeric" defaultValue={String(category.sortOrder)} hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />
+      <TextField span="half" label={t('cat.sortOrder')} name="sortOrder" inputMode="numeric" defaultValue={String(category.sortOrder)} hint={t('cat.sortOrderHint')} error={fieldError('sortOrder')} />
       <Actions pending={pending} label={t('common.save')} close={close} error={general(error)} />
     </form>
   );

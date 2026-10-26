@@ -145,12 +145,12 @@ function AddCombinationsFields({ close, product }: { close: () => void; product:
   const failed = status ? shown.filter((c) => status[c.sku] && !status[c.sku]!.ok).length : 0;
   return (
     <div className="flex flex-col gap-4">
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('vgrid.pageHint')}</p>
+      <p className="form-lede">{t('vgrid.pageHint')}</p>
       <fieldset disabled={plan !== null} className="flex flex-col gap-4">
-      <div className="grid gap-3 @lg:grid-cols-3">
-        <TextField label={t('vgrid.baseSku')} value={base} onChange={(e) => setBase(e.target.value)} hint={t('vgrid.baseSkuHint')} />
-        <TextField label={`${t('prod.price')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} error={priceOk ? undefined : t('vgrid.badAmount')} />
-        <TextField label={`${t('prod.refCost')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={cost} onChange={(e) => setCost(e.target.value)} error={costOk ? undefined : t('vgrid.badAmount')} />
+      <div className="form-grid">
+        <TextField span="third" label={t('vgrid.baseSku')} value={base} onChange={(e) => setBase(e.target.value)} hint={t('vgrid.baseSkuHint')} />
+        <TextField span="third" label={`${t('prod.price')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} error={priceOk ? undefined : t('vgrid.badAmount')} />
+        <TextField span="third" label={`${t('prod.refCost')} (${t('common.optional')})`} inputMode="decimal" placeholder="0.00" value={cost} onChange={(e) => setCost(e.target.value)} error={costOk ? undefined : t('vgrid.badAmount')} />
       </div>
       <OptionsEditor rows={rows} onChange={setRows} />
       </fieldset>
@@ -164,7 +164,7 @@ function AddCombinationsFields({ close, product }: { close: () => void; product:
       )}
       <GridPreview rows={shown} status={status ?? undefined} />
       {status && <p className="text-[0.875rem]" role="status">{t('vgrid.progress', { done, all: shown.length })}{failed > 0 && ` · ${t('vgrid.failed', { n: failed })}`}</p>}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button type="button" className="btn btn-primary" disabled={busy || shown.length === 0 || !priceOk || !costOk || (status !== null && done === shown.length)} onClick={() => void addAll()}>
           {failed > 0 ? t('vgrid.retry') : t('vgrid.addN', { n: shown.length - done })}
         </button>

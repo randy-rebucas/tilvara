@@ -129,31 +129,31 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>
-      <div className="grid gap-3 @lg:grid-cols-2">
-        <TextField label={t('promo.name')} name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t('promo.nameHint')} error={fieldError('name')} />
-        <SelectField label={t('promo.kind')} value={kind} onChange={(e) => setKind(e.target.value as PromotionKind)}>
+      <div className="form-grid">
+        <TextField span="half" label={t('promo.name')} name="name" required autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t('promo.nameHint')} error={fieldError('name')} />
+        <SelectField span="half" label={t('promo.kind')} value={kind} onChange={(e) => setKind(e.target.value as PromotionKind)}>
           {KINDS.map((k) => <option key={k} value={k}>{t(`promo.kind.${k}` as MessageKey)}</option>)}
         </SelectField>
       </div>
 
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 font-semibold">{t('promo.terms')}</legend>
-        <p className="-mt-1 text-[0.875rem] text-muted">{t(`promo.explain.${kind}` as MessageKey)}</p>
+        <p className="form-lede">{t(`promo.explain.${kind}` as MessageKey)}</p>
         {kind === 'MULTI_BUY' && (
-          <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
-            <TextField label={t('promo.quantity')} inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} error={fieldError('quantity')} />
-            <TextField label={t('promo.price')} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} hint={t('promo.priceHint')} error={fieldError('price')} />
+          <div className="form-grid">
+            <TextField span="half" label={t('promo.quantity')} inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value)} error={fieldError('quantity')} />
+            <TextField span="half" label={t('promo.price')} inputMode="decimal" placeholder="0.00" value={price} onChange={(e) => setPrice(e.target.value)} hint={t('promo.priceHint')} error={fieldError('price')} />
           </div>
         )}
         {kind === 'BUY_X_GET_Y' && (
-          <div className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4">
-            <TextField label={t('promo.buy')} inputMode="numeric" value={buy} onChange={(e) => setBuy(e.target.value)} error={fieldError('buyQuantity')} />
-            <TextField label={t('promo.get')} inputMode="numeric" value={get} onChange={(e) => setGet(e.target.value)} error={fieldError('getQuantity')} />
-            <SelectField label={t('promo.getAt')} value={free ? 'free' : 'off'} onChange={(e) => setFree(e.target.value === 'free')}>
+          <div className="form-grid">
+            <TextField span={free ? 'third' : 'quarter'} label={t('promo.buy')} inputMode="numeric" value={buy} onChange={(e) => setBuy(e.target.value)} error={fieldError('buyQuantity')} />
+            <TextField span={free ? 'third' : 'quarter'} label={t('promo.get')} inputMode="numeric" value={get} onChange={(e) => setGet(e.target.value)} error={fieldError('getQuantity')} />
+            <SelectField span={free ? 'third' : 'quarter'} label={t('promo.getAt')} value={free ? 'free' : 'off'} onChange={(e) => setFree(e.target.value === 'free')}>
               <option value="free">{t('promo.getFree')}</option>
               <option value="off">{t('promo.getOff')}</option>
             </SelectField>
-            {!free && <TextField label={t('promo.percentOff')} inputMode="decimal" value={getPct} onChange={(e) => setGetPct(e.target.value)} error={fieldError('getRate')} />}
+            {!free && <TextField span="quarter" label={t('promo.percentOff')} inputMode="decimal" value={getPct} onChange={(e) => setGetPct(e.target.value)} error={fieldError('getRate')} />}
           </div>
         )}
         {kind === 'QUANTITY_BREAK' && (
@@ -186,7 +186,7 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
 
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 font-semibold">{t('promo.items')}</legend>
-        <p className="-mt-1 text-[0.875rem] text-muted">{t('promo.itemsHint')}</p>
+        <p className="form-lede">{t('promo.itemsHint')}</p>
         <ItemPicker products={products} chosen={chosen} onAdd={(ids) => setItems((all) => [...all, ...ids.filter((x) => !all.includes(x))].slice(0, 500))} />
         {items.length > 0 ? (
           <div className="flex flex-col gap-2">
@@ -242,14 +242,15 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
         </fieldset>
       )}
 
-      <fieldset className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3">
+      <fieldset className="form-grid">
         <legend className="mb-1 font-semibold">{t('promo.when')}</legend>
-        <SelectField label={t('promo.starts')} value={startLater ? 'later' : 'now'} onChange={(e) => setStartLater(e.target.value === 'later')}>
+        <SelectField span={startLater ? 'third' : 'half'} label={t('promo.starts')} value={startLater ? 'later' : 'now'} onChange={(e) => setStartLater(e.target.value === 'later')}>
           <option value="now">{t('promo.startNow')}</option>
           <option value="later">{t('promo.startLater')}</option>
         </SelectField>
         {startLater && (
           <TextField
+            span="third"
             label={`${t('promo.starts')} (Asia/Manila)`}
             type="datetime-local"
             value={startsAt}
@@ -257,12 +258,12 @@ function PromotionFields({ close, products, branches, copyOf }: { close: () => v
             error={fieldError('startsAt') ?? (error?.code === 'BACKDATED_PROMOTION' ? error.message : undefined)}
           />
         )}
-        <TextField label={`${t('promo.ends')} (${t('common.optional')})`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} hint={t('promo.endsHint')} error={fieldError('endsAt')} />
+        <TextField span={startLater ? 'third' : 'half'} label={`${t('promo.ends')} (${t('common.optional')})`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} hint={t('promo.endsHint')} error={fieldError('endsAt')} />
       </fieldset>
 
       <p className="max-w-[80ch] text-[0.8125rem] text-muted">{t('promo.rules')}</p>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('promo.create')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={local ?? (error?.code === 'BACKDATED_PROMOTION' ? null : apiMessage)} />
@@ -302,7 +303,7 @@ function RenameFields({ close, promotion }: { close: () => void; promotion: { id
   const { pending, submit, fieldError, error } = useSubmit();
   return (
     <form
-      className="grid gap-3 @lg:grid-cols-2"
+      className="form-grid"
       noValidate
       onSubmit={async (e) => {
         e.preventDefault();
@@ -312,7 +313,7 @@ function RenameFields({ close, promotion }: { close: () => void; promotion: { id
       }}
     >
       <TextField label={t('promo.name')} name="name" required autoFocus defaultValue={promotion.name} error={fieldError('name')} />
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('common.save')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

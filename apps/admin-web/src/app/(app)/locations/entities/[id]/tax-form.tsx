@@ -32,25 +32,23 @@ function Fields({ close, legalEntityId, current }: { close: () => void; legalEnt
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <p className="col-span-full -mt-1 text-[0.875rem] text-muted">{t('tax.changeHint')}</p>
-      <SelectField label={t('loc.vat')} name="vatStatus" defaultValue={current === 'VAT' ? 'NON_VAT' : 'VAT'}>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('tax.changeHint')}</p>
+      <SelectField span="half" label={t('loc.vat')} name="vatStatus" defaultValue={current === 'VAT' ? 'NON_VAT' : 'VAT'}>
         <option value="VAT">{t('tax.vatOption')}</option>
         <option value="NON_VAT">{t('tax.nonVatOption')}</option>
       </SelectField>
-      <SelectField label={t('tax.rounding')} name="roundingMode" defaultValue="HALF_UP">
+      <SelectField span="half" label={t('tax.rounding')} name="roundingMode" defaultValue="HALF_UP">
         <option value="HALF_UP">{t('tax.HALF_UP')}</option>
         <option value="HALF_EVEN">{t('tax.HALF_EVEN')}</option>
       </SelectField>
-      <SelectField label={t('tax.effective')} value={when} onChange={(e) => setWhen(e.target.value as 'now' | 'later')}>
+      <SelectField span={when === 'later' ? 'half' : 'full'} label={t('tax.effective')} value={when} onChange={(e) => setWhen(e.target.value as 'now' | 'later')}>
         <option value="later">{t('tax.fromDate')}</option>
         <option value="now">{t('tax.fromNow')}</option>
       </SelectField>
-      {when === 'later' && <TextField label={`${t('tax.effective')} (Asia/Manila)`} name="effectiveAt" type="datetime-local" required error={fieldError('effectiveFrom')} />}
-      <div className="col-span-full">
-        <TextField label={`${t('tax.note')} (${t('common.optional')})`} name="note" placeholder={t('tax.noteHint')} error={fieldError('note')} />
-      </div>
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      {when === 'later' && <TextField span="half" label={`${t('tax.effective')} (Asia/Manila)`} name="effectiveAt" type="datetime-local" required error={fieldError('effectiveFrom')} />}
+      <TextField label={`${t('tax.note')} (${t('common.optional')})`} name="note" placeholder={t('tax.noteHint')} error={fieldError('note')} />
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('tax.save')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

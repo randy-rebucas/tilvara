@@ -12,7 +12,7 @@ const general = (e: { code: string; message: string } | null) => (e && !['VALIDA
 function Actions({ pending, close, error }: { pending: boolean; close: () => void; error: string | null }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{t('common.create')}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={error} />
@@ -31,12 +31,12 @@ function UomFields({ close }: { close: () => void }) {
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
-      <TextField label={t('units.code')} name="code" required autoFocus maxLength={10} autoCapitalize="characters" hint={t('units.codeHint')} error={fieldError('code') ?? (error?.code === 'CODE_TAKEN' ? error.message : undefined)} />
-      <TextField label={t('common.name')} name="name" required maxLength={200} placeholder={t('units.namePlaceholder')} error={fieldError('name')} />
-      <label className="flex items-start gap-2 self-end pb-2 text-[0.9375rem]">
-        <input type="checkbox" name="allowsFraction" className="mt-1 size-4 accent-[var(--color-blue)]" />
-        <span>{t('units.fraction')}<span className="block text-[0.8125rem] text-muted">{t('units.fractionHint')}</span></span>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={t('units.code')} name="code" required autoFocus maxLength={10} autoCapitalize="characters" hint={t('units.codeHint')} error={fieldError('code') ?? (error?.code === 'CODE_TAKEN' ? error.message : undefined)} />
+      <TextField span="half" label={t('common.name')} name="name" required maxLength={200} placeholder={t('units.namePlaceholder')} error={fieldError('name')} />
+      <label className="check">
+        <input type="checkbox" name="allowsFraction" />
+        <span>{t('units.fraction')}<span className="hint">{t('units.fractionHint')}</span></span>
       </label>
       <Actions pending={pending} close={close} error={general(error)} />
     </form>
@@ -59,9 +59,9 @@ function TaxFields({ close }: { close: () => void }) {
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
-      <TextField label={t('units.code')} name="code" required autoFocus maxLength={30} autoCapitalize="characters" hint={t('units.taxCodeHint')} error={fieldError('code') ?? (error?.code === 'CODE_TAKEN' ? error.message : undefined)} />
-      <TextField label={t('common.name')} name="name" required maxLength={200} error={fieldError('name')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={t('units.code')} name="code" required autoFocus maxLength={30} autoCapitalize="characters" hint={t('units.taxCodeHint')} error={fieldError('code') ?? (error?.code === 'CODE_TAKEN' ? error.message : undefined)} />
+      <TextField span="half" label={t('common.name')} name="name" required maxLength={200} error={fieldError('name')} />
       <SelectField label={t('units.vat')} name="vatTreatment" defaultValue="VATABLE" hint={t('units.vatHint')} error={fieldError('vatTreatment')}>
         <option value="VATABLE">{t('units.vat.VATABLE')}</option>
         <option value="VAT_EXEMPT">{t('units.vat.VAT_EXEMPT')}</option>

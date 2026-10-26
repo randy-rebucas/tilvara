@@ -28,15 +28,13 @@ function GrantFields({ close }: { close: () => void }) {
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('support.purpose')} name="purpose" required autoFocus maxLength={500} hint={t('support.purposeHint')} error={fieldError('purpose')} />
-      <div className="grid gap-3 @lg:grid-cols-2">
-        <SelectField label={t('support.hours')} name="hours" defaultValue="24">
-          {HOURS.map((h) => <option key={h} value={h}>{t('support.hoursN', { n: h })}</option>)}
-        </SelectField>
-        <TextField label={t('support.ticket')} name="ticketRef" maxLength={100} error={fieldError('ticketRef')} />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <SelectField span="half" label={t('support.hours')} name="hours" defaultValue="24">
+        {HOURS.map((h) => <option key={h} value={h}>{t('support.hoursN', { n: h })}</option>)}
+      </SelectField>
+      <TextField span="half" label={t('support.ticket')} name="ticketRef" maxLength={100} error={fieldError('ticketRef')} />
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('support.grant')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

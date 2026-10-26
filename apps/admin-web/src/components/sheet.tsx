@@ -20,6 +20,8 @@ export function Sheet({ open, title, onClose, wide = false, children }: { open: 
     if (!open || !dialog) return;
     opener.current = document.activeElement;
     if (!dialog.open) dialog.showModal();
+    // Start on the first field (the browser would pick the close button, first in the panel).
+    dialog.querySelector<HTMLElement>('.sheet-body :is(input:not([type=hidden]), select, textarea):not(:disabled)')?.focus();
     return () => {
       // Back to the button that opened it (unless the save re-rendered it away).
       if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus();
@@ -50,7 +52,7 @@ export function Sheet({ open, title, onClose, wide = false, children }: { open: 
             <X aria-hidden className="size-4" />
           </button>
         </header>
-        <div className="@container min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
+        <div className="sheet-body @container min-h-0 flex-1 overflow-y-auto px-5 py-5">{children}</div>
       </div>
     </dialog>
   );

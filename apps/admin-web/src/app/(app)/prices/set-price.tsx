@@ -34,19 +34,17 @@ function Fields({ close, listId, variants }: { close: () => void; listId: string
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <div className="@lg:col-span-2">
-        <SelectField label={t('common.item')} name="variantId">
-          {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </SelectField>
-      </div>
-      <TextField label={t('prod.price')} name="amount" inputMode="decimal" required placeholder="0.00" error={fieldError('items.0.amount')} />
-      <SelectField label={t('price.effective')} value={when} onChange={(e) => setWhen(e.target.value as 'now' | 'later')}>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField label={t('common.item')} name="variantId">
+        {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </SelectField>
+      <TextField span="half" label={t('prod.price')} name="amount" inputMode="decimal" required placeholder="0.00" error={fieldError('items.0.amount')} />
+      <SelectField span="half" label={t('price.effective')} value={when} onChange={(e) => setWhen(e.target.value as 'now' | 'later')}>
         <option value="now">{t('price.now')}</option>
         <option value="later">{t('price.scheduled')}</option>
       </SelectField>
       {when === 'later' && <TextField label={`${t('price.effective')} (Asia/Manila)`} name="effectiveAt" type="datetime-local" required />}
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || variants.length === 0}>{t('price.setPrice')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />
@@ -82,15 +80,15 @@ function ListFields({ close, list }: { close: () => void; list?: { id: string; n
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('price.listName')} name="name" required autoFocus defaultValue={list?.name} placeholder={list ? undefined : t('price.listNameHint')} error={fieldError('name')} />
       {!list && (
-        <div className="flex flex-col justify-end gap-2 pb-1">
-          <label className="flex items-center gap-2 text-[0.9375rem]"><input type="checkbox" name="pricesIncludeTax" defaultChecked className="size-4 accent-[var(--color-blue)]" /> {t('price.inclTaxLong')}</label>
-          <label className="flex items-center gap-2 text-[0.9375rem]"><input type="checkbox" name="isDefault" className="size-4 accent-[var(--color-blue)]" /> {t('price.makeDefaultLong')}</label>
+        <div className="flex flex-col gap-2">
+          <label className="check"><input type="checkbox" name="pricesIncludeTax" defaultChecked /> <span>{t('price.inclTaxLong')}</span></label>
+          <label className="check"><input type="checkbox" name="isDefault" /> <span>{t('price.makeDefaultLong')}</span></label>
         </div>
       )}
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{list ? t('common.save') : t('common.create')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

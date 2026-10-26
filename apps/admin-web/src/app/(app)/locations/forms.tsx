@@ -18,7 +18,7 @@ function useForm() {
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null; submitLabel: string; close: () => void }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{submitLabel}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={general} />
@@ -38,10 +38,10 @@ function EntityFields({ close }: { close: () => void }) {
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('loc.registeredName')} name="registeredName" required autoFocus error={fieldError('registeredName')} />
-      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} error={fieldError('tin')} />
-      <SelectField label={t('loc.vat')} name="vatStatus" defaultValue="VAT">
+      <TextField span="half" label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} error={fieldError('tin')} />
+      <SelectField span="half" label={t('loc.vat')} name="vatStatus" defaultValue="VAT">
         <option value="VAT">{t('loc.vatReg')}</option>
         <option value="NON_VAT">{t('loc.nonVat')}</option>
       </SelectField>
@@ -74,14 +74,12 @@ function EditEntityFields({ close, entity }: { close: () => void; entity: LegalE
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <TextField label={t('loc.registeredName')} name="registeredName" required autoFocus defaultValue={entity.registeredName} error={fieldError('registeredName')} />
-      <TextField label={`${t('loc.tradeName')} (${t('common.optional')})`} name="tradeName" defaultValue={entity.tradeName ?? ''} error={fieldError('tradeName')} />
-      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} defaultValue={entity.tin ?? ''} error={fieldError('tin')} />
-      <TextField label={`${t('loc.rdo')} (${t('common.optional')})`} name="rdoCode" placeholder="049" defaultValue={entity.rdoCode ?? ''} error={fieldError('rdoCode')} />
-      <div className="col-span-full">
-        <TextField label={`${t('loc.address')} (${t('common.optional')})`} name="registeredAddress" hint={t('loc.addressHint')} defaultValue={entity.registeredAddress ?? ''} error={fieldError('registeredAddress')} />
-      </div>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={t('loc.registeredName')} name="registeredName" required autoFocus defaultValue={entity.registeredName} error={fieldError('registeredName')} />
+      <TextField span="half" label={`${t('loc.tradeName')} (${t('common.optional')})`} name="tradeName" defaultValue={entity.tradeName ?? ''} error={fieldError('tradeName')} />
+      <TextField span="half" label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" placeholder="123-456-789" hint={t('loc.tinHint')} defaultValue={entity.tin ?? ''} error={fieldError('tin')} />
+      <TextField span="half" label={`${t('loc.rdo')} (${t('common.optional')})`} name="rdoCode" placeholder="049" defaultValue={entity.rdoCode ?? ''} error={fieldError('rdoCode')} />
+      <TextField label={`${t('loc.address')} (${t('common.optional')})`} name="registeredAddress" hint={t('loc.addressHint')} defaultValue={entity.registeredAddress ?? ''} error={fieldError('registeredAddress')} />
       <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
     </form>
   );
@@ -108,13 +106,13 @@ function BranchFields({ close, entities }: { close: () => void; entities: LegalE
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <SelectField label={t('loc.entityOne')} name="legalEntityId">
         {entities.map((e) => <option key={e.id} value={e.id}>{e.registeredName}</option>)}
       </SelectField>
       <TextField label={t('loc.branchName')} name="name" required autoFocus error={fieldError('name')} />
-      <TextField label={t('loc.branchCode')} name="code" required placeholder="MKT-01" error={fieldError('code')} />
-      <TextField label={t('loc.birBranch')} name="birBranchCode" inputMode="numeric" placeholder="00000" error={fieldError('birBranchCode')} />
+      <TextField span="half" label={t('loc.branchCode')} name="code" required placeholder="MKT-01" error={fieldError('code')} />
+      <TextField span="half" label={t('loc.birBranch')} name="birBranchCode" inputMode="numeric" placeholder="00000" error={fieldError('birBranchCode')} />
       <Actions pending={pending} general={general} submitLabel={t('common.create')} close={close} />
     </form>
   );
@@ -141,11 +139,11 @@ function EditBranchFields({ close, branch }: { close: () => void; branch: Branch
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('loc.branchName')} name="name" required autoFocus defaultValue={branch.name} error={fieldError('name')} />
-      <TextField label={t('loc.birBranch')} name="birBranchCode" inputMode="numeric" defaultValue={branch.birBranchCode} error={fieldError('birBranchCode')} />
       <TextField label={`${t('loc.address')} (${t('common.optional')})`} name="address" hint={t('loc.addressHint')} defaultValue={branch.address ?? ''} error={fieldError('address')} />
-      <TextField label={t('loc.timezone')} name="timezone" defaultValue={branch.timezone} hint={t('loc.timezoneHint')} error={fieldError('timezone')} />
+      <TextField span="half" label={t('loc.birBranch')} name="birBranchCode" inputMode="numeric" defaultValue={branch.birBranchCode} error={fieldError('birBranchCode')} />
+      <TextField span="half" label={t('loc.timezone')} name="timezone" defaultValue={branch.timezone} hint={t('loc.timezoneHint')} error={fieldError('timezone')} />
       <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
     </form>
   );
@@ -165,7 +163,7 @@ function EditRegisterFields({ close, register }: { close: () => void; register: 
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('loc.registerName')} name="name" required autoFocus defaultValue={register.name} error={fieldError('name')} />
       <Actions pending={pending} general={general} submitLabel={t('common.save')} close={close} />
     </form>
@@ -188,12 +186,12 @@ function RegisterFields({ close, branches }: { close: () => void; branches: Bran
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <SelectField label={t('loc.branchOne')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <TextField label={t('loc.registerName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.registerName')} error={fieldError('name')} />
-      <TextField label={t('loc.registerCode')} name="code" required placeholder="R1" error={fieldError('code')} />
+      <TextField span="half" label={t('loc.registerName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.registerName')} error={fieldError('name')} />
+      <TextField span="half" label={t('loc.registerCode')} name="code" required placeholder="R1" error={fieldError('code')} />
       <Actions pending={pending} general={general} submitLabel={t('common.create')} close={close} />
     </form>
   );
@@ -221,11 +219,11 @@ function TerminalFields({ close, registers, onPaired }: { close: () => void; reg
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <SelectField label={t('loc.registerOne')} name="registerId">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField span="half" label={t('loc.registerOne')} name="registerId">
         {registers.map((r) => <option key={r.id} value={r.id}>{r.code} · {r.name}</option>)}
       </SelectField>
-      <TextField label={t('loc.terminalName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.terminalName')} error={fieldError('name')} />
+      <TextField span="half" label={t('loc.terminalName')} name="name" required autoFocus placeholder={extraFor(lang, 'example.terminalName')} error={fieldError('name')} />
       <Actions pending={pending} general={general} submitLabel={t('loc.pair')} close={close} />
     </form>
   );

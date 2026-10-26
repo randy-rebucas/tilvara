@@ -80,15 +80,15 @@ function ReasonPanel({
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} noValidate className="flex w-full flex-col gap-3">
-      {hint && <p className="text-[0.875rem] text-muted">{hint}</p>}
+    <form onSubmit={onSubmit} noValidate className="form-grid">
+      {hint && <p className="form-lede">{hint}</p>}
       <TextField label={reasonLabel} name={field} required autoFocus error={fieldError(field)} />
       {choice && (
         <SelectField label={choice.label} name={choice.name} error={fieldError(choice.name)}>
           {choice.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </SelectField>
       )}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} disabled={pending || (choice !== undefined && choice.options.length === 0)}>{label}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

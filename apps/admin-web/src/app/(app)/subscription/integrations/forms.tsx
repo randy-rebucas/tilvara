@@ -46,7 +46,7 @@ function KeyFields({ close }: { close: () => void }) {
   }
   if (made) return <ShownOnce label={t('int.keyMade')} value={made} onDone={close} />;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('int.keyName')} name="keyName" required maxLength={100} placeholder={t('int.keyNameHint')} error={fieldError('name')} />
       <fieldset className="grid gap-1">
         <legend className="mb-1 text-[0.875rem] font-semibold">{t('int.scopes')}</legend>
@@ -61,7 +61,7 @@ function KeyFields({ close }: { close: () => void }) {
         <option value="0">{t('int.validForever')}</option>
         {[30, 90, 365].map((n) => <option key={n} value={n}>{t('int.validDays', { n })}</option>)}
       </SelectField>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('int.createKey')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
@@ -92,7 +92,7 @@ function WebhookFields({ close }: { close: () => void }) {
   }
   if (made) return <ShownOnce label={t('int.secretMade')} value={made} onDone={close} />;
   return (
-    <form onSubmit={onSubmit} className="grid gap-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('int.url')} name="hookUrl" type="url" required placeholder="https://" error={fieldError('url')} />
       <TextField label={`${t('int.description')} (${t('common.optional')})`} name="hookDescription" maxLength={200} error={fieldError('description')} />
       <fieldset className="grid gap-1">
@@ -104,7 +104,7 @@ function WebhookFields({ close }: { close: () => void }) {
         ))}
         {fieldError('topics') && <p className="hint text-red!">{fieldError('topics')}</p>}
       </fieldset>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('int.createHook')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />

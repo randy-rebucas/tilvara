@@ -34,11 +34,9 @@ function RoleFields({ close, role, extensions }: { close: () => void; role?: Rol
     }
   }
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <div className="grid gap-3 @lg:grid-cols-2">
-        <TextField label={t('team.roleName')} name="name" required autoFocus defaultValue={role?.name} error={fieldError('name')} />
-        {!role && <TextField label={t('team.roleKey')} name="key" required hint={t('team.roleKeyHint')} error={fieldError('key')} />}
-      </div>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span={role ? 'full' : 'half'} label={t('team.roleName')} name="name" required autoFocus defaultValue={role?.name} error={fieldError('name')} />
+      {!role && <TextField span="half" label={t('team.roleKey')} name="key" required hint={t('team.roleKeyHint')} error={fieldError('key')} />}
       <fieldset className="flex flex-col gap-3">
         <legend className="mb-1 text-[0.875rem] font-semibold">{t('team.permissions')}</legend>
         <p className="text-[0.8125rem] text-muted">{t('team.privilegedNote')}</p>
@@ -64,7 +62,7 @@ function RoleFields({ close, role, extensions }: { close: () => void; role?: Rol
         </div>
         {fieldError('permissions') && <p className="hint text-red!">{fieldError('permissions')}</p>}
       </fieldset>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{role ? t('common.save') : t('common.create')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />
@@ -108,8 +106,8 @@ function AccessFields({ close, member, roles, branches, entities }: { close: () 
     if (res.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate>
-      <p className="-mt-1 text-[0.875rem] text-muted">{t('team.accessHint')}</p>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('team.accessHint')}</p>
       {rows.map((r, i) => (
         <div key={r.key} className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] @lg:items-end">
           <div className="field min-w-0">
@@ -136,7 +134,7 @@ function AccessFields({ close, member, roles, branches, entities }: { close: () 
           <Plus aria-hidden className="size-4" /> {t('team.addAccess')}
         </button>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('common.save')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error?.message} />
@@ -168,16 +166,16 @@ function InviteFields({ close, roles, branches, onSent }: { close: () => void; r
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('auth.email')} name="email" type="email" required autoFocus error={fieldError('email')} />
-      <SelectField label={t('team.role')} name="roleId" defaultValue={roles.find((r) => r.key === 'cashier')?.id}>
+      <SelectField span="half" label={t('team.role')} name="roleId" defaultValue={roles.find((r) => r.key === 'cashier')?.id}>
         {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
       </SelectField>
-      <SelectField label={t('team.scope')} name="scope" defaultValue="TENANT">
+      <SelectField span="half" label={t('team.scope')} name="scope" defaultValue="TENANT">
         <option value="TENANT">{t('team.wholeBusiness')}</option>
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <div className="col-span-full flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('team.invite')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={error && error.code !== 'VALIDATION_FAILED' ? error.message : null} />

@@ -28,17 +28,17 @@ function StartSheetFields({ close, branchId }: { close: () => void; branchId: st
     }
   }
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-3" noValidate>
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('sheet.startHint')}</p>
-      <label className="flex items-start gap-2 text-[0.9375rem]">
-        <input type="checkbox" name="blind" defaultChecked className="mt-1" />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('sheet.startHint')}</p>
+      <label className="check">
+        <input type="checkbox" name="blind" defaultChecked />
         <span>
           {t('sheet.blind')}
-          <span className="block text-[0.8125rem] text-muted">{t('sheet.blindHint')}</span>
+          <span className="hint">{t('sheet.blindHint')}</span>
         </span>
       </label>
       <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('sheet.start')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
         <FormError message={general(error)} />
@@ -170,7 +170,7 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
             <Disclosure label={t('sheet.cancel')}>
               {(close) => (
                 <form
-                  className="flex flex-col gap-3"
+                  className="form-grid"
                   noValidate
                   onSubmit={async (e) => {
                     e.preventDefault();
@@ -180,7 +180,7 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
                   }}
                 >
                   <TextField label={t('sheet.cancelReason')} name="reason" error={cancel.fieldError('reason')} />
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="form-actions">
                     <button className="btn btn-danger" disabled={cancel.pending}>{t('sheet.cancel')}</button>
                     <button type="button" className="btn" onClick={close}>{t('sheet.keepCounting')}</button>
                     <FormError message={general(cancel.error)} />

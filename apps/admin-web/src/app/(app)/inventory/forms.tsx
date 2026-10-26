@@ -17,7 +17,7 @@ const text = (f: FormData, k: string) => String(f.get(k) ?? '').trim();
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null | undefined; submitLabel: string; close: () => void }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{submitLabel}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={general} />
@@ -54,13 +54,13 @@ function AdjustFields({ close, branchId, variants, dated }: { close: () => void;
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('inv.adjustHint')}</p>
-      <SelectField label={t('inv.adjustKind')} name="kind">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('inv.adjustHint')}</p>
+      <SelectField span="third" label={t('inv.adjustKind')} name="kind">
         <option value="ADJUSTMENT">{t('inv.adjustKind.ADJUSTMENT')}</option>
         <option value="WASTE">{t('inv.adjustKind.WASTE')}</option>
       </SelectField>
-      <TextField label={t('common.reason')} name="reason" required error={fieldError('reason')} />
+      <TextField span="twoThirds" label={t('common.reason')} name="reason" required error={fieldError('reason')} />
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -104,14 +104,12 @@ function ReorderFields({ close, branchId, variants }: { close: () => void; branc
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <div className="@lg:col-span-2">
-        <SelectField label={t('common.item')} name="variantId">
-          {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </SelectField>
-      </div>
-      <TextField label={t('inv.reorderPoint')} name="reorderPoint" inputMode="decimal" hint={t('inv.reorderHint')} error={fieldError('items.0.reorderPoint')} />
-      <TextField label={`${t('inv.reorderQty')} (${t('common.optional')})`} name="reorderQuantity" inputMode="decimal" error={fieldError('items.0.reorderQuantity')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField label={t('common.item')} name="variantId">
+        {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </SelectField>
+      <TextField span="half" label={t('inv.reorderPoint')} name="reorderPoint" inputMode="decimal" hint={t('inv.reorderHint')} error={fieldError('items.0.reorderPoint')} />
+      <TextField span="half" label={`${t('inv.reorderQty')} (${t('common.optional')})`} name="reorderQuantity" inputMode="decimal" error={fieldError('items.0.reorderQuantity')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('common.save')} close={close} />
     </form>
   );
@@ -164,15 +162,15 @@ function TransferFields({ close, from, destinations, variants }: { close: () => 
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       {/* The source is the branch picked above the list; name it so stock never leaves the wrong branch. */}
-      <p className="serial col-span-full -mt-2 text-[0.8125rem] text-muted">
+      <p className="serial text-[0.8125rem] text-muted">
         {t('inv.sendFrom')} <span className="font-semibold text-violet">{from.code}</span> · {from.name}
       </p>
-      <SelectField label={t('inv.toBranch')} name="toBranchId">
+      <SelectField span="half" label={t('inv.toBranch')} name="toBranchId">
         {destinations.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
+      <TextField span="half" label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -212,8 +210,8 @@ function ReceiveTransferFields({ close, transfer }: { close: () => void; transfe
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('inv.receiveHint')}</p>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('inv.receiveHint')}</p>
       <ul className="flex flex-col gap-3">
         {transfer.lines.map((l, i) => (
           <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,2fr)] @lg:items-end">
@@ -258,8 +256,8 @@ function CountFields({ close, branchId, variants }: { close: () => void; branchI
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2" noValidate>
-      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('inv.countHint')}</p>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('inv.countHint')}</p>
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -270,9 +268,7 @@ function CountFields({ close, branchId, variants }: { close: () => void; branchI
         addLabel={t('common.addLine')}
         removeLabel={t('common.removeLine')}
       />
-      <div className="col-span-full">
-        <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
-      </div>
+      <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
       <Actions pending={pending} general={general(error) ?? fieldError('lines')} submitLabel={t('inv.newCount')} close={close} />
     </form>
   );
@@ -303,17 +299,13 @@ function ReserveFields({ close, branchId, variants }: { close: () => void; branc
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <div className="@lg:col-span-2">
-        <SelectField label={t('common.item')} name="variantId">
-          {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-        </SelectField>
-      </div>
-      <TextField label={t('common.quantity')} name="quantity" inputMode="decimal" required error={fieldError('quantity')} />
-      <TextField label={`${t('inv.reserveUntil')} (${t('common.optional')})`} name="expiresOn" type="date" error={fieldError('expiresAt')} />
-      <div className="@lg:col-span-2 @3xl:col-span-4">
-        <TextField label={t('inv.reserveFor')} name="note" required maxLength={200} placeholder={t('inv.reserveForHint')} error={fieldError('note')} />
-      </div>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField label={t('common.item')} name="variantId">
+        {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+      </SelectField>
+      <TextField span="half" label={t('common.quantity')} name="quantity" inputMode="decimal" required error={fieldError('quantity')} />
+      <TextField span="half" label={`${t('inv.reserveUntil')} (${t('common.optional')})`} name="expiresOn" type="date" error={fieldError('expiresAt')} />
+      <TextField label={t('inv.reserveFor')} name="note" required maxLength={200} placeholder={t('inv.reserveForHint')} error={fieldError('note')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('inv.reserve')} close={close} />
     </form>
   );
@@ -364,14 +356,12 @@ function OpenPackFields({ close, branchId, links }: { close: () => void; branchI
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <div className="@lg:col-span-2">
-        <SelectField label={t('packs.link')} name="conversionId">
-          {links.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
-        </SelectField>
-      </div>
-      <TextField label={t('packs.count')} name="packs" inputMode="numeric" defaultValue="1" required error={fieldError('packs')} />
-      <TextField label={t('common.reason')} name="reason" required error={fieldError('reason')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField label={t('packs.link')} name="conversionId">
+        {links.map((l) => <option key={l.id} value={l.id}>{l.label}</option>)}
+      </SelectField>
+      <TextField span="third" label={t('packs.count')} name="packs" inputMode="numeric" defaultValue="1" required error={fieldError('packs')} />
+      <TextField span="twoThirds" label={t('common.reason')} name="reason" required error={fieldError('reason')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('packs.open')} close={close} />
     </form>
   );
@@ -393,7 +383,7 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
       {(close) => (
         <form
           noValidate
-          className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4"
+          className="form-grid"
           onSubmit={async (e) => {
             e.preventDefault();
             const f = new FormData(e.currentTarget);
@@ -408,22 +398,18 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
             if (r.ok) close();
           }}
         >
-          <div className="@lg:col-span-2">
-            <SelectField label={t('common.item')} name="variantId" defaultValue={initial?.variantId ?? ''} error={fieldError('variantId')}>
-              <option value="" disabled>—</option>
-              {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </SelectField>
-          </div>
-          <TextField label={t('exp.lot')} name="lotCode" required maxLength={64} defaultValue={initial?.lotCode ?? ''} error={fieldError('lotCode')} />
-          <SelectField label={t('lot.holdWhere')} name="holdBranchId" defaultValue="" hint={t('lot.holdWhereHint')} error={fieldError('branchId')}>
+          <SelectField label={t('common.item')} name="variantId" defaultValue={initial?.variantId ?? ''} error={fieldError('variantId')}>
+            <option value="" disabled>—</option>
+            {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+          </SelectField>
+          <TextField span="half" label={t('exp.lot')} name="lotCode" required maxLength={64} defaultValue={initial?.lotCode ?? ''} error={fieldError('lotCode')} />
+          <SelectField span="half" label={t('lot.holdWhere')} name="holdBranchId" defaultValue="" hint={t('lot.holdWhereHint')} error={fieldError('branchId')}>
             <option value="">{t('rep.allBranches')}</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
           </SelectField>
-          <div className="@lg:col-span-2">
-            <TextField label={t('common.reason')} name="reason" required maxLength={200} placeholder={t('lot.holdReasonHint')} error={fieldError('reason')} />
-          </div>
+          <TextField label={t('common.reason')} name="reason" required maxLength={200} placeholder={t('lot.holdReasonHint')} error={fieldError('reason')} />
           <TextField label={`${t('lot.holdReference')} (${t('common.optional')})`} name="reference" maxLength={100} placeholder="FDA Advisory 2026-123" error={fieldError('reference')} />
-          <div className="col-span-full flex flex-wrap items-center gap-2">
+          <div className="form-actions">
             <button className="btn btn-primary" disabled={pending}>{t('lot.placeHold')}</button>
             <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
             <FormError message={general(error)} />

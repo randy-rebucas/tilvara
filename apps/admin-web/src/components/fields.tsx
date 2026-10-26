@@ -3,17 +3,22 @@
 import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
 import { useId } from 'react';
 
+/** Width of a field in a `form-grid` (12 columns, full width by default; narrow sheets stack everything). */
+export type FieldSpan = 'full' | 'half' | 'third' | 'twoThirds' | 'quarter';
+const spanClass = (span: FieldSpan | undefined) => (span && span !== 'full' ? ` span-${span === 'twoThirds' ? 'two-thirds' : span}` : '');
+
 export function TextField({
   label,
   hint,
   error,
   labelClassName,
+  span,
   ...props
-}: { label: string; hint?: string; error?: string | undefined; /** e.g. `sr-only` on repeated rows. */ labelClassName?: string } & InputHTMLAttributes<HTMLInputElement>) {
+}: { label: string; hint?: string; error?: string | undefined; /** e.g. `sr-only` on repeated rows. */ labelClassName?: string; span?: FieldSpan } & InputHTMLAttributes<HTMLInputElement>) {
   const id = useId();
   const hintId = `${id}-hint`;
   return (
-    <div className="field">
+    <div className={`field${spanClass(span)}`}>
       <label htmlFor={id} className={labelClassName}>{label}</label>
       <input
         id={id}
@@ -36,12 +41,13 @@ export function SelectField({
   hint,
   error,
   children,
+  span,
   ...props
-}: { label: string; hint?: string; error?: string | undefined; children: ReactNode } & SelectHTMLAttributes<HTMLSelectElement>) {
+}: { label: string; hint?: string; error?: string | undefined; children: ReactNode; span?: FieldSpan } & SelectHTMLAttributes<HTMLSelectElement>) {
   const id = useId();
   const hintId = `${id}-hint`;
   return (
-    <div className="field">
+    <div className={`field${spanClass(span)}`}>
       <label htmlFor={id}>{label}</label>
       <select id={id} className="input" aria-invalid={error ? true : undefined} aria-describedby={hint || error ? hintId : undefined} {...props}>
         {children}

@@ -19,7 +19,7 @@ const TYPES: AccountType[] = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENS
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null | undefined; submitLabel: string; close: () => void }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{submitLabel}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={general} />
@@ -59,9 +59,9 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
   const difference = sumDecimal([totals.debit, `-${totals.credit}`.replace('--', '')]);
   const balanced = signOf(difference) === 0 && signOf(totals.debit) > 0;
   return (
-    <form onSubmit={onSubmit} onInput={onInput} className="grid gap-3 @lg:grid-cols-[12rem_minmax(0,1fr)]" noValidate>
-      <TextField label={t('common.date')} name="entryDate" type="date" defaultValue={todayManila()} error={fieldError('entryDate')} />
-      <TextField label={t('books.memo')} name="memo" required error={fieldError('memo')} />
+    <form onSubmit={onSubmit} onInput={onInput} className="form-grid" noValidate>
+      <TextField span="third" label={t('common.date')} name="entryDate" type="date" defaultValue={todayManila()} error={fieldError('entryDate')} />
+      <TextField span="twoThirds" label={t('books.memo')} name="memo" required error={fieldError('memo')} />
       <LineItems
         min={2}
         fields={[
@@ -75,7 +75,7 @@ function EntryFields({ close, legalEntityId, accounts }: { close: () => void; le
         addLabel={t('common.addLine')}
         removeLabel={t('common.removeLine')}
       />
-      <p className="col-span-full flex flex-wrap gap-x-5 gap-y-1 text-[0.875rem] text-muted" aria-live="polite">
+      <p className="flex flex-wrap gap-x-5 gap-y-1 text-[0.875rem] text-muted" aria-live="polite">
         <span>{t('books.debit')} <b className="money text-ink">{peso(totals.debit)}</b></span>
         <span>{t('books.credit')} <b className="money text-ink">{peso(totals.credit)}</b></span>
         <span>{t('books.difference')} <b className={`money ${signOf(difference) === 0 ? 'text-ink' : 'text-red'}`}>{peso(difference)}</b></span>
@@ -101,12 +101,12 @@ function AccountFields({ close, legalEntityId }: { close: () => void; legalEntit
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
-      <TextField label={t('books.code')} name="code" required placeholder="6100" error={fieldError('code')} />
-      <TextField label={t('books.accountName')} name="name" required error={fieldError('name')} />
-      <SelectField label={t('books.type')} name="type" defaultValue="EXPENSE">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={t('books.code')} name="code" required placeholder="6100" error={fieldError('code')} />
+      <SelectField span="half" label={t('books.type')} name="type" defaultValue="EXPENSE">
         {TYPES.map((x) => <option key={x} value={x}>{t(`acct.${x}`)}</option>)}
       </SelectField>
+      <TextField label={t('books.accountName')} name="name" required error={fieldError('name')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('common.create')} close={close} />
     </form>
   );
@@ -127,7 +127,7 @@ function CloseFields({ close, legalEntityId, defaultMonth }: { close: () => void
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-3" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       <TextField label={t('books.month')} name="month" type="month" defaultValue={defaultMonth} error={fieldError('month')} />
       <Actions pending={pending} general={general(error)} submitLabel={t('books.closeMonth')} close={close} />
     </form>

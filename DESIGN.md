@@ -266,7 +266,15 @@ A nested row of tabs (Reports → group → report) is `SubNav level={2}`: small
 
 **Empty lists** (`Empty`) are left-aligned like the rows they stand in for. They say what belongs there in the owner's terms, or what must exist first (a branch needs a legal entity, a register needs a branch), and carry the way to it when there is one (`action`, e.g. `ToLocations`). "Nothing here yet." is only the fallback. Record links inside notes keep a hairline underline that darkens on hover; table rows take the `table-head` fill on hover.
 
-Forms open in a sheet (`Sheet`, `components/sheet.tsx`; `Disclosure` and `ReasonAction` use it). A "+ Add …" or "Edit …" secondary button slides a white panel in from the right edge over the dimmed page; its title is the button's label, and it closes on save, Cancel, the × button, Esc or a click on the dimmed page, returning focus to the button. The panel is 36rem wide, or 56rem (`wide`) for forms with line items or many columns, and the full width below that. Form layouts inside it respond to the sheet's width with container queries (`@lg:` ≈ the old `sm:`, `@3xl:` ≈ the old `lg:`), never to the window's. Filters and searches stay inline on the page.
+Forms open in a sheet (`Sheet`, `components/sheet.tsx`; `Disclosure` and `ReasonAction` use it). A "+ Add …" or "Edit …" secondary button slides a white panel in from the right edge over the dimmed page; its title is the button's label, and it closes on save, Cancel, the × button, Esc or a click on the dimmed page, returning focus to the button. The panel is 36rem wide, or 56rem (`wide`) for forms with line items or many columns, and the full width below that. Filters and searches stay inline on the page.
+
+Inside a sheet, a form is a `form-grid` (12 columns, measured on the sheet, not the window):
+- Every field is full width unless it says otherwise. Short related fields pair up with `span` on `TextField`/`SelectField`: `half`, `third`/`twoThirds` or `quarter`. Halves need a 24rem sheet and quarters 40rem; below that they stack. Pick spans so each row fills the width, with no lone half-width field.
+- Long values (item, supplier, legal entity and other long names) get a full row, or at least a half in a wide sheet.
+- A checkbox or radio with its explanation is a `check` label on a row of its own, never squeezed beside inputs.
+- A sentence explaining the form is a `form-lede` paragraph at the top.
+- The Save / Cancel row is `form-actions`: a footer pinned to the bottom of the sheet, so it stays in reach while long forms scroll.
+- The first field takes focus when the sheet opens.
 
 ## Elevation & Depth
 

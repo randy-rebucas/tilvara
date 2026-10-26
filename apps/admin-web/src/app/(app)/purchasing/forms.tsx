@@ -13,7 +13,7 @@ import { peso, qty, signOf, subtractQty } from '@/lib/format';
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null; submitLabel: string; close: () => void }) {
   const { t } = useT();
   return (
-    <div className="col-span-full flex flex-wrap items-center gap-2">
+    <div className="form-actions">
       <button className="btn btn-primary" disabled={pending}>{submitLabel}</button>
       <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
       <FormError message={general} />
@@ -49,13 +49,13 @@ function SupplierFields({ close, supplier }: { close: () => void; supplier?: Sup
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
-      <TextField label={t('pur.supplierName')} name="name" required autoFocus defaultValue={supplier?.name} error={fieldError('name')} />
-      <TextField label={t('pur.supplierCode')} name="code" required placeholder="SUP-01" defaultValue={supplier?.code} error={fieldError('code')} />
-      <TextField label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" defaultValue={supplier?.tin ?? ''} error={fieldError('tin')} />
-      <TextField label={`${t('pur.phone')} (${t('common.optional')})`} name="phone" type="tel" defaultValue={supplier?.phone ?? ''} error={fieldError('phone')} />
-      <TextField label={`${t('auth.email')} (${t('common.optional')})`} name="email" type="email" defaultValue={supplier?.email ?? ''} error={fieldError('email')} />
-      <TextField label={t('pur.terms')} name="paymentTermsDays" inputMode="numeric" placeholder="0" defaultValue={supplier ? String(supplier.paymentTermsDays) : undefined} error={fieldError('paymentTermsDays')} />
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <TextField span="half" label={t('pur.supplierName')} name="name" required autoFocus defaultValue={supplier?.name} error={fieldError('name')} />
+      <TextField span="half" label={t('pur.supplierCode')} name="code" required placeholder="SUP-01" defaultValue={supplier?.code} error={fieldError('code')} />
+      <TextField span="half" label={`${t('loc.tin')} (${t('common.optional')})`} name="tin" inputMode="numeric" defaultValue={supplier?.tin ?? ''} error={fieldError('tin')} />
+      <TextField span="half" label={`${t('pur.phone')} (${t('common.optional')})`} name="phone" type="tel" defaultValue={supplier?.phone ?? ''} error={fieldError('phone')} />
+      <TextField span="half" label={`${t('auth.email')} (${t('common.optional')})`} name="email" type="email" defaultValue={supplier?.email ?? ''} error={fieldError('email')} />
+      <TextField span="half" label={t('pur.terms')} name="paymentTermsDays" inputMode="numeric" placeholder="0" defaultValue={supplier ? String(supplier.paymentTermsDays) : undefined} error={fieldError('paymentTermsDays')} />
       <Actions pending={pending} general={general(error)} submitLabel={supplier ? t('common.save') : t('common.create')} close={close} />
     </form>
   );
@@ -95,15 +95,15 @@ function OrderFields({ close, branches, suppliers, variants }: { close: () => vo
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <SelectField label={t('pur.supplierOne')} name="supplierId">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField span="half" label={t('pur.supplierOne')} name="supplierId">
         {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
       </SelectField>
-      <SelectField label={t('common.branch')} name="branchId">
+      <SelectField span="half" label={t('common.branch')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <TextField label={`${t('pur.expectedOn')} (${t('common.optional')})`} name="expectedOn" type="date" error={fieldError('expectedOn')} />
-      <TextField label={`${t('pur.supplierRef')} (${t('common.optional')})`} name="supplierRef" error={fieldError('supplierRef')} />
+      <TextField span="half" label={`${t('pur.expectedOn')} (${t('common.optional')})`} name="expectedOn" type="date" error={fieldError('expectedOn')} />
+      <TextField span="half" label={`${t('pur.supplierRef')} (${t('common.optional')})`} name="supplierRef" error={fieldError('supplierRef')} />
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -144,12 +144,12 @@ function DraftFields({ close, order, suppliers, variants }: { close: () => void;
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-3" noValidate>
-      <SelectField label={t('pur.supplierOne')} name="supplierId" defaultValue={order.supplierId}>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <SelectField span="half" label={t('pur.supplierOne')} name="supplierId" defaultValue={order.supplierId}>
         {[...suppliers.filter((s) => s.id !== order.supplierId), order.supplier].map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
       </SelectField>
-      <TextField label={`${t('pur.expectedOn')} (${t('common.optional')})`} name="expectedOn" type="date" defaultValue={order.expectedOn ?? ''} error={fieldError('expectedOn')} />
-      <TextField label={`${t('pur.supplierRef')} (${t('common.optional')})`} name="supplierRef" defaultValue={order.supplierRef ?? ''} error={fieldError('supplierRef')} />
+      <TextField span="quarter" label={`${t('pur.expectedOn')} (${t('common.optional')})`} name="expectedOn" type="date" defaultValue={order.expectedOn ?? ''} error={fieldError('expectedOn')} />
+      <TextField span="quarter" label={`${t('pur.supplierRef')} (${t('common.optional')})`} name="supplierRef" defaultValue={order.supplierRef ?? ''} error={fieldError('supplierRef')} />
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -201,8 +201,8 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
   }
   const lineError = (row: number) => (sent.includes(row) ? fieldError(`lines.${sent.indexOf(row)}.quantity`) : undefined);
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.returnHint')}</p>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('pur.returnHint')}</p>
       <TextField label={t('common.reason')} name="reason" required autoFocus error={fieldError('reason')} />
       <ul className="flex flex-col gap-3">
         {open.map((l, i) => (
@@ -267,15 +267,13 @@ function ReceiveFields({ close, order }: { close: () => void; order: PurchaseOrd
   }
   const lineError = (row: number, field: string) => (sent.includes(row) ? fieldError(`lines.${sent.indexOf(row)}.${field}`) : undefined);
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
-      <p className="-mt-2 text-[0.875rem] text-muted">{t('pur.receiveHint')}{open.some((l) => l.tracksExpiry) ? ` ${t('pur.expiresHint')}` : ''}</p>
-      <div className="grid gap-3 @lg:grid-cols-2">
-        <TextField label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
-        <TextField label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
-      </div>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('pur.receiveHint')}{open.some((l) => l.tracksExpiry) ? ` ${t('pur.expiresHint')}` : ''}</p>
+      <TextField span="half" label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
+      <TextField span="half" label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
       <ul className="flex flex-col gap-3">
         {open.map((l, i) => (
-          <li key={l.id} className="grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-2 @3xl:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))] @3xl:items-end">
+          <li key={l.id} className={`grid gap-2 rounded-[5px] border border-hair-soft p-3 @lg:grid-cols-2 @3xl:items-end ${l.tracksExpiry ? '@3xl:grid-cols-[minmax(0,2fr)_repeat(5,minmax(0,1fr))]' : '@3xl:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))]'}`}>
             <div className="min-w-0">
               <div className="font-semibold">{l.name}</div>
               <div className="serial text-[0.8125rem] text-muted">{l.sku} · {t('pur.remaining')} {qty(l.remainingQuantity)}</div>
@@ -329,16 +327,16 @@ function UnorderedReceiptFields({ close, branches, suppliers, variants, dated }:
     }
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
-      <p className="col-span-full -mt-2 text-[0.875rem] text-muted">{t('pur.receiveNoOrderHint')}{dated ? ` ${t('pur.expiresHint')}` : ''}</p>
-      <SelectField label={t('pur.supplierOne')} name="supplierId">
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
+      <p className="form-lede">{t('pur.receiveNoOrderHint')}{dated ? ` ${t('pur.expiresHint')}` : ''}</p>
+      <SelectField span="half" label={t('pur.supplierOne')} name="supplierId">
         {suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
       </SelectField>
-      <SelectField label={t('common.branch')} name="branchId">
+      <SelectField span="half" label={t('common.branch')} name="branchId">
         {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
       </SelectField>
-      <TextField label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
-      <TextField label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
+      <TextField span="half" label={`${t('pur.invoiceRef')} (${t('common.optional')})`} name="supplierInvoiceRef" error={fieldError('supplierInvoiceRef')} />
+      <TextField span="half" label={`${t('pur.deliveryRef')} (${t('common.optional')})`} name="supplierDeliveryRef" error={fieldError('supplierDeliveryRef')} />
       <LineItems
         fields={[
           { name: 'variantId', label: t('common.item'), kind: 'select' },
@@ -387,19 +385,17 @@ function SupplierItemFields({ close, supplierId, variants, item }: { close: () =
     if (r.ok) close();
   }
   return (
-    <form onSubmit={onSubmit} className="grid gap-3 @lg:grid-cols-2 @3xl:grid-cols-4" noValidate>
+    <form onSubmit={onSubmit} className="form-grid" noValidate>
       {!item && (
-        <div className="@lg:col-span-2">
-          <SelectField label={t('common.item')} name="variantId">
-            {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-          </SelectField>
-        </div>
+        <SelectField label={t('common.item')} name="variantId">
+          {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+        </SelectField>
       )}
-      <TextField label={`${t('pur.supplierSku')} (${t('common.optional')})`} name="supplierSku" maxLength={64} defaultValue={item?.supplierSku ?? ''} error={fieldError('supplierSku')} />
-      <TextField label={`${t('pur.catalogCostLabel')} (${t('common.optional')})`} name="unitCost" inputMode="decimal" placeholder="0.00" defaultValue={item?.unitCost ? item.unitCost.replace(/(\.\d{2})0+$/, '$1') : ''} error={fieldError('unitCost')} />
+      <TextField span="half" label={`${t('pur.supplierSku')} (${t('common.optional')})`} name="supplierSku" maxLength={64} defaultValue={item?.supplierSku ?? ''} error={fieldError('supplierSku')} />
+      <TextField span="half" label={`${t('pur.catalogCostLabel')} (${t('common.optional')})`} name="unitCost" inputMode="decimal" placeholder="0.00" defaultValue={item?.unitCost ? item.unitCost.replace(/(\.\d{2})0+$/, '$1') : ''} error={fieldError('unitCost')} />
       <TextField label={`${t('pur.supplierItemName')} (${t('common.optional')})`} name="supplierItemName" maxLength={200} defaultValue={item?.supplierItemName ?? ''} error={fieldError('supplierItemName')} />
-      <label className="flex items-center gap-2 self-end pb-3 text-[0.875rem]">
-        <input type="checkbox" name="preferred" defaultChecked={item?.preferred ?? false} /> {t('pur.preferred')}
+      <label className="check">
+        <input type="checkbox" name="preferred" defaultChecked={item?.preferred ?? false} /> <span>{t('pur.preferred')}</span>
       </label>
       <Actions pending={pending} general={general(error)} submitLabel={item ? t('common.save') : t('common.add')} close={close} />
     </form>
