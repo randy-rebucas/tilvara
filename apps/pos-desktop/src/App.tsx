@@ -8,7 +8,7 @@ import { Sell } from './components/Sell';
 import { Shell } from './components/Shell';
 import { TillSetup } from './components/Till';
 import { useT } from './i18n';
-import type { GuideTopic } from './lib/guide';
+import { tabsFor, type Tab } from './lib/tabs';
 import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
 import type { Me } from './types';
@@ -18,9 +18,6 @@ type Stage =
   | { name: 'business'; me: Me }
   | { name: 'register'; me: Me }
   | { name: 'counter'; me: Me; shift: Shift };
-type Tab = 'sell' | 'history' | 'close';
-/** The part of the user guide each counter tab opens. */
-const TAB_TOPIC: Record<Tab, GuideTopic> = { sell: 'sell', history: 'shift', close: 'close' };
 
 export function App() {
   const till = useTill();
@@ -86,15 +83,12 @@ function Counter() {
 
   const { me, shift } = stage;
   const permissions = me.activeTenant?.permissions ?? [];
-  const tabs: [Tab, string][] = [
-    ['sell', t('nav.sell')],
-    ['history', t('nav.history')],
-    ['close', t('nav.close')],
-  ];
+  const extensions = me.activeTenant?.extensions ?? [];
+  const tabs = tabsFor(extensions);
   return (
     <Shell
       onSignOut={leave}
-      help={{ topic: TAB_TOPIC[tab] }}
+      help={{ topic: tabs.find((x) => x.key === tab)?.topic ?? 'sell', extensions }}
       context={
         <span className="serial text-[0.8125rem]">
           {shift.branch.name} · <span className="text-white">{shift.register.code}</span> · {me.user.displayName}
@@ -102,7 +96,7 @@ function Counter() {
       }
       nav={
         <nav className="flex gap-1" aria-label={t('a11y.counterNav')} data-testid="counter-nav">
-          {tabs.map(([key, label]) => (
+          {tabs.map(({ key, label }) => (
             <button
               key={key}
               type="button"
@@ -110,7 +104,7 @@ function Counter() {
               onClick={() => setTab(key)}
               className={`h-10 whitespace-nowrap rounded px-3 text-[0.9375rem] ${tab === key ? 'bg-white/20 font-semibold text-white' : 'text-blue-ink hover:bg-white/10'}`}
             >
-              {label}
+              {t(label)}
             </button>
           ))}
         </nav>

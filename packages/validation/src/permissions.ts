@@ -1,10 +1,19 @@
 /**
- * Permission catalog. MUST match the rows seeded in
- * packages/database/drizzle/0003_identity_rls_auth.sql (checked by an integration test).
+ * Permission catalog: the base codes plus the codes each extension adds (ADR-0026). MUST match the
+ * rows seeded in packages/database/drizzle/0003_identity_rls_auth.sql and by each extension's
+ * migration (checked by an integration test).
  */
-import type { BusinessType } from './auth.js';
+import {
+  extensionManifest,
+  extensionPermissions,
+  extensionPrivileged,
+  extensionSupport,
+  type ExtensionManifest,
+  type ExtensionPermission,
+} from './extensions.js';
 
-export const PERMISSIONS = [
+/** What every business has (the retail base). */
+export const CORE_PERMISSIONS = [
   'tenant.manage',
   'subscription.manage',
   'members.read',
@@ -40,7 +49,9 @@ export const PERMISSIONS = [
   'integrations.manage',
 ] as const;
 
-export type PermissionCode = (typeof PERMISSIONS)[number];
+export type PermissionCode = (typeof CORE_PERMISSIONS)[number] | ExtensionPermission;
+
+export const PERMISSIONS: readonly PermissionCode[] = [...CORE_PERMISSIONS, ...extensionPermissions()];
 
 export function isPermissionCode(value: string): value is PermissionCode {
   return (PERMISSIONS as readonly string[]).includes(value);
@@ -51,6 +62,7 @@ export function isPermissionCode(value: string): value is PermissionCode {
  * after the grace period (ADR-0016). Built-in roles that qualify: owner, admin, accountant.
  */
 export const PRIVILEGED_PERMISSIONS: readonly PermissionCode[] = [
+  ...extensionPrivileged(),
   'tenant.manage',
   'subscription.manage',
   'members.manage',
@@ -66,6 +78,7 @@ export const PRIVILEGED_PERMISSIONS: readonly PermissionCode[] = [
  * business. Support access is read-only; the API refuses every write made with a support token.
  */
 export const SUPPORT_PERMISSIONS: readonly PermissionCode[] = [
+  ...extensionSupport(),
   'members.read',
   'roles.read',
   'org.read',
@@ -84,7 +97,7 @@ export interface RoleTemplate {
   permissions: readonly PermissionCode[];
 }
 
-const all = PERMISSIONS;
+const all = CORE_PERMISSIONS;
 
 const BRANCH_MANAGER: readonly PermissionCode[] = [
   'members.read', 'org.read', 'catalog.read', 'sales.create', 'sales.read', 'sales.refund', 'sales.void',
@@ -93,7 +106,7 @@ const BRANCH_MANAGER: readonly PermissionCode[] = [
   'customers.manage', 'reports.read',
 ];
 
-/** System roles seeded into every new tenant. Tenants may add custom roles later. */
+/** System roles seeded into every new tenant (base codes only). Tenants may add custom roles later. */
 export const ROLE_TEMPLATES: readonly RoleTemplate[] = [
   { key: 'owner', name: 'Owner', permissions: all },
   { key: 'admin', name: 'Administrator', permissions: all.filter((p) => p !== 'subscription.manage') },
@@ -136,5 +149,13 @@ export const isPrivilegedSet = (codes: Iterable<string>): boolean => {
   return false;
 };
 
-/** The built-in roles a business of this type is given (all of them since migration 0112). */
-export const roleTemplatesFor = (_businessType: BusinessType): readonly RoleTemplate[] => ROLE_TEMPLATES;
+/**
+ * The built-in roles of a business with these extensions on: the base roles plus each extension's
+ * (ADR-0026). Seeding is additive, so switching an extension on adds its roles and nothing else.
+ * Switching on also gives the business's Owner and Administrator roles every code of the extension
+ * (the API does it; those roles hold every base code).
+ */
+export const roleTemplatesFor = (extensions: readonly string[] = [], list?: readonly ExtensionManifest[]): readonly RoleTemplate[] => [
+  ...ROLE_TEMPLATES,
+  ...extensions.flatMap((code) => (extensionManifest(code, list)?.roleTemplates ?? []) as readonly RoleTemplate[]),
+];

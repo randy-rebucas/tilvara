@@ -113,7 +113,16 @@ export interface Me {
    * `features`: what the plan includes (multi_entity, api_access, advanced_reports).
    * Absent from an API older than session 22: treat as "not known" (show everything; the API still refuses).
    */
-  activeTenant: { tenantId: string; membershipId: string; status: string; businessType: BusinessType; features?: string[]; permissions: string[] } | null;
+  activeTenant: {
+    tenantId: string;
+    membershipId: string;
+    status: string;
+    businessType: BusinessType;
+    features?: string[];
+    /** Usable extensions (ADR-0026); absent from older APIs. */
+    extensions?: string[];
+    permissions: string[];
+  } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];
   mfa: MfaStatus;
   /** Tilvara support staff (ADR-0016 slice 6). */
@@ -122,6 +131,20 @@ export interface Me {
   support: { grantId: string; tenantName: string; expiresAt: string } | null;
 }
 /** Support access a business gave Tilvara (ADR-0016 slice 6). */
+/** An extension as this business sees it (ADR-0026; `GET /extensions`). */
+export interface Extension {
+  code: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  allowedByPlan: boolean;
+  /** On, active and on the plan: what `/me` lists. */
+  usable: boolean;
+  requires: string[];
+  /** Extensions it requires that are off. */
+  missing: string[];
+}
+
 export interface SupportGrant {
   id: string;
   purpose: string;

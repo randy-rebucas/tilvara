@@ -20,6 +20,8 @@ export const plans = pgTable('plans', {
   currency: text('currency').notNull().default('PHP'),
   limits: jsonb('limits').$type<PlanLimits>().notNull(),
   features: jsonb('features').$type<PlanFeature[]>().notNull().default([]),
+  /** Extension codes a business on this plan may switch on (ADR-0026); each extension's migration adds itself. */
+  extensions: jsonb('extensions').$type<string[]>().notNull().default([]),
   active: boolean('active').notNull().default(true),
 });
 

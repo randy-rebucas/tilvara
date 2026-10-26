@@ -18,6 +18,7 @@ export const NON_TENANT_TABLES: Record<string, string> = {
   email_change_tokens: 'per-user email change link hashes and the new address; no runtime access, only auth_email_change_* functions',
   permissions: 'global read-only permission catalog',
   plans: 'global read-only plan catalog',
+  extensions: 'global read-only extension catalog (ADR-0026)',
   discount_schemes: 'global statutory discount schemes (SC/PWD), platform-maintained, read-only to tenants',
   worker_heartbeats: 'one row per outbox worker; no runtime access, only worker_heartbeat* and platform_metrics()',
   backup_runs: 'successful backups and restore drills; no runtime access, only platform_record_backup() and platform_metrics()',

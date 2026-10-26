@@ -13,6 +13,8 @@ export interface GuideSection {
   lede: MessageKey;
   steps: MessageKey[];
   tips: MessageKey[];
+  /** The extension this part explains (ADR-0026): shown only while the business has it. */
+  extension?: string;
 }
 
 const keys = (id: GuideTopic, kind: 's' | 't', n: number) => Array.from({ length: n }, (_, i) => `guide.${id}.${kind}${i + 1}` as MessageKey);
@@ -33,4 +35,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('till', 'guide.till.title', 4, 2),
   section('trouble', 'guide.trouble.title', 4, 1),
 ];
+
+/** The parts for a business with these extensions on: the counter's own, and those of its extensions. */
+export const guideSections = (extensions: readonly string[]) => GUIDE_SECTIONS.filter((s) => !s.extension || extensions.includes(s.extension));
 

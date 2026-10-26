@@ -278,6 +278,8 @@ Retail stores and boutiques (session 26, ADR-0021): ✅ done. The user chose all
 
 Retail only (sessions 32–33, 2026-10-25): ✅ laundry, lodging and restaurants (0110–0111), then grocery, salons, pharmacies, HYBRID, recipes, tips, packages and prescriptions (0112) and the tip and package history (0113) removed at the user's request; packs, expiry lots, lot holds, the batch trace and the expired-stock rule kept for every shop.
 
+Extensions (session 35, 2026-10-26, ADR-0026): ✅ framework — retail is the base; industry modules declared in `EXTENSIONS` + the `extensions` catalog, allowed per plan (`plans.extensions`), switched on/off by the owner (Subscription → Extensions), `@RequiresExtension` / `assertExtension`, `/me` and the snapshot carry the usable list, admin nav/guide/role editor and till tabs/guide filter by it; proven with test-only fixtures (migrations 0114–0115). ⬜ Next: pharmacy as the first extension (its own slice, `docs/architecture/extensions.md`).
+
 Audit 2026-10-21 (session 31): second full audit, `docs/AUDIT-2026-10-21.md`. ✅ Every defect and work item fixed, decisions A1–A6 taken as recommended; all gates, integration (608 tests) and 33 E2E suites pass. Open items are in `LEFTOVER.md`.
 
 ## Phase 7 — Differentiation (validated demand only)

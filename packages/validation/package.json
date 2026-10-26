@@ -13,6 +13,10 @@
     "./permissions": {
       "types": "./dist/permissions.d.ts",
       "default": "./dist/permissions.js"
+    },
+    "./extensions": {
+      "types": "./dist/extensions.d.ts",
+      "default": "./dist/extensions.js"
     }
   },
   "scripts": {

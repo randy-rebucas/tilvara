@@ -39,6 +39,7 @@
     "test:e2e:web:onboarding": "node apps/admin-web/e2e/onboarding.mjs",
     "test:e2e:web:account": "node apps/admin-web/e2e/account.mjs",
     "test:e2e:web:guide": "node apps/admin-web/e2e/guide.mjs",
+    "test:e2e:web:extensions": "node apps/admin-web/e2e/extensions.mjs",
     "test:e2e:web:drawers": "node apps/admin-web/e2e/drawers.mjs",
     "test:e2e:web:stock": "node apps/admin-web/e2e/stock.mjs",
     "test:e2e:web:payables": "node apps/admin-web/e2e/payables.mjs",

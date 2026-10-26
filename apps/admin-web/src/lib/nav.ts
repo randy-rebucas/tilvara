@@ -10,6 +10,8 @@ export interface NavItem {
   key: MessageKey;
   needs?: string[];
   match?: string;
+  /** The extension this tab belongs to (ADR-0026): shown only while the business may use it. */
+  extension?: string;
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -25,6 +27,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
   { href: '/team', key: 'nav.team', needs: ['members.read'] },
   { href: '/subscription', key: 'nav.subscription', needs: ['subscription.manage', 'tenant.manage'] },
 ];
+
+/** The business has the extension this area belongs to, if any (`/me` → `activeTenant.extensions`). */
+export const offered = (item: Pick<NavItem, 'extension'>, extensions: readonly string[]) => !item.extension || extensions.includes(item.extension);
 
 /** The person's permissions open this area (UI hint only; the API enforces access). */
 export const permitted = (item: Pick<NavItem, 'needs'>, permissions: readonly string[]) =>

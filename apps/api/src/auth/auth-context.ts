@@ -54,6 +54,15 @@ export const ALLOW_READ_ONLY_BUSINESS = 'onepos:allowReadOnlyBusiness';
  */
 export const AllowReadOnlyBusiness = () => SetMetadata(ALLOW_READ_ONLY_BUSINESS, true);
 
+export const REQUIRES_EXTENSION = 'onepos:requiresExtension';
+/**
+ * Route (or every route of a controller) belongs to an extension (ADR-0026). Its writes are refused
+ * with 403 EXTENSION_NOT_ENABLED unless the business may use the extension (`ExtensionGuard`); reads
+ * stay open, so records made before switching it off stay visible. Inside a transaction use
+ * `assertExtension` instead (or as well).
+ */
+export const RequiresExtension = (code: string) => SetMetadata(REQUIRES_EXTENSION, code);
+
 export const REQUIRES_TENANT = 'onepos:requiresTenant';
 /** Route requires an active tenant but no specific permission (e.g. /me within a tenant). */
 export const RequireTenant = () => SetMetadata(REQUIRES_TENANT, true);

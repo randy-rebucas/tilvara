@@ -198,6 +198,9 @@ export class AuthController {
             // What the plan includes (multi_entity, api_access, advanced_reports): the screens
             // hide the rest, which the server refuses anyway (`assertFeature`).
             features: business!.features,
+            // Usable extensions (ADR-0026: on, and allowed by the plan): the screens show their areas;
+            // the server refuses their writes when off (`@RequiresExtension`, `assertExtension`).
+            extensions: business!.extensions,
             permissions: permissionCodes(auth.tenant.grants),
             grants: auth.tenant.grants,
           }

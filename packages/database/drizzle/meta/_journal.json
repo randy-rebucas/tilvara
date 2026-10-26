@@ -799,6 +799,20 @@
       "when": 1792939309179,
       "tag": "0113_remove_tip_and_package_history",
       "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1792985026763,
+      "tag": "0114_extensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1792985055664,
+      "tag": "0115_extensions_rls",
+      "breakpoints": true
     }
   ]
 }

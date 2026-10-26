@@ -4,13 +4,13 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useT } from '@/i18n/client';
 import { extraFor } from '@/i18n/titles';
-import { NAV_ITEMS, permitted } from '@/lib/nav';
+import { NAV_ITEMS, offered, permitted } from '@/lib/nav';
 
-/** Tabs follow the user's permissions (UI hint only; the API enforces access). */
-export function AppNav({ permissions }: { permissions: string[] }) {
+/** Tabs follow the user's permissions and the business's extensions (UI hint only; the API enforces access). */
+export function AppNav({ permissions, extensions }: { permissions: string[]; extensions: string[] }) {
   const { t, lang } = useT();
   const path = usePathname();
-  const visible = NAV_ITEMS.filter((i) => permitted(i, permissions));
+  const visible = NAV_ITEMS.filter((i) => offered(i, extensions) && permitted(i, permissions));
   return (
     // No gap in the band (lg+): the tabs' own padding separates them, and all of them fit at 1440px.
     <nav aria-label={extraFor(lang, 'a11y.mainNav')} data-testid="main-nav" className="-mx-1 flex min-w-0 gap-1 overflow-x-auto lg:gap-0">

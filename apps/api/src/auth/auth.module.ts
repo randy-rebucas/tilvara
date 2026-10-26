@@ -9,6 +9,7 @@ import { AccountSecurityService } from './account-security.service.js';
 import { AccountService } from './account.service.js';
 import { AuthController } from './auth.controller.js';
 import { AuthGuard } from './auth.guard.js';
+import { ExtensionGuard } from '../extensions/extension.guard.js';
 import { AuthService } from './auth.service.js';
 import { PasswordService } from './password.service.js';
 import { TokenService } from './token.service.js';
@@ -28,9 +29,10 @@ import { SecretBox } from './totp.js';
     AuthService,
     AccountSecurityService,
     AccountService,
-    // Order matters: rate limit first (cheap), then authentication/authorization.
+    // Order matters: rate limit first (cheap), then authentication/authorization, then extension writes (ADR-0026).
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
+    { provide: APP_GUARD, useClass: ExtensionGuard },
   ],
   exports: [TokenService, AuthService, PasswordService],
 })

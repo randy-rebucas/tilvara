@@ -110,7 +110,7 @@ describe('schema isolation catalog', () => {
     const writes = await q<{ table: string; priv: string }>(`
       SELECT table_name AS table, privilege_type AS priv FROM information_schema.table_privileges
        WHERE grantee = 'onepos_app' AND table_schema = 'public'
-         AND table_name IN ('permissions', 'plans', 'discount_schemes', 'user_sessions', 'tenants', 'users')
+         AND table_name IN ('permissions', 'plans', 'extensions', 'discount_schemes', 'user_sessions', 'tenants', 'users')
          AND privilege_type IN ('INSERT', 'UPDATE', 'DELETE')`);
     expect(writes).toEqual([]);
     const sessionReads = await q(`SELECT 1 FROM information_schema.column_privileges

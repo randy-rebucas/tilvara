@@ -9,7 +9,7 @@ import { rejectCrossSite } from '@/lib/csrf';
  * invitation goes through `/api/auth` (it sets the session cookies), never through here.
  */
 const ALLOWED =
-  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance)(\/|$)/;
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|extensions|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance)(\/|$)/;
 
 async function forward(request: NextRequest, path: string[]) {
   const joined = path.join('/');

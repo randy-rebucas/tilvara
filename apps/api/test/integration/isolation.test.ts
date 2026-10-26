@@ -5,6 +5,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ExportLinks } from '../../src/exports/export-links.js';
 import { addMember, asOwnerInTenant, bearer, createApp, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
+import { FIXTURE, seedExtensionFixtures } from './fixtures/extension-fixture.js';
 
 /**
  * Phase 1 exit sweep: two fully configured tenants, then every tenant table and every
@@ -267,6 +268,8 @@ async function world(prefix: string): Promise<World> {
   const apiKey = ok(await http().post('/v1/api-keys').set(auth).send({ name: 'Fixture', scopes: ['org.read'] }));
   const webhook = ok(await http().post('/v1/webhooks').set(auth).send({ url: 'https://hooks.example.ph/fixture', topics: ['sale.completed'] }));
   const webhookPing = ok(await http().post(`/v1/webhooks/${webhook.id}/ping`).set(auth));
+  // ADR-0026: an extension switched on (the test-only fixture; enterprise allows it).
+  ok(await http().post(`/v1/extensions/${FIXTURE}/enable`).set(auth), 200);
   // An item with dated lots (a delivery with lot AMX-1, seven sold from it) and a hold on another lot code.
   const dated = ok<{ variants: { id: string }[] }>(await http().post('/v1/products').set(auth).send({
     name: 'Vitamin C 500', uomId, taxCategoryId: taxId, tracksExpiry: true, variants: [{ sku: `${prefix}-VITC`, price: '9.00' }],
@@ -380,6 +383,7 @@ beforeAll(async () => {
   app = await createApp();
   owner = ownerPool();
   runtime = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 2 });
+  await seedExtensionFixtures(owner);
   [a, b] = await Promise.all([world('iso-a'), world('iso-b')]);
   // Two full businesses with a row in every tenant table: ~10 s alone, past 60 s late in a full gate run.
 }, 180_000);
@@ -394,6 +398,10 @@ afterAll(async () => {
 function attackMatrix(): Record<string, () => request.Test> {
   const auth = b.auth;
   return {
+    // Extension codes are catalog-wide, not tenant rows: an unknown code is not found, and one business
+    // switching an extension changes nothing for another (extensions.test.ts).
+    'POST /v1/extensions/:code/enable': () => http().post('/v1/extensions/no_such_extension/enable').set(auth),
+    'POST /v1/extensions/:code/disable': () => http().post('/v1/extensions/no_such_extension/disable').set(auth),
     'PATCH /v1/legal-entities/:id': () => http().patch(`/v1/legal-entities/${a.entityId}`).set(auth).send({ registeredName: 'pwned' }),
     'POST /v1/legal-entities/:id/archive': () => http().post(`/v1/legal-entities/${a.entityId}/archive`).set(auth),
     'GET /v1/legal-entities/:id/tax-profiles': () => http().get(`/v1/legal-entities/${a.entityId}/tax-profiles`).set(auth),

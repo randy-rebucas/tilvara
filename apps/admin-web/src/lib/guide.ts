@@ -1,6 +1,6 @@
 import type { Denomination } from '@/components/note';
 import type { MessageKey } from '@/i18n/messages';
-import { NAV_ITEMS, permitted, type NavItem } from './nav';
+import { NAV_ITEMS, offered, permitted, type NavItem } from './nav';
 
 /**
  * The user guide (`/help`): one section per area of the back office, in the order an owner sets
@@ -88,17 +88,17 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('drawers', 'drawers.title', 'orange', 3, 2, { area: area('/offline-sales'), href: '/shifts' }),
   section('locations', 'nav.locations', 'violet', 5, 3, { area: area('/locations') }),
   section('team', 'nav.team', 'green', 4, 2, { area: area('/team') }),
-  section('subscription', 'nav.subscription', 'none', 5, 1, { area: area('/subscription') }),
+  section('subscription', 'nav.subscription', 'none', 6, 1, { area: area('/subscription') }),
   section('account', 'guide.account.title', 'none', 4, 2),
   section('till', 'guide.till.title', 'orange', 3, 1),
 ];
 
 /**
  * The guide as this person sees it: `permitted` is false when the person's role does not open the area (the section still shows, so
- * a cashier can read what a manager does).
+ * a cashier can read what a manager does). The part of an extension the business does not have is left out (ADR-0026).
  */
-export function guideFor(permissions: readonly string[]) {
-  return GUIDE_SECTIONS.map((s) => ({
+export function guideFor(permissions: readonly string[], extensions: readonly string[] = []) {
+  return GUIDE_SECTIONS.filter((s) => !s.area || offered(s.area, extensions)).map((s) => ({
     ...s,
     permitted: !s.area || permitted(s.area, permissions),
   }));
@@ -133,8 +133,13 @@ const TOPIC_BY_PATH: readonly [string, GuideTopic][] = [
   ['/security', 'account'],
 ];
 
-/** The guide section for the page at `path` (the band's help button opens `/help#<topic>`). */
-export function topicFor(path: string): GuideTopic {
+/**
+ * The guide section for the page at `path` (the band's help button opens `/help#<topic>`). A page of an
+ * extension the business does not have points at the subscription part, which says how to switch it on.
+ */
+export function topicFor(path: string, extensions: readonly string[] = []): GuideTopic {
   const hit = TOPIC_BY_PATH.filter(([p]) => path === p || path.startsWith(`${p}/`)).sort((a, b) => b[0].length - a[0].length)[0];
+  const area = GUIDE_SECTIONS.find((s) => s.id === hit?.[1])?.area;
+  if (area && !offered(area, extensions)) return 'subscription';
   return hit?.[1] ?? 'start';
 }

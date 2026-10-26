@@ -75,6 +75,11 @@ export interface Snapshot {
    * the server re-prices the sale; absent from older servers (no promotions).
    */
   promotions?: Promotion[];
+  /**
+   * The business's usable extensions at `asOf` (ADR-0026): the till shows their screens offline. Absent
+   * from older servers (none). Switching one bumps `catalogVersion`. Never a reason to refuse a sale.
+   */
+  extensions?: string[];
 }
 
 /** `GET /v1/terminal/catalog-version`: cheap enough to ask every half minute. */

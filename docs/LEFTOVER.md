@@ -38,7 +38,14 @@ Latent: none of these has a row on the dev DB, and there is no production DB yet
 Clean-up left:
 - ⬜ `journal_entries_source_check` (and the TS schema) still allows `SALE_TIP_REFUND`, though 0113 deleted every such entry; drop it with the next migration that touches the check.
 - ⬜ No integration test returns an old sale paid with a retired tender (`TENDER_RETIRED`, unit test only) or an old sale with `sale_charges`.
-- ⬜ Kept as scaffolding for a future type: the business-type change path (`business.service.ts`, `roleTemplatesFor`), `PERSONAL_KEYS` for retired fields (over-redaction is harmless), account 2200 in new charts, the sale-side `serviceCharge` in `salePosting`.
+- ⬜ Kept as scaffolding: the business-type change path (`business.service.ts`; superseded by extensions, ADR-0026: drop it with the column when nothing reads `businessType`), `PERSONAL_KEYS` for retired fields (over-redaction is harmless), account 2200 in new charts, the sale-side `serviceCharge` in `salePosting`.
+
+## Extensions (session 35, ADR-0026)
+- ⬜ No extension ships yet; pharmacy is the first planned (its own slice: manifest, migration, module, screens, guide, E2E).
+- ⬜ Hook points not built until an extension needs them: extension webhook topics (`WEBHOOK_TOPICS`), API-key scopes, report pages, receipt lines, checkout hooks in `record()` beyond `assertExtension`, sample items per extension.
+- ⬜ The till takes its extension list from `/me` at sign-in; the snapshot's `extensions` is not read by the till yet (nothing offline depends on it until an extension's till screen does).
+- ⬜ A plan downgrade or an extension withdrawn from the catalog does not bump the catalog version (switching does), so a till shows the extension's screens until its next snapshot refresh (≤ 10 minutes online); its writes are refused by the server meanwhile.
+- ⬜ `tenants.business_type` (always RETAIL) and `businessType` on `/me` are kept for older tills; drop them in a later migration.
 
 ## Session 33 — retail only (2026-10-25)
 The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migration 0112): salons, recipes, tips and prescriptions went with them; packs, expiry lots, lot codes, lot holds, the batch trace and the expired-stock rule stay for every shop.

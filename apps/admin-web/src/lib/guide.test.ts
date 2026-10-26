@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { en, fil } from '../i18n/messages';
 import { GUIDE_SECTIONS, guideFor, topicFor } from './guide';
-import { NAV_ITEMS } from './nav';
+import { NAV_ITEMS, offered } from './nav';
+import { EXTENSIONS, type ExtensionManifest } from '@1pos/validation/extensions';
 
 describe('user guide', () => {
   it('words every section, step and tip in English and Filipino', () => {
@@ -23,9 +24,23 @@ describe('user guide', () => {
   it('covers every tab of the band, and the band help button lands on its section', () => {
     const ids = GUIDE_SECTIONS.map((s) => s.id);
     for (const item of NAV_ITEMS) {
-      expect(ids).toContain(topicFor(item.href));
-      if (item.href !== '/') expect(GUIDE_SECTIONS.find((s) => s.id === topicFor(item.href))?.area, item.href).toBe(item);
+      const on = item.extension ? [item.extension] : [];
+      expect(ids).toContain(topicFor(item.href, on));
+      if (item.href !== '/') expect(GUIDE_SECTIONS.find((s) => s.id === topicFor(item.href, on))?.area, item.href).toBe(item);
     }
+  });
+
+  it('extensions (ADR-0026): every area names a known extension; a business without it gets no part for it, and its pages point at Subscription', () => {
+    const known: readonly string[] = EXTENSIONS.map((m: ExtensionManifest) => m.code);
+    for (const item of NAV_ITEMS) if (item.extension) expect(known).toContain(item.extension);
+    const all = guideFor(['tenant.manage'], known);
+    expect(all).toHaveLength(GUIDE_SECTIONS.length);
+    const none = guideFor(['tenant.manage'], []);
+    expect(none.map((s) => s.id)).toEqual(GUIDE_SECTIONS.filter((s) => !s.area?.extension).map((s) => s.id));
+    for (const s of GUIDE_SECTIONS.filter((x) => x.area?.extension)) expect(topicFor(s.area!.href, [])).toBe('subscription');
+    expect(offered({ extension: 'pharmacy' }, [])).toBe(false);
+    expect(offered({ extension: 'pharmacy' }, ['pharmacy'])).toBe(true);
+    expect(offered({}, [])).toBe(true);
   });
 
   it('picks the section for nested pages and falls back to getting started', () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BUSINESS_TYPES, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
+import { BUSINESS_TYPES, CORE_PERMISSIONS, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -86,7 +86,7 @@ describe('role templates', () => {
     for (const t of ['SALON', 'PHARMACY', 'GROCERY', 'HYBRID']) expect(signupSchema.safeParse({ email: 'a@b.ph', password: 'correct horse battery', displayName: 'A', businessName: 'B', tenantSlug: 'bb', businessType: t }).success).toBe(false);
     expect(ROLE_TEMPLATES.map((t) => t.key)).not.toEqual(expect.arrayContaining(['front_desk', 'stylist', 'pharmacist', 'pharmacy_assistant']));
     expect(PERMISSIONS.some((p) => /^(appointments|staff|pharmacy)\./.test(p))).toBe(false);
-    expect(roleTemplatesFor('RETAIL')).toEqual(ROLE_TEMPLATES);
+    expect(roleTemplatesFor()).toEqual(ROLE_TEMPLATES);
     const product = { name: 'P', taxCategoryId: '0195f0a0-0000-7000-8000-000000000001', uomId: '0195f0a0-0000-7000-8000-000000000002', variants: [{ sku: 'P1' }] };
     expect(createProductSchema.safeParse({ ...product, productType: 'PACKAGE', trackInventory: false }).success).toBe(false);
     // Unknown keys (a tip, an appointment, prescriptions) are stripped, never recorded.
@@ -100,8 +100,8 @@ describe('role templates', () => {
     expect(sale.lines[0]).not.toHaveProperty('staffId');
   });
 
-  it('owner holds every permission; admin cannot manage the subscription', () => {
-    expect(ROLE_TEMPLATES.find((t) => t.key === 'owner')!.permissions).toHaveLength(PERMISSIONS.length);
+  it('owner holds every base permission; admin cannot manage the subscription', () => {
+    expect(ROLE_TEMPLATES.find((t) => t.key === 'owner')!.permissions).toHaveLength(CORE_PERMISSIONS.length);
     expect(ROLE_TEMPLATES.find((t) => t.key === 'admin')!.permissions).not.toContain('subscription.manage');
   });
 });

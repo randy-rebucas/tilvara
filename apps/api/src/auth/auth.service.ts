@@ -91,7 +91,7 @@ export class AuthService {
           ]);
           await tx.setTenant(tenantId);
           await tx.client.query('UPDATE tenants SET business_type = $1 WHERE id = $2', [input.businessType, tenantId]);
-          await this.seedTenantAccess(tx, tenantId, input.businessType, userId, meta.correlationId);
+          await this.seedTenantAccess(tx, tenantId, userId, meta.correlationId);
           await seedCatalogDefaults(tx.db, tenantId);
           await tx.client.query('SELECT platform_start_trial($1, $2, $3)', [tenantId, TRIAL_PLAN, TRIAL_DAYS]);
           await emitEvent(tx.db, {
@@ -346,19 +346,26 @@ export class AuthService {
     return this.scalarPool<boolean>('SELECT auth_staff_active($1) AS v', [userId]);
   }
 
-  /** The active business's name and type, read in its own context (support sessions have no membership row). */
-  /** The business's name, type and the features its plan includes (what the screens offer). */
-  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[] }> {
+  /**
+   * The business's name, type, the features its plan includes and its usable extensions (what the
+   * screens offer), read in its own context (support sessions have no membership row).
+   */
+  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[]; extensions: string[] }> {
     return this.tenantDb.tx(
       async (tx) => {
         await tx.setTenant(tenantId);
-        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType; features: PlanFeature[] | null }>(
-          `SELECT t.name, t.business_type, p.features
+        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType; features: PlanFeature[] | null; extensions: string[] }>(
+          `SELECT t.name, t.business_type, p.features, app_usable_extensions() AS extensions
              FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id LEFT JOIN plans p ON p.code = s.plan_code
             WHERE t.id = $1`,
           [tenantId],
         );
-        return { name: rows[0]?.name ?? '', businessType: rows[0]?.business_type ?? 'RETAIL', features: rows[0]?.features ?? [] };
+        return {
+          name: rows[0]?.name ?? '',
+          businessType: rows[0]?.business_type ?? 'RETAIL',
+          features: rows[0]?.features ?? [],
+          extensions: rows[0]?.extensions ?? [],
+        };
       },
       { userId: auth.userId, correlationId: auth.correlationId },
     );
@@ -421,8 +428,9 @@ export class AuthService {
     };
   }
 
-  private async seedTenantAccess(tx: Tx, tenantId: string, businessType: BusinessType, userId: string, correlationId: string | undefined): Promise<void> {
-    const idByKey = await addRoleTemplates(tx.db, tenantId, roleTemplatesFor(businessType));
+  /** A new business has no extensions, so it gets the base roles. */
+  private async seedTenantAccess(tx: Tx, tenantId: string, userId: string, correlationId: string | undefined): Promise<void> {
+    const idByKey = await addRoleTemplates(tx.db, tenantId, roleTemplatesFor());
     const [membership] = await tx.db
       .insert(tenantMemberships)
       .values({ tenantId, userId, status: 'ACTIVE' })

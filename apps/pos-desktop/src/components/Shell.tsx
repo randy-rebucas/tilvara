@@ -28,6 +28,8 @@ export function LangToggle() {
 /** Which part of the user guide the ? button (and F1) opens. */
 export interface HelpContext {
   topic: GuideTopic;
+  /** The business's usable extensions: their parts of the guide show (ADR-0026). */
+  extensions?: string[];
 }
 
 /** The blue band: wordmark, where you are (branch · register · shift), till status, help, language, sign-out. */
@@ -86,7 +88,7 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}
       {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
-      {guideOpen && <Guide topic={help.topic} onBack={() => setOverlay(null)} />}
+      {guideOpen && <Guide topic={help.topic} extensions={help.extensions ?? []} onBack={() => setOverlay(null)} />}
       <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
     </div>
   );

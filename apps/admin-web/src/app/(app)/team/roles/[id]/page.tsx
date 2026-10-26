@@ -39,7 +39,7 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
 
       {canManage && (
         <div className="flex flex-wrap items-start gap-2">
-          <EditRoleForm role={role} />
+          <EditRoleForm role={role} extensions={me.activeTenant?.extensions ?? []} />
           <ActionButton url={`/api/v1/roles/${role.id}/archive`} label={t('team.archiveRole')} confirmText={t('team.archiveRoleConfirm', { name: role.name })} />
         </div>
       )}

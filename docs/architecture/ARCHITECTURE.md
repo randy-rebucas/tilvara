@@ -114,6 +114,7 @@ Dependency rules (enforced by review now, by lint rule later):
 | 0023 | Lodging | **Withdrawn 2026-10-25** (migration 0111) |
 | 0024 | Laundry | **Withdrawn 2026-10-25** (migration 0110) |
 | 0025 | Pharmacies | **Withdrawn 2026-10-25** (migration 0112), except §4 expired-stock rule, §5 lot codes, holds and batch trace, §7 box → strip → piece, kept for every shop |
+| 0026 | Extensions | Retail is the base; industry modules (manifest + catalog row + plan allowance) switched on per business by the owner; `@RequiresExtension` / `assertExtension`; checklist `docs/architecture/extensions.md` |
 
 ## 6. Transaction engine (checkout) — as built (Phase 2)
 

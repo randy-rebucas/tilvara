@@ -1,4 +1,6 @@
 > Since 2026-10-25 Tilvara supports retail shops only (sari-sari stores and groceries are retail shops). The other industries below were built and then withdrawn (ADR-0014, ADR-0022–ADR-0025; migrations 0110–0112). The list is kept as the market it came from.
+>
+> Since 2026-10-26 (ADR-0026) an industry comes back as an **extension**: retail stays the base every business has, and an extension (pharmacy is the first planned) adds a trade's tools, switched on per business in Subscription → Extensions when the plan allows it. How to build one: `docs/architecture/extensions.md`.
 
 Retail Stores & Boutiques: Clothing shops, convenience stores, and specialty retail stores need a POS for barcode scanning, quick checkouts, multi-item pricing, and tracking stock levels across shelves.
 

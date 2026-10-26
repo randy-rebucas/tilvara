@@ -39,6 +39,7 @@ import { formatTin } from '../sales/receipt.js';
 import { SalesService, type OfflineContext } from '../sales/sales.service.js';
 import { profilesInForce } from '../tax/tax-profiles.js';
 import { nextPromotionChange, promotionsInForce } from '../catalog/promotions.service.js';
+import { usableExtensions } from '../extensions/gate.js';
 
 /** A terminal that proved its credential (ADR-0015 §2). The tenant comes from the credential, never the request. */
 export interface TerminalPrincipal {
@@ -177,6 +178,7 @@ export class SyncService extends TenantService {
           (await db.execute<{ n: string }>(sql`SELECT coalesce(max(device_seq), 0)::text AS n FROM terminal_transactions WHERE terminal_id = ${t.terminalId}`)).rows[0]!.n,
         ),
         promotions: await promotionsInForce(db, row.branch.id, asOf),
+        extensions: await usableExtensions(db),
       };
     });
   }

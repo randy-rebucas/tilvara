@@ -2,7 +2,8 @@
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
-  activeTenant: { tenantId: string; permissions: string[] } | null;
+  /** `extensions`: the business's usable extensions (ADR-0026); absent from older servers. */
+  activeTenant: { tenantId: string; permissions: string[]; extensions?: string[] } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
 

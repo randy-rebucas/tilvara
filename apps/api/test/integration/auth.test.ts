@@ -27,8 +27,9 @@ function login(email: string, extra: Record<string, unknown> = {}) {
 }
 
 describe('permission catalog', () => {
-  it('database seed matches the shared PERMISSIONS constant', async () => {
-    const { rows } = await owner.query<{ code: string }>('SELECT code FROM permissions ORDER BY code');
+  it('database seed matches the shared PERMISSIONS constant (base and extensions)', async () => {
+    // `test_*` codes belong to the test-only extensions (fixtures/extension-fixture.ts).
+    const { rows } = await owner.query<{ code: string }>(`SELECT code FROM permissions WHERE code NOT LIKE 'test\\_%' ORDER BY code`);
     expect(rows.map((r) => r.code)).toEqual([...PERMISSIONS].sort());
   });
 });
