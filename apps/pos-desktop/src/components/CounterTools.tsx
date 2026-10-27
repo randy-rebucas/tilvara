@@ -267,7 +267,8 @@ export function CustomerPanel({ canAdd, onPick, onCancel, title }: { canAdd: boo
       });
       onPick(c);
     } catch (err) {
-      setError(errorText(err, t('common.error'), t('common.network')));
+      // No answer: the customer may have been added; search for them before adding again.
+      setError(errorText(err, t('common.error'), t('custc.unconfirmed')));
     }
   }
   return (

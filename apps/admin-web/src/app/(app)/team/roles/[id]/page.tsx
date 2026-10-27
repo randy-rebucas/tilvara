@@ -32,7 +32,7 @@ export default async function RolePage({ params }: { params: Promise<{ id: strin
           {role.name} {role.isSystem && <span className="tag ml-1 align-middle">{t('team.system')}</span>}
           {role.archivedAt && <span className="tag ml-1 align-middle">{t('team.roleArchived')}</span>}
         </h1>
-        <Serial className="mt-1 block">{role.key} · {t('team.perms', { n: role.permissions.length })}</Serial>
+        <Serial className="mt-1 block">{t('team.perms', { n: role.permissions.length })}</Serial>
       </div>
 
       {role.isSystem && <Callout>{t('team.systemReadonly')}</Callout>}

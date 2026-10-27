@@ -46,6 +46,8 @@ export class CustomersController {
     return this.customers.update(auth, customerId, body);
   }
 
+  /** A withdrawal is honoured in a suspended or lapsed business too; the service refuses giving consent then. */
+  @AllowReadOnlyBusiness()
   @HttpCode(200)
   @Post(':id/consent')
   consent(@Auth() auth: AuthContext, @Param('id', id) customerId: string, @Body(new ZodPipe(customerConsentSchema)) body: CustomerConsentInput) {
@@ -58,6 +60,8 @@ export class CustomersController {
     return this.customers.archive(auth, customerId);
   }
 
+  /** An erasure request is answered in a suspended or lapsed business too. */
+  @AllowReadOnlyBusiness()
   @HttpCode(200)
   @Post(':id/anonymise')
   anonymise(@Auth() auth: AuthContext, @Param('id', id) customerId: string, @Body(new ZodPipe(anonymiseCustomerSchema)) body: AnonymiseCustomerInput) {
@@ -70,8 +74,8 @@ export class CustomersController {
   }
 
   @Get(':id/store-credit')
-  credit(@Auth() auth: AuthContext, @Param('id', id) customerId: string) {
-    return this.customers.credit(auth, customerId);
+  credit(@Auth() auth: AuthContext, @Param('id', id) customerId: string, @Query(new ZodPipe(customerHistoryQuerySchema)) q: CustomerHistoryQuery) {
+    return this.customers.credit(auth, customerId, q);
   }
 
   /** A data subject's access request: everything held about the customer, as JSON (audited). */

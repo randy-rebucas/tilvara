@@ -59,6 +59,16 @@ export class HttpErrorFilter implements ExceptionFilter {
       return;
     }
 
+    // The body parser's refusals (too large, not JSON): the client's fault, said as such, not a 500.
+    const parse = exception as { type?: unknown; status?: unknown; expose?: unknown };
+    if (parse?.expose === true && typeof parse.type === 'string' && typeof parse.status === 'number' && parse.status >= 400 && parse.status < 500) {
+      const tooLarge = parse.status === HttpStatus.PAYLOAD_TOO_LARGE;
+      const code = tooLarge ? 'PAYLOAD_TOO_LARGE' : (DEFAULT_CODES[parse.status] ?? 'ERROR');
+      res.locals.errorCode = code;
+      res.status(parse.status).json({ error: { code, message: tooLarge ? 'The request is too large' : 'The request body could not be read', correlationId } });
+      return;
+    }
+
     // Unknown error: log internally (no request body, no SQL parameters — they may hold PII
     // or token hashes), return a generic message.
     const err = exception as { name?: string; message?: string; cause?: { code?: string } };

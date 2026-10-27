@@ -39,6 +39,15 @@ type Buckets = Record<Bucket, string>;
 type Cell = string | number | null | undefined;
 type T = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
+/**
+ * A CSV download that failed is sent back to its page with `?exportError=<API code>` (never the API's
+ * text, so a link cannot put words on the page); this is what the page says.
+ */
+export function exportErrorMessage(t: T, code: string | undefined): string | null {
+  if (!code || !/^[A-Z_]{1,40}$/.test(code)) return null;
+  return code === 'RANGE_TOO_LARGE' ? t('rep.exportTooLarge') : t('rep.exportFailed', { code });
+}
+
 /** One CSV field: quoted when needed; a leading = + - @ is prefixed so a spreadsheet never runs it as a formula. */
 export function csvField(v: Cell): string {
   if (v === null || v === undefined) return '';
@@ -62,7 +71,8 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
         [t('common.date'), t('csv.part'), t('csv.count'), ...bucketHeads],
         ...r.days.flatMap((d) => [
           [d.day, t('csv.sales'), d.salesCount, ...BUCKETS.map((b) => d.sales[b])],
-          [d.day, t('csv.returns'), d.returnsCount + d.voidsCount, ...BUCKETS.map((b) => d.returns[b])],
+          // returnsCount counts every return document, voids included (voidsCount is the share of them).
+          [d.day, t('csv.returns'), d.returnsCount, ...BUCKETS.map((b) => d.returns[b])],
           [d.day, t('csv.net'), '', ...BUCKETS.map((b) => d.net[b])],
         ]),
       ];
@@ -83,7 +93,7 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       const r = data as RefundWatch;
       return [
         [t('csv.cashier'), t('csv.salesCount'), t('csv.sales'), t('csv.returnsCount'), t('csv.returns'), t('rep.voidsCol'), t('csv.voids'), t('rep.ownRefunds'), t('rep.refundRate'), t('rep.flags')],
-        ...r.data.map((x) => [x.displayName ?? '', x.salesCount, x.sales, x.returnsCount, x.returns, x.voidsCount, x.voids, x.ownSalesRefunded, x.refundRate ?? '', x.flags.join(' ')]),
+        ...r.data.map((x) => [x.displayName ?? '', x.salesCount, x.sales, x.returnsCount, x.returns, x.voidsCount, x.voids, x.ownSalesRefunded, x.refundRate ?? '', x.flags.map((f) => t(`rep.flag.${f}` as MessageKey)).join('; ')]),
       ];
     }
     case 'tenders': {
@@ -93,13 +103,13 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
     case 'tax': {
       const r = data as { data: (Omit<Buckets, 'gross' | 'discount'> & { vatStatus: string; vatRate: string })[] };
       const cols = BUCKETS.filter((b) => b !== 'gross' && b !== 'discount') as Exclude<Bucket, 'gross' | 'discount'>[];
-      return [[t('loc.vat'), t('csv.vatRate'), ...cols.map((b) => t(`csv.${b}` as MessageKey))], ...r.data.map((x) => [x.vatStatus, x.vatRate, ...cols.map((b) => x[b])])];
+      return [[t('loc.vat'), t('csv.vatRate'), ...cols.map((b) => t(`csv.${b}` as MessageKey))], ...r.data.map((x) => [x.vatStatus === 'VAT' ? t('loc.vatReg') : t('loc.nonVat'), x.vatRate, ...cols.map((b) => x[b])])];
     }
     case 'statutory': {
       const r = data as { data: { document: string; day: string; number: number; register: string; schemeCode: string; name: string; idNumber: string; tin: string | null; sales: string; discount: string; net: string }[] };
       return [
         [t('common.date'), t('csv.document'), t('common.number'), t('csv.register'), t('csv.scheme'), t('csv.beneficiary'), t('csv.idNumber'), 'TIN', t('csv.sales'), t('csv.discount'), t('csv.net')],
-        ...r.data.map((x) => [x.day, x.document, x.number, x.register, x.schemeCode, x.name, x.idNumber, x.tin ?? '', x.sales, x.discount, x.net]),
+        ...r.data.map((x) => [x.day, t(x.document === 'SALE' ? 'rep.docSALE' : 'rep.docRETURN'), x.number, x.register, x.schemeCode, x.name, x.idNumber, x.tin ?? '', x.sales, x.discount, x.net]),
       ];
     }
     case 'category': {
@@ -113,7 +123,7 @@ export function reportRows(report: CsvReport, data: unknown, t: T): Cell[][] {
       const r = data as ByBranch;
       return [
         [t('common.branch'), t('csv.salesCount'), t('csv.sales'), t('csv.returnsCount'), t('csv.returns'), t('rep.netSales'), t('csv.vatAmount'), t('rep.revenueExVat'), t('csv.discount'), t('csv.statutoryDiscount')],
-        ...r.data.map((x) => [`${x.code} ${x.name}`, x.salesCount, x.sales, x.returnsCount, x.returns, x.netSales, x.vatAmount, x.netExVat, x.discount, x.statutoryDiscount]),
+        ...r.data.map((x) => [`${x.code} ${x.name}${x.archivedAt ? ` (${t('common.archived')})` : ''}`, x.salesCount, x.sales, x.returnsCount, x.returns, x.netSales, x.vatAmount, x.netExVat, x.discount, x.statutoryDiscount]),
         [t('rep.allBranches'), r.totals.salesCount, r.totals.sales, r.totals.returnsCount, r.totals.returns, r.totals.netSales, r.totals.vatAmount, r.totals.netExVat, r.totals.discount, r.totals.statutoryDiscount],
       ];
     }

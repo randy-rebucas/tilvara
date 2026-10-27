@@ -148,6 +148,25 @@ try {
   await go(sheetPath);
   check('the sheet is now posted and links to its count', (await shown('Posted')) && await has('Open the posted count'));
 
+  // 4b. Two people on one sheet: a colleague's count saved meanwhile is kept, never sent back blank;
+  // one open sheet per branch, and no quick count of an item on it.
+  const sheet2 = await call('POST', '/v1/stock/count-sheets', tk, { branchId: br.id, blind: false });
+  check('a second open sheet at the branch is refused (SHEET_OPEN)', await call('POST', '/v1/stock/count-sheets', tk, { branchId: br.id }).then(() => false, (e) => String(e?.message ?? e).includes('SHEET_OPEN')));
+  await go(`/inventory/count-sheets/${sheet2.id}`);
+  await shown('0 of 2 items counted');
+  // The colleague (another session) counts the noodles while this page is open.
+  await call('PUT', `/v1/stock/count-sheets/${sheet2.id}/lines`, tk, { lines: [{ variantId: canton, countedQuantity: '3' }] });
+  await typeCount('Coke Mismo', '7.0');
+  await clickText('Save 1 counts');
+  check("after saving: the colleague's count shows and nothing waits to be saved", (await shown('2 of 2 items counted')) && (await shown('All counts saved')));
+  const after = (await call('GET', `/v1/stock/count-sheets/${sheet2.id}`, tk)).lines;
+  check("the colleague's 3 is kept and 7.0 was saved as 7", after.find((l) => l.variantId === canton)?.countedQuantity === '3' && after.find((l) => l.variantId === cola)?.countedQuantity === '7');
+  check('Post is offered (no "save first")', (await has('Post 2 counted items')) && !(await has('Save the counts first.')));
+  check('a quick count of an item on the open sheet is refused (ITEM_ON_OPEN_SHEET)', await call('POST', '/v1/stock/counts', tk, { branchId: br.id, lines: [{ variantId: cola, countedQuantity: '1' }] }, idem()).then(() => false, (e) => String(e?.message ?? e).includes('ITEM_ON_OPEN_SHEET')));
+  await go(`/inventory/counts?branch=${br.id}`);
+  check('Counts says a sheet is open and offers no second one', (await shown('already has an open count sheet')) && !(await has('Start a count sheet')));
+  await call('POST', `/v1/stock/count-sheets/${sheet2.id}/cancel`, tk, { reason: 'E2E: two counters' });
+
   // 5. Below zero is marked on the movements report.
   await call('PUT', `/v1/branches/${br.id}/inventory-settings`, tk, { negativeStockPolicy: 'ALLOW_WITH_FLAG', lowStockAlerts: true });
   await sell(canton, '5');

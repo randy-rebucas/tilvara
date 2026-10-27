@@ -23,6 +23,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   ]);
   const canCount = me.activeTenant?.permissions.includes('inventory.adjust') ?? false;
   const sheetHref = (s: CountSheetRow) => `/inventory/count-sheets/${s.id}`;
+  const openSheet = sheets?.data.find((s) => s.status === 'OPEN');
   const status = (s: CountSheetRow) => t(`sheet.status.${s.status}`);
   const href = (c: CountRow) => `/inventory/counts/${c.id}?branch=${branch?.id}`;
 
@@ -34,8 +35,14 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
             <h2 className="section-title pt-2">{t('sheet.title')}</h2>
             <p className="mt-1 max-w-[62ch] text-[0.875rem] text-muted">{t('sheet.lede')}</p>
           </div>
-          {canCount && branch && <StartSheetForm branchId={branch.id} />}
+          {/* One open sheet per branch (two would post the same differences twice). */}
+          {canCount && branch && !openSheet && <StartSheetForm branchId={branch.id} />}
         </div>
+        {openSheet && (
+          <p className="mb-3 text-[0.875rem] text-muted" data-sheet-open>
+            {t('sheet.oneOpen')} <Link href={sheetHref(openSheet)} className="underline">{t('sheet.openIt')}</Link>
+          </p>
+        )}
         <Note denom="gold" className="pr-2">
           {sheets && sheets.data.length > 0 ? (
             <RecordTable

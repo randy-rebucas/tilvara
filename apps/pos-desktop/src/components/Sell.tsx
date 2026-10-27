@@ -10,10 +10,12 @@ import { openCustomerDisplay, usePublishDisplay, type DisplayState } from '../li
 import type { CounterCustomer, LookupItem, Quote, Receipt as ReceiptData } from '../types';
 import { OfflineSaleError, type OfflineEngine, type OfflineReceipt as OfflineReceiptData } from '@1pos/pos-offline';
 import { errorText, PaymentPanel, unanswered, usePayment, type Notice } from './Payment';
+import { offlineRefusalText } from '../lib/offline-words';
 import type { Shift } from './Registers';
 import { Receipt } from './Receipt';
 import { OfflineReceipt } from './Till';
 import { Callout, Empty, Field, Money, Note } from './ui';
+import { openDrawerFor } from '../lib/drawer';
 import { QuickKeys } from './QuickKeys';
 import { CartDiscountPanel, CustomerPanel, DiscountPanel, ExchangeBanner, HeldCartsPanel, PricePanel, rateOf, type ExchangeStart, type HeldCart, type LineDiscount, type LineOverride } from './CounterTools';
 
@@ -112,9 +114,14 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   const creditHere = customer?.storeCredit.find((c) => c.legalEntityId === shift.branch.legalEntityId)?.balance ?? '0.00';
   const due = quote?.totals.amountDue ?? '0.00';
   // Store credit pays first, up to what is due; an exchange's refund likewise (the rest is paid, or comes back as change).
-  const credit = usingCredit && !exchange && isPositive(creditHere) ? (gte(creditHere, due) ? due : toDec(creditHere).toFixed(2)) : '0.00';
+  // Never offline: store credit needs the server, and an offline sale is cash only.
+  const credit = usingCredit && !exchange && !offline && isPositive(creditHere) ? (gte(creditHere, due) ? due : toDec(creditHere).toFixed(2)) : '0.00';
   const payable = exchange ? (gte(exchange.refund, due) ? '0.00' : sub(due, exchange.refund)) : sub(due, credit);
   const pay = usePayment({ shift, due: payable, setNotice });
+  /** The last checkout got no answer: the cart and payment stay as sent until "Complete sale again" gets one. */
+  const frozen = pay.unknown;
+  /** One Idempotency-Key per open "Hold sale" form: a hold whose answer was lost, sent again, is not held twice. */
+  const [holdKey, setHoldKey] = useState(uuid);
 
   const loadHeld = () =>
     api<{ data: HeldCart[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`)
@@ -123,6 +130,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   useEffect(() => {
     if (!offline) void loadHeld();
   }, [shift.register.id, offline]);
+
+  // An emptied cart is a new checkout: the next cart gets its own transaction id and key, so it can
+  // never be answered with (or recorded as) the one before. Kept while card/QR payments wait on it.
+  useEffect(() => {
+    if (cart.length === 0 && pay.intents.length === 0 && !pay.unknown) pay.resetIds();
+  }, [cart.length]);
 
   const focusScan = () => requestAnimationFrame(() => scanRef.current?.focus());
   useEffect(() => {
@@ -178,7 +191,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   /** Why the till refused offline, in the cashier's words (null when it was not an offline refusal). */
   function offlineText(err: unknown): string | null {
     if (err instanceof OfflineRefusal) return err.message;
-    if (err instanceof OfflineSaleError) return t('till.offlineRefused', { reason: err.message });
+    if (err instanceof OfflineSaleError) return t('till.offlineRefused', { reason: offlineRefusalText(err, t) });
     return null;
   }
 
@@ -196,6 +209,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   /** Add an item; `times` is a quantity typed before the scan ("5*", ADR-0021 §3). */
   function addItem(item: LookupItem, times?: string) {
+    if (frozen) return;
     if (!item.price) {
       setNotice({ kind: 'warn', text: t('sell.unpriced', { name: item.name }) });
       return;
@@ -296,8 +310,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     focusScan();
   }
 
-  const setQty = (id: string, quantity: string) => setCart((c) => c.map((l) => (l.id === id ? { ...l, quantity } : l)));
-  const remove = (id: string) => setCart((c) => c.filter((l) => l.id !== id));
+  const setQty = (id: string, quantity: string) => { if (!frozen) setCart((c) => c.map((l) => (l.id === id ? { ...l, quantity } : l))); };
+  const remove = (id: string) => { if (!frozen) setCart((c) => c.filter((l) => l.id !== id)); };
 
   function applyStatutory(lineId: string, e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -326,7 +340,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   }
 
   function patchLine(lineId: string, patch: (l: CartLine) => CartLine) {
-    setCart((c) => c.map((l) => (l.id === lineId ? patch(l) : l)));
+    if (!frozen) setCart((c) => c.map((l) => (l.id === lineId ? patch(l) : l)));
   }
   function setDiscount(lineId: string, d: LineDiscount | null) {
     patchLine(lineId, (l) => {
@@ -351,6 +365,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
    */
   const cartDiscountLines = cart.filter((l) => !l.statutory && !l.override && !l.discount && !quote?.lines.find((q) => q.id === l.id)?.promotionId);
   function discountCart(percent: string) {
+    if (frozen) return;
     const ids = new Set(cartDiscountLines.map((l) => l.id));
     setCart((c) => c.map((l) => (ids.has(l.id) ? { ...l, discount: { kind: 'RATE' as const, percent } } : l)));
     setDiscountingCart(false);
@@ -361,7 +376,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   async function hold(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const label = String(new FormData(e.currentTarget).get('holdLabel') ?? '').trim();
-    if (!label) return;
+    if (!label || frozen) return;
     try {
       await api('POST', '/v1/held-carts', {
         cashierSessionId: shift.sessionId,
@@ -369,17 +384,21 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         lines: cart.map((l) => ({ ...lineBody(l), name: l.name, sku: l.sku || (quote?.lines.find((q) => q.id === l.id)?.sku ?? l.variantId.slice(0, 8)), wholeUnits: l.wholeUnits })),
         beneficiaries: beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref)),
         ...(quote && { amountDue: quote.totals.amountDue }),
-      }, { 'idempotency-key': uuid() });
+      }, { 'idempotency-key': holdKey });
+      setHoldKey(uuid());
       setHolding(false);
       newSale();
       setNotice({ kind: 'info', text: t('hold.done', { label }) });
       void loadHeld();
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      // No answer: the cart may be held already; the same key holds it once however often it is sent.
+      if (!unanswered(err)) setHoldKey(uuid());
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('hold.unconfirmed')) });
     }
   }
 
   async function resume(id: string) {
+    if (frozen) return;
     try {
       const r = await api<{ lines: HeldLine[]; beneficiaries: Beneficiary[] }>('POST', `/v1/held-carts/${id}/resume`, { cashierSessionId: shift.sessionId });
       setCart(r.lines.map((l) => ({
@@ -396,7 +415,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       void loadHeld();
       focusScan();
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.unconfirmed')) });
       void loadHeld();
     }
   }
@@ -405,13 +424,15 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     try {
       await api('POST', `/v1/held-carts/${id}/discard`);
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.unconfirmed')) });
     }
     void loadHeld();
   }
 
   async function completeOffline() {
-    if (!pay.cashAmount || pay.intents.length > 0) return;
+    // Card/QR taken while online cannot be part of an offline sale: check or cancel them once the connection is back.
+    if (pay.intents.length > 0) return setNotice({ kind: 'warn', text: t('till.offlineIntents') });
+    if (!pay.cashAmount) return;
     try {
       const { receipt: kept } = await till.engine!.ringUp({
         cashierUserId, terminalTxnId: pay.txId, tendered: pay.cashAmount,
@@ -419,6 +440,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       });
       setNotice(null);
       setOfflineReceipt(kept);
+      // Cash changed hands: open the drawer (best effort, after the sale is kept; never in its way).
+      openDrawerFor(till.drawer, true);
       void till.refresh();
     } catch (err) {
       setNotice({ kind: 'error', text: offlineText(err) ?? errorText(err, t('common.error'), t('common.network')) });
@@ -427,12 +450,16 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   async function complete() {
     if (!quote) return;
-    if (offline) return completeOffline();
+    if (offline) {
+      // A customer or an exchange needs the server: the cashier is told why (see offlineBlock), nothing is kept.
+      if (offlineBlock) return;
+      return completeOffline();
+    }
     const lines = cart.map((l) => lineBody(l));
     const used = beneficiaries.filter((b) => cart.some((l) => l.statutory?.beneficiary === b.ref));
     const withCustomer = customer ? { customerId: customer.id } : {};
     const creditTender = isPositive(credit) ? [{ method: 'STORE_CREDIT' as const, amount: credit }] : [];
-    const saleId = await pay.submit(
+    const recorded = await pay.submit(
       (body, key) =>
         exchange
           ? api<{ sale: { id: string } }>(
@@ -461,11 +488,15 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
         if (text) setNotice({ kind: 'error', text });
       },
     );
-    if (!saleId) return;
+    if (!recorded) return;
     try {
-      setReceipt(await api<ReceiptData>('GET', `/v1/sales/${saleId}/receipt`));
+      const r = await api<ReceiptData>('GET', `/v1/sales/${recorded.id}/receipt`);
+      setReceipt(r);
+      // An earlier version of this checkout was recorded: its receipt is shown as exactly that, never as the cart on screen.
+      if (recorded.earlier) setNotice({ kind: 'warn', text: t('pay.earlierRecorded', { reference: r.transaction.reference }) });
+      openDrawerFor(till.drawer, r.tenders.some((x) => x.method === 'CASH'));
     } catch (e) {
-      setNotice({ kind: 'warn', text: errorText(e, t('common.error'), t('pay.unconfirmed')) });
+      setNotice({ kind: 'warn', text: errorText(e, t('common.error'), t('pay.receiptUnconfirmed')) });
     }
   }
 
@@ -494,6 +525,9 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
     focusScan();
   }
 
+  /** Offline, what stops this sale (it needs the server), in words; null when it can be kept on the till. */
+  const offlineBlock = offline ? (exchange ? t('till.offlineExchange') : customer ? t('till.offlineCustomer') : null) : null;
+
   const goToPayment = () => {
     document.getElementById('payment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     requestAnimationFrame(() => (document.getElementById('cash') as HTMLInputElement | null)?.focus());
@@ -513,7 +547,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   useShortcuts(active, showingReceipt ? { F2: newSale } : {
     F2: focusScan,
     F4: goToPayment,
-    F8: () => { if (quote && isPositive(pay.remaining)) { pay.setCash(pay.remaining); goToPayment(); } },
+    F8: () => { if (quote && !frozen && isPositive(pay.remaining)) { pay.setCash(pay.remaining); goToPayment(); } },
     F9: () => { pressIfEnabled('pay-submit'); },
   });
 
@@ -541,7 +575,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   return (
     <div className={`mx-auto grid max-w-[1440px] gap-5 px-4 py-5 sm:px-6 lg:grid-cols-[1fr_400px] ${cart.length > 0 ? 'pb-28 lg:pb-5' : ''}`}>
-      <div className="grid content-start gap-4">
+      {/* While a checkout's outcome is unknown, everything that would change the cart is locked (disabled fieldset). */}
+      <fieldset disabled={frozen} className="m-0 grid min-w-0 content-start gap-4 border-0 p-0">
         <form onSubmit={scan} className="flex gap-2">
           <label htmlFor="scan" className="sr-only">{t('sell.scan')}</label>
           <div className="relative flex-1">
@@ -568,15 +603,15 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
         {exchange && <ExchangeBanner exchange={exchange} total={quote?.totals.amountDue} onCancel={newSale} />}
 
-        {/* A customer on the sale needs the server: not offered offline. */}
-        {!offline && (customer ? (
+        {/* A customer on the sale needs the server: not offered offline (one already on it can be removed). */}
+        {(!offline || customer) && (customer ? (
           <div className="no-print flex flex-wrap items-center gap-2 rounded-[5px] border border-hair bg-white px-3 py-2" data-testid="sale-customer">
             <UserRound className="size-4 text-muted" aria-hidden />
             <span className="font-semibold">{customer.displayName}</span>
             {customer.phone && <span className="serial text-[0.8125rem] text-muted">{customer.phone}</span>}
             {isPositive(creditHere) && <span className="chip bg-green">{t('custc.credit', { amount: peso(creditHere) })}</span>}
             <span className="ml-auto flex gap-2">
-              {isPositive(creditHere) && !exchange && (
+              {isPositive(creditHere) && !exchange && !offline && (
                 <button type="button" className="btn btn-sm" aria-pressed={usingCredit} onClick={() => setUsingCredit(!usingCredit)}>
                   {usingCredit ? t('custc.dropCredit') : t('custc.useCredit')}
                 </button>
@@ -794,7 +829,7 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
             </ul>
           )}
         </Note>
-      </div>
+      </fieldset>
 
       <aside className="grid content-start gap-4" aria-label={t('totals.title')}>
         <Note className="p-5">
@@ -819,12 +854,13 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
           {quote?.requiresProfessionalReview && <div className="mt-3"><Callout kind="warn">{t('sell.pendingReview')}</Callout></div>}
         </Note>
 
+        {offlineBlock && <Callout kind="warn">{offlineBlock}</Callout>}
         <PaymentPanel
           pay={pay}
           priced={cart.length > 0 && !!quote && !quoting}
-          submitLabel={offline ? t('till.offlineSubmit') : exchange ? t('exch.complete') : t('pay.complete')}
+          submitLabel={offline ? t('till.offlineSubmit') : exchange ? t(frozen ? 'exch.again' : 'exch.complete') : t(frozen ? 'pay.again' : 'pay.complete')}
           onSubmit={() => void complete()}
-          canSubmit={cart.length > 0 && !(offline && (cart.some((l) => l.statutory || l.discount || l.override) || exchange))}
+          canSubmit={cart.length > 0 && !(offline && (cart.some((l) => l.statutory || l.discount || l.override) || offlineBlock))}
           cashOnly={offline}
         />
       </aside>

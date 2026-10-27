@@ -7,8 +7,8 @@ import { FormError, SelectField, TextField } from '@/components/fields';
 import { compact, LineItems, readLines, type VariantOption } from '@/components/line-items';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
-import type { Branch, GoodsReceipt, PurchaseOrder, Supplier, SupplierItem } from '@/lib/api';
-import { peso, qty, signOf, subtractQty } from '@/lib/format';
+import type { Branch, GoodsReceipt, PurchaseOrder, StockLot, Supplier, SupplierItem } from '@/lib/api';
+import { formatDate, peso, qty, signOf, subtractQty } from '@/lib/format';
 
 function Actions({ pending, general, submitLabel, close }: { pending: boolean; general: string | null; submitLabel: string; close: () => void }) {
   const { t } = useT();
@@ -174,8 +174,9 @@ export function EditDraftForm(props: { order: PurchaseOrder; suppliers: Supplier
 
 // ---------------------------------------------------------------- supplier return
 /** Send back part of a delivery: credited at the receipt's cost; at most what is still returnable. */
-function ReturnFields({ close, receipt, names }: { close: () => void; receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }> }) {
-  const { t } = useT();
+function ReturnFields({ close, receipt, names, lots }: { close: () => void; receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }>; lots: Record<string, StockLot[]> }) {
+  const { t, lang } = useT();
+  const lotLabel = (l: StockLot) => `${formatDate(l.expiresOn, lang)}${l.lotCode ? ` · ${l.lotCode}` : ''} · ${qty(l.quantity)}${l.held ? ` · ${t('exp.onHold')}` : ''}`;
   const router = useRouter();
   const key = useFormKey();
   const { pending, submit, fieldError, error } = useSubmit();
@@ -184,7 +185,11 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const rows = open.map((l, i) => ({ row: i, line: { goodsReceiptLineId: l.id, variantId: l.variantId, quantity: text(f, `lines.${i}.quantity`) } }));
+    // The lot it leaves from: the one picked, else (left blank) the lot this delivery made (the API's default).
+    const rows = open.map((l, i) => {
+      const lotId = text(f, `lines.${i}.lotId`);
+      return { row: i, line: { goodsReceiptLineId: l.id, variantId: l.variantId, quantity: text(f, `lines.${i}.quantity`), ...(lotId && { lotId }) } };
+    });
     const kept = rows.filter((r) => !isZero(r.line.quantity || undefined));
     setSent(kept.map((r) => r.row));
     const r = await submit<{ id: string }>('POST', '/api/v1/supplier-returns', {
@@ -214,6 +219,12 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
               </div>
             </div>
             <TextField label={t('pur.returnQty')} name={`lines.${i}.quantity`} inputMode="decimal" placeholder="0" error={lineError(i)} />
+            {(lots[l.variantId]?.length ?? 0) > 0 && (
+              <SelectField label={t('pur.returnLot')} name={`lines.${i}.lotId`} defaultValue="" error={sent.includes(i) ? fieldError(`lines.${sent.indexOf(i)}.lotId`) : undefined}>
+                <option value="">{l.expiresOn ? t('pur.returnLotOwn', { lot: `${formatDate(l.expiresOn, lang)}${l.lotCode ? ` · ${l.lotCode}` : ''}` }) : t('pur.returnLotOldest')}</option>
+                {lots[l.variantId]!.map((x) => <option key={x.lotId} value={x.lotId}>{lotLabel(x)}</option>)}
+              </SelectField>
+            )}
           </li>
         ))}
       </ul>
@@ -222,7 +233,7 @@ function ReturnFields({ close, receipt, names }: { close: () => void; receipt: G
   );
 }
 
-export function ReturnForm(props: { receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }> }) {
+export function ReturnForm(props: { receipt: GoodsReceipt; names: Record<string, { sku: string; name: string }>; lots: Record<string, StockLot[]> }) {
   const { t } = useT();
   return <Disclosure wide label={t('pur.returnToSupplier')}>{(close) => <ReturnFields close={close} {...props} />}</Disclosure>;
 }

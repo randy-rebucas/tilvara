@@ -29,7 +29,8 @@ function ShownOnce({ label, value, onDone }: { label: string; value: string; onD
   );
 }
 
-function KeyFields({ close }: { close: () => void }) {
+/** `scopes`: the ones the person holds (a key reads no more than its maker; the API refuses others). */
+function KeyFields({ close, scopes }: { close: () => void; scopes: readonly (typeof SCOPES)[number][] }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
   const [made, setMade] = useState<string | null>(null);
@@ -39,7 +40,7 @@ function KeyFields({ close }: { close: () => void }) {
     const days = Number(f.get('validDays') ?? 0);
     const r = await submit<{ key: string }>('POST', '/api/v1/api-keys', {
       name: String(f.get('keyName') ?? '').trim(),
-      scopes: SCOPES.filter((s) => f.get(`scope-${s}`) === 'on'),
+      scopes: scopes.filter((s) => f.get(`scope-${s}`) === 'on'),
       ...(days > 0 && { expiresAt: new Date(Date.now() + days * 86_400_000).toISOString() }),
     }, { idempotent: true });
     if (r.ok) setMade(r.data.key);
@@ -50,7 +51,7 @@ function KeyFields({ close }: { close: () => void }) {
       <TextField label={t('int.keyName')} name="keyName" required maxLength={100} placeholder={t('int.keyNameHint')} error={fieldError('name')} />
       <fieldset className="grid gap-1">
         <legend className="mb-1 text-[0.875rem] font-semibold">{t('int.scopes')}</legend>
-        {SCOPES.map((s) => (
+        {scopes.map((s) => (
           <label key={s} className="flex items-center gap-2 text-[0.9375rem]">
             <input type="checkbox" name={`scope-${s}`} defaultChecked={s === 'reports.read' || s === 'org.read'} /> {t(`int.scope.${s}` as MessageKey)}
           </label>
@@ -70,9 +71,11 @@ function KeyFields({ close }: { close: () => void }) {
   );
 }
 
-export function CreateKeyForm() {
+/** `held`: the person's permission codes (from /me); without them every scope is offered and the API decides. */
+export function CreateKeyForm({ held }: { held?: readonly string[] }) {
   const { t } = useT();
-  return <Disclosure label={t('int.newKey')}>{(close) => <KeyFields close={close} />}</Disclosure>;
+  const scopes = held ? SCOPES.filter((s) => held.includes(s)) : SCOPES;
+  return <Disclosure label={t('int.newKey')}>{(close) => <KeyFields close={close} scopes={scopes} />}</Disclosure>;
 }
 
 function WebhookFields({ close }: { close: () => void }) {

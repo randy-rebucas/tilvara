@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { datePresets, peso, percentFromRate, qty, rateFromPercent, signOf, subtractQty, sumDecimal } from './format';
+import { datePresets, peso, percentFromRate, qty, rateFromPercent, sameDecimal, signOf, subtractQty, sumDecimal } from './format';
 
 describe('datePresets', () => {
   const at = (today: string) => Object.fromEntries(datePresets(today).map((p) => [p.key, `${p.from}..${p.to}`]));
@@ -80,5 +80,17 @@ describe('sumDecimal / signOf', () => {
   });
   it('refuses something that is not a decimal', () => {
     expect(() => sumDecimal(['1e3'])).toThrow();
+  });
+});
+
+describe('sameDecimal (a count typed vs the count saved)', () => {
+  it('compares the numbers, not the spelling', () => {
+    expect(sameDecimal('5.0', '5')).toBe(true);
+    expect(sameDecimal(' 05 ', '5')).toBe(true);
+    expect(sameDecimal('2.50', '2.5')).toBe(true);
+    expect(sameDecimal('2.5', '2.51')).toBe(false);
+    expect(sameDecimal('', '0')).toBe(false);
+    expect(sameDecimal('', '')).toBe(true);
+    expect(sameDecimal('abc', '0')).toBe(false);
   });
 });

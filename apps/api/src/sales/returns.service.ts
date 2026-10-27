@@ -522,8 +522,11 @@ export class ReturnsService extends TenantService {
       for (const k of [...BUCKETS, 'amountDue']) if (typeof o[k] === 'string') o[k] = money(o[k] as string);
       return o;
     };
+    // Who processed it, by name: readers of a sale need not be able to read the team.
+    const [person] = await db.select({ displayName: users.displayName }).from(users).where(eq(users.id, d.processedBy));
     return {
       ...fmt(d),
+      processedByName: person?.displayName ?? null,
       lines: lines.map((l) => ({ ...fmt(l), quantity: toDec(l.quantity).toString() })),
       refunds: await this.refundParts(db, d),
     };

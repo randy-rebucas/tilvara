@@ -76,6 +76,26 @@ describe('receipt for a thermal printer', () => {
     expect(text).toContain('OFFLINE SALE');
     expect(text).toContain('Change                  PHP 5.20');
   });
+
+  it('prints a promotion on an offline sale as a Discount total and the VAT row with its rate, like online receipts', () => {
+    const doc = offlineReceiptToPrintable({
+      localReference: 'R1-TAbCd-000043', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
+      seller: { name: 'Tindahan ni Nena', registeredName: 'Nena Trading', tin: null, vatStatus: 'VAT' }, cashierName: 'Maria',
+      lines: [{ name: 'Cola', quantity: '2', unitPrice: '22.40', amount: '40.00', flag: 'V', promotion: { name: '2 for 40', discount: '4.80' } }],
+      totals: { gross: '44.80', discount: '4.80', vatableSales: '35.71', vatLabel: 'VAT 12%', vatAmount: '4.29', vatExemptSales: '0.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', amountDue: '40.00' },
+      tendered: '40.00', change: '0.00', notice: 'THIS IS NOT AN OFFICIAL INVOICE',
+    }, '10/17/2026, 10:00:00');
+    expect(doc.totals.map((r) => [r.label, r.amount])).toEqual([
+      ['Gross', '₱44.80'], ['Discount', '−₱4.80'], ['VATable sales', '₱35.71'], ['VAT 12%', '₱4.29'], ['VAT-exempt sales', '₱0.00'], ['Zero-rated sales', '₱0.00'], ['TOTAL DUE', '₱40.00'],
+    ]);
+    // A receipt queued before the discount was kept prints as before (no Discount row, plain "VAT").
+    const older = offlineReceiptToPrintable({
+      localReference: 'x', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
+      seller: { name: 'N', registeredName: 'N', tin: null, vatStatus: 'VAT' }, cashierName: 'Maria', lines: [], tendered: '1.00', change: '0.00', notice: 'n',
+      totals: { gross: '1.00', vatableSales: '0.89', vatAmount: '0.11', vatExemptSales: '0.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', amountDue: '1.00' },
+    }, 'now');
+    expect(older.totals.map((r) => r.label)).toEqual(['Gross', 'VATable sales', 'VAT', 'VAT-exempt sales', 'Zero-rated sales', 'TOTAL DUE']);
+  });
 });
 
 describe('ESC/POS printer port', () => {

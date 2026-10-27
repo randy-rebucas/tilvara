@@ -185,6 +185,13 @@ export class AccountingService extends TenantService {
       // The same for a payment (void it: the invoices it settled open again) and a note (record an opposite note).
       if (entry.sourceType === 'SUPPLIER_PAYMENT') throw unprocessable('CANCEL_THE_DOCUMENT', 'Void the supplier payment instead of reversing its entry');
       if (entry.sourceType === 'SUPPLIER_NOTE') throw unprocessable('CANCEL_THE_DOCUMENT', 'Record an opposite note instead of reversing this entry');
+      // Every other document's entry too (a sale, return, receipt, count, adjustment, transfer, drawer
+      // difference, and the retired lodging/laundry ones): the books must keep matching the documents
+      // (ledger.test, the traceability audit), and a return of a sale whose entry was undone would post again.
+      // Only a manual entry is corrected by a reversal.
+      if (entry.sourceType !== 'MANUAL') {
+        throw unprocessable('CANCEL_THE_DOCUMENT', 'This entry was posted by its document: correct the document (a return or void, a count, an adjustment) instead of reversing its entry', { sourceType: entry.sourceType });
+      }
       const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, id));
       const posting: PostingLine[] = lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }));
       const reversal = await post(db, {

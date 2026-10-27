@@ -212,7 +212,9 @@ export class OfflineEngine {
             };
           }),
           totals: {
-            gross: priced.totals.gross, vatableSales: priced.totals.vatableSales, vatAmount: priced.totals.vatAmount, vatExemptSales: priced.totals.vatExemptSales,
+            gross: priced.totals.gross, discount: toDec(priced.totals.discount).toFixed(2), vatableSales: priced.totals.vatableSales,
+            ...(isVat && { vatLabel: `VAT ${toDec(snap.taxProfile.vatRate).times(100).toString()}%` }),
+            vatAmount: priced.totals.vatAmount, vatExemptSales: priced.totals.vatExemptSales,
             zeroRatedSales: priced.totals.zeroRatedSales, percentageTaxSales: priced.totals.percentageTaxSales, amountDue: due.toFixed(2),
           },
           tendered: tendered.toFixed(2), change: tendered.minus(due).toFixed(2), notice: NOT_AN_INVOICE,
@@ -302,6 +304,11 @@ export class OfflineEngine {
           : null,
       };
     });
+  }
+
+  /** How many sales of this shift are still on the till, not yet answered by the server (Close shift waits for them). */
+  pendingFor(cashierSessionId: string): Promise<number> {
+    return this.serial(async () => (await this.store.list('PENDING')).filter((q) => q.envelope.cashierSessionId === cashierSessionId).length);
   }
 
   /** Exponential backoff with jitter: base × 2^(n−1), capped, then 50–100 % of it. */

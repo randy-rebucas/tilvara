@@ -6,6 +6,7 @@ import {
   asc,
   barcodes,
   categories,
+  desc,
   eq,
   inArray,
   isNull,
@@ -29,7 +30,9 @@ import type {
   UpdateVariantInput,
   VariantInput,
 } from '@1pos/validation';
+import { encodeNameCursor } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
+import { effectiveNowSql } from '../common/clock.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { emitEvent } from '../outbox/outbox.js';
@@ -224,10 +227,39 @@ export class CatalogService extends TenantService {
     this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const conds = [];
-      if (!q.includeArchived) conds.push(isNull(products.archivedAt));
-      if (q.categoryId) conds.push(eq(products.categoryId, q.categoryId));
+      if (q.status === 'active') conds.push(isNull(products.archivedAt));
+      if (q.status === 'archived') conds.push(sql`${products.archivedAt} IS NOT NULL`);
+      if (q.categoryId === 'none') conds.push(isNull(products.categoryId));
+      else if (q.categoryId && q.withSubcategories) {
+        conds.push(sql`${products.categoryId} IN (
+          WITH RECURSIVE tree AS (SELECT id FROM categories WHERE id = ${q.categoryId}
+                                  UNION ALL SELECT c.id FROM categories c JOIN tree ON c.parent_id = tree.id)
+          SELECT id FROM tree)`);
+      } else if (q.categoryId) conds.push(eq(products.categoryId, q.categoryId));
       if (q.productType) conds.push(eq(products.productType, q.productType));
-      if (q.cursor) conds.push(sql`${products.id} > ${q.cursor}`);
+      if (q.soldBy) conds.push(eq(products.soldBy, q.soldBy));
+      if (q.taxCategoryId) conds.push(eq(products.taxCategoryId, q.taxCategoryId));
+      if (q.trackInventory !== undefined) conds.push(eq(products.trackInventory, q.trackInventory));
+      if (q.tracksExpiry !== undefined) conds.push(eq(products.tracksExpiry, q.tracksExpiry));
+      if (q.hasBarcode !== undefined) {
+        const withCode = sql`EXISTS (SELECT 1 FROM barcodes b JOIN product_variants v ON v.tenant_id = b.tenant_id AND v.id = b.variant_id
+                                      WHERE v.product_id = ${products.id} AND v.archived_at IS NULL AND b.archived_at IS NULL)`;
+        conds.push(q.hasBarcode ? withCode : sql`NOT ${withCode}`);
+      }
+      if (q.hasPrice !== undefined) {
+        // A variant on sale without a price in force on the default list: the till cannot sell it.
+        const unpriced = sql`EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = ${products.id} AND v.archived_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM product_prices pp JOIN price_lists pl ON pl.tenant_id = pp.tenant_id AND pl.id = pp.price_list_id
+                           WHERE pl.is_default AND pl.archived_at IS NULL AND pp.variant_id = v.id AND pp.effective_from <= ${effectiveNowSql}))`;
+        conds.push(q.hasPrice ? sql`NOT ${unpriced}` : unpriced);
+      }
+      if (q.hasVariants !== undefined) {
+        const many = sql`(SELECT count(*) FROM product_variants v WHERE v.product_id = ${products.id} AND v.archived_at IS NULL) > 1`;
+        conds.push(q.hasVariants ? many : sql`NOT ${many}`);
+      }
+      if (q.after && q.sort === 'name') conds.push(sql`(lower(${products.name}), ${products.id}) > (lower(${q.after.name}), ${q.after.id}::uuid)`);
+      else if (q.after && q.sort === 'newest') conds.push(sql`${products.id} < ${q.after.id}`);
+      else if (q.after) conds.push(sql`${products.id} > ${q.after.id}`);
       if (q.q) {
         const like = `%${escapeLike(q.q)}%`;
         conds.push(sql`(
@@ -241,11 +273,14 @@ export class CatalogService extends TenantService {
         .select()
         .from(products)
         .where(conds.length ? and(...conds) : undefined)
-        .orderBy(asc(products.id))
+        // Ids are uuidv7: their order is the order the products were made in.
+        .orderBy(...(q.sort === 'name' ? [sql`lower(${products.name})`, asc(products.id)] : q.sort === 'newest' ? [desc(products.id)] : [asc(products.id)]))
         .limit(q.limit + 1);
       const page = rows.slice(0, q.limit);
       const views = await this.attachVariants(db, page);
-      return { data: views, nextCursor: rows.length > q.limit ? page[page.length - 1]!.id : null };
+      const last = page[page.length - 1];
+      const nextCursor = rows.length > q.limit && last ? (q.sort === 'name' ? encodeNameCursor(last.name, last.id) : last.id) : null;
+      return { data: views, nextCursor };
     });
   }
 
@@ -423,7 +458,15 @@ export class CatalogService extends TenantService {
     this.assertHolds(auth, 'catalog.read');
     return this.read(auth, async (db) => {
       const s = await this.sampleState(db);
-      return { loaded: s.loaded, canLoad: s.refusal === null, reason: s.refusal, items: SAMPLE_ITEMS.length };
+      // What this person may do (the same checks as load and remove), so a screen offers only that.
+      const manage = this.can(auth, 'catalog.manage');
+      return {
+        loaded: s.loaded,
+        canLoad: s.refusal === null && manage && this.can(auth, 'prices.manage'),
+        canRemove: s.loaded > 0 && manage,
+        reason: s.refusal,
+        items: SAMPLE_ITEMS.length,
+      };
     });
   }
 

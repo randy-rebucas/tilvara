@@ -11,8 +11,6 @@ import { getT } from '@/i18n/server';
 import { sourceHref } from '../../chrome';
 import { pageTitle } from '@/i18n/page-title';
 
-/** Undone through their document (cancel the invoice, void the payment, an opposite note), never by hand; the API refuses it too. */
-const NOT_REVERSIBLE = ['REVERSAL', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE'];
 
 export const generateMetadata = pageTitle('books.entries.item');
 
@@ -53,8 +51,12 @@ export default async function EntryPage({ params }: { params: Promise<{ id: stri
 
       <div className="flex flex-wrap items-start gap-2">
         {source && <Link href={source} className="btn">{t('books.openSource')}</Link>}
-        {canPost && !entry.reversedBy && !NOT_REVERSIBLE.includes(entry.sourceType) && (
+        {/* Only a manual entry is reversed by hand; a document's entry is corrected through the document (the API refuses it too). */}
+        {canPost && !entry.reversedBy && entry.sourceType === 'MANUAL' && (
           <ReasonAction url={`/api/v1/journal-entries/${entry.id}/reverse`} label={t('books.reverse')} reasonLabel={t('books.why')} hint={t('books.reverseHint')} field="memo" danger idempotent />
+        )}
+        {canPost && entry.sourceType !== 'MANUAL' && entry.sourceType !== 'REVERSAL' && (
+          <p className="max-w-[60ch] self-center text-[0.875rem] text-muted">{t('books.correctDocument')}</p>
         )}
       </div>
 

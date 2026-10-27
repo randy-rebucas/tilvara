@@ -97,14 +97,16 @@ const METHODS = ['BANK_TRANSFER', 'CHECK', 'OTHER'] as const;
  * How the supplier was paid; "Cash from a till's drawer" (offered while a shift is open at the branch) picks the
  * drawer and is paid today. Returns the fields to send.
  */
-function MethodFields({ drawers, today, fieldError, span }: { drawers: DrawerOption[]; today: string; fieldError: (k: string) => string | undefined; span: FieldSpan }) {
+function MethodFields({ drawers, today, fieldError, span, hint }: { drawers: DrawerOption[]; today: string; fieldError: (k: string) => string | undefined; span: FieldSpan; hint?: string }) {
   const { t } = useT();
-  const [method, setMethod] = useState<string>('BANK_TRANSFER');
+  const [picked, setMethod] = useState<string>('BANK_TRANSFER');
+  // No drawer can pay these invoices (none open at their branch): the drawer choice is not offered.
+  const method = picked === 'CASH_DRAWER' && drawers.length === 0 ? 'BANK_TRANSFER' : picked;
   const drawer = method === 'CASH_DRAWER';
   return (
     <>
       <TextField span={span} label={t('ap.paidOn')} name="paidOn" type="date" required defaultValue={today} max={today} readOnly={drawer} key={drawer ? 'today' : 'any'} error={fieldError('paidOn')} hint={drawer ? t('ap.drawerToday') : undefined} />
-      <SelectField span={span} label={t('ap.method')} name="method" value={method} onChange={(e) => setMethod(e.target.value)}>
+      <SelectField span={span} label={t('ap.method')} name="method" value={method} onChange={(e) => setMethod(e.target.value)} hint={hint}>
         {METHODS.map((m) => <option key={m} value={m}>{t(`ap.method.${m}`)}</option>)}
         {drawers.length > 0 && <option value="CASH_DRAWER">{t('ap.method.CASH_DRAWER')}</option>}
       </SelectField>
@@ -205,7 +207,7 @@ export function NoteForm(props: { invoiceId: string; today: string }) {
   return <Disclosure wide label={t('ap.newNote')}>{(close) => <NoteFields close={close} {...props} />}</Disclosure>;
 }
 
-type BatchPaymentProps = { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string }[]; today: string; drawers: DrawerOption[] };
+type BatchPaymentProps = { supplierId: string; invoices: { id: string; invoiceNumber: string; dueDate: string; balance: string; branchId: string; branch: string }[]; today: string; drawers: DrawerOption[] };
 
 /** One payment over several open invoices of a supplier (session 22); its sheet opens as soon as the invoices are shown. */
 export function BatchPaymentForm(props: BatchPaymentProps) {
@@ -232,6 +234,10 @@ function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: Bat
   const [amounts, setAmounts] = useState<Record<string, string>>(() => Object.fromEntries(invoices.map((i) => [i.id, ''])));
   const chosen = invoices.filter((i) => /^\d+(\.\d{1,2})?$/.test((amounts[i.id] ?? '').trim()) && signOf(amounts[i.id]!.trim()) > 0);
   const total = sumDecimal(chosen.map((i) => amounts[i.id]!.trim()));
+  // A drawer pays invoices of its own branch only: offered while every invoice paid is of one branch.
+  const chosenBranches = [...new Set(chosen.map((i) => i.branchId))];
+  const usable = chosenBranches.length === 1 ? drawers.filter((d) => d.branchId === chosenBranches[0]) : chosenBranches.length === 0 ? drawers : [];
+  const drawerHint = chosenBranches.length > 1 && drawers.length > 0 ? t('ap.drawerOneBranch') : undefined;
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -253,7 +259,7 @@ function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: Bat
           <li key={i.id} className="flex flex-wrap items-center gap-3 rounded-[5px] border border-hair-soft p-3">
             <span className="min-w-0 flex-1">
               <span className="serial font-semibold">{i.invoiceNumber}</span>
-              <span className="serial ml-2 text-[0.8125rem] text-muted">{t('ap.dueDate')} {formatDate(i.dueDate, lang)} · {t('ap.balance')} {peso(i.balance)}</span>
+              <span className="serial ml-2 text-[0.8125rem] text-muted">{i.branch} · {t('ap.dueDate')} {formatDate(i.dueDate, lang)} · {t('ap.balance')} {peso(i.balance)}</span>
             </span>
             <button type="button" className="btn btn-sm" onClick={() => setAmounts((a) => ({ ...a, [i.id]: i.balance }))}>{t('ap.balance')}</button>
             <label className="sr-only" htmlFor={`pay-${i.id}`}>{`${t('ap.amount')} ${i.invoiceNumber}`}</label>
@@ -263,7 +269,7 @@ function BatchPaymentFields({ supplierId, invoices, today, drawers, close }: Bat
       </ul>
       <p className="text-[0.9375rem] font-semibold">{t('ap.payManyTotal', { amount: peso(total) })}</p>
       <FormError message={fieldError('allocations')} />
-      <MethodFields drawers={drawers} today={today} fieldError={fieldError} span="half" />
+      <MethodFields drawers={usable} today={today} fieldError={fieldError} span="half" hint={drawerHint} />
       <TextField label={`${t('ap.reference')} (${t('common.optional')})`} name="reference" error={fieldError('reference')} />
       <div className="form-actions">
         <button className="btn btn-primary" disabled={pending || chosen.length === 0}>{t('ap.payManyRecord')}</button>

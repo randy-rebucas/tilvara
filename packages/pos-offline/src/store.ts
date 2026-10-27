@@ -28,7 +28,11 @@ export interface OfflineReceipt {
   cashierName: string;
   /** `promotion`: the promotion that priced the line and its discount (ADR-0021). */
   lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string; promotion?: { name: string; discount: string } }[];
-  totals: { gross: string; vatableSales: string; vatAmount: string; vatExemptSales: string; zeroRatedSales: string; percentageTaxSales: string; amountDue: string };
+  /**
+   * `discount`: what promotions took off (absent on receipts queued before it was kept, so read it as 0).
+   * `vatLabel`: the VAT row as online receipts word it, e.g. "VAT 12%" (absent on older receipts: "VAT").
+   */
+  totals: { gross: string; discount?: string; vatableSales: string; vatLabel?: string; vatAmount: string; vatExemptSales: string; zeroRatedSales: string; percentageTaxSales: string; amountDue: string };
   tendered: string;
   change: string;
   notice: string;

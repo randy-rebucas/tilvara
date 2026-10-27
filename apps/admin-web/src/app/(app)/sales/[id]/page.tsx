@@ -39,7 +39,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
         <Link href={`/shifts/${sale.cashierSessionId}`} className="text-[0.875rem] text-muted underline">{t('doc.shift')}</Link>
         <h1 className="mt-1 text-[1.75rem] font-bold leading-tight tracking-[-0.01em]">{t('doc.saleTitle', { n: docNo(sale.saleNumber) })}</h1>
         <Serial className="mt-1 block">
-          {branch?.code ?? '—'} · {register ? `${register.code} ${register.name}` : '—'} · {person(sale.cashierUserId)} · {formatDateTime(sale.completedAt, lang)}
+          {branch?.code ?? '—'} · {register ? `${register.code} ${register.name}` : '—'} · {sale.cashierName ?? person(sale.cashierUserId)} · {formatDateTime(sale.completedAt, lang)}
           {sale.offlineReference && ` · ${t('doc.offline', { ref: sale.offlineReference })}`}
           {sale.customerId && <> · <Link href={`/customers/${sale.customerId}`} className="underline">{t('doc.customer')}</Link></>}
         </Serial>
@@ -131,7 +131,7 @@ export default async function SalePage({ params }: { params: Promise<{ id: strin
                   <div>
                     <p className="font-semibold">{t(r.kind === 'VOID' ? 'doc.voidTitle' : 'doc.returnTitle', { n: docNo(r.returnNumber) })}</p>
                     <p className="text-[0.9375rem]">{r.reason}</p>
-                    <Serial>{person(r.processedBy)} · {formatDateTime(r.createdAt, lang)}</Serial>
+                    <Serial>{r.processedByName ?? person(r.processedBy)} · {formatDateTime(r.createdAt, lang)}</Serial>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="money font-semibold">{peso(`-${r.amountDue}`)}</span>

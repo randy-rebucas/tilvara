@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useT } from '@/i18n/client';
 import { send, type ApiFailure, type Result } from '@/lib/client-api';
+import { refusalKey } from '@/lib/refusals';
 
 /** Form submission state: pending flag, last error, field issues; refreshes server data on success. */
 export interface ValidationIssue {
@@ -51,7 +52,9 @@ export function useSubmit() {
     if (!r.ok) {
       // The server failed to finish (5xx) or no answer came: give the person the reference support can look up.
       const ref = (r.error.status >= 500 || r.error.status === 0) && r.error.correlationId;
-      setError(ref ? { ...r.error, message: t('error.reference', { message: r.error.message, ref }) } : r.error);
+      // A known refusal reads in the person's language (the API's message is English).
+      const known = !ref && refusalKey(r.error.code, r.error.message);
+      setError(ref ? { ...r.error, message: t('error.reference', { message: r.error.message, ref }) } : known ? { ...r.error, message: t(known) } : r.error);
       if (opts.refreshOnError) router.refresh();
     } else if (opts.refresh !== false) router.refresh();
     return r;

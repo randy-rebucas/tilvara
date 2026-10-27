@@ -18,15 +18,19 @@ function Fields({ close, legalEntityId, current }: { close: () => void; legalEnt
   const key = useFormKey();
   const { pending, submit, fieldError, error } = useSubmit();
   const [when, setWhen] = useState<'now' | 'later'>('later');
+  const [dateMissing, setDateMissing] = useState(false);
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const at = String(f.get('effectiveAt') ?? '');
+    // "From a date" with no date must not be sent: the API reads a missing date as "from now".
+    setDateMissing(when === 'later' && !at);
+    if (when === 'later' && !at) return;
     const note = String(f.get('note') ?? '').trim();
     const r = await submit('POST', `/api/v1/legal-entities/${legalEntityId}/tax-profiles`, {
       vatStatus: f.get('vatStatus'),
       roundingMode: f.get('roundingMode'),
-      ...(when === 'later' && at ? { effectiveFrom: manilaToIso(at) } : {}),
+      ...(when === 'later' && { effectiveFrom: manilaToIso(at) }),
       note: note || null,
     }, { idempotencyKey: key });
     if (r.ok) close();
@@ -46,7 +50,7 @@ function Fields({ close, legalEntityId, current }: { close: () => void; legalEnt
         <option value="later">{t('tax.fromDate')}</option>
         <option value="now">{t('tax.fromNow')}</option>
       </SelectField>
-      {when === 'later' && <TextField span="half" label={`${t('tax.effective')} (Asia/Manila)`} name="effectiveAt" type="datetime-local" required error={fieldError('effectiveFrom')} />}
+      {when === 'later' && <TextField span="half" label={`${t('tax.effective')} (Asia/Manila)`} name="effectiveAt" type="datetime-local" required error={dateMissing ? t('validation.required') : fieldError('effectiveFrom')} />}
       <TextField label={`${t('tax.note')} (${t('common.optional')})`} name="note" placeholder={t('tax.noteHint')} error={fieldError('note')} />
       <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('tax.save')}</button>

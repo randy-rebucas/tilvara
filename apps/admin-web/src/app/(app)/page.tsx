@@ -148,7 +148,7 @@ export default async function OverviewPage() {
               {t('overview.guide')}
             </Link>
           </Note>
-          {sample && lists && <SampleCard state={sample} />}
+          {sample && lists && perms.includes('catalog.manage') && <SampleCard state={sample} />}
           <Callout tone="info">{t('loc.invoicingOff')}</Callout>
         </aside>
 

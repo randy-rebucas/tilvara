@@ -3583,6 +3583,16 @@
               "type": "string",
               "format": "uuid"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "UUID; a retry with the same key and body replays the stored response (header Idempotent-Replayed).",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         ],
         "requestBody": {
@@ -3671,6 +3681,16 @@
           },
           "409": {
             "description": "Conflict (stable code in error.code)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Idempotency-Key reused with a different payload or user",
             "content": {
               "application/json": {
                 "schema": {
@@ -5270,6 +5290,27 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
             }
           }
         ],
@@ -10952,9 +10993,29 @@
             "in": "query",
             "required": false,
             "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "const": "none"
+                }
+              ]
+            }
+          },
+          {
+            "name": "withSubcategories",
+            "in": "query",
+            "required": false,
+            "schema": {
               "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
@@ -10970,6 +11031,88 @@
             }
           },
           {
+            "name": "soldBy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "UNIT",
+                "WEIGHT"
+              ]
+            }
+          },
+          {
+            "name": "taxCategoryId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "trackInventory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "tracksExpiry",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "hasBarcode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "hasPrice",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "hasVariants",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
             "name": "includeArchived",
             "in": "query",
             "required": false,
@@ -10979,6 +11122,33 @@
               "enum": [
                 "true",
                 "false"
+              ]
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived",
+                "all"
+              ]
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "oldest",
+              "type": "string",
+              "enum": [
+                "oldest",
+                "newest",
+                "name"
               ]
             }
           },
@@ -10999,8 +11169,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "format": "uuid",
-              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              "maxLength": 1200
             }
           }
         ],
@@ -11260,6 +11429,384 @@
           },
           "422": {
             "description": "Idempotency-Key reused with a different payload or user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/products/import": {
+      "post": {
+        "operationId": "catalog.importProducts",
+        "tags": [
+          "catalog"
+        ],
+        "description": "Requires an active tenant on the access token. Fine-grained permission (incl. branch/register scope) is checked in the service.",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "UUID; a retry with the same key and body replays the stored response (header Idempotent-Replayed).",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rows": {
+                    "minItems": 1,
+                    "maxItems": 2000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "line": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000000
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sku": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$"
+                        },
+                        "variantName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "barcodes": {
+                          "default": [],
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9-]{1,64}$"
+                          }
+                        },
+                        "category": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 10
+                        },
+                        "tax": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "productType": {
+                          "type": "string",
+                          "enum": [
+                            "STANDARD",
+                            "SERVICE"
+                          ]
+                        },
+                        "soldBy": {
+                          "type": "string",
+                          "enum": [
+                            "UNIT",
+                            "WEIGHT"
+                          ]
+                        },
+                        "trackInventory": {
+                          "type": "boolean"
+                        },
+                        "tracksExpiry": {
+                          "type": "boolean"
+                        },
+                        "price": {
+                          "type": "string",
+                          "pattern": "^\\d{1,16}(\\.\\d{1,4})?$"
+                        },
+                        "referenceCost": {
+                          "type": "string",
+                          "pattern": "^\\d{1,16}(\\.\\d{1,4})?$"
+                        },
+                        "attributes": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 50
+                          },
+                          "additionalProperties": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        }
+                      },
+                      "required": [
+                        "line",
+                        "name",
+                        "sku"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "rows"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Subscription is read-only (lapsed trial, past due after grace, or canceled)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted (or no active tenant)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (stable code in error.code)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Idempotency-Key reused with a different payload or user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/products/import/preview": {
+      "post": {
+        "operationId": "catalog.previewImport",
+        "tags": [
+          "catalog"
+        ],
+        "description": "Requires an active tenant on the access token. Fine-grained permission (incl. branch/register scope) is checked in the service.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rows": {
+                    "minItems": 1,
+                    "maxItems": 2000,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "line": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000000
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "sku": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$"
+                        },
+                        "variantName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "barcodes": {
+                          "default": [],
+                          "maxItems": 20,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9-]{1,64}$"
+                          }
+                        },
+                        "category": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "unit": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 10
+                        },
+                        "tax": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "productType": {
+                          "type": "string",
+                          "enum": [
+                            "STANDARD",
+                            "SERVICE"
+                          ]
+                        },
+                        "soldBy": {
+                          "type": "string",
+                          "enum": [
+                            "UNIT",
+                            "WEIGHT"
+                          ]
+                        },
+                        "trackInventory": {
+                          "type": "boolean"
+                        },
+                        "tracksExpiry": {
+                          "type": "boolean"
+                        },
+                        "price": {
+                          "type": "string",
+                          "pattern": "^\\d{1,16}(\\.\\d{1,4})?$"
+                        },
+                        "referenceCost": {
+                          "type": "string",
+                          "pattern": "^\\d{1,16}(\\.\\d{1,4})?$"
+                        },
+                        "attributes": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 50
+                          },
+                          "additionalProperties": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        }
+                      },
+                      "required": [
+                        "line",
+                        "name",
+                        "sku"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "rows"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired or revoked access token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Subscription is read-only (lapsed trial, past due after grace, or canceled)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not permitted (or no active tenant)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict (stable code in error.code)",
             "content": {
               "application/json": {
                 "schema": {
@@ -21289,6 +21836,11 @@
                         "creditUnitCost": {
                           "type": "string",
                           "pattern": "^\\d{1,16}(\\.\\d{1,4})?$"
+                        },
+                        "lotId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         }
                       },
                       "required": [

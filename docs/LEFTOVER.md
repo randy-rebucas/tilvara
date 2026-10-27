@@ -50,6 +50,14 @@ Clean-up left:
 - ⬜ A plan downgrade or an extension withdrawn from the catalog does not bump the catalog version (switching does), so a till shows the extension's screens until its next snapshot refresh (≤ 10 minutes online); its writes are refused by the server meanwhile.
 - ⬜ `tenants.business_type` (always RETAIL) and `businessType` on `/me` are kept for older tills; drop them in a later migration.
 
+## Products: filters, CSV export and import (session 37, 2026-10-27)
+- ⬜ The import sets the default price list only; other price lists are set on Prices. Add a column per price list if shops ask.
+- ⬜ The import never clears a detail (an empty cell leaves it as it is) and never removes a barcode or archives an item: on purpose, so a partial file is safe. A "clear" word per cell would be needed to empty a category or a variant name from a file.
+- ⬜ Stock quantities are not imported (they need a cost and a branch: a stock count or a goods receipt). An opening-stock import per branch would be its own document.
+- ⬜ A row the API refuses is described in English (the API's message), also to a Filipino reader; the file's own problems (bad numbers, Yes/No, columns) are in the viewer's language.
+- ⬜ 2,000 rows (all new) take about 12 s on this machine in one transaction (an audit row per product, variant change, barcode and category). Batch the inserts if larger files are wanted.
+- Fixed on the way: a request body over 100 kB, or one that is not JSON, answered 500 on every route; it is now 413 `PAYLOAD_TOO_LARGE` / 400 (`http-error.filter.ts`). Only the import routes take up to 2 MB.
+
 ## Admin forms in slide-over sheets (session 36, 2026-10-26)
 - Open: the E2E suites not yet run against the sheets: smoke, integrations, onboarding, security, account and offline. Run them with the API at `RATE_LIMITS_ENABLED=false` and the worker. A script that clicks a sheet's button right after a full page load should use `openSheet()` (`e2e/cdp.mjs`).
 - Choice: the business-name form (Subscription → Business) and Take Z-reading stay on the page, because each is the page's only control. Move them into sheets if wanted.
@@ -87,7 +95,15 @@ The user audits one area at a time for what does not fit a retail shop.
 - ✅ A receipt prints "Tendered" only for cash handed over (not a card, store credit or an exchange's refund) and "Change" whenever there was cash; `sales.amount_tendered` is unchanged.
 - ✅ Inventory tabs follow what the shop uses: Expiry, Lot holds, Batch trace (and the expired-stock settings) only once an item keeps expiry dates or lots exist; Packs only once a pack is linked or opened (`GET /v1/stock/in-use`). The features stay for every shop (tingi, dated goods, recalls).
 - ⬜ By design: the product page still offers "Keeps expiry dates" and "Packs and pieces" to every shop: that is how a shop starts using them, so it stays.
-- ⬜ Next areas to audit: the user's call (every area is ✅; a second pass only if asked).
+- ✅ Second pass, every area (session 38, 2026-10-27): no removed-trade feature left anywhere. 62 findings fixed (bugs, guards, words for codes), migration 0121 (a supplier return names its lot). See STATUS session 38. All its open items, with where they live and how to close them: `docs/OPEN-ITEMS-2026-10-27.md`.
+- ⬜ DPO to confirm: a lapsed or suspended business may still record a customer's consent withdrawal and an erasure (`@AllowReadOnlyBusiness` on those two routes only; giving consent stays refused).
+- ⬜ The tax-registration change "From a date" is guarded in the form only; the API still reads a missing `effectiveFrom` as now (telling the two apart needs a new request field).
+- ⬜ Kept on purpose: `api_keys_scopes_check` still allows `lodging.read`, `laundry.read`, `appointments.read` (0119: an old key holding one must still record its last use and be revoked); validation refuses them for new keys.
+- ⬜ Admin refusals in words (`src/lib/refusals.ts`, applied in `useSubmit`) cover the codes met in this pass; other API refusals still show the API's English message to FIL readers. The Z-reading's SHIFT_OPEN and the categories' HAS_ACTIVE_CHILDREN messages are not mapped.
+- ⬜ The till looks up an earlier recorded sale after `IDEMPOTENCY_KEY_REUSED` by resending under a new key (the server answers `DUPLICATE_TRANSACTION` with that sale); a `clientTransactionId` filter on `GET /v1/sales` would be cleaner.
+- ⬜ Branch-scoped managers: `/me` lists codes at any scope, so the admin may still offer a team action the API refuses for another branch (the refusal now reads in words).
+- ⬜ Not seen on real hardware: the cash drawer opening after a cash sale/refund/pay in-out (best effort, errors swallowed).
+- ⬜ Next areas to audit: the user's call (every area ✅ twice).
 
 ## Session 33 — retail only (2026-10-25)
 The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migration 0112): salons, recipes, tips and prescriptions went with them; packs, expiry lots, lot codes, lot holds, the batch trace and the expired-stock rule stay for every shop.

@@ -278,7 +278,7 @@ try {
   await clickText('By tender');
   await waitFor(`location.pathname === '/reports/tenders'`);
   check('by tender: cash, in words, net ₱33.00', (await shown('Cash')) && (await has('₱33.00')));
-  const csv = await evaluate(`fetch(document.querySelector('a[download]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), name: r.headers.get('content-disposition'), body: await r.text() }))`);
+  const csv = await evaluate(`fetch(document.querySelector('a[href^="/reports/export"]').getAttribute('href')).then(async (r) => ({ type: r.headers.get('content-type'), name: r.headers.get('content-disposition'), body: await r.text() }))`);
   check('CSV download: tender rows with exact amounts', csv.type.startsWith('text/csv') && csv.name.includes('tilvara-tenders-') && csv.body.includes('Cash,1,49.50,1,16.50,33.00'));
   await clickText('Refund watch');
   await waitFor(`location.pathname === '/reports/refunds'`);

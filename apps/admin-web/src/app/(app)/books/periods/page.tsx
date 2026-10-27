@@ -23,7 +23,8 @@ export default async function PeriodsPage({ searchParams }: { searchParams: Prom
   const { t, lang } = await getT();
   const { entities, entity } = await booksEntity((await searchParams).entity);
   const [me, periods] = await Promise.all([api<Me>('/me'), entity ? apiOrNull<{ data: Period[] }>(`/accounting/periods?legalEntityId=${entity.id}`) : null]);
-  const canPost = me.activeTenant?.permissions.includes('accounting.post') ?? false;
+  // An archived entity's books are read only here.
+  const canPost = (me.activeTenant?.permissions.includes('accounting.post') ?? false) && !entity?.archivedAt;
 
   return (
     <BooksChrome tab="periods" entities={entities} entity={entity}>

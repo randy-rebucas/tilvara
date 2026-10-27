@@ -18,6 +18,7 @@ import {
   type UpdatePromotionInput,
   idParamSchema,
   lookupQuerySchema,
+  productImportSchema,
   productListQuerySchema,
   setPricesSchema,
   updateCategorySchema,
@@ -32,6 +33,7 @@ import {
   type CreateTaxCategoryInput,
   type CreateUomInput,
   type LookupQuery,
+  type ProductImportInput,
   type ProductListQuery,
   type SetPricesInput,
   type UpdateCategoryInput,
@@ -46,6 +48,7 @@ import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { CatalogService } from './catalog.service.js';
 import { PricingService } from './pricing.service.js';
+import { ProductImportService } from './product-import.service.js';
 import { PromotionsService } from './promotions.service.js';
 
 const id = new ZodPipe(idParamSchema);
@@ -57,6 +60,7 @@ export class CatalogController {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(PricingService) private readonly pricing: PricingService,
     @Inject(PromotionsService) private readonly promotions: PromotionsService,
+    @Inject(ProductImportService) private readonly imports: ProductImportService,
   ) {}
 
   // sample items for a trial (ADR-0016 slice 6)
@@ -132,6 +136,19 @@ export class CatalogController {
   @Post('products')
   createProduct(@Auth() auth: AuthContext, @Body(new ZodPipe(createProductSchema)) body: CreateProductInput) {
     return this.catalog.createProduct(auth, body);
+  }
+
+  // import from a file (the admin reads the CSV): preview, then all rows or none
+  @HttpCode(200)
+  @Post('products/import/preview')
+  previewImport(@Auth() auth: AuthContext, @Body(new ZodPipe(productImportSchema)) body: ProductImportInput) {
+    return this.imports.preview(auth, body);
+  }
+
+  @Idempotent()
+  @Post('products/import')
+  importProducts(@Auth() auth: AuthContext, @Body(new ZodPipe(productImportSchema)) body: ProductImportInput) {
+    return this.imports.commit(auth, body);
   }
 
   @Get('products/:id')

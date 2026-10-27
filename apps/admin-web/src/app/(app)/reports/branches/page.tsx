@@ -24,7 +24,7 @@ export default async function ByBranchPage({ searchParams }: { searchParams: Pro
             rows={rows}
             rowKey={(x) => x.branchId}
             columns={[
-              { header: t('common.branch'), cell: (x) => <span><Serial className="text-ink">{x.code}</Serial> {x.name}</span> },
+              { header: t('common.branch'), cell: (x) => <span><Serial className="text-ink">{x.code}</Serial> {x.name}{x.archivedAt && <span className="tag ml-2">{t('common.archived')}</span>}</span> },
               { header: t('csv.salesCount'), num: true, cell: (x) => x.salesCount },
               { header: t('csv.sales'), num: true, cell: (x) => <span className="money">{peso(x.sales)}</span> },
               { header: t('csv.returns'), num: true, cell: (x) => <span className="money">{peso(x.returns)}</span> },
@@ -33,7 +33,7 @@ export default async function ByBranchPage({ searchParams }: { searchParams: Pro
               { header: t('csv.discount'), num: true, cell: (x) => <span className="money">{peso(x.discount)}</span> },
             ]}
             stacked={{
-              title: (x) => `${x.code} ${x.name}`,
+              title: (x) => `${x.code} ${x.name}${x.archivedAt ? ` · ${t('common.archived')}` : ''}`,
               meta: (x) => <Serial>{t('csv.salesCount')} {x.salesCount} · {t('csv.returns')} {peso(x.returns)}</Serial>,
               figure: (x) => <span className="money font-semibold">{peso(x.netSales)}</span>,
             }}

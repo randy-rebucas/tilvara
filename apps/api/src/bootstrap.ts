@@ -1,4 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
+import bodyParser from 'body-parser';
+import type { NextFunction, Request, Response } from 'express';
 import helmet from 'helmet';
 import type { ServerEnv } from '@1pos/config';
 import type { Logger } from '@1pos/observability';
@@ -25,6 +27,13 @@ export function configureApp(app: INestApplication, logger?: Logger): void {
     }),
   );
   app.setGlobalPrefix('v1');
+  // A product file (up to 2,000 rows) is larger than the 100 kB every other route accepts. Parsed here,
+  // before Nest's own parser, which then leaves the request alone. Not named `jsonParser`: Nest would take
+  // it for its own and register no parser for the other routes.
+  const importJson = bodyParser.json({ limit: '2mb' });
+  app.use(['/v1/products/import', '/v1/products/import/preview'], function productImportJson(req: Request, res: Response, next: NextFunction) {
+    importJson(req, res, next);
+  });
   app.use(correlationIdMiddleware);
   if (logger) {
     app.useLogger(new PinoNestLogger(logger));

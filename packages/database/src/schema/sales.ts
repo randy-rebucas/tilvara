@@ -786,7 +786,7 @@ export const stockMovements = pgTable(
     foreignKey({ columns: [t.tenantId, t.lotId], foreignColumns: [stockLots.tenantId, stockLots.id] }),
     check('stock_movements_dated_inbound', sql`${t.expiresOn} IS NULL OR (${t.quantity} > 0 AND ${t.type} IN ('RECEIPT','ADJUSTMENT'))`),
     check('stock_movements_lot_needs_date', sql`${t.lotCode} IS NULL OR ${t.expiresOn} IS NOT NULL`),
-    check('stock_movements_named_lot', sql`${t.lotId} IS NULL OR (${t.quantity} < 0 AND ${t.type} IN ('ADJUSTMENT','WASTE'))`),
+    check('stock_movements_named_lot', sql`${t.lotId} IS NULL OR (${t.quantity} < 0 AND ${t.type} IN ('ADJUSTMENT','WASTE','SUPPLIER_RETURN'))`),
     foreignKey({ columns: [t.tenantId, t.branchId], foreignColumns: [branches.tenantId, branches.id] }),
     foreignKey({ columns: [t.tenantId, t.variantId], foreignColumns: [productVariants.tenantId, productVariants.id] }),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),

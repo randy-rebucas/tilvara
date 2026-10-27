@@ -67,7 +67,14 @@ export class LotHoldsService extends TenantService {
            ${q.branchId ? sql`AND (h.branch_id IS NULL OR h.branch_id = ${q.branchId})` : sql``}
          ORDER BY h.placed_at DESC
          LIMIT 500`);
-      return { data: rows.map(({ branch_name, ...r }) => ({ ...r, branchName: branch_name })) };
+      // A hold at one branch is listed to those who may read stock there; a hold everywhere to all readers.
+      const scopes = new Map((await db.select({ id: branches.id, legalEntityId: branches.legalEntityId }).from(branches)).map((b) => [b.id, { branchId: b.id, legalEntityId: b.legalEntityId }]));
+      const sees = (branchId: string | null) => branchId === null || this.can(auth, 'inventory.read', scopes.get(branchId)!);
+      return {
+        data: rows.filter((r) => sees(r.branchId)).map(({ branch_name, ...r }) => ({ ...r, branchName: branch_name })),
+        /** Whether this person may place a hold at every branch (the business-wide grant); else only at their branches. */
+        canHoldEverywhere: this.can(auth, 'inventory.adjust'),
+      };
     });
   }
 
@@ -166,6 +173,8 @@ export class LotHoldsService extends TenantService {
           reason: r.reason,
         })),
         onHand: left.filter((r) => sees(r.branch_id)).map((r) => ({ branchId: r.branch_id, branch: r.branch, variantId: r.variant_id, sku: r.sku, name: r.name, expiresOn: r.expires_on, quantity: toDec(r.quantity).toString() })),
+        /** Whether this person may place a hold at every branch (as on the holds list). */
+        canHoldEverywhere: this.can(auth, 'inventory.adjust'),
       };
     });
   }

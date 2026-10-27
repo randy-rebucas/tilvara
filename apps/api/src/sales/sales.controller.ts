@@ -86,6 +86,8 @@ export class SalesController {
     return this.cash.addMovement(auth, sessionId, body);
   }
 
+  // A close whose answer was lost is retried with the same key and replays the count (the till keeps one key per count).
+  @Idempotent()
   @HttpCode(200)
   @Post('cashier-sessions/:id/close')
   close(@Auth() auth: AuthContext, @Param('id', id) sessionId: string, @Body(new ZodPipe(closeCashierSessionSchema)) body: CloseCashierSessionInput) {

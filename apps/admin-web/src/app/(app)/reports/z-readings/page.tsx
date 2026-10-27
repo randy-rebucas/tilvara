@@ -18,8 +18,10 @@ export default async function ZReadingsPage({ searchParams }: { searchParams: Pr
   const sp = await searchParams;
   const scope = await reportScope(sp);
   const [me, regs] = await Promise.all([api<Me>('/me'), apiOrNull<{ data: Register[] }>('/registers')]);
-  const registers = (regs?.data ?? []).filter((r) => r.branchId === scope.branch?.id && !r.archivedAt);
-  const register = registers.find((r) => r.id === sp.register) ?? registers[0];
+  // Archived registers stay, after the open ones: their readings are part of the record (no new reading on them).
+  const here = (regs?.data ?? []).filter((r) => r.branchId === scope.branch?.id);
+  const registers = [...here.filter((r) => !r.archivedAt), ...here.filter((r) => r.archivedAt)];
+  const register = registers.find((r) => r.id === sp.register) ?? registers.find((r) => !r.archivedAt) ?? registers[0];
   const list = register ? await apiOrNull<{ data: ZReading[] }>(`/registers/${register.id}/z-readings`) : null;
   const rows = list?.data ?? [];
   const canTake = me.activeTenant?.permissions.includes('cash.reconcile') ?? false;
@@ -31,13 +33,13 @@ export default async function ZReadingsPage({ searchParams }: { searchParams: Pr
       <section className="flex flex-col gap-4">
         <Callout tone="info">{t('z.notAccredited')}</Callout>
         <div className="print:hidden">
-          <ScopePicker label={t('z.register')} items={registers} selected={register?.id} href={q} />
+          <ScopePicker label={t('z.register')} items={registers.map((r) => ({ id: r.id, name: r.name, code: r.code, archived: Boolean(r.archivedAt) }))} archivedLabel={t('common.archived')} selected={register?.id} href={q} />
         </div>
         {!register ? (
           <Note><Empty>{t('z.noRegister')}</Empty></Note>
         ) : (
           <>
-            {canTake && <div className="print:hidden"><TakeZReading registerId={register.id} today={scope.to} /></div>}
+            {canTake && !register.archivedAt && !scope.branch?.archivedAt && <div className="print:hidden"><TakeZReading registerId={register.id} today={scope.to} /></div>}
             {latest && (
               <Note denom="blue" className="px-5 py-4 pr-8">
                 <div className="grid gap-1" data-testid="z-latest">

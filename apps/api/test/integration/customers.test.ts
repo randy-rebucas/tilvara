@@ -113,6 +113,35 @@ describe('customer profiles', () => {
     const session = await openSession(s.cashier, s.registerId);
     expect((await sell(s.cashier, sale(session, [{ variantId: s.cola, quantity: '1' }], [{ method: 'CASH', tendered: '22.40' }], { customerId: jose.id })).expect(409)).body.error.code).toBe('ARCHIVED');
   });
+
+  it('a lapsed or suspended business still records a "stop" and an erasure, nothing else', async () => {
+    const t = await signup(app, 'cust-ro');
+    const auth = bearer(t.access);
+    const add = async (displayName: string) =>
+      (await http().post('/v1/customers').set(auth).send({ displayName, phone: '0917 555 0101', marketingConsent: true, consentSource: 'COUNTER' }).expect(201)).body.id as string;
+    const [ana, ben, cora] = [await add('Ana Cruz'), await add('Ben Reyes'), await add('Cora Lim')];
+    await http().post(`/v1/customers/${cora}/consent`).set(auth).send({ marketingConsent: false, source: 'REQUEST' }).expect(200);
+
+    // The trial lapses: records are read-only.
+    await asOwnerInTenant(owner, t.tenantId, (c) => c.query(`UPDATE subscriptions SET trial_ends_at = now() - interval '1 second'`));
+    expect((await http().patch(`/v1/customers/${ana}`).set(auth).send({ phone: '0918 000 0000' }).expect(402)).body.error.code).toBe('SUBSCRIPTION_READ_ONLY');
+    expect((await http().post(`/v1/customers/${cora}/consent`).set(auth).send({ marketingConsent: true, source: 'ADMIN' }).expect(402)).body.error.code).toBe('SUBSCRIPTION_READ_ONLY');
+    expect((await http().post(`/v1/customers/${ana}/consent`).set(auth).send({ marketingConsent: false, source: 'REQUEST' }).expect(200)).body.marketingConsent).toBe(false);
+    expect((await http().post(`/v1/customers/${ben}/anonymise`).set(auth).send({ reason: 'The customer asked to be forgotten' }).expect(200)).body.anonymisedAt).not.toBeNull();
+    await http().post(`/v1/customers/${ana}/archive`).set(auth).expect(402);
+
+    // Suspended: the same two writes, and only those.
+    await asOwnerInTenant(owner, t.tenantId, (c) => c.query(`UPDATE tenants SET status = 'SUSPENDED' WHERE id = $1`, [t.tenantId]));
+    const cora2 = (await http().get(`/v1/customers/${cora}`).set(auth).expect(200)).body;
+    expect(cora2.marketingConsent).toBe(false);
+    expect((await http().post(`/v1/customers/${cora}/consent`).set(auth).send({ marketingConsent: true, source: 'ADMIN' }).expect(403)).body.error.code).toBe('TENANT_SUSPENDED');
+    await http().post('/v1/customers').set(auth).send({ displayName: 'New' }).expect(403);
+    await http().post(`/v1/customers/${ana}/anonymise`).set(auth).send({ reason: 'Asked to be forgotten' }).expect(200);
+
+    const actions = await asOwnerInTenant(owner, t.tenantId, async (c) =>
+      (await c.query<{ action: string }>(`SELECT action FROM audit_logs WHERE resource_type = 'customer' AND action IN ('customer.consent_withdrawn', 'customer.anonymised') ORDER BY occurred_at, id`)).rows.map((r) => r.action));
+    expect(actions).toEqual(['customer.consent_withdrawn', 'customer.consent_withdrawn', 'customer.anonymised', 'customer.anonymised']);
+  });
 });
 
 describe('purchases and store credit', () => {
@@ -170,7 +199,16 @@ describe('purchases and store credit', () => {
     const [cash] = await q<{ v: string }>(s, `SELECT sum(amount) AS v FROM cash_movements WHERE sale_id = $1`, [paid.id]);
     expect(Number(cash!.v)).toBe(33.6);
     const ledger = (await http().get(`/v1/customers/${maria.id}/store-credit`).set(s.cashier).expect(200)).body.data;
-    expect(ledger.map((e: { kind: string; amount: string }) => [e.kind, e.amount])).toEqual([['REDEEM', '-22.40'], ['RETURN', '22.40']]);
+    expect(ledger.map((e: { kind: string; amount: string; canOpen: boolean }) => [e.kind, e.amount, e.canOpen])).toEqual([['REDEEM', '-22.40', true], ['RETURN', '22.40', true]]);
+    // Paged newest first; a reader who may not read those sales sees the entries but may not open their documents.
+    const first = (await http().get(`/v1/customers/${maria.id}/store-credit?limit=1`).set(s.cashier).expect(200)).body;
+    expect([first.data.map((e: { kind: string }) => e.kind), first.nextCursor]).toEqual([['REDEEM'], first.data[0].id]);
+    const rest = (await http().get(`/v1/customers/${maria.id}/store-credit?limit=1&cursor=${first.nextCursor}`).set(s.cashier).expect(200)).body;
+    expect([rest.data.map((e: { kind: string }) => e.kind), rest.nextCursor]).toEqual([['RETURN'], null]);
+    const other = await addMember(owner, s.t.tenantId, 'cashier', { type: 'REGISTER', id: s.register2Id });
+    const otherAuth = bearer(await loginToken(app, other.email));
+    const view = (await http().get(`/v1/customers/${maria.id}/store-credit`).set(otherAuth).expect(200)).body.data;
+    expect(view.map((e: { canOpen: boolean }) => e.canOpen)).toEqual([false, false]);
   });
 
   it('two tills spending the same credit at once: one of them gets it', async () => {

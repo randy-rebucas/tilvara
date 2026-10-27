@@ -288,4 +288,28 @@ describe('count sheets (blind counts)', () => {
     const fee = await s.product('Fee', '5.00', { productType: 'SERVICE', trackInventory: false });
     expect((await http().post('/v1/stock/count-sheets').set(s.manager).send({ branchId: s.branchId, variantIds: [fee] }).expect(422)).body.error.code).toBe('NOT_STOCKED');
   });
+
+  it('one open sheet per branch, and no quick count of an item on it (the change would post twice)', async () => {
+    const s = await shop('sheet-once');
+    const cola = await s.product('Cola');
+    const chips = await s.product('Chips');
+    await stockIn(s, cola, '10');
+    await stockIn(s, chips, '4');
+    const open = (await http().post('/v1/stock/count-sheets').set(s.manager).send({ branchId: s.branchId, variantIds: [cola] }).expect(201)).body;
+    const [a, b] = await Promise.all([
+      http().post('/v1/stock/count-sheets').set(s.manager).send({ branchId: s.branchId }),
+      http().post('/v1/stock/count-sheets').set(s.manager).send({ branchId: s.branchId, variantIds: [chips] }),
+    ]);
+    expect([a.status, a.body.error?.code, b.status, b.body.error?.code]).toEqual([409, 'SHEET_OPEN', 409, 'SHEET_OPEN']);
+    const refused = await http().post('/v1/stock/counts').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, lines: [{ variantId: cola, countedQuantity: '8' }] }).expect(409);
+    expect(refused.body.error).toMatchObject({ code: 'ITEM_ON_OPEN_SHEET', details: { sheetId: open.id, variantIds: [cola] } });
+    // An item not on the sheet is counted as before.
+    await http().post('/v1/stock/counts').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, lines: [{ variantId: chips, countedQuantity: '3' }] }).expect(201);
+    await http().put(`/v1/stock/count-sheets/${open.id}/lines`).set(s.manager).send({ lines: [{ variantId: cola, countedQuantity: '8' }] }).expect(200);
+    await http().post(`/v1/stock/count-sheets/${open.id}/post`).set(s.manager).set('Idempotency-Key', randomUUID()).expect(200);
+    expect(await onHand(s, cola)).toBe('8');
+    expect(await onHand(s, chips)).toBe('3');
+    // Once it is posted, the next sheet may start.
+    await http().post('/v1/stock/count-sheets').set(s.manager).send({ branchId: s.branchId }).expect(201);
+  });
 });

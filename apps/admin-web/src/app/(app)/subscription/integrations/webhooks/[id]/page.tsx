@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ActionButton } from '@/components/actions';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { apiOrNull } from '@/lib/api';
+import { apiOrNull, type Me } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import type { MessageKey } from '@/i18n/messages';
@@ -19,12 +19,28 @@ export default async function WebhookDeliveriesPage({ params }: { params: Promis
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { t, lang } = await getT();
-  const [list, hooks] = await Promise.all([
+  const [list, hooks, me] = await Promise.all([
     apiOrNull<{ data: Delivery[] }>(`/webhooks/${id}/deliveries`),
     apiOrNull<{ data: { id: string; url: string }[] }>('/webhooks'),
+    apiOrNull<Me>('/me'),
   ]);
   if (!list) notFound();
   const hook = hooks?.data.find((h) => h.id === id);
+  // Sending again needs the plan's API access (the API refuses it otherwise).
+  const included = me?.activeTenant?.features?.includes('api_access') ?? true;
+  /** The receiver's HTTP status, or the worker's connection error in words (the raw text in the tooltip). */
+  const answer = (d: Delivery) => {
+    if (d.lastStatusCode !== null) return String(d.lastStatusCode);
+    if (!d.lastError) return '—';
+    const e = d.lastError;
+    const key: MessageKey =
+      e === 'timed out' ? 'int.err.timeout'
+        : e === 'ECONNREFUSED' || e === 'ECONNRESET' ? 'int.err.refused'
+          : e === 'ENOTFOUND' || e === 'EAI_AGAIN' ? 'int.err.notFound'
+            : e === 'not https' || e === 'address not public' ? 'int.err.notPublic'
+              : 'int.err.other';
+    return <span title={e}>{t(key)}</span>;
+  };
   const tone = (s: Delivery['status']) => (s === 'DELIVERED' ? 'chip bg-violet' : s === 'DEAD' ? 'chip bg-red' : 'tag');
 
   return (
@@ -43,12 +59,12 @@ export default async function WebhookDeliveriesPage({ params }: { params: Promis
               { header: t('int.when'), cell: (d) => <span className="text-muted">{formatDateTime(d.createdAt, lang)}</span> },
               { header: t('common.status'), cell: (d) => <span className={tone(d.status)}>{t(`int.status.${d.status}` as MessageKey)}</span> },
               { header: t('int.attempts'), num: true, cell: (d) => `${d.attempts}/${d.maxAttempts}` },
-              { header: t('int.answer'), cell: (d) => <Serial className="text-ink">{d.lastStatusCode ?? d.lastError ?? '—'}</Serial> },
-              { header: '', cell: (d) => (d.status === 'DEAD' ? <ActionButton url={`/api/v1/webhook-deliveries/${d.id}/retry`} label={t('int.sendAgain')} /> : null) },
+              { header: t('int.answer'), cell: (d) => <Serial className="text-ink">{answer(d)}</Serial> },
+              { header: '', cell: (d) => (d.status === 'DEAD' && included ? <ActionButton url={`/api/v1/webhook-deliveries/${d.id}/retry`} label={t('int.sendAgain')} /> : null) },
             ]}
             stacked={{
               title: (d) => (d.topic === 'webhook.ping' ? t('int.pingEvent') : t(`int.topic.${d.topic}` as MessageKey)),
-              meta: (d) => <Serial>{formatDateTime(d.createdAt, lang)} · {d.attempts}/{d.maxAttempts} · {d.lastStatusCode ?? d.lastError ?? '—'}</Serial>,
+              meta: (d) => <Serial>{formatDateTime(d.createdAt, lang)} · {d.attempts}/{d.maxAttempts} · {answer(d)}</Serial>,
               figure: (d) => <span className={tone(d.status)}>{t(`int.status.${d.status}` as MessageKey)}</span>,
             }}
           />

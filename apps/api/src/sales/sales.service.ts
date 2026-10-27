@@ -746,15 +746,18 @@ export class SalesService extends TenantService {
     const { rows: returned } = await db.execute<{ sale_line_id: string; quantity: string }>(
       sql`SELECT rl.sale_line_id, sum(rl.quantity)::text AS quantity FROM sale_return_lines rl JOIN sale_returns r ON r.id = rl.sale_return_id WHERE r.sale_id = ${s.id} GROUP BY 1`,
     );
-    const [lines, tenders, beneficiaries, charges] = await inSequence(
+    const [lines, tenders, beneficiaries, charges, [cashier]] = await inSequence(
       () => db.select().from(saleLines).where(eq(saleLines.saleId, s.id)).orderBy(saleLines.lineNo),
       () => db.select().from(saleTenders).where(eq(saleTenders.saleId, s.id)).orderBy(saleTenders.createdAt, saleTenders.id),
       () => db.select().from(saleBeneficiaries).where(eq(saleBeneficiaries.saleId, s.id)),
       () => db.select().from(saleCharges).where(eq(saleCharges.saleId, s.id)),
+      // The cashier's name rides along: readers of a sale need not be able to read the team.
+      () => db.select({ displayName: users.displayName }).from(users).where(eq(users.id, s.cashierUserId)),
     );
     const promos = await promotionNames(db, lines);
     return {
       ...this.summary(s),
+      cashierName: cashier?.displayName ?? null,
       lines: lines.map((l) => {
         const back = returned.find((r) => r.sale_line_id === l.id)?.quantity ?? '0';
         const out: Record<string, unknown> = {

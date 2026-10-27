@@ -8,7 +8,7 @@ import { useT } from '@/i18n/client';
  * Where an item sits in this branch (ADR-0021 §5), edited in its row: saved on Enter or on leaving
  * the field when it changed; an empty field removes it. The server writes it in capitals.
  */
-export function LocationCell({ branchId, variantId, name, location }: { branchId: string; variantId: string; name: string; location: string | null }) {
+export function LocationCell({ branchId, variantId, name, location, idPrefix = 'loc' }: { branchId: string; variantId: string; name: string; location: string | null; idPrefix?: string }) {
   const { t } = useT();
   const { pending, submit, error } = useSubmit();
   const [value, setValue] = useState(location ?? '');
@@ -24,9 +24,9 @@ export function LocationCell({ branchId, variantId, name, location }: { branchId
   }
   return (
     <span className="inline-flex flex-col items-start">
-      <label className="sr-only" htmlFor={`loc-${variantId}`}>{t('shelf.locationOf', { name })}</label>
+      <label className="sr-only" htmlFor={`${idPrefix}-${variantId}`}>{t('shelf.locationOf', { name })}</label>
       <input
-        id={`loc-${variantId}`}
+        id={`${idPrefix}-${variantId}`}
         className="input serial h-8 w-28 text-[0.8125rem] uppercase"
         maxLength={32}
         value={value}

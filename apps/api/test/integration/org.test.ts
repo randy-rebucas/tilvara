@@ -171,6 +171,46 @@ describe('scoped administration', () => {
     await expect(addMember(owner, o.tenant.tenantId, 'cashier', { type: 'BRANCH', id: foreign.branchId })).rejects.toThrow(/does not exist/);
     await expect(addMember(owner, o.tenant.tenantId, 'cashier', { type: 'REGISTER', id: o.branchId })).rejects.toThrow(/does not exist/);
   });
+
+  it('a role with terminals.manage alone sees the registers of its branch and can pair a till there', async () => {
+    await http()
+      .post('/v1/roles')
+      .set(bearer(o.tenant.access))
+      .set('Idempotency-Key', crypto.randomUUID())
+      .send({ key: 'till_setup', name: 'Till set-up', permissions: ['terminals.manage'] })
+      .expect(201);
+    await http().post('/v1/registers').set(bearer(o.tenant.access)).send({ branchId: otherBranchId, code: 'C1', name: 'Cebu 1' }).expect(201);
+    const setup = await addMember(owner, o.tenant.tenantId, 'till_setup', { type: 'BRANCH', id: o.branchId });
+    const token = await loginToken(app, setup.email);
+    const regs = await http().get('/v1/registers').set(bearer(token)).expect(200);
+    const branchIds = new Set(regs.body.data.map((r: { branchId: string }) => r.branchId));
+    expect(regs.body.data.map((r: { id: string }) => r.id)).toContain(o.registerId);
+    expect([...branchIds]).toEqual([o.branchId]);
+    await http().post('/v1/terminals').set(bearer(token)).send({ registerId: o.registerId, name: 'Till A' }).expect(201);
+  });
+
+  it('report, drawer and books readers see the branches, registers and entity they work on, no others', async () => {
+    const role = (key: string, permissions: string[]) =>
+      http().post('/v1/roles').set(bearer(o.tenant.access)).set('Idempotency-Key', crypto.randomUUID()).send({ key, name: key, permissions }).expect(201);
+    await role('report_reader', ['reports.read']);
+    await role('drawer_checker', ['cash.reconcile']);
+    await role('bookkeeper', ['accounting.read']);
+    const as = async (key: string, scope: { type: 'BRANCH' | 'LEGAL_ENTITY'; id: string }) => bearer(await loginToken(app, (await addMember(owner, o.tenant.tenantId, key, scope)).email));
+    const ids = (body: { data: { id: string }[] }) => body.data.map((x) => x.id);
+    for (const key of ['report_reader', 'drawer_checker']) {
+      const who = await as(key, { type: 'BRANCH', id: o.branchId });
+      expect(ids((await http().get('/v1/branches').set(who).expect(200)).body)).toEqual([o.branchId]);
+      const regs = (await http().get('/v1/registers').set(who).expect(200)).body.data as { id: string; branchId: string }[];
+      expect(regs.map((r) => r.id)).toContain(o.registerId);
+      expect(new Set(regs.map((r) => r.branchId))).toEqual(new Set([o.branchId]));
+      expect((await http().get('/v1/legal-entities').set(who).expect(200)).body.data).toEqual([]);
+    }
+    const books = await as('bookkeeper', { type: 'LEGAL_ENTITY', id: o.entityId });
+    expect(ids((await http().get('/v1/legal-entities').set(books).expect(200)).body)).toEqual([o.entityId]);
+    expect(ids((await http().get('/v1/branches').set(books).expect(200)).body).sort()).toEqual([o.branchId, otherBranchId].sort());
+    // Reading only: none of them may change the organisation.
+    await http().patch(`/v1/branches/${o.branchId}`).set(books).send({ name: 'x' }).expect(403);
+  });
 });
 
 describe('cross-tenant isolation (org)', () => {

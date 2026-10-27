@@ -209,3 +209,23 @@ describe('local business dates', () => {
     expect([1, 2]).toContain((Date.parse(days[0]!) - Date.parse(days[1]!)) / 86_400_000);
   });
 });
+
+describe('closing a shift again after a lost answer', () => {
+  it('replays the count under the same Idempotency-Key and refuses the key with another count', async () => {
+    const s = await shop('recon-close-key');
+    const br = (await http().post('/v1/branches').set(s.auth).send({ legalEntityId: s.legalEntityId, code: 'CK', name: 'Close key' }).expect(201)).body.id as string;
+    const reg = (await http().post('/v1/registers').set(s.auth).send({ branchId: br, code: 'R1', name: 'Counter' }).expect(201)).body.id as string;
+    const session = await open(s.auth, reg, '100.00');
+    const key = randomUUID();
+    const closeWith = (countedCash: string, k = key) => http().post(`/v1/cashier-sessions/${session}/close`).set(s.auth).set('Idempotency-Key', k).send({ countedCash });
+    const first = await closeWith('100.00').expect(200);
+    expect(first.body.status).toBe('RECONCILED');
+    // The till's retry of the same count gets the same answer, not "session not open".
+    const again = await closeWith('100.00').expect(200);
+    expect(again.headers['idempotent-replayed']).toBe('true');
+    expect(again.body).toEqual(first.body);
+    expect((await closeWith('99.00').expect(422)).body.error.code).toBe('IDEMPOTENCY_KEY_REUSED');
+    // A new key on a closed shift is still refused.
+    expect((await closeWith('100.00', randomUUID()).expect(409)).body.error.code).toBe('SESSION_NOT_OPEN');
+  });
+});

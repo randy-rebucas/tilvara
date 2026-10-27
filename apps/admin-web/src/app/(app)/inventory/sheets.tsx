@@ -7,7 +7,7 @@ import { FormError, TextField } from '@/components/fields';
 import { useFormKey, useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 import type { CountSheet, InventorySettings, NegativeStockPolicy } from '@/lib/api';
-import { qty, signed } from '@/lib/format';
+import { qty, sameDecimal, signed } from '@/lib/format';
 
 const general = (e: { code: string; message: string } | null) => (e && e.code !== 'VALIDATION_FAILED' ? e.message : null);
 
@@ -41,7 +41,7 @@ function StartSheetFields({ close, branchId }: { close: () => void; branchId: st
       <div className="form-actions">
         <button className="btn btn-primary" disabled={pending}>{t('sheet.start')}</button>
         <button type="button" className="btn" onClick={close}>{t('common.cancel')}</button>
-        <FormError message={general(error)} />
+        <FormError message={error?.code === 'SHEET_OPEN' ? t('sheet.oneOpen') : general(error)} />
       </div>
     </form>
   );
@@ -55,9 +55,11 @@ export function StartSheetForm({ branchId }: { branchId: string }) {
 // ---------------------------------------------------------------- counting
 
 /**
- * One field per item. Counts are saved for the changed lines only, so two people counting
- * different shelves do not overwrite each other. Frozen quantities appear only when the API sends
- * them; on a blind sheet an adjuster still has to ask to see them.
+ * One field per item. Only the fields this person typed in are kept here (`edits`); every other field
+ * shows what the server has, so a colleague's counts appear after a refresh and are never sent back.
+ * A save sends only the edited lines that differ from the server (as decimals: "5.0" is "5"), then hands
+ * those lines back to the server's values. Frozen quantities appear only when the API sends them; on a
+ * blind sheet an adjuster still has to ask to see them.
  */
 export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: boolean }) {
   const { t } = useT();
@@ -66,11 +68,16 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
   const save = useSubmit();
   const post = useSubmit();
   const cancel = useSubmit();
-  const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(sheet.lines.map((l) => [l.variantId, l.countedQuantity ?? ''])));
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  // What the last save answered, shown until the refreshed sheet arrives (then the sheet itself is newer).
+  const [saved, setSaved] = useState<{ base: CountSheet; lines: Record<string, string | null> } | null>(null);
+  const justSaved = saved && saved.base === sheet ? saved.lines : {};
+  const serverValue = (variantId: string, fallback: string | null) => (variantId in justSaved ? justSaved[variantId] : fallback) ?? '';
+  const values: Record<string, string> = Object.fromEntries(sheet.lines.map((l) => [l.variantId, edits[l.variantId] ?? serverValue(l.variantId, l.countedQuantity)]));
   const [reveal, setReveal] = useState(!sheet.blind);
   const [filter, setFilter] = useState('');
   const open = sheet.status === 'OPEN';
-  const changed = sheet.lines.filter((l) => (values[l.variantId] ?? '').trim() !== (l.countedQuantity ?? ''));
+  const changed = sheet.lines.filter((l) => edits[l.variantId] !== undefined && !sameDecimal(edits[l.variantId]!, serverValue(l.variantId, l.countedQuantity)));
   const showExpected = sheet.expectedShown && (reveal || !open);
   const shown = sheet.lines.filter((l) => !filter || `${l.sku} ${l.name} ${l.location ?? ''}`.toLowerCase().includes(filter.toLowerCase()));
   const counted = sheet.lines.filter((l) => l.countedQuantity !== null).length;
@@ -78,9 +85,14 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
     if (changed.length === 0) return;
-    await save.submit('PUT', `/api/v1/stock/count-sheets/${sheet.id}/lines`, {
-      lines: changed.map((l) => ({ variantId: l.variantId, countedQuantity: (values[l.variantId] ?? '').trim() === '' ? null : values[l.variantId]!.trim() })),
-    });
+    const sent = changed.map((l) => ({ variantId: l.variantId, countedQuantity: (edits[l.variantId] ?? '').trim() === '' ? null : edits[l.variantId]!.trim() }));
+    const r = await save.submit<CountSheet>('PUT', `/api/v1/stock/count-sheets/${sheet.id}/lines`, { lines: sent });
+    if (r.ok) {
+      // The saved lines show the server's numbers again (and pick up later counts by others).
+      const answered = new Map(r.data.lines.map((l) => [l.variantId, l.countedQuantity]));
+      setSaved((s) => ({ base: sheet, lines: { ...(s && s.base === sheet ? s.lines : {}), ...Object.fromEntries(sent.map((x) => [x.variantId, answered.get(x.variantId) ?? null])) } }));
+      setEdits((e) => Object.fromEntries(Object.entries(e).filter(([v]) => !sent.some((x) => x.variantId === v))));
+    }
   }
 
   return (
@@ -132,7 +144,10 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
                       inputMode="decimal"
                       placeholder={t('sheet.notCounted')}
                       value={values[l.variantId] ?? ''}
-                      onChange={(e) => setValues((v) => ({ ...v, [l.variantId]: e.target.value }))}
+                      onChange={(e) => {
+                        const typed = e.target.value;
+                        setEdits((v) => ({ ...v, [l.variantId]: typed }));
+                      }}
                     />
                   </div>
                 ) : (

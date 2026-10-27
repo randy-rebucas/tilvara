@@ -32,6 +32,12 @@ export default async function SupplierPage({ params }: { params: Promise<{ id: s
   const products = canManage && !supplier?.archivedAt ? await allProducts() : null;
   const listed = new Set(catalog?.data.map((i) => i.variantId));
   const open = orders?.data.filter((o) => OPEN.includes(o.status)).length ?? 0;
+  const itemActions = (i: SupplierItem) => (
+    <span className="inline-flex flex-wrap gap-2">
+      <EditSupplierItemForm item={i} supplierId={supplier.id} />
+      <ActionButton url={`/api/v1/supplier-items/${i.id}/archive`} label={t('pur.removeCatalogItem')} />
+    </span>
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,18 +92,12 @@ export default async function SupplierPage({ params }: { params: Promise<{ id: s
                 { header: t('common.item'), cell: (i) => <span>{i.name}{i.preferred && <span className="tag ml-2">{t('pur.preferred')}</span>}</span> },
                 { header: t('pur.supplierSku'), cell: (i) => <Serial className="text-ink">{i.supplierSku ?? '—'}</Serial> },
                 { header: t('pur.catalogCostLabel'), num: true, cell: (i) => <span className="money">{i.unitCost ? peso(i.unitCost) : '—'}</span> },
-                ...(canManage
-                  ? [{ header: '', cell: (i: SupplierItem) => (
-                      <span className="inline-flex flex-wrap gap-2">
-                        <EditSupplierItemForm item={i} supplierId={supplier.id} />
-                        <ActionButton url={`/api/v1/supplier-items/${i.id}/archive`} label={t('pur.removeCatalogItem')} />
-                      </span>
-                    ) }]
-                  : []),
+                ...(canManage ? [{ header: '', cell: (i: SupplierItem) => itemActions(i) }] : []),
               ]}
               stacked={{
                 title: (i) => i.name,
-                meta: (i) => <Serial>{i.sku} · {t('pur.supplierSku')} {i.supplierSku ?? '—'}{i.preferred ? ` · ${t('pur.preferred')}` : ''}</Serial>,
+                // On a phone the actions sit under the row (the stacked list has no action column).
+                meta: (i) => <><Serial>{i.sku} · {t('pur.supplierSku')} {i.supplierSku ?? '—'}{i.preferred ? ` · ${t('pur.preferred')}` : ''}</Serial>{canManage && <div className="mt-2">{itemActions(i)}</div>}</>,
                 figure: (i) => <span className="money font-semibold">{i.unitCost ? peso(i.unitCost) : '—'}</span>,
               }}
             />

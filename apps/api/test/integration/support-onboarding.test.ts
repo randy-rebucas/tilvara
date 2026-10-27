@@ -454,13 +454,18 @@ describe('sample items for a trial (ADR-0016 slice 6)', () => {
   it('load, sell, remove: labelled, priced, scannable, removed by archiving, history kept', async () => {
     const t = await signup(app, 'sample');
     const auth = bearer(t.access);
-    expect((await http().get('/v1/sample-data').set(auth).expect(200)).body).toEqual({ loaded: 0, canLoad: true, reason: null, items: 8 });
+    expect((await http().get('/v1/sample-data').set(auth).expect(200)).body).toEqual({ loaded: 0, canLoad: true, canRemove: false, reason: null, items: 8 });
     const cashier = await addMember(owner, t.tenantId, 'cashier');
     const cashierToken = (await http().post('/v1/auth/login').send({ email: cashier.email, password: PASSWORD }).expect(200)).body.tokens.accessToken;
+    // A cashier reads the catalog but may not load or remove the set: the state says so, and the API refuses.
+    expect((await http().get('/v1/sample-data').set(bearer(cashierToken)).expect(200)).body).toMatchObject({ canLoad: false, canRemove: false, reason: null });
     await http().post('/v1/sample-data').set(bearer(cashierToken)).expect(403);
 
     const loaded = (await http().post('/v1/sample-data').set(auth).expect(201)).body;
     expect(loaded.loaded).toBe(8);
+    expect((await http().get('/v1/sample-data').set(auth).expect(200)).body).toMatchObject({ loaded: 8, canLoad: false, canRemove: true, reason: 'SAMPLE_DATA_LOADED' });
+    expect((await http().get('/v1/sample-data').set(bearer(cashierToken)).expect(200)).body).toMatchObject({ loaded: 8, canRemove: false });
+    await http().post('/v1/sample-data/remove').set(bearer(cashierToken)).expect(403);
     expect((await http().post('/v1/sample-data').set(auth).expect(409)).body.error.code).toBe('SAMPLE_DATA_LOADED');
     const products = (await http().get('/v1/products').set(auth).expect(200)).body.data as { name: string; isSample: boolean; trackInventory: boolean; variants: { sku: string; barcodes: string[] }[] }[];
     expect(products).toHaveLength(8);

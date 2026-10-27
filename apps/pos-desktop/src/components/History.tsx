@@ -1,8 +1,12 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
-import { api, ApiFailure, uuid, withReference } from '../lib/api';
-import { peso } from '../lib/money';
+import { api, ApiFailure, uuid } from '../lib/api';
+import { openDrawerFor } from '../lib/drawer';
+import { isPositive, peso } from '../lib/money';
 import { RETIRED_TENDERS } from '../lib/printing';
+import { leftOn, returnOptions } from '../lib/return-options';
+import { useTill } from '../lib/till';
+import { errorText } from './Payment';
 import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } from '../types';
 import type { ExchangeStart } from './CounterTools';
 import type { Shift } from './Registers';
@@ -22,6 +26,7 @@ const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH
  */
 export function History({ shift, permissions, onExchange }: { shift: Shift; permissions: string[]; onExchange?: (x: ExchangeStart) => void }) {
   const { t } = useT();
+  const till = useTill();
   const [sales, setSales] = useState<SaleSummary[] | null>(null);
   const [selected, setSelected] = useState<{ detail: SaleDetail; receipt: ReceiptData } | null>(null);
   /** The refund/void slip just made, shown (and printable) until the cashier goes back to the sale. */
@@ -38,11 +43,18 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   const canExchange = canReturn && permissions.includes('sales.create') && Boolean(onExchange);
   // Paid with a tender no longer offered: the server refuses a void, return or exchange (TENDER_RETIRED), so none is offered.
   const retired = Boolean(selected?.receipt.tenders.some((tn) => RETIRED_TENDERS.includes(tn.method)));
+  // What the server would refuse is not offered: each button only when it can work, with why the others cannot.
+  const options = selected ? returnOptions(selected.detail, selected.receipt.tenders, shift.sessionId) : null;
+  const offerVoid = canVoid && Boolean(options?.voidable);
+  const offerReturn = canReturn && Boolean(options?.returnable);
+  const offerExchange = canExchange && Boolean(options?.exchangeable);
+  const reasons = options && (canVoid || canReturn) ? options.why.filter((k) => (k === 'history.exchangeCredit' ? canExchange : k === 'history.nothingLeft' || canVoid)) : [];
+  const readError = (e: unknown) => errorText(e, t('common.error'), t('common.network'));
 
   const load = () =>
     api<{ data: SaleSummary[] }>('GET', `/v1/sales?cashierSessionId=${shift.sessionId}`)
       .then((r) => setSales(r.data))
-      .catch((e) => setMessage({ kind: 'error', text: e instanceof ApiFailure ? e.error.message : t('common.error') }));
+      .catch((e) => setMessage({ kind: 'error', text: readError(e) }));
   useEffect(() => {
     void load();
     // A sale rung up at another register of this branch can come back here too.
@@ -54,12 +66,16 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   }, []);
 
   async function open(id: string) {
-    const [detail, receipt] = await Promise.all([api<SaleDetail>('GET', `/v1/sales/${id}`), api<ReceiptData>('GET', `/v1/sales/${id}/receipt`)]);
-    setSelected({ detail, receipt });
-    setSlip(null);
-    setMode(null);
-    setPreview(null);
-    setMessage(null);
+    try {
+      const [detail, receipt] = await Promise.all([api<SaleDetail>('GET', `/v1/sales/${id}`), api<ReceiptData>('GET', `/v1/sales/${id}/receipt`)]);
+      setSelected({ detail, receipt });
+      setSlip(null);
+      setMode(null);
+      setPreview(null);
+      setMessage(null);
+    } catch (e) {
+      setMessage({ kind: 'error', text: readError(e) });
+    }
   }
 
   async function find(e: FormEvent<HTMLFormElement>) {
@@ -71,7 +87,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       if (!r.data[0]) return setMessage({ kind: 'error', text: t('history.notFound') });
       await open(r.data[0].id);
     } catch (err) {
-      setMessage({ kind: 'error', text: err instanceof ApiFailure ? withReference(err.error.message, err) : t('common.error') });
+      setMessage({ kind: 'error', text: readError(err) });
     }
   }
 
@@ -93,7 +109,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
         setPreview({ saleId: selected.detail.id, saleNumber: selected.detail.saleNumber, reason: String(f.get('reason') ?? '').trim(), returnLines: lines, refund: r.refund, items });
         setMessage(null);
       } catch (err) {
-        setMessage({ kind: 'error', text: err instanceof ApiFailure ? withReference(err.error.message, err) : t('common.error') });
+        setMessage({ kind: 'error', text: readError(err) });
       }
       return;
     }
@@ -115,16 +131,18 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       const parts = r.refunds?.length ? r.refunds : [{ method: f.get('toCredit') === 'on' ? 'STORE_CREDIT' : (r.refundMethod ?? 'CASH'), amount: r.amountDue }];
       const refunded = parts.map((p) => t(p.method === 'STORE_CREDIT' ? 'history.creditGiven' : 'history.refund', { amount: peso(p.amount) })).join(' · ');
       setMessage({ kind: 'info', text: refunded });
+      // Cash went out of the drawer: open it (best effort, after the refund is recorded).
+      openDrawerFor(till.drawer, parts.some((p) => p.method === 'CASH' && isPositive(p.amount)));
       void api<ReceiptData>('GET', `/v1/sale-returns/${r.id}/receipt`).then(setSlip).catch(() => undefined);
       void load();
     } catch (err) {
       // No answer or a server failure: the refund may have been recorded. Keep the key so
       // submitting again replays it instead of refunding twice.
       if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) {
-        return setMessage({ kind: 'error', text: withReference(t('history.unconfirmed'), err) });
+        return setMessage({ kind: 'error', text: errorText(err, t('common.error'), t('history.unconfirmed')) });
       }
       setKey(uuid());
-      setMessage({ kind: 'error', text: err instanceof ApiFailure ? err.error.message : t('common.error') });
+      setMessage({ kind: 'error', text: readError(err) });
     }
   }
 
@@ -183,18 +201,26 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
             {retired ? (
               (canVoid || canReturn) && <div className="no-print"><Callout kind="info">{t('history.retiredTender')}</Callout></div>
             ) : (
-            <div className="no-print flex flex-wrap gap-2">
-              {canVoid && <button className="btn btn-danger" aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
-              {canReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
-              {canExchange && <button className="btn" aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
+            <div className="no-print grid gap-2">
+              <div className="flex flex-wrap gap-2">
+                {offerVoid && <button className="btn btn-danger" aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
+                {offerReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
+                {offerExchange && <button className="btn" aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
+              </div>
               {!canVoid && !canReturn && <Callout kind="info">{t('history.managerOnly')}</Callout>}
+              {reasons.length > 0 && (
+                <ul className="grid gap-1 text-[0.875rem] text-muted" data-testid="return-why">
+                  {reasons.map((k) => <li key={k}>{t(k)}</li>)}
+                </ul>
+              )}
             </div>
             )}
-            {mode && !retired && (
+            {mode && !retired && ((mode === 'void' && offerVoid) || (mode === 'return' && offerReturn) || (mode === 'exchange' && offerExchange)) && (
               <Note className="no-print p-5">
                 <form className="grid gap-3" onSubmit={submit}>
                   {mode !== 'void' &&
-                    selected.detail.lines.map((l) => (
+                    // Only lines with something left to give back.
+                    selected.detail.lines.filter((l) => leftOn(l).gt(0)).map((l) => (
                       <div key={l.id} className="grid items-end gap-3 sm:grid-cols-[1fr_120px_auto]">
                         <p>
                           {l.name}{' '}

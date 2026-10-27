@@ -86,12 +86,12 @@ try {
   check('8 labelled sample items are added', await shown('8 sample items are on your list'));
   await shot('onboarding-sample.png');
   await go('/products');
-  check('products show them tagged Sample and named “(sample)”', (await text()).includes('Rice 5 kg (sample)') && (await evaluate(`[...document.querySelectorAll('.tag')].filter((x) => x.textContent === 'Sample').length`)) === 8);
+  check('products show them tagged Sample and named “(sample)”', (await text()).includes('Rice 5 kg (sample)') && (await evaluate(`[...document.querySelectorAll('.tag')].filter((x) => x.textContent === 'Sample' && x.offsetParent !== null).length`)) === 8);
 
   // 2. Support access, given by the owner.
   await go('/subscription/support');
   const tabs = await evaluate(`[...document.querySelectorAll('nav[aria-label="Subscription sections"] a')].map((a) => a.textContent)`);
-  check('subscription has Plan · Business · Your records · Support access · Integrations tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Business', 'Your records', 'Support access', 'Integrations']));
+  check('subscription has Plan · Business · Extensions · Your records · Support access · Integrations tabs', JSON.stringify(tabs) === JSON.stringify(['Plan', 'Business', 'Extensions', 'Your records', 'Support access', 'Integrations']));
   check('the page says support cannot see the business unless allowed', await shown('Tilvara support cannot see your business unless you allow it here.'));
   await clickText('Give support access');
   await fill('purpose', 'Please check why the sample rice price shows twice');
@@ -156,7 +156,7 @@ try {
   await sleep(800);
   check('ending it marks it Ended', (await lower()).includes('ended ·'));
   await go('/audit?action=support');
-  check('the audit log lists support steps by the staff member', await shown('(Tilvara support)') && (await lower()).includes('support.session_opened'));
+  check('the audit log lists support steps by the staff member', await shown('(Tilvara support)') && await shown('Tilvara support opened the business') && await shown('Support staff: Sam Support') && !(await lower()).includes('staffname'));
   await shot('onboarding-audit.png');
 
   // 6. Sample items removed; phone width; Filipino.

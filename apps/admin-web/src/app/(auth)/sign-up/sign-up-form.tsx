@@ -21,8 +21,9 @@ const STEPS = [
   { title: 'auth.stepAccount', fields: ['displayName', 'email', 'password'] },
 ] as const;
 
-/** Server refusals that belong to one field rather than the whole form. */
+/** Server refusals that belong to one field rather than the whole form, with their words. */
 const FIELD_CODES: Record<string, string> = { SLUG_UNAVAILABLE: 'tenantSlug', EMAIL_UNAVAILABLE: 'email' };
+const FIELD_WORDS = { SLUG_UNAVAILABLE: 'auth.slugTaken', EMAIL_UNAVAILABLE: 'auth.emailTaken' } as const;
 
 /**
  * Sign-up in two steps: the business, then the owner's account (a retail business: the only type). Every step stays
@@ -53,7 +54,7 @@ export function SignUpForm() {
   const errorFor = (name: string) =>
     (missing.includes(name) ? t('validation.required') : undefined) ??
     fieldError(name) ??
-    (error && FIELD_CODES[error.code] === name ? error.message : undefined);
+    (error && FIELD_CODES[error.code] === name ? t(FIELD_WORDS[error.code as keyof typeof FIELD_WORDS]) : undefined);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

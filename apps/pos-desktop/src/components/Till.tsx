@@ -3,7 +3,7 @@ import { Printer, Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
-import { offlineReceiptToPrintable } from '../lib/printing';
+import { offlineReceiptToPrintable, RECEIPT_WORDS } from '../lib/printing';
 import { useTill } from '../lib/till';
 import { AuthStub } from './AuthNote';
 import { Callout, Field, Note } from './ui';
@@ -75,6 +75,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
   const [kind, setKind] = useState<'none' | PrinterTarget['kind']>(till.printerTarget?.kind ?? 'none');
   const [printers, setPrinters] = useState<string[]>([]);
   const [note, setNote] = useState<{ kind: 'info' | 'error'; text: string } | null>(null);
+  const [confirmForget, setConfirmForget] = useState(false);
 
   useEffect(() => {
     if (kind === 'windows') windowsPrinters().then(setPrinters, () => setPrinters([]));
@@ -98,8 +99,9 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
         header: ['Tilvara'], notice: 'TEST PRINT — NOT A RECEIPT', meta: [[till.terminalId ?? '', when(Date.now())]],
         items: [], totals: [], payments: [], footer: [t('till.printerTest')],
       });
-    } catch (err) {
-      setNote({ kind: 'error', text: `${t('receipt.printFailed')} (${(err as Error).message})` });
+    } catch {
+      // The printer's own message is English and technical: the words say what to do.
+      setNote({ kind: 'error', text: t('receipt.printFailed') });
     }
   }
 
@@ -122,7 +124,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
             {status.lastSyncAt && <li>{t('till.lastSync', { when: when(status.lastSyncAt) })}</li>}
           </ul>
         )}
-        {status?.snapshot?.expired && <Callout kind="warn">{t('till.priceListExpired')}</Callout>}
+        {status?.snapshot?.expired && <Callout kind="warn">{t('till.priceListExpired', { when: when(status.snapshot.validUntil) })}</Callout>}
         {status?.authState === 'REVOKED' && <Callout kind="error">{t('till.revoked')}. {t('till.revokedHelp')}</Callout>}
         <button className="btn justify-self-start" onClick={() => void till.engine?.drain().finally(() => void till.refresh())}>{t('till.syncNow')}</button>
       </Note>
@@ -160,7 +162,17 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
         </form>
       </Note>
 
-      <button className="btn btn-danger justify-self-start" onClick={() => void till.forget().then(onBack)}>{t('till.forget')}</button>
+      {confirmForget ? (
+        <Note denom="orange" className="grid gap-3 p-5" data-testid="forget-confirm">
+          <p>{t('till.forgetConfirm', { n: String(status?.pending ?? 0) })}</p>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-danger" onClick={() => void till.forget().then(onBack)}>{t('till.forgetYes')}</button>
+            <button className="btn" onClick={() => setConfirmForget(false)}>{t('common.cancel')}</button>
+          </div>
+        </Note>
+      ) : (
+        <button className="btn btn-danger justify-self-start" onClick={() => setConfirmForget(true)}>{t('till.forget')}</button>
+      )}
     </div>
   );
 }
@@ -219,11 +231,11 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
             <p key={r.label} className={`flex justify-between ${r.label === 'Change' ? 'font-semibold' : ''}`}><span>{r.label}</span><span className="money">{r.amount}</span></p>
           ))}
         </div>
-        <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.cashierName} · {data.register.name}</p>
+        <p className="mt-3 text-center text-muted">{RECEIPT_WORDS.cashier}: {data.cashierName} · {data.register.name}</p>
       </div>
       {printError && (
         <div className="no-print mx-auto w-full max-w-[420px]">
-          <Callout kind="error">{t('receipt.printFailed')} ({printError})</Callout>
+          <Callout kind="error">{t('receipt.printFailed')}</Callout>
         </div>
       )}
       <button className="no-print btn mx-auto" onClick={() => void print()}>

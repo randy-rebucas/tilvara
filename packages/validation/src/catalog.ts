@@ -122,19 +122,110 @@ export type UpdateVariantInput = z.infer<typeof updateVariantSchema>;
 
 export const addBarcodeSchema = z.object({ code: barcodeSchema });
 
-export const productListQuerySchema = z.object({
-  q: z.string().trim().min(1).max(100).optional(),
-  categoryId: z.uuid().optional(),
-  /** Only this kind of item. */
-  productType: z.enum(['STANDARD', 'SERVICE']).optional(),
-  includeArchived: z
-    .enum(['true', 'false'])
-    .default('false')
-    .transform((v) => v === 'true'),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  cursor: z.uuid().optional(),
-});
+const queryFlag = z
+  .enum(['true', 'false'])
+  .transform((v) => v === 'true')
+  .optional();
+
+/** The next page after a product listed by name: its name and id, base64url JSON (opaque to callers). */
+export function encodeNameCursor(name: string, id: string): string {
+  return Buffer.from(JSON.stringify([name, id])).toString('base64url');
+}
+
+function decodeNameCursor(cursor: string): { name: string; id: string } | null {
+  try {
+    const v: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+    if (!Array.isArray(v) || v.length !== 2 || typeof v[0] !== 'string' || !z.uuid().safeParse(v[1]).success) return null;
+    return { name: v[0], id: v[1] as string };
+  } catch {
+    return null;
+  }
+}
+
+export const productListQuerySchema = z
+  .object({
+    q: z.string().trim().min(1).max(100).optional(),
+    /** A category id, or `none` for products without one. */
+    categoryId: z.union([z.uuid(), z.literal('none')]).optional(),
+    /** With `categoryId`: its sub-categories too (Drinks finds Drinks › Hot drinks). */
+    withSubcategories: queryFlag,
+    /** Only this kind of item. */
+    productType: z.enum(['STANDARD', 'SERVICE']).optional(),
+    soldBy: z.enum(['UNIT', 'WEIGHT']).optional(),
+    taxCategoryId: z.uuid().optional(),
+    trackInventory: queryFlag,
+    tracksExpiry: queryFlag,
+    /** At least one active barcode on an active variant (false: none). */
+    hasBarcode: queryFlag,
+    /** A price in force now on the default price list for every active variant (false: one has none). */
+    hasPrice: queryFlag,
+    /** More than one active variant (sizes, colours). */
+    hasVariants: queryFlag,
+    includeArchived: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
+    /** Overrides `includeArchived`. */
+    status: z.enum(['active', 'archived', 'all']).optional(),
+    /** `oldest` (the default) and `newest` page by id; `name` pages by name then id. */
+    sort: z.enum(['oldest', 'newest', 'name']).default('oldest'),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    cursor: z.string().max(1200).optional(),
+  })
+  .transform((q, ctx) => {
+    const status = q.status ?? (q.includeArchived ? 'all' : 'active');
+    let after: { name?: string; id: string } | undefined;
+    if (q.cursor) {
+      const decoded = q.sort === 'name' ? decodeNameCursor(q.cursor) : z.uuid().safeParse(q.cursor).success ? { id: q.cursor } : null;
+      if (!decoded) {
+        ctx.addIssue({ code: 'custom', path: ['cursor'], message: 'Use the nextCursor of the previous page, with the same sort' });
+        return z.NEVER;
+      }
+      after = decoded;
+    }
+    return { ...q, status, after };
+  });
 export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+/** Rows in one product import (a CSV file read by the admin). */
+export const PRODUCT_IMPORT_MAX_ROWS = 2000;
+
+/**
+ * One line of a product import: one variant (SKU) and its product's details. A row whose SKU is
+ * already an active variant updates it; a new SKU joins the product of the same name in the file
+ * that already exists, or makes a new product. A field left out leaves that detail as it is (or
+ * takes the default for a new product: unit PC, tax VAT, sold by unit, stock tracked).
+ */
+export const productImportRowSchema = z.object({
+  /** Line in the file, for the messages. */
+  line: z.number().int().min(1).max(1_000_000),
+  name,
+  sku: skuSchema,
+  variantName: z.string().trim().min(1).max(200).optional(),
+  /** Added to the variant's barcodes; none is ever removed. */
+  barcodes: z.array(barcodeSchema).max(20).default([]),
+  /** A name, or a path such as "Drinks › Hot drinks" (› or >); missing categories are made. */
+  category: z.string().trim().min(1).max(500).optional(),
+  /** A unit code (PC, KG). */
+  unit: z.string().trim().min(1).max(10).optional(),
+  /** A tax category's code or name. */
+  tax: z.string().trim().min(1).max(200).optional(),
+  productType: z.enum(['STANDARD', 'SERVICE']).optional(),
+  soldBy: z.enum(['UNIT', 'WEIGHT']).optional(),
+  trackInventory: z.boolean().optional(),
+  tracksExpiry: z.boolean().optional(),
+  /** The price on the default price list, from now. */
+  price: amountSchema.optional(),
+  referenceCost: amountSchema.optional(),
+  /** Replaces the variant's sizes and colours. */
+  attributes: attributes.optional(),
+});
+export type ProductImportRow = z.infer<typeof productImportRowSchema>;
+
+export const productImportSchema = z.object({
+  rows: z.array(productImportRowSchema).min(1).max(PRODUCT_IMPORT_MAX_ROWS),
+});
+export type ProductImportInput = z.infer<typeof productImportSchema>;
 
 /** Names for document lines that carry only variant ids (archived ones included): `?ids=a,b,c`. */
 export const variantLookupQuerySchema = z.object({

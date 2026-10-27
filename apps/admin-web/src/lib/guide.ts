@@ -71,7 +71,7 @@ const section = (
 
 export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('start', 'guide.start.title', 'none', 6, 3),
-  section('products', 'nav.products', 'blue', 7, 2, { area: area('/products') }),
+  section('products', 'nav.products', 'blue', 8, 2, { area: area('/products') }),
   section('prices', 'nav.prices', 'blue', 4, 3, { area: area('/prices') }),
   // ADR-0021: promotions, sizes and colours, quick keys, labels and shelf locations (a shop's or boutique's tools).
   section('retail', 'guide.retail.title', 'blue', 6, 3, { area: area('/products'), href: '/prices/promotions' }),

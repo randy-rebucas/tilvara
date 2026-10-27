@@ -319,7 +319,6 @@ export class CashService extends TenantService {
       sql`SELECT count(*)::int AS count, sum(amount_due)::text AS total FROM sales WHERE cashier_session_id = ${s.id}`,
     );
     const [rec] = await db.select().from(cashReconciliations).where(eq(cashReconciliations.cashierSessionId, s.id));
-    const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy]);
     // Pay-ins, pay-outs and suppliers paid from the drawer, one by one (each with a reason; a pay-in/out is its own
     // document with a journal entry, a supplier payment's entry is the payment's).
     const payInOut = await db
@@ -327,11 +326,12 @@ export class CashService extends TenantService {
       .from(cashMovements)
       .where(and(eq(cashMovements.cashierSessionId, s.id), inArray(cashMovements.type, ['PAY_IN', 'PAY_OUT', 'SUPPLIER_PAYMENT'])))
       .orderBy(cashMovements.createdAt, cashMovements.id);
+    const names = await namesOf(db, [s.openedBy, rec?.countedBy, rec?.approvedBy, ...payInOut.map((m) => m.createdBy)]);
     return {
       ...base,
       openedByName: names.get(s.openedBy) ?? null,
       movements: byType.map((m) => ({ type: m.type, total: money(m.total), count: m.count })),
-      payInOut: payInOut.map((m) => ({ ...m, amount: money(m.amount) })),
+      payInOut: payInOut.map((m) => ({ ...m, amount: money(m.amount), createdByName: names.get(m.createdBy) ?? null })),
       sales: { count: salesAgg[0]!.count, total: money(salesAgg[0]!.total ?? '0') },
       reconciliation: reconciliationView(rec, names),
     };

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, ApiError, type Member } from '@/lib/api';
+import { auditDetails } from '@/lib/audit-details';
 import { formatDateTime } from '@/lib/format';
 import { isUuid } from '@/lib/options';
 import { en, type MessageKey } from '@/i18n/messages';
@@ -30,7 +31,7 @@ const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 const FAMILIES = [
   'sale', 'cash', 'customer', 'held_cart', 'payment', 'z_reading', 'offline_sale', 'terminal',
   'product', 'variant', 'barcode', 'category', 'uom', 'pack_link', 'sample_data', 'price', 'promotion',
-  'stock', 'inventory', 'lot', 'goods', 'purchase', 'supplier', 'journal', 'period', 'tax',
+  'stock', 'inventory', 'lot', 'goods', 'purchase', 'supplier', 'journal', 'account', 'period', 'tax',
   'branch', 'register', 'legal_entity', 'member', 'role', 'invitation', 'auth', 'tenant', 'support', 'data_export', 'api_key', 'webhook',
 ] as const;
 
@@ -72,14 +73,6 @@ function recordHref(type: string, id: string | null): string | null {
     case 'lot_hold': return '/inventory/holds?released=1';
     default: return null;
   }
-}
-
-/** A short, readable view of an event's details (keys and simple values; nested values are counted). */
-function details(m: Record<string, unknown>): string {
-  return Object.entries(m)
-    .slice(0, 6)
-    .map(([k, v]) => `${k}: ${v === null ? '—' : typeof v === 'object' ? (Array.isArray(v) ? `${v.length} items` : '…') : String(v)}`)
-    .join(' · ');
 }
 
 /** The business's audit log: who did what to which record, when (append-only; audit.read for the whole business). */
@@ -174,7 +167,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
                   );
                 },
               },
-              { header: t('audit.details'), cell: (r) => <span className="text-[0.8125rem] text-muted">{details(r.metadata)}</span> },
+              { header: t('audit.details'), cell: (r) => <span className="text-[0.8125rem] text-muted">{auditDetails(t, r.metadata)}</span> },
             ]}
             stacked={{
               title: (r) => what(r.action),

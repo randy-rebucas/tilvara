@@ -26,7 +26,8 @@ export default async function TransferPage({ params, searchParams }: { params: P
   if (!transfer) notFound();
   const from = branches?.data.find((b) => b.id === transfer.fromBranchId);
   const received = transfer.status === 'RECEIVED';
-  const canReceive = !received && (me.activeTenant?.permissions.includes('inventory.transfer') ?? false);
+  // Received at the destination: the API says whether this person may do it there (older APIs: by permission alone).
+  const canReceive = !received && (transfer.canReceive ?? me.activeTenant?.permissions.includes('inventory.transfer') ?? false);
   const short = transfer.lines.some((l) => l.shortQuantity !== null && signOf(l.shortQuantity) > 0);
 
   return (

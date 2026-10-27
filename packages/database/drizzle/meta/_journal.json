@@ -848,6 +848,13 @@
       "when": 1793025105346,
       "tag": "0120_supplier_cash_from_drawer",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1793064484508,
+      "tag": "0121_supplier_return_lot",
+      "breakpoints": true
     }
   ]
 }

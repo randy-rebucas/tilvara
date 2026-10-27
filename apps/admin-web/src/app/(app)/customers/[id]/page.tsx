@@ -16,17 +16,18 @@ export const generateMetadata = pageTitle('customers.item');
  * One customer (ADR-0018): contact details and corrections, marketing consent and how it was given,
  * store credit, purchases, the export for an access request, archiving and anonymising.
  */
-export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ cursor?: string }> }) {
+export default async function CustomerPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ cursor?: string; credit?: string }> }) {
   const { id } = await params;
   if (!isUuid(id)) notFound();
-  const { cursor: rawCursor } = await searchParams;
-  // Older purchases, 50 at a time (the API pages them by sale id).
+  const { cursor: rawCursor, credit: rawCredit } = await searchParams;
+  // Older purchases and older store credit entries, 50 at a time (the API pages them by id).
   const cursor = rawCursor && isUuid(rawCursor) ? rawCursor : undefined;
+  const creditCursor = rawCredit && isUuid(rawCredit) ? rawCredit : undefined;
   const { t, lang } = await getT();
   const [customer, sales, credit, branches] = await Promise.all([
     apiOrNull<Customer>(`/customers/${id}`),
     apiOrNull<{ data: CustomerSale[]; nextCursor: string | null }>(`/customers/${id}/sales?limit=50${cursor ? `&cursor=${cursor}` : ''}`),
-    apiOrNull<{ data: CreditEntry[] }>(`/customers/${id}/store-credit`),
+    apiOrNull<{ data: CreditEntry[]; nextCursor: string | null }>(`/customers/${id}/store-credit?limit=50${creditCursor ? `&cursor=${creditCursor}` : ''}`),
     apiOrNull<{ data: Branch[] }>('/branches'),
   ]);
   if (!customer) notFound();
@@ -148,9 +149,12 @@ export default async function CustomerPage({ params, searchParams }: { params: P
                 { header: t('cust.when'), cell: (e) => <span className="text-muted">{formatDateTime(e.createdAt, lang)}</span> },
                 {
                   header: t('cust.creditWhat'),
-                  cell: (e) => (e.saleReturnId
-                    ? <Link href={`/sales/returns/${e.saleReturnId}`} className="underline">{t('cust.creditReturn')}</Link>
-                    : <Link href={`/sales/${e.saleId}`} className="underline">{t('cust.creditRedeem')}</Link>),
+                  // A link only when the person may open the sale or return behind it.
+                  cell: (e) => (!e.canOpen
+                    ? <span>{e.saleReturnId ? t('cust.creditReturn') : t('cust.creditRedeem')}</span>
+                    : e.saleReturnId
+                      ? <Link href={`/sales/returns/${e.saleReturnId}`} className="underline">{t('cust.creditReturn')}</Link>
+                      : <Link href={`/sales/${e.saleId}`} className="underline">{t('cust.creditRedeem')}</Link>),
                 },
                 { header: t('common.branch'), cell: (e) => <Serial className="text-ink">{branchLabel(branches?.data, e.branchId)}</Serial> },
                 { header: t('cust.creditAmount'), num: true, cell: (e) => <span className="money font-semibold">{peso(e.amount)}</span> },
@@ -165,6 +169,14 @@ export default async function CustomerPage({ params, searchParams }: { params: P
             <Empty>{credit ? t('cust.noCredit') : t('common.noAccess')}</Empty>
           )}
         </Note>
+        {(credit?.nextCursor || creditCursor) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {creditCursor && <Link href={`/customers/${customer.id}${cursor ? `?cursor=${cursor}` : ''}`} className="btn">{t('cust.latestCredit')}</Link>}
+            {credit?.nextCursor && (
+              <Link href={`/customers/${customer.id}?${new URLSearchParams({ ...(cursor && { cursor }), credit: credit.nextCursor })}`} className="btn">{t('cust.moreCredit')}</Link>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );

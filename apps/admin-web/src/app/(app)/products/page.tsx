@@ -1,13 +1,16 @@
-import { ChevronRight, Search } from 'lucide-react';
+import { ChevronRight, Download, Search } from 'lucide-react';
 import Link from 'next/link';
 import { Empty, Note, PageHeader, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { api, apiOrNull, type Category, type CurrentPrice, type Me, type PriceList, type Product, type TaxCategory, type Uom } from '@/lib/api';
 import { categoryOptions } from '@/lib/categories';
-import { isUuid } from '@/lib/options';
+import { activeFilterCount, filtersToSearch, FILTER_KEYS, productApiQuery, readProductFilters, type ProductFilters } from '@/lib/product-filters';
 import { peso } from '@/lib/format';
 import { getT } from '@/i18n/server';
+import type { MessageKey } from '@/i18n/messages';
 import { AddProduct } from './add-product';
+import { FilterSheet } from './filter-sheet';
+import { ImportProducts } from './import-products';
 import { ProductsTabs } from './tabs';
 import { pageTitle } from '@/i18n/page-title';
 
@@ -15,18 +18,16 @@ export const generateMetadata = pageTitle('products');
 
 type List<T> = { data: T[] };
 
-export default async function ProductsPage({ searchParams }: { searchParams: Promise<{ q?: string; cursor?: string; category?: string }> }) {
+export default async function ProductsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { t } = await getT();
-  const { q, cursor, category: rawCategory } = await searchParams;
-  const category = rawCategory && isUuid(rawCategory) ? rawCategory : undefined;
-  const query = new URLSearchParams({ limit: '50' });
-  if (q) query.set('q', q);
-  if (category) query.set('categoryId', category);
-  if (cursor) query.set('cursor', cursor);
+  const sp = await searchParams;
+  const filters = readProductFilters(sp);
+  const cursor = typeof sp.cursor === 'string' ? sp.cursor.slice(0, 1200) : undefined;
+  const { q } = filters;
 
   const [me, products, uoms, taxes, lists, cats] = await Promise.all([
     api<Me>('/me'),
-    apiOrNull<{ data: Product[]; nextCursor: string | null }>(`/products?${query}`),
+    apiOrNull<{ data: Product[]; nextCursor: string | null }>(`/products?${productApiQuery(filters, { limit: 50, cursor })}`),
     apiOrNull<List<Uom>>('/uoms'),
     apiOrNull<List<TaxCategory>>('/tax-categories'),
     apiOrNull<List<PriceList>>('/price-lists'),
@@ -35,7 +36,6 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
   // Categories by their full path ("Drinks › Hot drinks"), for the column, the filter and the add form.
   const catOptions = categoryOptions(cats?.data);
   const catName = new Map([...(cats?.data ?? []).map((c) => [c.id, c.name] as const), ...catOptions.map((o) => [o.id, o.label] as const)]);
-  const filtered = category ? catName.get(category) : undefined;
   const defaultList = lists?.data.find((l) => l.isDefault);
   const prices = defaultList ? await apiOrNull<{ data: CurrentPrice[] }>(`/price-lists/${defaultList.id}/prices`) : null;
   const priceOf = new Map(prices?.data.map((p) => [p.variantId, p.amount]));
@@ -51,27 +51,72 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
     </>
   );
 
+  // Each filter in force, in words, with a link that takes only that one off.
+  const taxName = (id: string) => taxes?.data.find((x) => x.id === id)?.name ?? '—';
+  const filterWords: Record<(typeof FILTER_KEYS)[number], (v: string) => string> = {
+    category: (v) => t('cat.filtered', { name: v === 'none' ? t('prod.noCategory') : (catName.get(v) ?? '—') }),
+    status: (v) => t(`pf.status.${v}` as MessageKey),
+    type: (v) => t(`pf.type.${v}` as MessageKey),
+    soldBy: (v) => `${t('prod.soldBy')}: ${v === 'WEIGHT' ? t('prod.byWeight') : t('prod.byUnit')}`,
+    tax: (v) => `${t('prod.tax')}: ${taxName(v)}`,
+    stock: (v) => `${t('pf.stock')}: ${t(`pf.stock.${v}` as MessageKey)}`,
+    expiry: (v) => `${t('pf.expiry')}: ${t(`pf.expiry.${v}` as MessageKey)}`,
+    barcode: (v) => t(`pf.barcode.${v}` as MessageKey),
+    price: (v) => t(`pf.price.${v}` as MessageKey),
+    variants: (v) => `${t('pf.variants')}: ${t(`pf.variants.${v}` as MessageKey)}`,
+  };
+  const inForce = FILTER_KEYS.filter((k) => filters[k] !== undefined);
+  const without = (k: keyof ProductFilters) => {
+    const s = filtersToSearch({ ...filters, [k]: undefined });
+    return s.size ? `/products?${s}` : '/products';
+  };
+  const count = activeFilterCount(filters);
+  const exportHref = `/products/export${filtersToSearch(filters).size ? `?${filtersToSearch(filters)}` : ''}`;
+
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title={t('prod.title')} lede={t('prod.lede')} />
       <ProductsTabs active="products" />
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <form role="search" className="relative w-full max-w-[420px]" action="/products">
-          <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-          <label className="sr-only" htmlFor="q">{t('prod.search')}</label>
-          <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
-          {category && <input type="hidden" name="category" value={category} />}
-        </form>
-        {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} />}
-      </div>
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex w-full max-w-[560px] gap-2">
+            <form role="search" className="relative min-w-0 flex-1" action="/products">
+              <Search aria-hidden className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+              <label className="sr-only" htmlFor="q">{t('prod.search')}</label>
+              <input id="q" name="q" defaultValue={q} placeholder={t('prod.search')} className="input pl-9" />
+              {/* A new search keeps the filters and the sort in force. */}
+              {[...filtersToSearch({ ...filters, q: undefined })].map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
+            </form>
+            <FilterSheet
+              filters={filters}
+              categories={catOptions.map((o): [string, string] => [o.id, o.label])}
+              taxes={(taxes?.data ?? []).filter((x) => !x.archivedAt).map((x): [string, string] => [x.id, x.name])}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {products && (
+              <a href={exportHref} download className="btn">
+                <Download aria-hidden className="size-4" /> {t('pio.export')}
+              </a>
+            )}
+            {canManage && <ImportProducts />}
+            {canManage && uoms && taxes && <AddProduct uoms={uoms.data.filter((u) => u.code)} taxes={taxes.data} categories={catOptions} />}
+          </div>
+        </div>
 
-      {category && (
-        <p className="-mt-3 flex flex-wrap items-center gap-2 text-[0.9375rem]" data-testid="category-filter">
-          <span>{t('cat.filtered', { name: filtered ?? '—' })}</span>
-          <Link href={q ? `/products?${new URLSearchParams({ q })}` : '/products'} className="underline">{t('cat.showAll')}</Link>
-        </p>
-      )}
+
+        {inForce.length > 0 && (
+          <ul className="flex flex-wrap items-center gap-2 text-[0.875rem]" data-testid="category-filter" aria-label={t('pf.filters')}>
+            {inForce.map((k) => (
+              <li key={k} className="tag inline-flex items-center gap-1.5">
+                {filterWords[k](filters[k]!)}
+                <Link href={without(k)} className="underline" aria-label={`${t('audit.clear')}: ${filterWords[k](filters[k]!)}`}>×</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <Note denom="blue" className="pr-2">
         {products && products.data.length > 0 ? (
@@ -105,12 +150,12 @@ export default async function ProductsPage({ searchParams }: { searchParams: Pro
             }}
           />
         ) : (
-          <Empty>{!products ? t('common.noAccess') : q ? t('prod.noMatch', { q }) : t('prod.empty')}</Empty>
+          <Empty>{!products ? t('common.noAccess') : q ? t('prod.noMatch', { q }) : count ? t('pf.noMatch') : t('prod.empty')}</Empty>
         )}
       </Note>
 
       {products?.nextCursor && (
-        <Link className="btn self-center" href={`/products?${new URLSearchParams({ ...(q ? { q } : {}), ...(category ? { category } : {}), cursor: products.nextCursor })}`}>
+        <Link className="btn self-center" href={`/products?${filtersToSearch(filters, { cursor: products.nextCursor })}`}>
           {t('common.nextPage')} <ChevronRight aria-hidden className="size-4" />
         </Link>
       )}

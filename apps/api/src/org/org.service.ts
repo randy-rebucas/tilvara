@@ -34,7 +34,8 @@ import { seedChart } from '../accounting/ledger.js';
 type LegalEntityRow = typeof legalEntities.$inferSelect;
 
 /** Any of these at a branch lets the user see that branch in GET /v1/branches (a cashier picks their own at the till). */
-const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'inventory.adjust', 'inventory.count', 'inventory.transfer', 'purchasing.manage', 'cash.session'];
+// Report, drawer and books readers pick the branch in Reports, Drawer counts and journal lines (that branch only).
+const BRANCH_READERS: PermissionCode[] = ['org.read', 'inventory.read', 'inventory.adjust', 'inventory.count', 'inventory.transfer', 'purchasing.manage', 'cash.session', 'reports.read', 'cash.reconcile', 'accounting.read'];
 
 /** Legal entity plus the tax profile in force (and the next scheduled one), ADR-0008. */
 async function withTaxProfiles(db: Database, rows: LegalEntityRow[]) {
@@ -69,7 +70,8 @@ export class OrgService extends TenantService {
   listLegalEntities(auth: AuthContext) {
     return this.tenantDb.run(auth, async (db) => {
       const rows = await db.select().from(legalEntities).orderBy(asc(legalEntities.registeredName));
-      return withTaxProfiles(db, rows.filter((r) => this.can(auth, 'org.read', { legalEntityId: r.id })));
+      // Books readers pick the entity whose books they keep (Books is per legal entity).
+      return withTaxProfiles(db, rows.filter((r) => (['org.read', 'accounting.read'] as const).some((p) => this.can(auth, p, { legalEntityId: r.id }))));
     });
   }
 
@@ -183,8 +185,12 @@ export class OrgService extends TenantService {
         .innerJoin(branches, eq(branches.id, registers.branchId))
         .orderBy(asc(registers.code));
       return rows
+        // Whoever pairs tills at a register sees it, so a role with terminals.manage alone can pair one;
+        // so do report readers and drawer managers (Z-readings are per register).
         .filter((r) =>
-          this.can(auth, 'org.read', { legalEntityId: r.legalEntityId, branchId: r.register.branchId, registerId: r.register.id }),
+          (['org.read', 'terminals.manage', 'reports.read', 'cash.reconcile'] as const).some((p) =>
+            this.can(auth, p, { legalEntityId: r.legalEntityId, branchId: r.register.branchId, registerId: r.register.id }),
+          ),
         )
         .map((r) => r.register);
     });

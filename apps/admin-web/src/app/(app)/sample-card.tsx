@@ -8,12 +8,12 @@ import type { SampleData } from '@/lib/api';
 
 /**
  * The trial's sample items (ADR-0016 slice 6): offered before the first sale, removable any time.
- * Shown only to someone who manages the catalog; the API checks it again.
+ * Shown only to someone who may load or remove the set (`canLoad` / `canRemove` from the API, which checks it again).
  */
 export function SampleCard({ state }: { state: SampleData }) {
   const { t } = useT();
   const { pending, submit, error } = useSubmit();
-  if (!state.canLoad && state.loaded === 0) return null;
+  if (state.loaded > 0 ? !state.canRemove : !state.canLoad) return null;
   return (
     // Sample items are catalog records: blue, like the products they stand in for.
     <Note denom="blue" className="px-5 py-4">

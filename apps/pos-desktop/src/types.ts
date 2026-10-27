@@ -107,6 +107,8 @@ export interface CounterCustomer {
 
 export interface SaleDetail extends Omit<SaleSummary, 'tenderMethods' | 'voided' | 'returnCount'> {
   customerId?: string | null;
+  /** The shift that rang it up: only that shift may void it. */
+  cashierSessionId: string;
   lines: { id: string; name: string; sku: string; quantity: string; returnedQuantity: string; amountDue: string }[];
 }
 

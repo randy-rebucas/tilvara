@@ -10,6 +10,7 @@ import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity, sourceHref } from './chrome';
 import { ManualEntryForm } from './forms';
 import { pageTitle } from '@/i18n/page-title';
+import { exportErrorMessage } from '@/lib/report-csv';
 
 export const generateMetadata = pageTitle('books');
 
@@ -27,8 +28,11 @@ async function loadJournal(path: string): Promise<{ data: JournalRow[] } | { err
 
 const SOURCE_TYPES = ['SALE', 'SALE_RETURN', 'GOODS_RECEIPT', 'SUPPLIER_RETURN', 'SUPPLIER_INVOICE', 'SUPPLIER_PAYMENT', 'SUPPLIER_NOTE', 'STOCK_ADJUSTMENT', 'STOCK_COUNT', 'PACK_OPENING', 'TRANSFER_DISPATCH', 'TRANSFER_RECEIPT', 'CASH_MOVEMENT', 'CASH_VARIANCE', 'MANUAL', 'REVERSAL'] as const;
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+/** As `LIMIT 500` in the API's journal list. */
+const JOURNAL_LIMIT = 500;
 
-type Query = { entity?: string; source?: string; account?: string; from?: string; to?: string; type?: string };
+// exportError: a journal CSV that failed comes back with the API's code (books/export/route.ts).
+type Query = { entity?: string; source?: string; account?: string; from?: string; to?: string; type?: string; exportError?: string };
 
 export default async function JournalPage({ searchParams }: { searchParams: Promise<Query> }) {
   const { t, lang } = await getT();
@@ -49,7 +53,8 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
     entity ? loadJournal(`/journal-entries?legalEntityId=${entity.id}${filter}${narrowed}`) : null,
     entity ? apiOrNull<{ data: Account[] }>(`/accounts?legalEntityId=${entity.id}`) : null,
   ]);
-  const canPost = me.activeTenant?.permissions.includes('accounting.post') ?? false;
+  // An archived entity's books are read only here.
+  const canPost = (me.activeTenant?.permissions.includes('accounting.post') ?? false) && !entity?.archivedAt;
   const entryHref = (e: JournalRow) => `/books/entries/${e.id}?entity=${entity?.id}`;
   const sourceLabel = (e: JournalRow) => t(`src.${e.sourceType}` as MessageKey);
 
@@ -95,12 +100,13 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
         {entity && (
           // The accountant's export: the dates above, else this month so far.
           <p className="mb-3 flex flex-wrap items-center gap-2 text-[0.875rem] text-muted">
-            <a href={`/books/export?entity=${entity.id}&from=${exportFrom}&to=${exportTo}`} className="btn" download>
+            <a href={`/books/export?entity=${entity.id}&from=${exportFrom}&to=${exportTo}`} className="btn">
               <Download aria-hidden className="size-4" /> {t('books.exportCsv')}
             </a>
             {t('books.exportHint', { from: formatDate(exportFrom, lang), to: formatDate(exportTo, lang) })}
           </p>
         )}
+        {exportErrorMessage(t, sp.exportError) && <Callout tone="error">{exportErrorMessage(t, sp.exportError)}</Callout>}
         {entries && 'error' in entries && <Callout tone="error">{entries.error}</Callout>}
         <Note denom="ink" className="pr-2">
           {entries && 'data' in entries && entries.data.length > 0 ? (
@@ -135,6 +141,10 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
             <Empty>{entries ? (narrowed ? t('books.noMatches') : t('books.noEntries')) : t('common.noAccess')}</Empty>
           )}
         </Note>
+        {/* The API answers the newest JOURNAL_LIMIT entries of a view (accounting.service.ts listEntries). */}
+        {entries && 'data' in entries && entries.data.length >= JOURNAL_LIMIT && (
+          <p className="mt-2 text-[0.8125rem] text-muted">{t('books.capped', { n: JOURNAL_LIMIT })}</p>
+        )}
       </section>
     </BooksChrome>
   );

@@ -1,8 +1,10 @@
 import { toDec } from '@1pos/money';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
-import { api, ApiFailure, uuid, withReference } from '../lib/api';
+import { api, ApiFailure, uuid } from '../lib/api';
+import { openDrawerFor } from '../lib/drawer';
 import { parseAmount } from '../lib/money';
+import { useTill } from '../lib/till';
 import type { PaymentIntent } from '../types';
 import { errorText } from './Payment';
 import type { Shift } from './Registers';
@@ -23,6 +25,7 @@ interface SessionView {
  */
 function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: NonNullable<SessionView['payInOut']>; onRecorded: () => void }) {
   const { t } = useT();
+  const till = useTill();
   const [key, setKey] = useState(uuid);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
@@ -38,9 +41,11 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
       setKey(uuid());
       setError(null);
       form.reset();
+      // Cash goes in or out: open the drawer (best effort, after it is recorded).
+      openDrawerFor(till.drawer, true);
       onRecorded();
     } catch (err) {
-      if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) return setError(withReference(t('payio.unconfirmed'), err));
+      if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) return setError(errorText(err, t('common.error'), t('payio.unconfirmed')));
       setKey(uuid());
       setError(errorText(err, t('common.error'), t('common.network')));
     }
@@ -84,7 +89,41 @@ type Outstanding = Pick<PaymentIntent, 'id' | 'method' | 'amount' | 'status'>;
 /** Count the drawer and close. The expected amount comes from the drawer ledger on the server. */
 export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => void }) {
   const { t } = useT();
+  const till = useTill();
   const [view, setView] = useState<SessionView | null>(null);
+  // One Idempotency-Key per count: a close whose answer was lost, sent again, replays that close.
+  const [closeKey, setCloseKey] = useState(uuid);
+  const [lastCount, setLastCount] = useState<string | null>(null);
+  /**
+   * Desktop till: sales of this shift still kept on the till. Delivered after the close they could not go
+   * on the shift any more (SESSION_NOT_OPEN, quarantined) and the count would miss their cash, so the
+   * close waits until they are sent.
+   */
+  const [waiting, setWaiting] = useState(0);
+  const [sending, setSending] = useState(false);
+  const engine = till.mode === 'ready' ? till.engine : null;
+  useEffect(() => {
+    if (!engine) return;
+    let live = true;
+    const check = () => engine.pendingFor(shift.sessionId).then((n) => live && setWaiting(n), () => undefined);
+    void check();
+    const timer = setInterval(() => void check(), 3_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [engine, shift.sessionId, till.status?.pending]);
+  async function sendNow() {
+    if (!engine) return;
+    setSending(true);
+    try {
+      await engine.drain();
+    } finally {
+      setWaiting(await engine.pendingFor(shift.sessionId).catch(() => waiting));
+      void till.refresh();
+      setSending(false);
+    }
+  }
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
   // Card/QR charges that belong to no sale: the server refuses to close until each is settled.
@@ -100,24 +139,41 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
     void reload();
   }, [shift.sessionId]);
 
-  const failure = (err: unknown) => errorText(err, t('common.error'), t('common.network'));
-
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const counted = parseAmount(String(form.get('counted') ?? ''));
     if (!counted) return setFieldError(t('register.floatInvalid'));
+    if (waiting > 0) return;
     setFieldError(undefined);
+    // Another count is another close: it gets its own key (a lost answer is replayed only for the same count).
+    const key = lastCount === null || lastCount === counted ? closeKey : uuid();
+    if (key !== closeKey) setCloseKey(key);
+    setLastCount(counted);
     try {
-      setView(await api<SessionView>('POST', `/v1/cashier-sessions/${shift.sessionId}/close`, { countedCash: counted }));
+      setView(await api<SessionView>('POST', `/v1/cashier-sessions/${shift.sessionId}/close`, { countedCash: counted }, { 'idempotency-key': key }));
       setError(null);
     } catch (err) {
+      if (!(err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500))) {
+        // A final answer: the next count is a new request.
+        setCloseKey(uuid());
+        setLastCount(null);
+      }
       if (err instanceof ApiFailure && err.error.code === 'PAYMENTS_OUTSTANDING') {
         const payments = (err.error.details?.payments ?? []) as Outstanding[];
         setOutstanding(payments);
         return setError(t('close.paymentsOutstanding', { count: String(payments.length) }));
       }
-      setError(failure(err));
+      if (err instanceof ApiFailure && err.error.code === 'OFFLINE_SALES_UNRESOLVED') {
+        const n = Array.isArray(err.error.details?.offlineSales) ? err.error.details.offlineSales.length : 0;
+        return setError(t('close.offlineUnresolved', { n: String(n) }));
+      }
+      if (err instanceof ApiFailure && err.error.code === 'SESSION_NOT_OPEN') {
+        // Closed already (e.g. by an earlier try whose answer was lost): show the shift as it stands.
+        void reload();
+        return setError(t('close.alreadyClosed'));
+      }
+      setError(errorText(err, t('common.error'), t('close.unconfirmed')));
     }
   }
 
@@ -126,7 +182,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
       const updated = await api<PaymentIntent>('POST', `/v1/payment-intents/${id}/${action}`);
       setOutstanding((xs) => xs.map((x) => (x.id === id ? { ...x, status: updated.status } : x)));
     } catch (err) {
-      setError(failure(err));
+      setError(errorText(err, t('common.error'), t('common.unconfirmed')));
     }
   }
 
@@ -157,6 +213,12 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
           </>
         )}
         {!closed && heldCount > 0 && <Callout kind="info">{t('close.heldCarts', { n: String(heldCount) })}</Callout>}
+        {!closed && waiting > 0 && (
+          <div className="grid gap-2" data-testid="close-offline-waiting">
+            <Callout kind="warn">{t('close.offlineWaiting', { n: String(waiting) })}</Callout>
+            <button type="button" className="btn justify-self-start" disabled={sending} onClick={() => void sendNow()}>{t('till.syncNow')}</button>
+          </div>
+        )}
         {error && <Callout kind={outstanding.length ? 'warn' : 'error'}>{error}</Callout>}
         {!closed && unsettled.length > 0 && (
           <ul className="grid gap-2" aria-label={t('close.unsettledPayments')}>
@@ -177,7 +239,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
         {!closed && (
           <form className="grid gap-3" onSubmit={submit}>
             <Field id="counted" name="counted" inputMode="decimal" autoFocus className="input-money" label={t('close.counted')} error={fieldError} placeholder="0.00" />
-            <button className="btn btn-primary" disabled={unsettled.length > 0}>
+            <button className="btn btn-primary" disabled={unsettled.length > 0 || waiting > 0}>
               {t('close.submit')}
             </button>
           </form>

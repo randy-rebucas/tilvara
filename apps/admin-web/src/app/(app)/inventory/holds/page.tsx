@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { ReasonAction } from '@/components/actions';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
-import { allProducts, api, apiOrNull, type LotHold, type Me, type Member } from '@/lib/api';
+import { allProducts, api, apiOrNull, type LotHold, type Me } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { getT } from '@/i18n/server';
 import { InventoryChrome, inventoryBranch } from '../chrome';
@@ -25,15 +25,14 @@ export default async function LotHoldsPage({ searchParams }: { searchParams: Pro
   /** Place and release holds on a lot. */
   const canHold = permissions.includes('inventory.adjust');
   const withReleased = sp.released === '1';
-  const [holds, products, members] = canStock
+  const [holds, products] = canStock
     ? await Promise.all([
-        apiOrNull<{ data: LotHold[] }>(`/stock/lot-holds${withReleased ? '?includeReleased=true' : ''}`),
+        apiOrNull<{ data: LotHold[]; canHoldEverywhere?: boolean }>(`/stock/lot-holds${withReleased ? '?includeReleased=true' : ''}`),
         canHold ? allProducts() : null,
-        apiOrNull<{ data: Member[] }>('/members'),
       ])
-    : [null, null, null];
-  // The API names who placed a hold by user id: shown by name when the person may read the team.
-  const person = (userId: string | null) => (userId ? (members?.data.find((m) => m.user.id === userId)?.user.displayName ?? null) : null);
+    : [null, null];
+  // Who placed it, by the name the API gives (any reader of the holds sees it).
+  const person = (h: LotHold) => h.placedByName ?? null;
   const options = (products?.data ?? [])
     .filter((p) => !p.archivedAt && p.tracksExpiry)
     .flatMap((p) => p.variants.filter((v) => !v.archivedAt).map((v) => ({ id: v.id, label: `${v.sku} · ${p.name}${v.name ? ` — ${v.name}` : ''}` })));
@@ -51,7 +50,7 @@ export default async function LotHoldsPage({ searchParams }: { searchParams: Pro
       ) : (
         <>
           <p className="max-w-[68ch] text-[0.875rem] text-muted">{t('lot.holdsLede')}</p>
-          {canHold && <div><PlaceHold variants={options} branches={branches} /></div>}
+          {canHold && <div><PlaceHold variants={options} branches={branches} everywhere={holds?.canHoldEverywhere ?? true} /></div>}
           <nav aria-label={t('lot.holdsShow')} className="flex flex-wrap gap-1.5 text-[0.875rem]">
             <Link href="/inventory/holds" aria-current={!withReleased ? 'page' : undefined} className={`tag ${!withReleased ? 'font-semibold text-ink' : 'underline'}`}>{t('lot.holdsOpen')}</Link>
             <Link href="/inventory/holds?released=1" aria-current={withReleased ? 'page' : undefined} className={`tag ${withReleased ? 'font-semibold text-ink' : 'underline'}`}>{t('lot.holdsAll')}</Link>
@@ -67,7 +66,7 @@ export default async function LotHoldsPage({ searchParams }: { searchParams: Pro
                   { header: t('exp.lot'), cell: trace },
                   { header: t('lot.holdWhere'), cell: where },
                   { header: t('common.reason'), cell: (h) => <>{h.reason}{h.reference && <Serial className="block">{h.reference}</Serial>}</> },
-                  { header: t('lot.placed'), cell: (h) => <Serial className="text-ink">{formatDateTime(h.placedAt, lang)}{person(h.placedBy) && ` · ${person(h.placedBy)}`}</Serial> },
+                  { header: t('lot.placed'), cell: (h) => <Serial className="text-ink">{formatDateTime(h.placedAt, lang)}{person(h) && ` · ${person(h)}`}</Serial> },
                   { header: t('common.status'), cell: (h) => <>{state(h)}{h.releasedAt && <Serial className="block">{formatDateTime(h.releasedAt, lang)} · {h.releaseReason}</Serial>}</> },
                   { header: '', cell: release },
                 ]}

@@ -179,7 +179,10 @@ export interface DataExport {
 }
 export interface SampleData {
   loaded: number;
+  /** This person may load the set now (trial, no sales, none loaded, catalog.manage and prices.manage). */
   canLoad: boolean;
+  /** Sample items are on the list and this person may remove them (catalog.manage). */
+  canRemove: boolean;
   reason: 'SAMPLE_DATA_LOADED' | 'NOT_TRIAL' | 'HAS_SALES' | null;
   items: number;
 }
@@ -436,6 +439,8 @@ export interface CreditEntry {
   saleId: string | null;
   saleReturnId: string | null;
   createdAt: string;
+  /** The person may open the sale or return behind it. */
+  canOpen: boolean;
 }
 /** A supplier's catalog entry for an item (session 20). */
 export interface SupplierItem {
@@ -548,6 +553,8 @@ export interface Sale extends Buckets {
   registerId: string;
   cashierSessionId: string;
   cashierUserId: string;
+  /** From the API (GET /sales/:id); readers of a sale need not read the team. */
+  cashierName?: string | null;
   saleNumber: number;
   status: string;
   origin: string;
@@ -586,6 +593,7 @@ export interface SaleReturnDoc extends Buckets {
   returnNumber: number;
   reason: string;
   processedBy: string;
+  processedByName?: string | null;
   amountDue: string;
   refundMethod: string | null;
   createdAt: string;
@@ -604,7 +612,7 @@ export interface CashierSession {
   expectedCash: string;
   movements: { type: string; total: string; count: number }[];
   /** `SUPPLIER_PAYMENT`: a supplier paid from the drawer (negative) or that cash put back on a void (positive); `supplierPaymentId` names it. */
-  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'SUPPLIER_PAYMENT'; amount: string; reason: string | null; supplierPaymentId?: string | null; createdBy: string; createdAt: string }[];
+  payInOut: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'SUPPLIER_PAYMENT'; amount: string; reason: string | null; supplierPaymentId?: string | null; createdBy: string; createdByName?: string | null; createdAt: string }[];
   sales: { count: number; total: string };
   /** Names travel with the shift (a branch manager may not read /members). */
   openedByName: string | null;
@@ -740,6 +748,8 @@ export interface Transfer extends TransferRow {
   inTransitValue: string;
   transitLossValue: string | null;
   lines: { id: string; variantId: string; sku: string; name: string; quantity: string; receivedQuantity: string | null; shortQuantity: string | null; discrepancyReason: string | null; unitCost: string }[];
+  /** `GET /stock/transfers/:id`: still in transit and this person may receive it at the destination. */
+  canReceive?: boolean;
 }
 export interface CountRow {
   id: string;
@@ -919,11 +929,12 @@ export interface ByCategory {
 export interface ByBranch {
   from: string;
   to: string;
-  data: { branchId: string; code: string; name: string; salesCount: number; sales: string; returnsCount: number; returns: string; netSales: string; vatAmount: string; netExVat: string; discount: string; statutoryDiscount: string }[];
+  /** `archivedAt`: an archived branch, listed only when it sold or took returns in the range. */
+  data: { branchId: string; code: string; name: string; archivedAt: string | null; salesCount: number; sales: string; returnsCount: number; returns: string; netSales: string; vatAmount: string; netExVat: string; discount: string; statutoryDiscount: string }[];
   totals: { salesCount: number; returnsCount: number; sales: string; returns: string; netSales: string; vatAmount: string; netExVat: string; discount: string; statutoryDiscount: string };
 }
 export interface DiscountsReport {
-  data: { saleId: string; reference: string; completedAt: string; name: string; quantity: string; listUnitPrice: string; unitPrice: string; discount: string; priceChange: string; cashierName: string | null; approvedByName: string | null; approvalMethod: 'SELF' | 'CREDENTIALS' | null; priceReason: string | null }[];
+  data: { saleId: string; lineId: string; reference: string; completedAt: string; name: string; quantity: string; listUnitPrice: string; unitPrice: string; discount: string; priceChange: string; cashierName: string | null; approvedByName: string | null; approvalMethod: 'SELF' | 'CREDENTIALS' | null; priceReason: string | null }[];
   byCashier: { userId: string; displayName: string | null; lines: number; discount: string; priceChange: string }[];
   totals: { lines: number; discount: string; priceChange: string };
 }
@@ -1086,12 +1097,17 @@ export interface LotHold {
   releasedBy: string | null;
   releasedAt: string | null;
   releaseReason: string | null;
+  /** Who placed and released it, by name (null for an account that is gone). */
+  placedByName?: string | null;
+  releasedByName?: string | null;
   sku: string;
   name: string;
 }
 export interface LotTrace {
   variantId: string;
   lotCode: string;
+  /** Whether this person may place a hold at every branch. */
+  canHoldEverywhere?: boolean;
   movements: {
     at: string;
     branchId: string;

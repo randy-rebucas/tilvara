@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { Empty, Note, Serial } from '@/components/note';
 import { RecordTable } from '@/components/record-table';
 import { Figure } from '@/components/scope';
-import { api, apiOrNull, variantNamesById, type Branch, type GoodsReceipt, type Me, type Supplier } from '@/lib/api';
+import { api, apiOrNull, variantNamesById, type Branch, type GoodsReceipt, type Me, type StockLot, type Supplier } from '@/lib/api';
 import { formatDate, formatDateTime, peso, qty, signOf, subtractQty } from '@/lib/format';
 import { docNo, isUuid } from '@/lib/options';
 import { getT } from '@/i18n/server';
@@ -33,6 +33,10 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
   const expiryLot = (l: GoodsReceipt['lines'][number]) => (l.expiresOn ? `${formatDate(l.expiresOn, lang)}${l.lotCode ? ` · ${l.lotCode}` : ''}` : '');
   const canReturn = (me.activeTenant?.permissions.includes('purchasing.manage') ?? false) && !supplier?.archivedAt
     && receipt.lines.some((l) => signOf(subtractQty(l.quantity, l.returnedQuantity)) > 0);
+  // The expiry lots of a dated delivery's items at the branch (ADR-0020): a return may name the lot it leaves from.
+  const datedItems = canReturn && dated ? [...new Set(receipt.lines.filter((l) => l.expiresOn).map((l) => l.variantId))] : [];
+  const lotLists = await Promise.all(datedItems.map((v) => apiOrNull<{ data: StockLot[] }>(`/stock/lots?branchId=${receipt.branchId}&variantId=${v}`)));
+  const lots: Record<string, StockLot[]> = Object.fromEntries(datedItems.map((v, k) => [v, lotLists[k]?.data ?? []]));
 
   return (
     <div className="flex flex-col gap-6">
@@ -97,7 +101,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ id: st
         />
       </Note>
 
-      {canReturn && <div><ReturnForm receipt={receipt} names={Object.fromEntries(names)} /></div>}
+      {canReturn && <div><ReturnForm receipt={receipt} names={Object.fromEntries(names)} lots={lots} /></div>}
 
       <section>
         <h2 className="section-title mb-3">{t('pur.returns')}</h2>

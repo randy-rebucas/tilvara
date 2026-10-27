@@ -8,11 +8,14 @@ export function ScopePicker({
   items,
   selected,
   href,
+  archivedLabel,
 }: {
   label: string;
-  items: { id: string; name: string; code?: string }[];
+  /** `archived`: kept in the picker for its history, marked with `archivedLabel`. */
+  items: { id: string; name: string; code?: string; archived?: boolean }[];
   selected: string | undefined;
   href: (id: string) => string;
+  archivedLabel?: string;
 }) {
   if (items.length < 2) return null;
   // Plain links in a labelled nav (not ARIA tabs): they navigate, and the choice lives in the URL.
@@ -29,6 +32,7 @@ export function ScopePicker({
           >
             <span className="font-semibold">{i.name}</span>
             {i.code && <Serial>{i.code}</Serial>}
+            {i.archived && archivedLabel && <span className="tag">{archivedLabel}</span>}
           </Link>
         );
       })}

@@ -184,6 +184,58 @@ describe('expired and held stock where the branch blocks it', () => {
     await sell(session, s.cashier.auth, [{ variantId: piece, quantity: '1' }]).expect(201); // opens the box: 9 pieces of lot H-1
     await http().post('/v1/stock/lot-holds').set(s.auth).set('Idempotency-Key', randomUUID()).send({ variantId: box, lotCode: 'H-1', reason: 'Recall', reference: 'REC-2026-002' }).expect(201);
     expect((await sell(session, s.cashier.auth, [{ variantId: piece, quantity: '1' }]).expect(409)).body.error).toMatchObject({ code: 'EXPIRED_STOCK', details: { lines: [{ variantId: piece, expiredOrHeld: '9' }] } });
+    // The expiry list shows the pieces on hold too (the hold covers the family), whatever their date, so they can be written off.
+    const listed = (await http().get('/v1/stock/expiring').query({ branchId: s.branchId, withinDays: 7 }).set(s.auth).expect(200)).body.data as { variantId: string; lotCode: string; held: boolean }[];
+    expect(listed.find((l) => l.variantId === piece)).toMatchObject({ lotCode: 'H-1', held: true });
+  });
+
+  it('a hold at one branch is listed only to those who may read stock there', async () => {
+    const s = await shop('exp-hold-scope');
+    const tea = await s.product('Milk tea', '30.00');
+    const entity = ((await http().get('/v1/branches').set(s.auth).expect(200)).body.data as { id: string; legalEntityId: string }[]).find((b) => b.id === s.branchId)!.legalEntityId;
+    const b2 = (await http().post('/v1/branches').set(s.auth).send({ legalEntityId: entity, code: 'B2', name: 'Two', birBranchCode: '00001' }).expect(201)).body.id as string;
+    await http().post('/v1/stock/lot-holds').set(s.auth).set('Idempotency-Key', randomUUID()).send({ variantId: tea, lotCode: 'B2-1', branchId: b2, reason: 'Damaged batch' }).expect(201);
+    await http().post('/v1/stock/lot-holds').set(s.auth).set('Idempotency-Key', randomUUID()).send({ variantId: tea, lotCode: 'ALL-1', reason: 'Recall' }).expect(201);
+    const mine = (await http().get('/v1/stock/lot-holds').set(s.manager).expect(200)).body;
+    expect([mine.data.map((h: { lotCode: string }) => h.lotCode), mine.canHoldEverywhere]).toEqual([['ALL-1'], false]);
+    const all = (await http().get('/v1/stock/lot-holds').set(s.auth).expect(200)).body;
+    expect([all.data.map((h: { lotCode: string }) => h.lotCode).sort(), all.canHoldEverywhere]).toEqual([['ALL-1', 'B2-1'], true]);
+  });
+
+  it('a held batch returned to its supplier leaves its own lot, so the good stock still sells', async () => {
+    const s = await shop('exp-return');
+    const tea = await s.product('Bottled tea', '25.00');
+    const supplier = (await http().post('/v1/suppliers').set(s.auth).send({ code: 'TEA', name: 'Tea Co' }).expect(201)).body;
+    // Good stock with an earlier date, then a delivery whose batch is recalled.
+    await stockIn(s, [{ variantId: tea, quantity: '5', expiresOn: day(40), lotCode: 'OK-2' }]).expect(201);
+    const receipt = (await http().post('/v1/goods-receipts').set(s.auth).set('Idempotency-Key', randomUUID()).send({
+      branchId: s.branchId, supplierId: supplier.id, lines: [{ variantId: tea, quantity: '6', unitCost: '12.00', expiresOn: day(300), lotCode: 'RC-7' }],
+    }).expect(201)).body;
+    await http().post('/v1/stock/lot-holds').set(s.auth).set('Idempotency-Key', randomUUID()).send({ variantId: tea, lotCode: 'RC-7', reason: 'Supplier recall' }).expect(201);
+    const lots = async () => Object.fromEntries(((await http().get('/v1/stock/lots').query({ branchId: s.branchId, variantId: tea }).set(s.auth).expect(200)).body.data as { lotCode: string; quantity: string }[]).map((l) => [l.lotCode, l.quantity]));
+    expect(await lots()).toEqual({ 'OK-2': '5', 'RC-7': '6' });
+    // Four go back from the receipt line: they leave lot RC-7 (its own), not the earlier-dated good lot.
+    await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID()).send({
+      branchId: s.branchId, supplierId: supplier.id, goodsReceiptId: receipt.id, reason: 'Recall',
+      lines: [{ goodsReceiptLineId: receipt.lines[0].id, variantId: tea, quantity: '4' }],
+    }).expect(201);
+    expect(await lots()).toEqual({ 'OK-2': '5', 'RC-7': '2' });
+    // The last two are returned naming the lot; the lot named must be this item's at this branch.
+    const rc = ((await http().get('/v1/stock/lots').query({ branchId: s.branchId, variantId: tea }).set(s.auth).expect(200)).body.data as { lotId: string; lotCode: string }[]).find((l) => l.lotCode === 'RC-7')!;
+    const other = await s.product('Other tea', '20.00');
+    const wrong = await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID()).send({
+      branchId: s.branchId, supplierId: supplier.id, reason: 'Recall', lines: [{ variantId: other, quantity: '1', creditUnitCost: '12.00', lotId: rc.lotId }],
+    }).expect(422);
+    expect(wrong.body.error.code).toBe('LOT_MISMATCH');
+    await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID()).send({
+      branchId: s.branchId, supplierId: supplier.id, reason: 'Recall', lines: [{ variantId: tea, quantity: '2', creditUnitCost: '12.00', lotId: rc.lotId }],
+    }).expect(201);
+    expect(await lots()).toEqual({ 'OK-2': '5' });
+    // Nothing held is left on hand: all five good ones sell at the counter.
+    const session = await openSession(s.cashier.auth, s.registerId);
+    await sell(session, s.cashier.auth, [{ variantId: tea, quantity: '5' }]).expect(201);
+    expect(await onHand(s, tea)).toBe('0');
+    expect(await audit(s)).toEqual(CLEAN);
   });
 });
 

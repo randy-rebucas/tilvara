@@ -45,7 +45,7 @@ export default async function IntegrationsPage() {
                 <h2 className="section-title">{t('int.keys')}</h2>
                 <p className="mt-1 text-[0.875rem] text-muted">{t('int.keysLede')}</p>
               </div>
-              {included && <CreateKeyForm />}
+              {included && <CreateKeyForm held={me?.activeTenant?.permissions} />}
             </div>
             {keys.data.length === 0 ? (
               <Note><Empty>{t('int.noKeys')}</Empty></Note>
@@ -112,7 +112,8 @@ export default async function IntegrationsPage() {
                         <div className="flex flex-wrap gap-2">
                           <Link href={`/subscription/integrations/webhooks/${w.id}`} className="btn btn-sm">{t('int.deliveries')}</Link>
                           {included && w.enabled && <ActionButton url={`/api/v1/webhooks/${w.id}/ping`} label={t('int.ping')} />}
-                          <ActionButton url={`/api/v1/webhooks/${w.id}`} method="PATCH" body={{ enabled: !w.enabled }} label={w.enabled ? t('int.turnOff') : t('int.turnOn')} />
+                          {/* Turning one on needs the plan's API access; turning off never does. */}
+                          {(w.enabled || included) && <ActionButton url={`/api/v1/webhooks/${w.id}`} method="PATCH" body={{ enabled: !w.enabled }} label={w.enabled ? t('int.turnOff') : t('int.turnOn')} />}
                           <RotateSecretButton id={w.id} />
                         </div>
                       </div>

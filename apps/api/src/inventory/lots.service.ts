@@ -19,6 +19,20 @@ type LotRow = {
   held: boolean;
 };
 
+/**
+ * Lot `l` is on hold: an open hold on its lot code at its branch (or everywhere) on the item or any item of its
+ * pack family (a hold on a box covers the strips and pieces opened from it), as `app_lot_held` and `unsellableAt` read it.
+ */
+const HELD = sql`(l.lot_code IS NOT NULL AND EXISTS (
+  WITH RECURSIVE family(v) AS (
+    SELECT l.variant_id
+    UNION
+    SELECT CASE WHEN pc.pack_variant_id = f.v THEN pc.piece_variant_id ELSE pc.pack_variant_id END
+      FROM family f JOIN pack_conversions pc ON pc.pack_variant_id = f.v OR pc.piece_variant_id = f.v)
+  SELECT 1 FROM lot_holds h
+   WHERE h.variant_id IN (SELECT v FROM family) AND h.released_at IS NULL
+     AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code)) AND (h.branch_id IS NULL OR h.branch_id = l.branch_id)))`;
+
 const view = (r: LotRow) => ({
   lotId: r.id,
   variantId: r.variant_id,
@@ -56,8 +70,7 @@ export class LotsService extends TenantService {
       const withinDays = q.withinDays ?? (s?.days || 30);
       // Held lots (a recall, ADR-0025 §5) are listed whatever their date, so they can be written off here.
       const rows = await this.lots(db, branch.id, branch.timezone, sql`AND (l.expires_on <= (now() AT TIME ZONE ${branch.timezone})::date + ${withinDays}::int
-        OR (l.lot_code IS NOT NULL AND EXISTS (SELECT 1 FROM lot_holds h WHERE h.variant_id = l.variant_id AND h.released_at IS NULL
-              AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code)) AND (h.branch_id IS NULL OR h.branch_id = l.branch_id))))`);
+        OR ${HELD})`);
       const data = rows.map(view);
       return {
         withinDays,
@@ -86,8 +99,7 @@ export class LotsService extends TenantService {
     const { rows } = await db.execute<LotRow>(sql`
       SELECT l.id, l.variant_id, v.sku, concat_ws(' ', p.name, v.name) AS name, l.expires_on::text, l.lot_code, l.quantity::text,
              b.avg_cost::text, (l.expires_on - (now() AT TIME ZONE ${timezone})::date)::int AS days_left,
-             (l.lot_code IS NOT NULL AND EXISTS (SELECT 1 FROM lot_holds h WHERE h.variant_id = l.variant_id AND h.released_at IS NULL
-                AND upper(btrim(h.lot_code)) = upper(btrim(l.lot_code)) AND (h.branch_id IS NULL OR h.branch_id = l.branch_id))) AS held
+             ${HELD} AS held
         FROM stock_lots l
         JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
         JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id

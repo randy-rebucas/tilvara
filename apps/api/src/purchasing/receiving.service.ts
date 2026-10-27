@@ -6,12 +6,14 @@ import {
   goodsReceiptLines,
   goodsReceipts,
   inArray,
+  mapInSequence,
   productVariants,
   products,
   purchaseOrderLines,
   purchaseOrders,
   sql,
   stockBalances,
+  stockLots,
   stockMovements,
   supplierReturnLines,
   supplierReturns,
@@ -236,11 +238,18 @@ export class ReceivingService extends TenantService {
         )
         .returning();
       const track = await tracking(db, inserted.map((l) => l.variantId));
+      const lotOf = await this.returnLots(db, branch.id, input);
+      // One statement per movement, in variant order: the lot trigger reads the item's balance after each row,
+      // so an item on two lines must reach it one movement at a time (as stock adjustments do).
       const moves = inserted
-        .filter((l) => track.get(l.variantId))
-        .map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: toDec(l.quantity).negated().toString(), type: 'SUPPLIER_RETURN', supplierReturnLineId: l.id, createdBy: auth.userId }))
+        .map((l, i) => ({ l, lotId: lotOf.get(i) }))
+        .filter(({ l }) => track.get(l.variantId))
+        .map(({ l, lotId }) => ({
+          tenantId, branchId: branch.id, variantId: l.variantId, quantity: toDec(l.quantity).negated().toString(), type: 'SUPPLIER_RETURN',
+          supplierReturnLineId: l.id, ...(lotId && { lotId }), createdBy: auth.userId,
+        }))
         .sort(byVariant);
-      const moved = moves.length ? await db.insert(stockMovements).values(moves).returning({ value: stockMovements.value }) : [];
+      const moved = await mapInSequence(moves, async (m) => (await db.insert(stockMovements).values(m).returning({ value: stockMovements.value }))[0]!);
 
       const creditFor = (stocked: boolean) =>
         inserted.filter((l) => Boolean(track.get(l.variantId)) === stocked).reduce((a, l) => a.plus(toDec(l.quantity).times(l.creditUnitCost).toDecimalPlaces(4)), new Dec(0));
@@ -310,6 +319,41 @@ export class ReceivingService extends TenantService {
         .limit(200);
       return { data: rows };
     });
+  }
+
+  /**
+   * Line index → the expiry lot it leaves from (ADR-0020): the lot named, else the lot its receipt line made
+   * (a recalled or expired delivery goes back from its own batch). The lot trigger draws it; lots are never written here.
+   */
+  private async returnLots(db: Database, branchId: string, input: CreateSupplierReturnInput) {
+    const out = new Map<number, string>();
+    const named = [...new Set(input.lines.flatMap((l) => (l.lotId ? [l.lotId] : [])))];
+    if (named.length) {
+      const lots = await db.select({ id: stockLots.id, branchId: stockLots.branchId, variantId: stockLots.variantId }).from(stockLots).where(inArray(stockLots.id, named));
+      input.lines.forEach((l, i) => {
+        if (!l.lotId) return;
+        const lot = lots.find((x) => x.id === l.lotId);
+        if (!lot) throw new AppError('NOT_FOUND', 'Lot not found', HttpStatus.NOT_FOUND, { lotIds: [l.lotId] });
+        if (lot.branchId !== branchId || lot.variantId !== l.variantId) {
+          const message = 'This lot is not this item’s at this branch';
+          throw unprocessable('LOT_MISMATCH', message, { line: i, issues: [{ path: `lines.${i}.lotId`, message }] });
+        }
+        out.set(i, l.lotId);
+      });
+    }
+    const fromReceipt = input.lines.flatMap((l, i) => (!l.lotId && l.goodsReceiptLineId ? [{ i, lineId: l.goodsReceiptLineId }] : []));
+    if (fromReceipt.length) {
+      const { rows } = await db.execute<{ line_id: string; lot_id: string }>(sql`
+        SELECT DISTINCT ON (m.goods_receipt_line_id) m.goods_receipt_line_id AS line_id, lm.lot_id
+          FROM stock_movements m JOIN stock_lot_movements lm ON lm.tenant_id = m.tenant_id AND lm.movement_id = m.id
+         WHERE m.type = 'RECEIPT' AND m.goods_receipt_line_id IN (${sql.join(fromReceipt.map((r) => sql`${r.lineId}::uuid`), sql`, `)})
+         ORDER BY m.goods_receipt_line_id, lm.quantity DESC`);
+      for (const r of fromReceipt) {
+        const lot = rows.find((x) => x.line_id === r.lineId)?.lot_id;
+        if (lot) out.set(r.i, lot);
+      }
+    }
+    return out;
   }
 
   private async assertCanSee(db: Database, auth: AuthContext, branchId: string) {

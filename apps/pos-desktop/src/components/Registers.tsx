@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
-import { api, ApiFailure, uuid } from '../lib/api';
+import { api, uuid } from '../lib/api';
 import { parseAmount } from '../lib/money';
 import type { Workstation } from '../types';
 import { errorText } from './Payment';
@@ -25,7 +25,7 @@ export function RegisterPicker({ onReady }: { onReady: (shift: Shift) => void })
   useEffect(() => {
     api<{ data: Workstation[] }>('GET', '/v1/pos/workstations')
       .then((r) => setStations(r.data))
-      .catch((e) => setError(e instanceof ApiFailure ? e.error.message : t('common.error')));
+      .catch((e) => setError(errorText(e, t('common.error'), t('common.network'))));
   }, []);
 
   async function open(e: FormEvent<HTMLFormElement>, ws: Workstation) {
@@ -37,7 +37,8 @@ export function RegisterPicker({ onReady }: { onReady: (shift: Shift) => void })
       const s = await api<{ id: string }>('POST', '/v1/cashier-sessions', { registerId: ws.register.id, openingFloat: amount }, { 'idempotency-key': openKey });
       onReady({ sessionId: s.id, register: ws.register, branch: ws.branch });
     } catch (err) {
-      setError(errorText(err, t('common.error'), t('common.network')));
+      // No answer: the shift may be open already; the same key opens it once however often it is sent.
+      setError(errorText(err, t('common.error'), t('common.unconfirmed')));
     }
   }
 

@@ -14,7 +14,8 @@ export default async function AccountsPage({ searchParams }: { searchParams: Pro
   const { t } = await getT();
   const { entities, entity } = await booksEntity((await searchParams).entity);
   const [me, accounts] = await Promise.all([api<Me>('/me'), entity ? apiOrNull<{ data: Account[] }>(`/accounts?legalEntityId=${entity.id}`) : null]);
-  const canPost = me.activeTenant?.permissions.includes('accounting.post') ?? false;
+  // An archived entity's books are read only here.
+  const canPost = (me.activeTenant?.permissions.includes('accounting.post') ?? false) && !entity?.archivedAt;
   // The business's own accounts can be archived and restored; system accounts never (the books post to them).
   const toggle = (a: Account) =>
     canPost && !a.systemKey ? (

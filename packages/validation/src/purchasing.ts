@@ -150,6 +150,11 @@ export const createSupplierReturnSchema = z
           quantity: quantitySchema,
           /** What the supplier credits per unit; defaults to the receipt line's cost, else the current average. */
           creditUnitCost: amountSchema.optional(),
+          /**
+           * The expiry lot the goods leave from (ADR-0020: a held or expired batch going back). A line from a
+           * receipt defaults to the lot that receipt line made; else the oldest stock goes first.
+           */
+          lotId: z.uuid().optional(),
         }),
       )
       .min(1)

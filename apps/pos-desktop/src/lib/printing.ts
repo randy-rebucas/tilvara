@@ -28,7 +28,9 @@ export const SETTLEMENT = ['tendered', 'change'];
 /** A total as printed: deductions carry a minus unless they are zero. */
 export const signedTotal = (k: string, v: string) => (DEDUCTIONS.has(k) && !isZero(v) ? `-${v}` : v);
 
-const SIGNATURE = 'Signature of the beneficiary';
+/** Receipt words the screen shows too, so the receipt on screen reads as it prints (English, like the totals). */
+export const SIGNATURE = 'Signature of the beneficiary';
+export const RECEIPT_WORDS = { cashier: 'Cashier', customer: 'Customer', reason: 'Reason', discount: 'Discount' } as const;
 
 /** A promoted line prints the promotion and what it took off under the quantity (ADR-0021). */
 const promoDetail = (detail: string, promo?: { name: string; discount: string }) => (promo ? `${detail}  ${promo.name} -${promo.discount}` : detail);
@@ -60,27 +62,29 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
     blocks: r.statutory.map((s) => ({
       lines: [`${s.label}: ${s.name}`, `ID ${s.idNumber}`],
       // One beneficiary's discount is the "SC/PWD discount" total already; only a split needs each share.
-      pairs: r.statutory.length > 1 ? [['Discount', peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
+      pairs: r.statutory.length > 1 ? [[RECEIPT_WORDS.discount, peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
-    footer: [...(r.customer ? [`Customer: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`Reason: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `Cashier: ${r.transaction.cashier} · ${r.transaction.register}`],
+    footer: [...(r.customer ? [`${RECEIPT_WORDS.customer}: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`${RECEIPT_WORDS.reason}: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `${RECEIPT_WORDS.cashier}: ${r.transaction.cashier} · ${r.transaction.register}`],
   };
 }
 
 /** A receipt rung up offline (ADR-0015 §6): its local reference, and that it is not an invoice. */
 export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): PrintableReceipt {
   const isVat = r.seller.vatStatus === 'VAT';
+  // What promotions took off, as online receipts print it (a receipt queued before it was kept has none).
+  const discount: [string, string][] = r.totals.discount && !isZero(r.totals.discount) ? [['discount', r.totals.discount]] : [];
   const totals: [string, string][] = isVat
-    ? [['gross', r.totals.gross], ['vatableSales', r.totals.vatableSales], ['vatAmount', r.totals.vatAmount], ['vatExemptSales', r.totals.vatExemptSales], ['zeroRatedSales', r.totals.zeroRatedSales], ['amountDue', r.totals.amountDue]]
-    : [['gross', r.totals.gross], ['salesSubjectToPercentageTax', r.totals.percentageTaxSales], ['exemptSales', r.totals.vatExemptSales], ['amountDue', r.totals.amountDue]];
+    ? [['gross', r.totals.gross], ...discount, ['vatableSales', r.totals.vatableSales], ['vatAmount', r.totals.vatAmount], ['vatExemptSales', r.totals.vatExemptSales], ['zeroRatedSales', r.totals.zeroRatedSales], ['amountDue', r.totals.amountDue]]
+    : [['gross', r.totals.gross], ...discount, ['salesSubjectToPercentageTax', r.totals.percentageTaxSales], ['exemptSales', r.totals.vatExemptSales], ['amountDue', r.totals.amountDue]];
   return {
     header: [r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
     notice: r.notice,
     meta: [[r.localReference, dateTime]],
     items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion) })),
-    totals: totals.map(([k, v]) => ({ label: TOTAL_LABELS[k]!, amount: peso(v), ...(k === 'amountDue' && { emphasis: true }) })),
+    totals: totals.map(([k, v]) => ({ label: k === 'vatAmount' ? (r.totals.vatLabel ?? TOTAL_LABELS.vatAmount!) : TOTAL_LABELS[k]!, amount: peso(signedTotal(k, v)), ...(k === 'amountDue' && { emphasis: true }) })),
     payments: [{ label: 'CASH', amount: peso(r.totals.amountDue) }, { label: 'Tendered', amount: peso(r.tendered) }, { label: 'Change', amount: peso(r.change) }],
-    footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `Cashier: ${r.cashierName} · ${r.register.name}`],
+    footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `${RECEIPT_WORDS.cashier}: ${r.cashierName} · ${r.register.name}`],
   };
 }
 

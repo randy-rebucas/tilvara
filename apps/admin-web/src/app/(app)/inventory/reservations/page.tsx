@@ -26,13 +26,16 @@ export default async function ReservationsPage({ searchParams }: { searchParams:
   const perms = me.activeTenant?.permissions ?? [];
   const canReserve = perms.includes('sales.create') || perms.includes('inventory.adjust');
   const rows = list?.data ?? [];
+  // On the table its own column; on a phone under the row (the stacked list has no action column).
+  const release = (r: Reservation) =>
+    canReserve && r.status === 'ACTIVE' ? <ReasonAction url={`/api/v1/stock/reservations/${r.id}/release`} label={t('inv.release')} reasonLabel={t('common.reason')} hint={t('inv.releaseHint')} /> : null;
 
   return (
     <InventoryChrome tab="reservations" branches={branches} branch={branch}>
       <section className="grid gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="max-w-[640px] text-[0.9375rem] text-muted">{t('inv.reservationsLede')}</p>
-          {canReserve && branch && <ReserveForm branchId={branch.id} variants={variantOptions(products?.data, { stocked: true })} />}
+          {canReserve && branch && <ReserveForm branchId={branch.id} timeZone={branch.timezone} variants={variantOptions(products?.data, { stocked: true })} />}
         </div>
         {branch && (
           <Link href={`/inventory/reservations?branch=${branch.id}${all ? '' : '&all=1'}`} className="text-[0.875rem] text-blue underline">
@@ -59,17 +62,17 @@ export default async function ReservationsPage({ searchParams }: { searchParams:
                       : <span>{r.expiresAt ? t('inv.until', { date: formatDateTime(r.expiresAt, lang) }) : t('inv.untilReleased')}</span>),
                 },
                 ...(canReserve
-                  ? [{ header: '', cell: (r: Reservation) => (r.status === 'ACTIVE' ? <ReasonAction url={`/api/v1/stock/reservations/${r.id}/release`} label={t('inv.release')} reasonLabel={t('common.reason')} hint={t('inv.releaseHint')} /> : null) }]
+                  ? [{ header: '', cell: release }]
                   : []),
               ]}
               stacked={{
                 title: (r) => `${r.name} × ${qty(r.quantity)}`,
-                meta: (r) => <Serial>{r.sku} · {r.note}{r.createdByName ? ` · ${r.createdByName}` : ''}</Serial>,
+                meta: (r) => <><Serial>{r.sku} · {r.note}{r.createdByName ? ` · ${r.createdByName}` : ''}</Serial>{release(r) && <div className="mt-2">{release(r)}</div>}</>,
                 figure: (r) => (r.status === 'RELEASED' ? <span className="text-muted">{t('inv.releasedShort')}</span> : null),
               }}
             />
           ) : (
-            <Empty>{all ? t('inv.noReservationsAll') : t('inv.noReservations')}</Empty>
+            <Empty>{branch && !list ? t('common.noAccess') : all ? t('inv.noReservationsAll') : t('inv.noReservations')}</Empty>
           )}
         </Note>
       </section>

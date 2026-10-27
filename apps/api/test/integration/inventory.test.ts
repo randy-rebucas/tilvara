@@ -89,7 +89,8 @@ describe('transfers between branches', () => {
     const t = (await post(s, '/v1/stock/transfers', { fromBranchId: s.b1, toBranchId: s.b2, lines: [{ variantId: cola, quantity: '1' }] }, s.manager).expect(201)).body;
     // The B1 manager sent it; only someone with inventory.transfer at B2 may receive it.
     await post(s, `/v1/stock/transfers/${t.id}/receive`, {}, s.manager).expect(403);
-    await http().get(`/v1/stock/transfers/${t.id}`).set(s.manager).expect(200);
+    expect((await http().get(`/v1/stock/transfers/${t.id}`).set(s.manager).expect(200)).body.canReceive).toBe(false);
+    expect((await http().get(`/v1/stock/transfers/${t.id}`).set(s.auth).expect(200)).body.canReceive).toBe(true);
     await http().post(`/v1/stock/transfers/${t.id}/receive`).set(s.auth).send({}).expect(400);
   });
 });

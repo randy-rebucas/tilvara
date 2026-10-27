@@ -46,7 +46,7 @@ export default async function DiscountsPage({ searchParams }: { searchParams: Pr
           <Note className="pr-2">
             <RecordTable
               rows={rows}
-              rowKey={(l) => `${l.saleId}-${l.name}-${l.unitPrice}-${l.discount}`}
+              rowKey={(l) => l.lineId}
               columns={[
                 { header: t('cust.receipt'), cell: (l) => <Link href={`/sales/${l.saleId}`} className="serial font-semibold underline">{l.reference}</Link> },
                 { header: t('cust.when'), cell: (l) => <span className="text-muted">{formatDateTime(l.completedAt, lang)}</span> },

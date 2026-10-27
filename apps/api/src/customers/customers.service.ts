@@ -11,6 +11,7 @@ import {
   legalEntities,
   registers,
   saleLines,
+  saleReturns,
   sales,
   sql,
   inArray,
@@ -122,7 +123,11 @@ export class CustomersService extends TenantService {
     });
   }
 
-  /** Marketing consent given or withdrawn, with how it was given; kept as history. */
+  /**
+   * Marketing consent given or withdrawn, with how it was given; kept as history. A withdrawal is also
+   * recorded in a suspended or lapsed business (a customer's "stop" must be honoured whatever the
+   * subscription); giving consent is not.
+   */
   consent(auth: AuthContext, id: string, input: CustomerConsentInput) {
     return this.mutate(auth, async (db) => {
       const current = await this.load(db, id);
@@ -139,7 +144,7 @@ export class CustomersService extends TenantService {
       await this.consentEvent(db, auth, id, input.marketingConsent, input.source);
       await this.audit(db, auth, input.marketingConsent ? 'customer.consent_given' : 'customer.consent_withdrawn', 'customer', id, { source: input.source });
       return this.view(db, auth, row!);
-    });
+    }, { allowReadOnlyBusiness: !input.marketingConsent });
   }
 
   archive(auth: AuthContext, id: string) {
@@ -156,7 +161,8 @@ export class CustomersService extends TenantService {
   /**
    * Blank every personal field for good (the customer asked to be forgotten, or the retention period
    * ended). The row stays, named "Anonymised customer", so the fiscal records that point at it keep
-   * their integrity; store credit must be spent or settled first (it is owed to someone).
+   * their integrity; store credit must be spent or settled first (it is owed to someone). A suspended or
+   * lapsed business must still answer an erasure request, so this write is allowed then.
    */
   anonymise(auth: AuthContext, id: string, input: AnonymiseCustomerInput) {
     return this.mutate(auth, async (db) => {
@@ -181,7 +187,7 @@ export class CustomersService extends TenantService {
         .returning();
       await this.audit(db, auth, 'customer.anonymised', 'customer', id, { reason: input.reason });
       return this.view(db, auth, row!);
-    });
+    }, { allowReadOnlyBusiness: true });
   }
 
   get(auth: AuthContext, id: string) {
@@ -274,13 +280,32 @@ export class CustomersService extends TenantService {
     }, { allowReadOnlyBusiness: true });
   }
 
-  /** The store credit ledger of a customer, newest first, with the document behind each entry. */
-  credit(auth: AuthContext, id: string) {
+  /**
+   * The store credit ledger of a customer, newest first, cursor-paged, with the document behind each entry.
+   * `canOpen`: the person may open that document (the sale's rule: sales.read at its scope, or their own sale).
+   */
+  credit(auth: AuthContext, id: string, q: CustomerHistoryQuery) {
     return this.read(auth, async (db) => {
       await this.load(db, id);
       this.assertRead(auth);
-      const rows = await db.select().from(customerCreditEntries).where(eq(customerCreditEntries.customerId, id)).orderBy(desc(customerCreditEntries.createdAt), desc(customerCreditEntries.id)).limit(200);
-      return { data: rows.map((e) => ({ id: e.id, legalEntityId: e.legalEntityId, branchId: e.branchId, kind: e.kind, amount: money(e.amount), saleId: e.saleId, saleReturnId: e.saleReturnId, createdAt: e.createdAt })) };
+      const rows = await db
+        .select({ e: customerCreditEntries, sale: { legalEntityId: sales.legalEntityId, branchId: sales.branchId, registerId: sales.registerId, cashierUserId: sales.cashierUserId } })
+        .from(customerCreditEntries)
+        .leftJoin(saleReturns, eq(saleReturns.id, customerCreditEntries.saleReturnId))
+        .leftJoin(sales, sql`${sales.id} = coalesce(${customerCreditEntries.saleId}, ${saleReturns.saleId})`)
+        .where(and(eq(customerCreditEntries.customerId, id), q.cursor ? sql`${customerCreditEntries.id} < ${q.cursor}` : undefined))
+        .orderBy(desc(customerCreditEntries.id))
+        .limit(q.limit + 1);
+      const page = rows.slice(0, q.limit);
+      const canOpen = (s: (typeof rows)[number]['sale']) =>
+        !!s && (s.cashierUserId === auth.userId || hasPermission(tenantOf(auth).grants, 'sales.read', { legalEntityId: s.legalEntityId, branchId: s.branchId, registerId: s.registerId }));
+      return {
+        data: page.map(({ e, sale }) => ({
+          id: e.id, legalEntityId: e.legalEntityId, branchId: e.branchId, kind: e.kind, amount: money(e.amount), saleId: e.saleId, saleReturnId: e.saleReturnId, createdAt: e.createdAt,
+          canOpen: canOpen(sale),
+        })),
+        nextCursor: rows.length > q.limit ? page.at(-1)!.e.id : null,
+      };
     });
   }
 

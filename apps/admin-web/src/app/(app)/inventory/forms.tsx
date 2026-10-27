@@ -269,7 +269,7 @@ function CountFields({ close, branchId, variants }: { close: () => void; branchI
         removeLabel={t('common.removeLine')}
       />
       <TextField label={`${t('common.notes')} (${t('common.optional')})`} name="notes" error={fieldError('notes')} />
-      <Actions pending={pending} general={general(error) ?? fieldError('lines')} submitLabel={t('inv.newCount')} close={close} />
+      <Actions pending={pending} general={(error?.code === 'ITEM_ON_OPEN_SHEET' ? t('inv.onOpenSheet') : general(error)) ?? fieldError('lines')} submitLabel={t('inv.newCount')} close={close} />
     </form>
   );
 }
@@ -281,7 +281,14 @@ export function CountForm(props: { branchId: string; variants: VariantOption[] }
 
 // ---------------------------------------------------------------- reservations (session 20)
 /** Set stock aside for a customer or a reason; never more than is available. */
-function ReserveFields({ close, branchId, variants }: { close: () => void; branchId: string; variants: VariantOption[] }) {
+/** The last second of `date` in the branch's time zone, as an ISO time with that zone's offset ("…T23:59:59+08:00"). */
+function endOfDayIn(date: string, timeZone: string) {
+  const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'longOffset' }).formatToParts(new Date(`${date}T12:00:00Z`)).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
+  const offset = name.replace('GMT', '');
+  return `${date}T23:59:59${offset === '' ? '+00:00' : offset}`;
+}
+
+function ReserveFields({ close, branchId, timeZone, variants }: { close: () => void; branchId: string; timeZone: string; variants: VariantOption[] }) {
   const { t } = useT();
   const { pending, submit, fieldError, error } = useSubmit();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -293,8 +300,8 @@ function ReserveFields({ close, branchId, variants }: { close: () => void; branc
       variantId: f.get('variantId'),
       quantity: text(f, 'quantity'),
       note: text(f, 'note'),
-      // Until the end of that day in Manila.
-      ...(until ? { expiresAt: `${until}T23:59:59+08:00` } : {}),
+      // Until the end of that day at the branch.
+      ...(until ? { expiresAt: endOfDayIn(until, timeZone) } : {}),
     }, { idempotent: true });
     if (r.ok) close();
   }
@@ -311,14 +318,17 @@ function ReserveFields({ close, branchId, variants }: { close: () => void; branc
   );
 }
 
-export function ReserveForm(props: { branchId: string; variants: VariantOption[] }) {
+export function ReserveForm(props: { branchId: string; timeZone: string; variants: VariantOption[] }) {
   const { t } = useT();
   return <Disclosure label={t('inv.reserve')}>{(close) => <ReserveFields close={close} {...props} />}</Disclosure>;
 }
 
 // ---------------------------------------------------------------- expiry and packs (ADR-0020)
-/** Write off what is left of one lot as waste: a WASTE adjustment that names the lot. */
-export function WriteOffLot({ branchId, lot, confirmText }: { branchId: string; lot: { lotId: string; variantId: string; quantity: string }; confirmText: string }) {
+/**
+ * Write off what is left of one lot as waste: a WASTE adjustment that names the lot, with the reason it goes
+ * (expired, or on hold for a recall while still in date).
+ */
+export function WriteOffLot({ branchId, lot, confirmText }: { branchId: string; lot: { lotId: string; variantId: string; quantity: string; daysLeft: number; held?: boolean }; confirmText: string }) {
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, error } = useSubmit();
@@ -333,7 +343,7 @@ export function WriteOffLot({ branchId, lot, confirmText }: { branchId: string; 
           void submit('POST', '/api/v1/stock/adjustments', {
             branchId,
             kind: 'WASTE',
-            reason: t('exp.reason'),
+            reason: lot.daysLeft < 0 ? t('exp.reason') : t('exp.reasonHeld'),
             items: [{ variantId: lot.variantId, quantity: `-${lot.quantity}`, lotId: lot.lotId }],
           }, { idempotencyKey: key });
         }}
@@ -374,7 +384,7 @@ export function OpenPackForm(props: { branchId: string; links: { id: string; lab
 
 // ---------------------------------------------------------------- holds on a lot
 /** Place a hold on a lot (a recall, a supplier or FDA advisory): one branch or every branch (ADR-0025 §5). */
-export function PlaceHold({ variants, branches, initial }: { variants: { id: string; label: string }[]; branches: Branch[]; initial?: { variantId?: string; lotCode?: string } }) {
+export function PlaceHold({ variants, branches, initial, everywhere = true }: { variants: { id: string; label: string }[]; branches: Branch[]; initial?: { variantId?: string; lotCode?: string }; everywhere?: boolean }) {
   const { t } = useT();
   const key = useFormKey();
   const { pending, submit, error, fieldError } = useSubmit();
@@ -403,8 +413,9 @@ export function PlaceHold({ variants, branches, initial }: { variants: { id: str
             {variants.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
           </SelectField>
           <TextField span="half" label={t('exp.lot')} name="lotCode" required maxLength={64} defaultValue={initial?.lotCode ?? ''} error={fieldError('lotCode')} />
-          <SelectField span="half" label={t('lot.holdWhere')} name="holdBranchId" defaultValue="" hint={t('lot.holdWhereHint')} error={fieldError('branchId')}>
-            <option value="">{t('rep.allBranches')}</option>
+          {/* Every branch needs the business-wide grant: someone with branch rights only picks one of theirs. */}
+          <SelectField span="half" label={t('lot.holdWhere')} name="holdBranchId" defaultValue={everywhere ? '' : branches[0]?.id} hint={t('lot.holdWhereHint')} error={fieldError('branchId')}>
+            {everywhere && <option value="">{t('rep.allBranches')}</option>}
             {branches.map((b) => <option key={b.id} value={b.id}>{b.code} · {b.name}</option>)}
           </SelectField>
           <TextField label={t('common.reason')} name="reason" required maxLength={200} placeholder={t('lot.holdReasonHint')} error={fieldError('reason')} />

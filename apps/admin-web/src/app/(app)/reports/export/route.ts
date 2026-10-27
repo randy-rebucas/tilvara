@@ -3,6 +3,7 @@ import { API_URL } from '@/lib/config';
 import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
 import { reportPath, reportRows, toCsv, type CsvReport } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
+import { REPORT_PATHS } from '../paths';
 
 const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'category', 'branches', 'discounts', 'purchases', 'payments', 'promotions', 'attributes'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,8 +28,12 @@ export async function GET(request: NextRequest) {
   const range = { branchId, from: pick('from'), to: pick('to'), attribute };
   const res = await fetch(`${API_URL}${reportPath(report, range)}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    return NextResponse.json(body ?? { error: { code: 'ERROR', message: 'Report failed' } }, { status: res.status });
+    // Back to the report with the reason (a plain link, so the browser shows the page, not a JSON file).
+    const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;
+    const back = new URL(REPORT_PATHS[report], request.url);
+    for (const [k, v] of Object.entries({ branch: branchId, from: range.from, to: range.to, ...(attribute && { attribute }) })) back.searchParams.set(k, v);
+    back.searchParams.set('exportError', /^[A-Z_]{1,40}$/.test(body?.error?.code ?? '') ? body!.error!.code! : 'ERROR');
+    return NextResponse.redirect(back, 303);
   }
   const lang = request.cookies.get(LANG_COOKIE)?.value === 'fil' ? 'fil' : 'en';
   const t = (key: MessageKey, vars?: Record<string, string | number>) => translate(lang, key, vars);

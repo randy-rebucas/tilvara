@@ -143,6 +143,12 @@ describe('a day in the books', () => {
     expect(await one(s, `SELECT count(*) AS v FROM (SELECT journal_entry_id FROM journal_lines GROUP BY 1 HAVING sum(debit) <> sum(credit)) x`)).toBe('0');
     const traced = (await http().get('/v1/journal-entries').query({ legalEntityId: s.le, sourceType: 'SALE', sourceId: s1.id }).set(s.accountant).expect(200)).body.data;
     expect(traced).toEqual([expect.objectContaining({ sourceType: 'SALE', sourceId: s1.id, total: expect.any(String) })]);
+    // A document's entry is corrected through its document, never reversed by hand (the books keep matching the evidence below).
+    for (const type of ['SALE', 'SALE_RETURN', 'GOODS_RECEIPT', 'STOCK_COUNT', 'STOCK_ADJUSTMENT', 'TRANSFER_DISPATCH', 'CASH_MOVEMENT', 'CASH_VARIANCE']) {
+      const [doc] = (await http().get('/v1/journal-entries').query({ legalEntityId: s.le, sourceType: type }).set(s.accountant).expect(200)).body.data as { id: string }[];
+      const refused = (await idem(s, `/v1/journal-entries/${doc!.id}/reverse`, { memo: 'by hand' }, s.accountant).expect(422)).body.error;
+      expect(refused).toMatchObject({ code: 'CANCEL_THE_DOCUMENT', details: { sourceType: type } });
+    }
 
     // ---- every GL balance equals the evidence it summarises
     const ev = (q: string) => one(s, q);

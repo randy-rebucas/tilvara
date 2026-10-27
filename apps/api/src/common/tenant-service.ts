@@ -60,7 +60,8 @@ export abstract class TenantService {
   /**
    * Write transaction: refuses suspended tenants and maps unique violations to 409s.
    * `allowReadOnlyBusiness` (with `@AllowReadOnlyBusiness()` on the route) lets a suspended or lapsed
-   * business still take a copy of its records (ADR-0016 slice 6); nothing else may use it.
+   * business still take a copy of its records (ADR-0016 slice 6) and answer a customer's withdrawal of
+   * consent or erasure request (ADR-0018); nothing else may use it.
    */
   protected async mutate<T>(auth: AuthContext, fn: (db: Database) => Promise<T>, options: { allowReadOnlyBusiness?: boolean } = {}): Promise<T> {
     if (tenantOf(auth).status === 'SUSPENDED' && !options.allowReadOnlyBusiness) {

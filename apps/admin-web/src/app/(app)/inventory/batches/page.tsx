@@ -87,7 +87,7 @@ export default async function BatchTracePage({ searchParams }: { searchParams: P
           {trace && (
             <>
               {canHold && (
-                <div><PlaceHold variants={options} branches={branches} initial={{ variantId: trace.variantId, lotCode: trace.lotCode }} /></div>
+                <div><PlaceHold variants={options} branches={branches} initial={{ variantId: trace.variantId, lotCode: trace.lotCode }} everywhere={trace.canHoldEverywhere ?? true} /></div>
               )}
               <section aria-labelledby="trace-left" className="flex flex-col gap-3">
                 <h2 id="trace-left" className="section-title">{t('lot.traceLeft', { lot: trace.lotCode })}</h2>

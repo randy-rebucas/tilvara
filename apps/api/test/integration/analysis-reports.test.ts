@@ -142,3 +142,35 @@ describe('payment exceptions', () => {
     await http().get('/v1/reports/payment-exceptions').query({ branchId: b1 }).set(cashier).expect(403);
   });
 });
+
+describe('sales by branch: archived branches', () => {
+  it('an archived branch that sold in the range stays in the total, marked; one with nothing in it is left out', async () => {
+    const q = { from: today(), to: today() };
+    const before = (await http().get('/v1/reports/by-branch').query(q).set(auth).expect(200)).body.totals.netSales as string;
+    // B3 sells a rice today, then closes for good (shift counted, register and branch archived).
+    const b3 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: entity, code: 'B3', name: 'Closed', birBranchCode: '00003' }).expect(201)).body.id;
+    const r3 = (await http().post('/v1/registers').set(auth).send({ branchId: b3, code: 'R3', name: 'Three' }).expect(201)).body.id;
+    await idem('/v1/stock/adjustments', { branchId: b3, reason: 'Opening', items: [{ variantId: rice, quantity: '1', unitCost: '40.00' }] }).expect(201);
+    const s3 = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId: r3, openingFloat: '0.00' }).expect(201)).body.id;
+    const sold = (await sell(s3, [{ variantId: rice, quantity: '1' }], '56.00').expect(201)).body;
+    // The sale and its returns carry the people's names (readers of a sale need not read the team).
+    const nameOfOwner = (await http().get(`/v1/sales/${sold.id}`).set(auth).expect(200)).body.cashierName;
+    expect(typeof nameOfOwner).toBe('string');
+    await idem(`/v1/cashier-sessions/${s3}/close`, { countedCash: '56.00' }).expect(200);
+    await idem(`/v1/registers/${r3}/archive`, {}).expect((r) => expect([200, 201]).toContain(r.status));
+    await idem(`/v1/branches/${b3}/archive`, {}).expect((r) => expect([200, 201]).toContain(r.status));
+    // B4 never sold anything and is archived too.
+    const b4 = (await http().post('/v1/branches').set(auth).send({ legalEntityId: entity, code: 'B4', name: 'Never opened', birBranchCode: '00004' }).expect(201)).body.id;
+    await idem(`/v1/branches/${b4}/archive`, {}).expect((r) => expect([200, 201]).toContain(r.status));
+
+    const all = (await http().get('/v1/reports/by-branch').query(q).set(auth).expect(200)).body;
+    const closed = all.data.find((b: { code: string }) => b.code === 'B3');
+    expect(closed).toMatchObject({ netSales: '56.00', salesCount: 1 });
+    expect(closed.archivedAt).toBeTruthy();
+    expect(all.data.map((b: { code: string }) => b.code)).not.toContain('B4');
+    expect(all.data.find((b: { code: string }) => b.code === 'B1').archivedAt).toBeNull();
+    expect(all.totals.netSales).toBe((Number(before) + 56).toFixed(2));
+    // Its own reports still answer for it.
+    expect((await report('sales-summary', b3).expect(200)).body.totals.net.amountDue).toBe('56.00');
+  });
+});

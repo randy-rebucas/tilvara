@@ -56,6 +56,19 @@ export function signOf(value: string): -1 | 0 | 1 {
   return u < 0n ? -1 : u > 0n ? 1 : 0;
 }
 
+/**
+ * Whether two typed quantities are the same number ("5", "5.0", "05"), compared exactly; blank only equals
+ * blank, and anything that is not a decimal only equals itself.
+ */
+export function sameDecimal(a: string, b: string): boolean {
+  const x = a.trim();
+  const y = b.trim();
+  if (x === y) return true;
+  const decimal = /^-?\d+(\.\d{0,4})?$/;
+  if (!decimal.test(x) || !decimal.test(y)) return false;
+  return toUnits(x) === toUnits(y);
+}
+
 /** A change shown with its sign spelled out: "+2", "−2", "0" (never colour alone). */
 export function signed(value: string, fmt: (s: string) => string = qty): string {
   const s = signOf(value);

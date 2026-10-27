@@ -15,7 +15,8 @@ export default async function SalesSummaryPage({ searchParams }: { searchParams:
   const scope = await reportScope(await searchParams);
   const r = scope.branch ? await loadReport<SalesSummary>(`/reports/sales-summary?branchId=${scope.branch.id}&from=${scope.from}&to=${scope.to}`) : null;
   const s = r?.data;
-  const days = s?.days.filter((d) => d.salesCount + d.returnsCount + d.voidsCount > 0) ?? [];
+  // returnsCount counts every return document, voids included (voidsCount is the share of them).
+  const days = s?.days.filter((d) => d.salesCount + d.returnsCount > 0) ?? [];
   const cols = (b: SaleBuckets) => [b.gross, b.discount, b.statutoryDiscount, b.vatAmount, b.amountDue];
 
   return (
@@ -35,7 +36,7 @@ export default async function SalesSummaryPage({ searchParams }: { searchParams:
             rowKey={(d) => d.day}
             columns={[
               { header: t('common.date'), cell: (d) => <b>{formatDate(d.day, lang)}</b> },
-              { header: t('rep.count'), num: true, cell: (d) => <Serial className="text-ink">{d.salesCount} / {d.returnsCount + d.voidsCount}</Serial> },
+              { header: t('rep.count'), num: true, cell: (d) => <Serial className="text-ink">{d.salesCount} / {d.returnsCount}</Serial> },
               { header: t('csv.gross'), num: true, cell: (d) => <span className="money">{peso(d.net.gross)}</span> },
               { header: t('rep.discount'), num: true, cell: (d) => <span className="money">{peso(d.net.discount)}</span> },
               { header: t('rep.statutoryDiscount'), num: true, cell: (d) => <span className="money">{peso(d.net.statutoryDiscount)}</span> },

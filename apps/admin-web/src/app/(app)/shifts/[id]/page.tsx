@@ -13,6 +13,23 @@ import { pageTitle } from '@/i18n/page-title';
 
 export const generateMetadata = pageTitle('shifts.item');
 
+/** Pages of 200 a shift's sales list follows (5,000 sales); past that the page says so. */
+const SALE_PAGES = 25;
+
+/** Every sale of the shift, following the API's cursor; null without access, `more` if pages were left. */
+async function shiftSales(id: string): Promise<{ data: Sale[]; more: boolean } | null> {
+  const data: Sale[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < SALE_PAGES; page += 1) {
+    const r: { data: Sale[]; nextCursor: string | null } | null = await apiOrNull(`/sales?cashierSessionId=${id}&limit=200${cursor ? `&cursor=${cursor}` : ''}`);
+    if (!r) return page === 0 ? null : { data, more: false };
+    data.push(...r.data);
+    cursor = r.nextCursor;
+    if (!cursor) return { data, more: false };
+  }
+  return { data, more: true };
+}
+
 /** Cash movement types as the API names them; the last three are history of the removed lodging and laundry (no longer made). */
 const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'SUPPLIER_PAYMENT', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT'] as const;
 
@@ -24,7 +41,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
   const [me, shift, sales, branches, registers, members] = await Promise.all([
     api<Me>('/me'),
     apiOrNull<CashierSession>(`/cashier-sessions/${id}`),
-    apiOrNull<{ data: Sale[] }>(`/sales?cashierSessionId=${id}&limit=200`),
+    shiftSales(id),
     apiOrNull<{ data: Branch[] }>('/branches'),
     apiOrNull<{ data: Register[] }>('/registers'),
     apiOrNull<{ data: Member[] }>('/members'),
@@ -118,7 +135,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
                 <li key={m.id} id={`movement-${m.id}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-hair-soft px-4 py-3 last:border-b-0">
                   <div className="min-w-0">
                     <p className="font-semibold">{t(m.type === 'PAY_IN' ? 'doc.payIn' : m.type === 'SUPPLIER_PAYMENT' ? 'doc.supplierPaid' : 'doc.payOut')}: {m.reason ?? ''}</p>
-                    <Serial>{person(m.createdBy)} · {formatDateTime(m.createdAt, lang)}</Serial>
+                    <Serial>{m.createdByName ?? person(m.createdBy)} · {formatDateTime(m.createdAt, lang)}</Serial>
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="money font-semibold">{peso(m.amount)}</span>
@@ -159,6 +176,7 @@ export default async function ShiftPage({ params }: { params: Promise<{ id: stri
             <Empty>{sales ? t('doc.noSales') : t('common.noAccess')}</Empty>
           )}
         </Note>
+        {sales?.more && <p className="mt-2 text-[0.8125rem] text-muted">{t('doc.salesCapped', { n: sales.data.length })}</p>}
       </section>
     </div>
   );

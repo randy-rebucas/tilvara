@@ -3,12 +3,12 @@ import { useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { ReceiptPrinter } from '../lib/devices';
 import { useTill } from '../lib/till';
-import { receiptToPrintable, SETTLEMENT, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
+import { RECEIPT_WORDS, receiptToPrintable, SETTLEMENT, SIGNATURE, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
 
 /**
- * The server's receipt document, rendered as-is. Its notice (e.g. "THIS IS NOT AN OFFICIAL
+ * The server's receipt document, rendered as-is, in the same English words as the print (only the buttons follow the language). Its notice (e.g. "THIS IS NOT AN OFFICIAL
  * INVOICE") is always printed; the counter never adds or removes compliance wording.
  */
 export function Receipt({ data, printer: given }: { data: ReceiptData; printer?: ReceiptPrinter }) {
@@ -70,7 +70,7 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
         <dl className="mt-3 grid gap-0.5 border-t border-dashed border-hair pt-2">
           {totals.map(([k, v]) => (
             <div key={k} className={`flex justify-between ${k === 'amountDue' || k === 'refund' ? 'text-[1rem] font-semibold' : ''}`}>
-              <dt>{k === 'vatAmount' ? data.totals.vatLabel : (TOTAL_LABELS[k] ?? k)}</dt>
+              <dt>{k === 'vatAmount' ? (data.totals.vatLabel ?? TOTAL_LABELS.vatAmount) : (TOTAL_LABELS[k] ?? k)}</dt>
               <dd><Money value={signedTotal(k, v)} /></dd>
             </div>
           ))}
@@ -93,18 +93,18 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
           <div key={i} className="mt-3 border-t border-dashed border-hair pt-2">
             <p>{s.label}: {s.name}</p>
             <p className="serial">ID {s.idNumber}</p>
-            {perPersonDiscount && <p className="flex justify-between"><span>Discount</span><Money value={signedTotal('statutoryDiscount', s.discount)} /></p>}
-            {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{t('receipt.signature')}</p>}
+            {perPersonDiscount && <p className="flex justify-between"><span>{RECEIPT_WORDS.discount}</span><Money value={signedTotal('statutoryDiscount', s.discount)} /></p>}
+            {s.signatureLine && <p className="mt-6 border-t border-ink pt-1 text-center text-muted">{SIGNATURE}</p>}
           </div>
         ))}
-        {data.customer && <p className="mt-3">Customer: {data.customer.name}{data.customer.tin ? ` · TIN ${data.customer.tin}` : ''}</p>}
-        {data.reason && <p className="mt-3">Reason: {data.reason}</p>}
+        {data.customer && <p className="mt-3">{RECEIPT_WORDS.customer}: {data.customer.name}{data.customer.tin ? ` · TIN ${data.customer.tin}` : ''}</p>}
+        {data.reason && <p className="mt-3">{RECEIPT_WORDS.reason}: {data.reason}</p>}
         {data.legend && <p className="mt-3 text-muted">{data.legend}</p>}
-        <p className="mt-3 text-center text-muted">{t('receipt.cashier')}: {data.transaction.cashier} · {data.transaction.register}</p>
+        <p className="mt-3 text-center text-muted">{RECEIPT_WORDS.cashier}: {data.transaction.cashier} · {data.transaction.register}</p>
       </div>
       {printError && (
         <div className="no-print mx-auto w-full max-w-[420px]">
-          <Callout kind="error">{t('receipt.printFailed')} ({printError})</Callout>
+          <Callout kind="error">{t('receipt.printFailed')}</Callout>
         </div>
       )}
       <button className="no-print btn mx-auto" onClick={() => void print()}>

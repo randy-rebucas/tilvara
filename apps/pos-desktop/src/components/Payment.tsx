@@ -2,7 +2,7 @@ import { CreditCard, QrCode } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
-import { add, gte, isPositive, isZero, parseAmount, quickTenders, sub } from '../lib/money';
+import { add, gte, isPositive, isZero, parseAmount, peso, quickTenders, sub } from '../lib/money';
 import type { PaymentIntent } from '../types';
 import type { Shift } from './Registers';
 import { Callout, methodLabel, Money, Note, PaymentTag } from './ui';
@@ -15,6 +15,13 @@ export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.er
 
 export const errorText = (err: unknown, fallback: string, network: string) =>
   err instanceof ApiFailure ? (unanswered(err) ? withReference(network, err) : err.error.message) : fallback;
+
+/** What recording this payment's sale gave: the sale, and whether it is an earlier version of the cart (see `submit`). */
+export interface Recorded {
+  id: string;
+  /** The checkout had already been recorded with the cart as it was then: its receipt is that sale, not the cart now on screen. */
+  earlier: boolean;
+}
 
 /**
  * Taking payment for one sale (ADR-0009/0010): card/QR intents first, cash for the rest.
@@ -32,6 +39,12 @@ export function usePayment({ shift, due, setNotice }: {
   const [intents, setIntents] = useState<PaymentIntent[]>([]);
   const [cash, setCash] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  /**
+   * The last "record the sale" got no answer, so it may be recorded. Until a final answer comes, the cart
+   * and the payment stay as they were sent (the counter locks them) and only "Complete sale again" is
+   * offered: the same body under the same key, which can never record twice.
+   */
+  const [unknown, setUnknown] = useState(false);
   // Synchronous guards: a double click lands before React re-renders the disabled button.
   const busy = useRef(false);
   // Card/QR request whose answer never arrived: retried with the same key, so it cannot charge twice.
@@ -54,7 +67,7 @@ export function usePayment({ shift, due, setNotice }: {
   }
 
   async function takeElectronic(method: PaymentIntent['method']) {
-    if (!isPositive(remaining) || busy.current) return;
+    if (!isPositive(remaining) || busy.current || unknown) return;
     busy.current = true;
     try {
       const pending = unansweredIntent.current;
@@ -90,14 +103,22 @@ export function usePayment({ shift, due, setNotice }: {
       setIntents((xs) => xs.map((i) => (i.id === id ? updated : i)));
       setNotice(updated.status === 'FAILED' ? { kind: 'warn', text: t('pay.declined') } : null);
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      // A cancel with no answer may have gone through: say so, never "nothing was recorded".
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.unconfirmed')) });
     }
   }
 
   /**
-   * Record the sale with this payment's tenders. Resolves to the recorded sale id, or null when it was
-   * not recorded (the notice says why). An unanswered request keeps its key; a duplicate transaction
-   * resolves to the sale already recorded; TOTAL_CHANGED calls `onTotalChanged` to re-price.
+   * Record the sale with this payment's tenders. Resolves to the recorded sale, or null when it was
+   * not recorded (the notice says why). An unanswered request keeps its key (and `unknown` locks the
+   * cart); a duplicate transaction resolves to the sale already recorded; TOTAL_CHANGED calls
+   * `onTotalChanged` to re-price.
+   *
+   * IDEMPOTENCY_KEY_REUSED means this key's first request was recorded and the body has changed since
+   * (not possible while the cart is locked, but handled): the checkout is asked for once more under a
+   * new key, which the server answers with the sale recorded for this transaction id
+   * (DUPLICATE_TRANSACTION). That sale comes back marked `earlier`, so the counter says it is the cart
+   * as first sent, never passing it off as the cart now on screen.
    */
   async function submit(
     send: (body: { clientTransactionId: string; tenders: Tender[] }, key: string) => Promise<{ id: string }>,
@@ -105,7 +126,7 @@ export function usePayment({ shift, due, setNotice }: {
     onUnanswered?: () => void,
     /** The server refused it (a final answer): the caller may word the refusal itself. */
     onRefused?: (err: unknown) => void,
-  ): Promise<string | null> {
+  ): Promise<Recorded | null> {
     if (busy.current) return null;
     busy.current = true;
     setSubmitting(true);
@@ -113,28 +134,56 @@ export function usePayment({ shift, due, setNotice }: {
       ...intents.filter((i) => i.status === 'SUCCEEDED').map((i) => ({ method: 'INTENT' as const, paymentIntentId: i.id })),
       ...(isPositive(cashDue) && cashAmount ? [{ method: 'CASH' as const, tendered: cashAmount }] : []),
     ];
+    const duplicateOf = (err: unknown) =>
+      err instanceof ApiFailure && err.error.code === 'DUPLICATE_TRANSACTION' && typeof err.error.details?.saleId === 'string' ? err.error.details.saleId : undefined;
     try {
       const sale = await send({ clientTransactionId: txId, tenders }, saleKey);
       setNotice(null);
-      return sale.id;
+      setUnknown(false);
+      return { id: sale.id, earlier: false };
     } catch (err) {
-      const recorded = err instanceof ApiFailure && err.error.code === 'DUPLICATE_TRANSACTION' ? err.error.details?.saleId : undefined;
       if (unanswered(err)) {
         // Unknown outcome: keep the same key (and transaction id) so retrying cannot create a second sale.
         setNotice({ kind: 'warn', text: t('pay.unconfirmed') });
+        setUnknown(true);
         onUnanswered?.();
-      } else if (typeof recorded === 'string') {
+        return null;
+      }
+      const recorded = duplicateOf(err);
+      if (recorded) {
         // Already recorded (an earlier answer was lost): that sale is the result.
         setNotice(null);
-        return recorded;
-      } else {
-        setSaleKey(uuid());
-        if (err instanceof ApiFailure && err.error.code === 'TOTAL_CHANGED') {
-          setNotice({ kind: 'warn', text: t('pay.totalChanged', { amount: String(err.error.details?.amountDue ?? '') }) });
-          onTotalChanged?.();
-        } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
-        onRefused?.(err);
+        setUnknown(false);
+        return { id: recorded, earlier: false };
       }
+      if (err instanceof ApiFailure && err.error.code === 'IDEMPOTENCY_KEY_REUSED') {
+        // The first request under this key was recorded, with another body: that sale, by this transaction id.
+        try {
+          await send({ clientTransactionId: txId, tenders }, uuid());
+        } catch (again) {
+          const earlier = duplicateOf(again);
+          if (earlier) {
+            setUnknown(false);
+            return { id: earlier, earlier: true };
+          }
+          if (unanswered(again)) {
+            setNotice({ kind: 'warn', text: t('pay.unconfirmed') });
+            setUnknown(true);
+            return null;
+          }
+        }
+        setSaleKey(uuid());
+        setUnknown(false);
+        setNotice({ kind: 'error', text: t('common.error') });
+        return null;
+      }
+      setSaleKey(uuid());
+      setUnknown(false);
+      if (err instanceof ApiFailure && err.error.code === 'TOTAL_CHANGED') {
+        setNotice({ kind: 'warn', text: t('pay.totalChanged', { amount: peso(String(err.error.details?.amountDue ?? '0')) }) });
+        onTotalChanged?.();
+      } else setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+      onRefused?.(err);
       return null;
     } finally {
       busy.current = false;
@@ -145,13 +194,20 @@ export function usePayment({ shift, due, setNotice }: {
   function reset() {
     setIntents([]);
     setCash('');
-    setTxId(uuid());
-    setSaleKey(uuid());
+    resetIds();
     unansweredIntent.current = null;
   }
 
+  /** A new checkout (the cart was emptied): fresh transaction id and key, so the next cart is never taken for this one. */
+  function resetIds() {
+    setTxId(uuid());
+    setSaleKey(uuid());
+    setUnknown(false);
+  }
+
   return {
-    txId, intents, cash, setCash, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, takeElectronic, settleIntent, submit, reset,
+    txId, intents, cash, setCash: (v: string) => { if (!unknown) setCash(v); }, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, unknown,
+    takeElectronic, settleIntent, submit, reset, resetIds,
   };
 }
 
@@ -183,7 +239,7 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
                 <button className="btn w-full" onClick={() => pay.settleIntent(i.id, 'reconcile')}>{t('pay.check')}</button>
               </>
             )}
-            {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger justify-self-end" onClick={() => pay.settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
+            {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger justify-self-end" disabled={pay.unknown} onClick={() => pay.settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
           </div>
         );
       })}
@@ -197,11 +253,11 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
         <>
           <div className="field">
             <label htmlFor="cash">{t('pay.tendered')}</label>
-            <input id="cash" className="input input-money" inputMode="decimal" value={pay.cash} onChange={(e) => pay.setCash(e.target.value)} placeholder="0.00" />
+            <input id="cash" className="input input-money" inputMode="decimal" value={pay.cash} disabled={pay.unknown} onChange={(e) => pay.setCash(e.target.value)} placeholder="0.00" />
           </div>
           <div className="flex flex-wrap gap-2">
             {quickTenders(cashDue).map((v) => (
-              <button key={v} type="button" className="btn btn-sm money" onClick={() => pay.setCash(v)}>
+              <button key={v} type="button" className="btn btn-sm money" disabled={pay.unknown} onClick={() => pay.setCash(v)}>
                 <Money value={v} />
               </button>
             ))}
@@ -227,10 +283,10 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
           ) : !isPositive(remaining) ? null : (
           <div className="grid grid-cols-2 gap-2">
             {/* No second charge while an earlier one has no answer: check it first. */}
-            <button type="button" className="btn" disabled={!priced || pay.pendingIntent} onClick={() => pay.takeElectronic('CARD')}>
+            <button type="button" className="btn" disabled={!priced || pay.pendingIntent || pay.unknown} onClick={() => pay.takeElectronic('CARD')}>
               <CreditCard className="size-4" aria-hidden /> {t('pay.card')}
             </button>
-            <button type="button" className="btn" disabled={!priced || pay.pendingIntent} onClick={() => pay.takeElectronic('QR')}>
+            <button type="button" className="btn" disabled={!priced || pay.pendingIntent || pay.unknown} onClick={() => pay.takeElectronic('QR')}>
               <QrCode className="size-4" aria-hidden /> {t('pay.qr')}
             </button>
           </div>

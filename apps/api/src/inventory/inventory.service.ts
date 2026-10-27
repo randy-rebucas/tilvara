@@ -54,6 +54,9 @@ const MAX_SHEET_LINES = 5000;
 const sheetClosed = (status: string) =>
   new AppError('COUNT_SHEET_CLOSED', `This count sheet is ${status.toLowerCase()}`, HttpStatus.CONFLICT, { status });
 
+/** Opening a count sheet and posting a quick count at a branch take turns (the open-sheet checks cannot race). */
+const lockCounting = (db: Database, branchId: string) => db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`count-sheet:${branchId}`}, 0))`);
+
 const byVariant = <T extends { variantId: string }>(a: T, b: T) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
 
 /** Only stock-tracked items can be transferred or counted. */
@@ -206,7 +209,8 @@ export class InventoryService extends TenantService {
       const from = await branchScope(db, transfer.fromBranchId);
       const to = await branchScope(db, transfer.toBranchId);
       if (!this.canSeeTransfer(auth, from.scope, to.scope)) this.assertCan(auth, 'inventory.read', to.scope);
-      return this.transferView(db, transfer);
+      // Received by the destination branch: whether this person may do it there (the admin offers the form only then).
+      return { ...(await this.transferView(db, transfer)), canReceive: transfer.status === 'DISPATCHED' && this.can(auth, 'inventory.transfer', to.scope) };
     });
   }
 
@@ -285,6 +289,17 @@ export class InventoryService extends TenantService {
       const ids = input.lines.map((l) => l.variantId);
       await assertVariants(db, ids);
       await assertStocked(db, ids);
+      // An item on an open count sheet is counted there: a quick count now would be applied again when the sheet posts.
+      await lockCounting(db, branch.id);
+      const { rows: onSheet } = await db.execute<{ variant_id: string; sheet_id: string }>(sql`
+        SELECT l.variant_id, l.sheet_id FROM stock_count_sheet_lines l JOIN stock_count_sheets s ON s.id = l.sheet_id
+         WHERE s.branch_id = ${branch.id} AND s.status = 'OPEN' AND l.variant_id IN (${sql.join(ids.map((v) => sql`${v}::uuid`), sql`, `)})`);
+      if (onSheet.length) {
+        throw new AppError('ITEM_ON_OPEN_SHEET', 'These items are on an open count sheet: count them there', HttpStatus.CONFLICT, {
+          sheetId: onSheet[0]!.sheet_id,
+          variantIds: [...new Set(onSheet.map((r) => r.variant_id))],
+        });
+      }
       return this.postCount(db, auth, branch, input.lines.map((l) => ({ ...l, expectedQuantity: null })), input.notes ?? null);
     });
   }
@@ -387,6 +402,14 @@ export class InventoryService extends TenantService {
       const { branch, scope } = await branchScope(db, input.branchId);
       this.assertCan(auth, 'inventory.adjust', scope);
       if (branch.archivedAt) throw archived('Branch');
+      // One open sheet per branch: two sheets frozen together would each post counted − frozen (twice the change).
+      await lockCounting(db, branch.id);
+      const [openSheet] = await db
+        .select({ id: stockCountSheets.id })
+        .from(stockCountSheets)
+        .where(and(eq(stockCountSheets.branchId, branch.id), eq(stockCountSheets.status, 'OPEN')))
+        .limit(1);
+      if (openSheet) throw new AppError('SHEET_OPEN', 'This branch already has an open count sheet: post or cancel it first', HttpStatus.CONFLICT, { sheetId: openSheet.id });
       let ids: string[];
       if (input.variantIds) {
         ids = [...new Set(input.variantIds)];

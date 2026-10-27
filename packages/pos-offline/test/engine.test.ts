@@ -80,11 +80,27 @@ describe('ringing up offline', () => {
     expect(receipt).toMatchObject({
       seller: { name: 'Tindahan ni Nena', tin: '123-456-789-00000', vatStatus: 'VAT' }, // the TIN as online receipts print it
       lines: [{ name: 'Cola', amount: '44.80', flag: 'V' }, { name: 'Rice (kg)', quantity: '0.5', amount: '27.50', flag: 'E' }],
-      totals: { vatableSales: '40.00', vatAmount: '4.80', vatExemptSales: '27.50', amountDue: '72.30' }, change: '27.70',
+      totals: { discount: '0.00', vatableSales: '40.00', vatLabel: 'VAT 12%', vatAmount: '4.80', vatExemptSales: '27.50', amountDue: '72.30' }, change: '27.70',
     });
     expect(receipt.notice).toMatch(/NOT AN OFFICIAL INVOICE/);
     expect((await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '22.40' })).sale.deviceSeq).toBe(2);
     expect(await engine.status()).toMatchObject({ pending: 2, recorded: 0, authState: 'OK', snapshot: { expired: false } });
+    // Close shift waits for these: both are on the open shift, none on another.
+    expect(await engine.pendingFor(snapshot.openSession!.id)).toBe(2);
+    expect(await engine.pendingFor('00000000-0000-4000-8000-000000000000')).toBe(0);
+  });
+
+  it('prints what a promotion took off as a Discount total, as online receipts do', async () => {
+    const server = fakeServer();
+    server.transport.snapshot = async () => ({
+      ...snapshot,
+      promotions: [{ id: 'promo-1', name: '2 for 40', kind: 'MULTI_BUY', startsAt: '2026-01-01T00:00:00.000Z', variantIds: [COLA], quantity: 2, price: '40.00' }],
+    });
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const { receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '2' }], tendered: '40' });
+    expect(receipt.totals).toMatchObject({ gross: '44.80', discount: '4.80', amountDue: '40.00', vatLabel: 'VAT 12%' });
+    expect(receipt.lines[0]).toMatchObject({ amount: '40.00', promotion: { name: '2 for 40', discount: '4.80' } });
   });
 
   it('refuses at the till what it cannot record: another cashier, unknown items, fractions of whole items, too little cash', async () => {

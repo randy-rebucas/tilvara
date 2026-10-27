@@ -8,28 +8,11 @@ import { PrintButton } from '@/components/print-button';
 import { datePresets, formatDateTime, todayManila } from '@/lib/format';
 import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
+import { exportErrorMessage } from '@/lib/report-csv';
+import { REPORT_PATHS, type ReportTab } from './paths';
 
-export type ReportTab =
-  | 'sales' | 'products' | 'cashiers' | 'refunds' | 'tenders' | 'tax' | 'statutory' | 'z'
-  | 'promotions' | 'attributes'
-  | 'category' | 'branches' | 'discounts' | 'purchases' | 'payments';
-const PATHS: Record<ReportTab, string> = {
-  sales: '/reports/sales',
-  products: '/reports/products',
-  promotions: '/reports/promotions',
-  attributes: '/reports/sizes-colours',
-  cashiers: '/reports/cashiers',
-  refunds: '/reports/refunds',
-  tenders: '/reports/tenders',
-  tax: '/reports/tax',
-  statutory: '/reports/statutory',
-  z: '/reports/z-readings',
-  category: '/reports/categories',
-  branches: '/reports/branches',
-  discounts: '/reports/discounts',
-  purchases: '/reports/purchases',
-  payments: '/reports/payments',
-};
+export type { ReportTab } from './paths';
+const PATHS = REPORT_PATHS;
 /** All branches at once: no branch to pick. */
 const CONSOLIDATED: readonly ReportTab[] = ['branches'];
 /** As things stand now: no dates to pick. */
@@ -45,20 +28,27 @@ export interface ReportQuery {
   branch?: string;
   from?: string;
   to?: string;
+  /** A CSV download that failed comes back with the API's code (reports/export/route.ts). */
+  exportError?: string;
 }
 
 const isDate = (s: string | undefined) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-/** Branch (?branch=, else the first) and local dates (?from=&to=), defaulting to today in Manila. */
+/**
+ * Branch (?branch=, else the first open one) and local dates (?from=&to=), defaulting to today in Manila.
+ * Archived branches stay in the list, after the open ones: their sales and readings are part of the record.
+ */
 export async function reportScope(q: ReportQuery) {
   const list = await apiOrNull<{ data: Branch[] }>('/branches');
-  const branches = list?.data.filter((b) => !b.archivedAt) ?? [];
+  const all = list?.data ?? [];
+  const branches = [...all.filter((b) => !b.archivedAt), ...all.filter((b) => b.archivedAt)];
   const today = todayManila();
   return {
     branches,
-    branch: branches.find((b) => b.id === q.branch) ?? branches[0],
+    branch: branches.find((b) => b.id === q.branch) ?? branches.find((b) => !b.archivedAt) ?? branches[0],
     from: isDate(q.from) ? q.from! : today,
     to: isDate(q.to) ? q.to! : today,
+    exportError: q.exportError,
   };
 }
 
@@ -90,6 +80,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
 }) {
   const { t, lang } = await getT();
   const { branches, branch, from, to } = scope;
+  const exportFailed = exportErrorMessage(t, scope.exportError);
   const group = (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) => (GROUPS[g] as readonly ReportTab[]).includes(tab))!;
   const tenant = (await api<Me>('/me')).activeTenant;
   // Analysis is the plan's `advanced_reports` (Growth and Enterprise): the group stays visible, with the
@@ -113,7 +104,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
       <div className="contents print:hidden">
       <SubNav label={t('rep.groups')} active={group} items={(Object.keys(GROUPS) as (keyof typeof GROUPS)[]).map((g) => ({ key: g, href: keep(GROUPS[g][0]), label: t(`rep.group.${g}` as MessageKey) }))} />
       <SubNav level={2} label={t('common.sections')} active={tab} items={GROUPS[group].map((k) => ({ key: k, href: keep(k), label: t(`rep.tab.${k}` as MessageKey) }))} />
-      {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, from, to, ...extra })}`} />}
+      {!CONSOLIDATED.includes(tab) && <ScopePicker label={t('common.branch')} items={branches.map((b) => ({ id: b.id, name: b.name, code: b.code, archived: Boolean(b.archivedAt) }))} archivedLabel={t('common.archived')} selected={branch?.id} href={(id) => `${PATHS[tab]}?${new URLSearchParams({ branch: id, from, to, ...extra })}`} />}
       {branch && (
         <div className="flex flex-col gap-2">
           {/* A plain GET form: the range lives in the URL, so a report can be bookmarked or shared. */}
@@ -134,7 +125,8 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
             )}
             {!UNDATED.includes(tab) && <button className="btn">{t('common.show')}</button>}
             {!error && tab !== 'z' && (
-              <a href={`/reports/export?${params({ ...extra, report: tab })}`} className="btn" download>
+              // No `download` attribute: a failed export redirects back here with its reason instead of saving a file.
+              <a href={`/reports/export?${params({ ...extra, report: tab })}`} className="btn">
                 <Download aria-hidden className="size-4" /> {t('rep.csv')}
               </a>
             )}
@@ -160,6 +152,7 @@ export async function ReportsChrome({ tab, scope, error: reportError, extra = {}
         </div>
       )}
       </div>
+      {exportFailed && <Callout tone="error">{exportFailed}</Callout>}
       {!branch ? <Note><Empty action={<ToLocations label={t('loc.goTo')} />}>{t('inv.noBranch')}</Empty></Note> : error ? <Callout tone={notOnPlan || error === t('rep.notOnPlan') ? 'warn' : 'error'}>{error}</Callout> : children}
     </div>
   );

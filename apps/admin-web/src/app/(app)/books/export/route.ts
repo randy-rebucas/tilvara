@@ -19,7 +19,15 @@ export async function GET(request: NextRequest) {
   const token = request.cookies.get(ACCESS_COOKIE)?.value;
   if (!token) return NextResponse.redirect(new URL('/sign-in', request.url));
   const res = await fetch(`${API_URL}/journal-lines?legalEntityId=${entity}&from=${from}&to=${to}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
-  if (!res.ok) return NextResponse.json((await res.json().catch(() => null)) ?? { error: { code: 'ERROR', message: 'Export failed' } }, { status: res.status });
+  if (!res.ok) {
+    // Back to the journal with the reason (a plain link, so the browser shows the page, not a JSON file).
+    const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;
+    const code = body?.error?.code ?? '';
+    const back = new URL('/books', request.url);
+    back.searchParams.set('entity', entity);
+    back.searchParams.set('exportError', /^[A-Z_]{1,40}$/.test(code) ? code : 'ERROR');
+    return NextResponse.redirect(back, 303);
+  }
   const lang = request.cookies.get(LANG_COOKIE)?.value === 'fil' ? 'fil' : 'en';
   const t = (key: MessageKey) => translate(lang, key);
   const { data } = (await res.json()) as { data: Line[] };

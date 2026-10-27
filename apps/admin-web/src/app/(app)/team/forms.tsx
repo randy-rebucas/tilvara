@@ -87,7 +87,9 @@ type Row = { key: number; roleId: string; scope: string };
 const scopeValue = (a: { scopeType: string; scopeId: string | null }) => (a.scopeType === 'TENANT' ? 'TENANT' : `${a.scopeType}:${a.scopeId}`);
 
 /** A member's role assignments, edited as lines (role + where it applies); saving replaces them all. */
-function AccessFields({ close, member, roles, branches, entities }: { close: () => void; member: Member; roles: Role[]; branches: Branch[]; entities: LegalEntity[] }) {
+/** `extraScopes`: where the member's access applies today but the lists no longer offer (archived, or a register). */
+type ScopeChoice = { value: string; label: string };
+function AccessFields({ close, member, roles, branches, entities, extraScopes = [] }: { close: () => void; member: Member; roles: Role[]; branches: Branch[]; entities: LegalEntity[]; extraScopes?: ScopeChoice[] }) {
   const { t } = useT();
   const { pending, submit, error } = useSubmit();
   const [rows, setRows] = useState<Row[]>(() =>
@@ -122,6 +124,7 @@ function AccessFields({ close, member, roles, branches, entities }: { close: () 
               <option value="TENANT">{t('team.wholeBusiness')}</option>
               {entities.map((le) => <option key={le.id} value={`LEGAL_ENTITY:${le.id}`}>{t('team.legalEntity', { name: le.registeredName })}</option>)}
               {branches.map((b) => <option key={b.id} value={`BRANCH:${b.id}`}>{b.code} · {b.name}</option>)}
+              {extraScopes.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
           </div>
           <button type="button" className="btn h-[2.4rem] px-2.5" aria-label={`${t('team.removeAccess')} ${i + 1}`} disabled={rows.length <= 1} onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))}>
@@ -143,7 +146,7 @@ function AccessFields({ close, member, roles, branches, entities }: { close: () 
   );
 }
 
-export function AccessForm(props: { member: Member; roles: Role[]; branches: Branch[]; entities: LegalEntity[] }) {
+export function AccessForm(props: { member: Member; roles: Role[]; branches: Branch[]; entities: LegalEntity[]; extraScopes?: ScopeChoice[] }) {
   const { t } = useT();
   return <Disclosure kind="edit" label={t('team.editAccess')}>{(close) => <AccessFields close={close} {...props} />}</Disclosure>;
 }

@@ -83,7 +83,18 @@ export default async function StockPage({ searchParams }: { searchParams: Promis
               ]}
               stacked={{
                 title: (r) => r.name,
-                meta: (r) => <Serial>{r.sku}{placeOf.get(r.variantId) ? ` · ${placeOf.get(r.variantId)}` : ''} · {qty(r.quantity)} × {peso(r.avgCost)}</Serial>,
+                // On a phone the shelf is edited under the row too (the stacked list has no columns).
+                meta: (r) =>
+                  canPlace && branch ? (
+                    <>
+                      <Serial>{r.sku} · {qty(r.quantity)} × {peso(r.avgCost)}</Serial>
+                      <div className="mt-2">
+                        <LocationCell key={`${branch.id}-${r.variantId}-m`} idPrefix="loc-m" branchId={branch.id} variantId={r.variantId} name={r.name} location={placeOf.get(r.variantId) ?? null} />
+                      </div>
+                    </>
+                  ) : (
+                    <Serial>{r.sku}{placeOf.get(r.variantId) ? ` · ${placeOf.get(r.variantId)}` : ''} · {qty(r.quantity)} × {peso(r.avgCost)}</Serial>
+                  ),
                 figure: (r) => <span className="money font-semibold">{peso(r.value)}</span>,
               }}
               foot={{

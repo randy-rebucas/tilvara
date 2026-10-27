@@ -1,5 +1,5 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { branches, categories, eq, isNull, sql, type Database } from '@1pos/database';
+import { branches, categories, eq, sql, type Database } from '@1pos/database';
 import { movementAt, movementSaleJoin } from './movement-time.js';
 import { Dec, toDec } from '@1pos/money';
 import type { ConsolidatedRangeQuery } from '@1pos/validation';
@@ -109,10 +109,12 @@ export class AnalysisReportsService extends ReportsService {
   /**
    * Every branch the person may report on, side by side, and the total: sales, returns and net, with
    * VAT and discounts, each branch in its own local days. `legalEntityId` narrows to one company.
+   * An archived branch is listed (with `archivedAt`) when it sold or took returns in the range, so the
+   * total still adds up to the books for a past period.
    */
   byBranch(auth: AuthContext, q: ConsolidatedRangeQuery) {
     return this.read(auth, async (db) => {
-      const all = await db.select().from(branches).where(isNull(branches.archivedAt));
+      const all = await db.select().from(branches);
       const mine = all.filter((b) => (!q.legalEntityId || b.legalEntityId === q.legalEntityId) && hasPermission(tenantOf(auth).grants, 'reports.read', { branchId: b.id, legalEntityId: b.legalEntityId }));
       if (!mine.length) throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing: ['reports.read'] });
       const rows: Row[] = [];
@@ -130,7 +132,8 @@ export class AnalysisReportsService extends ReportsService {
                  (s.amount - r.amount)::text AS net_sales, (s.vat - r.vat)::text AS vat_amount, (s.ex_vat - r.ex_vat)::text AS net_ex_vat,
                  s.discount::text AS discount, s.statutory::text AS statutory_discount
             FROM s, r`);
-        rows.push({ ...r!, branch_id: b.id, code: b.code, name: b.name, legal_entity_id: b.legalEntityId, timezone: b.timezone });
+        if (b.archivedAt && r!.sales_count === 0 && r!.returns_count === 0) continue;
+        rows.push({ ...r!, branch_id: b.id, code: b.code, name: b.name, legal_entity_id: b.legalEntityId, timezone: b.timezone, archived_at: b.archivedAt?.toISOString() ?? null });
       }
       const cols = ['sales', 'returns', 'net_sales', 'vat_amount', 'net_ex_vat', 'discount', 'statutory_discount'];
       return {
@@ -154,7 +157,7 @@ export class AnalysisReportsService extends ReportsService {
   discounts(auth: AuthContext, range: ReportRange) {
     return this.run(auth, range, async (db, w) => {
       const { rows } = await db.execute<Row>(sql`
-        SELECT s.id AS sale_id, s.sale_number, rg.code AS register_code, s.completed_at, l.name, l.quantity::text AS quantity,
+        SELECT s.id AS sale_id, l.id AS line_id, s.sale_number, rg.code AS register_code, s.completed_at, l.name, l.quantity::text AS quantity,
                coalesce(o.list_unit_price, pp.amount)::text AS list_unit_price, l.unit_price::text AS unit_price,
                l.discount::text AS discount,
                CASE WHEN o.id IS NULL THEN 0 ELSE round((o.list_unit_price - l.unit_price) * l.quantity, 2) END::text AS price_change,

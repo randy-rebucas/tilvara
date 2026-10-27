@@ -114,7 +114,7 @@ export default async function SupplierInvoicesPage({ searchParams }: { searchPar
               </form>
               {payable && paySupplier && (
                 payable.data.length > 0
-                  ? <BatchPaymentForm key={paySupplier.id} supplierId={paySupplier.id} today={today} invoices={payable.data.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, balance: i.balance }))}
+                  ? <BatchPaymentForm key={paySupplier.id} supplierId={paySupplier.id} today={today} invoices={payable.data.map((i) => ({ id: i.id, invoiceNumber: i.invoiceNumber, dueDate: i.dueDate, balance: i.balance, branchId: i.branchId, branch: branchLabel(branches?.data, i.branchId) }))}
                       drawers={drawerOptions(openShifts?.data, registers?.data, branches?.data, (amount) => t('ap.inDrawer', { amount }), [...new Set(payable.data.map((i) => i.branchId))])} />
                   : <Callout>{t('ap.payManyNone')}</Callout>
               )}
