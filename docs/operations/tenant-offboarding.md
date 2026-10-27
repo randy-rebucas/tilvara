@@ -28,15 +28,22 @@ The owner (or an admin) does this in the back office:
 
 ## 2. End the subscription → read-only
 
-Until online billing exists (D6), ops sets the subscription with ops credentials:
+Until online billing exists (D6), ops sets the subscription with the support CLI (ops credentials,
+`DATABASE_MIGRATOR_URL`). The business's address is its slug (`<slug>.tilvara.ph`, or the `/s/<slug>` link):
 
-```sql
--- as onepos_migrator
-SELECT platform_set_subscription('<tenant id>', '<current plan>', 'CANCELED', NULL, NULL);
+```sh
+pnpm --filter @1pos/database support subscription-show --slug <slug>
+pnpm --filter @1pos/database support subscription-set --slug <slug> --plan <current plan> --status CANCELED   --reason "Owner asked to leave Tilvara (call-back checked)" --ticket <ref>
 ```
 
+Each change is written in the business's own audit log as `subscription.changed` (plan and status before
+and after, who, why, the ticket), so the owner sees it too. The same command extends a trial
+(`--status TRIALING --trial-ends <date>`), records a payment (`--status ACTIVE --paid-until <date>`) or
+gives time to pay (`--status PAST_DUE --grace-ends <date>`); it refuses a date already past.
+
 From then on the business is **read-only**: every page and report still opens, every write answers
-`402 SUBSCRIPTION_READ_ONLY` (shown as a banner in the back office). Nothing is deleted.
+`402 SUBSCRIPTION_READ_ONLY`. Every member sees why in a banner (the owner and admins with how to renew,
+`ONEPOS_SUPPORT_EMAIL`); a till shows a red line, and sales it rings wait for review. Nothing is deleted.
 
 If the business must also be blocked from writing even after a renewal (a dispute, a legal hold), set
 the business itself to `SUSPENDED` (same effect on writes, `403 TENANT_SUSPENDED`):

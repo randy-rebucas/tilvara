@@ -51,7 +51,11 @@ export interface EngineStatus {
   lastSyncAt: number | null;
   lastError: string | null;
   /** `registerId` / `openSessionId`: what the till can sell on offline (the shift open when it last synced). */
-  snapshot: { asOf: string; validUntil: string; expired: boolean; fetchedAt: number; registerId: string; openSessionId: string | null } | null;
+  snapshot: {
+    asOf: string; validUntil: string; expired: boolean; fetchedAt: number; registerId: string; openSessionId: string | null;
+    /** False: the business could not make changes when the snapshot was taken, so sales rung on it wait for review. */
+    businessWritable: boolean;
+  } | null;
 }
 
 const NOT_AN_INVOICE = 'THIS IS NOT AN OFFICIAL INVOICE — OFFLINE SALE, RECORDED WHEN THE TILL RECONNECTS';
@@ -343,6 +347,7 @@ export class OfflineEngine {
           ? {
               asOf: snap.body.asOf, validUntil: snap.body.validUntil, expired: this.now() > Date.parse(snap.body.validUntil), fetchedAt: snap.fetchedAt,
               registerId: snap.body.register.id, openSessionId: snap.body.openSession?.id ?? null,
+              businessWritable: snap.body.businessWritable !== false,
             }
           : null,
       };

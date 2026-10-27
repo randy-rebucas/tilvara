@@ -9,6 +9,9 @@ const BY_MESSAGE: Record<string, MessageKey> = {
   'Archive its branches first': 'refusal.archiveBranchesFirst',
   'Archive its registers first': 'refusal.archiveRegistersFirst',
   'Revoke its terminals first': 'refusal.revokeTerminalsFirst',
+  'Move or archive its products first': 'refusal.moveProductsFirst',
+  'Move or archive its sub-categories first': 'refusal.moveSubcategoriesFirst',
+  'Move or archive its sub-categories and products first': 'refusal.moveSubcategoriesAndProductsFirst',
   'Close the open shift on this register first': 'refusal.closeShiftFirst',
 };
 
@@ -18,6 +21,8 @@ const BY_CODE: Record<string, MessageKey> = {
   SCOPE_NOT_HELD: 'refusal.scopeNotHeld',
   ENTITLEMENT_REQUIRED: 'refusal.notOnPlan',
   ENTITLEMENT_LIMIT_REACHED: 'refusal.planLimit',
+  SUBSCRIPTION_READ_ONLY: 'refusal.readOnly',
+  TENANT_SUSPENDED: 'refusal.suspended',
   TAX_PROFILE_BACKDATED: 'refusal.taxBackdated',
   SYSTEM_ROLE_READONLY: 'refusal.systemRole',
   ROLE_IN_USE: 'refusal.roleInUse',

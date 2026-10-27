@@ -8,6 +8,8 @@ import { Callout } from '@/components/note';
 import { formatDateTime } from '@/lib/format';
 import { LeaveSupportButton } from '../(auth)/support/open-grant';
 import { brandImageUrl, brandVars } from '@/lib/brand';
+import { SUPPORT_EMAIL } from '@/lib/config';
+import { trialEndingSoon } from '@/lib/subscription';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const me = await api<Me>('/me');
@@ -22,7 +24,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const current = me.memberships.find((m) => m.tenantId === me.activeTenant!.tenantId);
   // Tilvara staff in a business's support view (ADR-0016 slice 6): no membership, so the name comes from the grant.
   const tenantName = current?.tenantName ?? me.support?.tenantName ?? '';
+  // Only people who may see the plan (subscription.manage / tenant.manage) get it: they are the ones who can renew.
   const sub = await apiOrNull<Subscription>('/subscription');
+  const suspended = me.activeTenant.status === 'SUSPENDED';
+  const readOnly = !suspended && (me.activeTenant.access ?? sub?.access) === 'READ_ONLY';
+  const trialEnds = sub && !suspended ? trialEndingSoon(sub) : null;
+  // Until online billing (D6) an owner renews by writing to support (`ONEPOS_SUPPORT_EMAIL`).
+  const contact = SUPPORT_EMAIL ? (
+    <>
+      {' '}
+      {t('sub.contact')}{' '}
+      <a href={`mailto:${SUPPORT_EMAIL}`} className="font-semibold underline">{SUPPORT_EMAIL}</a>.
+    </>
+  ) : null;
   const branding = me.activeTenant.branding;
   const brandName = branding?.displayName || tenantName || 'Tilvara';
 
@@ -37,7 +51,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             {branding?.logoSha256 && (
               <img src={brandImageUrl('logo', branding.logoSha256)} alt="" className="brand-logo h-10 w-auto max-w-[104px] object-contain lg:h-9 lg:max-w-[64px]" />
             )}
-            <span data-testid="band-name" className="block max-w-[14rem] truncate lg:max-w-[104px] lg:text-[1.125rem]" title={brandName}>
+            <span data-testid="band-name" className="block min-w-0 max-w-[14rem] truncate lg:max-w-[104px] lg:text-[1.125rem]" title={brandName}>
               {brandName}
             </span>
           </a>
@@ -45,8 +59,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="nav-fade order-last -mx-4 w-[calc(100%+2rem)] border-t border-white/15 px-3 py-1.5 sm:-mx-7 sm:w-[calc(100%+3.5rem)] sm:px-6 lg:order-none lg:mx-0 lg:w-auto lg:min-w-0 lg:border-0 lg:p-0">
             <AppNav permissions={me.activeTenant.permissions} extensions={me.activeTenant.extensions ?? []} />
           </div>
-          {/* Below lg it shares the wordmark's line and shrinks (the names truncate) rather than wrapping. */}
-          <div className="ml-auto flex min-w-0 flex-1 basis-0 items-center justify-end gap-3 sm:gap-4 lg:flex-none lg:basis-auto">
+          {/* Below lg it shares the wordmark's line and shrinks (the names truncate) rather than wrapping. Sized by its
+              content (flex-auto, not basis 0), so the business's name shrinks too and the icons stay on screen. */}
+          <div className="ml-auto flex min-w-0 flex-auto items-center justify-end gap-3 sm:gap-4 lg:flex-none">
             <LangSwitch onBand />
             <UserMenu tenantName={tenantName} userName={me.user.displayName} multiple={me.memberships.length > 1} />
           </div>
@@ -69,9 +84,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Callout>
         </div>
       )}
-      {sub?.access === 'READ_ONLY' && (
-        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden">
-          <Callout tone="warn">{t('sub.readOnly')}</Callout>
+      {(suspended || readOnly || trialEnds) && (
+        <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden" data-testid="subscription-notice">
+          {suspended ? (
+            <Callout tone="warn">{sub ? <>{t('sub.suspendedOwner')}{contact}</> : t('sub.suspended')}</Callout>
+          ) : readOnly ? (
+            <Callout tone="warn">{sub ? <>{t('sub.readOnly')}{contact}</> : t('sub.readOnlyMember')}</Callout>
+          ) : (
+            <Callout tone="info">{t('sub.trialEnding', { date: formatDateTime(trialEnds, lang) })}{contact}</Callout>
+          )}
         </div>
       )}
       <main className="reveal mx-auto max-w-[1440px] px-4 py-7 sm:px-7">{children}</main>

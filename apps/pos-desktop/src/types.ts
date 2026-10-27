@@ -3,7 +3,8 @@ export interface Me {
   userId: string;
   user: { email: string; displayName: string };
   /** `extensions`: the business's usable extensions (ADR-0026); absent from older servers. */
-  activeTenant: { tenantId: string; permissions: string[]; extensions?: string[] } | null;
+  /** `status` SUSPENDED or `access` READ_ONLY (a lapsed subscription): nothing can be recorded; absent from older servers. */
+  activeTenant: { tenantId: string; permissions: string[]; extensions?: string[]; status?: string; access?: 'FULL' | 'READ_ONLY' } | null;
   memberships: { tenantId: string; tenantName: string; tenantSlug: string }[];
 }
 

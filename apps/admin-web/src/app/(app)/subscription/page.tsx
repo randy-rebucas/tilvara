@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { Callout, Empty, Note, PageHeader, Serial } from '@/components/note';
 import { apiOrNull, type Extension, type Me, type Subscription } from '@/lib/api';
-import { daysUntil, formatDateTime } from '@/lib/format';
+import { formatDateTime } from '@/lib/format';
+import { planFacts } from '@/lib/subscription';
 import { getT } from '@/i18n/server';
 import { en, type MessageKey } from '@/i18n/messages';
 import { SubscriptionTabs } from './tabs';
@@ -35,7 +36,6 @@ export default async function SubscriptionPage() {
       </div>
     );
   }
-  const trialDays = sub.status === 'TRIALING' ? daysUntil(sub.trialEndsAt) : null;
   // Names as the Extensions tab shows them; that list needs tenant.manage, so a code stands in without it.
   // An API from before ADR-0026 sends no `extensions`.
   const planExtensions = sub.plan.extensions ?? [];
@@ -50,7 +50,6 @@ export default async function SubscriptionPage() {
     <div className="flex max-w-[960px] flex-col gap-6">
       <PageHeader title={t('sub.title')} />
       <SubscriptionTabs active="plan" />
-      {sub.access === 'READ_ONLY' && <Callout tone="warn">{t('sub.readOnly')}</Callout>}
 
       <Note denom="blue" className="px-6 py-5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -58,9 +57,9 @@ export default async function SubscriptionPage() {
           <span className={`tag ${sub.access === 'FULL' ? 'text-ink!' : 'text-red!'}`}>{sub.access === 'FULL' ? t('sub.full') : t('common.readOnly')}</span>
         </div>
         <Serial className="mt-1 block">
-          {t(statusKey)}
-          {trialDays !== null && ` · ${t('sub.daysLeft', { n: trialDays })} · ${formatDateTime(sub.trialEndsAt, lang)}`}
-          {sub.graceEndsAt && ` · ${t('sub.graceUntil', { date: formatDateTime(sub.graceEndsAt, lang) })}`}
+          {/* The read-only notice itself is the layout's, above every page. */}
+          {/* A trial's name already says trial: its line is the days left or the day it ended. */}
+          {[...(sub.status === 'TRIALING' ? [] : [t(statusKey)]), ...planFacts(sub).map((f) => t(f.key, { ...(f.n !== undefined && { n: f.n }), ...(f.date && { date: formatDateTime(f.date, lang) }) }))].join(' · ')}
         </Serial>
       </Note>
 

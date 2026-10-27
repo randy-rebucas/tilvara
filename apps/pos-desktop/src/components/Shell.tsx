@@ -38,7 +38,7 @@ export interface HelpContext {
  * till status, help, language, sign-out. `backdrop`: the business's background image behind the
  * screens before the counter (sign-in, business, register).
  */
-export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, backdrop = false, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; help?: HelpContext; backdrop?: boolean; children: ReactNode }) {
+export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, backdrop = false, readOnly = false, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; help?: HelpContext; backdrop?: boolean; readOnly?: boolean; children: ReactNode }) {
   const { t } = useT();
   const till = useTill();
   const { brand } = useBrand();
@@ -91,6 +91,11 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, back
         {nav && <div className="overflow-x-auto px-3 pb-2 lg:hidden">{nav}</div>}
       </header>
       <p className="serial border-b border-hair bg-paper-deep px-4 py-1 text-[0.6875rem] text-muted sm:px-6">{mode}</p>
+      {/* The business cannot record sales (`/me` at sign-in, or the till's latest snapshot). A desktop till's offline sales
+          then wait for review; a till in a browser is refused outright. */}
+      {(readOnly || (till.mode === 'ready' && till.status?.snapshot?.businessWritable === false)) && (
+        <p role="alert" data-testid="read-only-banner" className="border-b border-hair bg-[#fbeceb] px-4 py-2 text-[0.9375rem] font-semibold text-red sm:px-6">{t(till.mode === 'ready' ? 'till.readOnlyBanner' : 'till.readOnlyBannerOnline')}</p>
+      )}
       {till.mode === 'ready' && !till.online && (
         <p role="status" className="border-b border-hair bg-amber-bg px-4 py-2 text-[0.9375rem] font-semibold sm:px-6">{t('till.offlineBanner')}</p>
       )}

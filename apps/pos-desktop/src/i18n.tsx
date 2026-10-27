@@ -188,6 +188,10 @@ const en = {
   'till.lastSync': 'Last sent {when}',
   'till.syncNow': 'Send now',
   'till.offlineBanner': 'Offline. Cash sales are kept on this till and sent when the connection is back. Card, QR, discounts and returns need the connection.',
+  'till.readOnlyBanner': 'This business cannot record sales right now: its subscription has lapsed or it is suspended. A sale rung now is not recorded; it waits for the manager’s review. Ask the owner.',
+  'till.readOnlyBannerOnline': 'This business cannot record sales right now: its subscription has lapsed or it is suspended. Sales and shifts are refused until then. Ask the owner.',
+  'refusal.readOnly': 'The business’s subscription has lapsed, so nothing can be recorded. Ask the owner to renew.',
+  'refusal.suspended': 'This business is suspended, so nothing can be recorded.',
   'till.offlineRefused': 'This sale cannot be done offline: {reason}',
   'till.offlineSubmit': 'Record cash sale offline',
   'till.offlineSc': 'SC/PWD and other discounts need the connection. Remove the discount or wait for the connection.',
@@ -252,6 +256,7 @@ const en = {
   'guide.till.t2': 'Till revoked? Ask an owner for a new key for this register, then disconnect and set the till up again. Sales still waiting are delivered then, not lost.',
   'guide.till.t3': 'The logo, colour, background and receipt messages come from the back office (Subscription → Branding). The till picks up a change within a minute and keeps it for when it is offline.',
   'guide.till.t4': 'Moving the till to another business or server? First let every waiting sale be sent; set-up refuses until they are. Then disconnect and set it up with the new terminal: the old business’s items, names, logo and receipts are removed from this computer.',
+  'guide.till.t5': 'A red line under the band saying the business cannot record sales: its subscription has lapsed or it is suspended. Sales rung then are not recorded; they wait for the manager’s review. Tell the owner.',
 
   'guide.trouble.title': 'When something goes wrong',
   'guide.trouble.lede': 'What the messages mean, and what to do.',
@@ -574,6 +579,10 @@ const fil: Record<MessageKey, string> = {
   'till.lastSync': 'Huling naipadala {when}',
   'till.syncNow': 'Ipadala ngayon',
   'till.offlineBanner': 'Offline. Itatabi sa till na ito ang mga benta ng cash at ipapadala pagbalik ng koneksyon. Kailangan ng koneksyon ang card, QR, diskwento at return.',
+  'till.readOnlyBanner': 'Hindi makakapagtala ng benta ang negosyong ito ngayon: nag-lapse ang subscription nito o naka-suspend ito. Hindi maitatala ang bentang gagawin ngayon; maghihintay ito sa pagsusuri ng manager. Sabihan ang may-ari.',
+  'till.readOnlyBannerOnline': 'Hindi makakapagtala ng benta ang negosyong ito ngayon: nag-lapse ang subscription nito o naka-suspend ito. Tatanggihan muna ang mga benta at shift. Sabihan ang may-ari.',
+  'refusal.readOnly': 'Nag-lapse na ang subscription ng negosyo, kaya walang maitatala. Sabihan ang may-ari na mag-renew.',
+  'refusal.suspended': 'Naka-suspend ang negosyong ito, kaya walang maitatala.',
   'till.offlineRefused': 'Hindi magagawa offline ang bentang ito: {reason}',
   'till.offlineSubmit': 'Itala offline ang benta ng cash',
   'till.offlineSc': 'Kailangan ng koneksyon ang SC/PWD at iba pang diskwento. Alisin ang diskwento o hintayin ang koneksyon.',
@@ -637,6 +646,7 @@ const fil: Record<MessageKey, string> = {
   'guide.till.t2': 'Binawi ang till? Humingi sa may-ari ng bagong key para sa register na ito, pagkatapos ay idiskonekta at i-set up ulit ang till. Maipapadala na noon ang mga bentang naghihintay pa, hindi mawawala.',
   'guide.till.t3': 'Galing sa back office ang logo, kulay, background at mga mensahe sa resibo (Subscription → Tatak ng tindahan). Makukuha ng till ang pagbabago sa loob ng isang minuto at itatabi ito para kapag offline.',
   'guide.till.t4': 'Ililipat ang till sa ibang negosyo o server? Hayaan munang maipadala ang lahat ng bentang naghihintay; tatanggi ang set-up hangga’t hindi pa. Pagkatapos ay idiskonekta at i-set up gamit ang bagong terminal: aalisin sa computer na ito ang mga item, pangalan, logo at resibo ng dating negosyo.',
+  'guide.till.t5': 'Pulang linya sa ilalim ng band na nagsasabing hindi makakapagtala ng benta ang negosyo: nag-lapse ang subscription nito o naka-suspend ito. Hindi maitatala ang bentang gagawin noon; maghihintay ito sa pagsusuri ng manager. Sabihan ang may-ari.',
 
   'guide.trouble.title': 'Kapag may nagkamali',
   'guide.trouble.lede': 'Ang ibig sabihin ng mga mensahe, at ang dapat gawin.',
@@ -775,6 +785,14 @@ const dictionaries: Record<Lang, Record<MessageKey, string>> = { en, fil };
 /** Both catalogs, for tests that check copy exists in each language. */
 export const messages: Readonly<Record<Lang, Record<MessageKey, string>>> = dictionaries;
 
+/** The language on screen now, for text made outside a component (`errorText`). */
+let shownLang: Lang = 'en';
+
+/** `t` for code that is not a component: the language on screen now. */
+export function translate(key: MessageKey): string {
+  return dictionaries[shownLang][key] ?? en[key];
+}
+
 const Ctx = createContext<{ lang: Lang; setLang: (l: Lang) => void }>({ lang: 'en', setLang: () => undefined });
 
 function initialLang(): Lang {
@@ -787,6 +805,7 @@ function initialLang(): Lang {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(initialLang);
+  shownLang = lang;
   const setLang = (l: Lang) => {
     setLangState(l);
     document.documentElement.lang = l;

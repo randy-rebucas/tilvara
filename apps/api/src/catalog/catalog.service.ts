@@ -169,8 +169,10 @@ export class CatalogService extends TenantService {
         .from(products)
         .where(and(eq(products.categoryId, id), isNull(products.archivedAt)))
         .limit(1);
+      // Name only what is in the way: a category holding products alone has no sub-categories to move.
       if (child || product) {
-        throw new AppError('HAS_ACTIVE_CHILDREN', 'Move or archive its sub-categories and products first', HttpStatus.CONFLICT);
+        const what = child && product ? 'sub-categories and products' : child ? 'sub-categories' : 'products';
+        throw new AppError('HAS_ACTIVE_CHILDREN', `Move or archive its ${what} first`, HttpStatus.CONFLICT);
       }
       const [row] = await db.update(categories).set({ archivedAt: new Date() }).where(eq(categories.id, id)).returning();
       await this.audit(db, auth, 'category.archived', 'category', id);

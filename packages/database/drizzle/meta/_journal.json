@@ -890,6 +890,13 @@
       "when": 1793089480463,
       "tag": "0126_tenant_audit_second_pass",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1793095362694,
+      "tag": "0127_subscription_ops",
+      "breakpoints": true
     }
   ]
 }

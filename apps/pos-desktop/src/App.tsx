@@ -34,6 +34,9 @@ export function App() {
   return <Counter />;
 }
 
+/** The business cannot record anything: suspended, or its subscription lapsed (`/me` as of sign-in). */
+const readOnlyBusiness = (me: Me) => me.activeTenant?.status === 'SUSPENDED' || me.activeTenant?.access === 'READ_ONLY';
+
 function Counter() {
   const { t } = useT();
   const [stage, setStage] = useState<Stage>({ name: 'signin' });
@@ -77,7 +80,7 @@ function Counter() {
   }
   if (stage.name === 'register') {
     return (
-      <Shell onSignOut={leave} help={{ topic: 'start' }} backdrop>
+      <Shell onSignOut={leave} help={{ topic: 'start' }} backdrop readOnly={readOnlyBusiness(stage.me)}>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.
@@ -96,6 +99,7 @@ function Counter() {
   return (
     <Shell
       onSignOut={leave}
+      readOnly={readOnlyBusiness(me)}
       help={{ topic: tabs.find((x) => x.key === tab)?.topic ?? 'sell', extensions }}
       context={
         <span className="serial text-[0.8125rem]">

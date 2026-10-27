@@ -41,6 +41,12 @@ export interface Snapshot {
   asOf: string;
   /** After this, offline sales are still accepted but flagged SNAPSHOT_EXPIRED. */
   validUntil: string;
+  /**
+   * False when the business could not make changes as the snapshot was taken (its subscription lapsed or it
+   * is suspended): sales rung on it are not recorded but wait for the manager's review (`SUBSCRIPTION_READ_ONLY`
+   * / `TENANT_SUSPENDED`), so the till warns. Absent from older servers (read as true).
+   */
+  businessWritable?: boolean;
   terminal: { id: string; name: string; credentialHint: string };
   register: { id: string; code: string; name: string };
   branch: { id: string; code: string; name: string; timezone: string };

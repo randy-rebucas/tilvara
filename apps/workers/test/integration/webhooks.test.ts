@@ -41,6 +41,13 @@ afterAll(async () => {
   await workerPool.end();
 });
 
+/** A business on a plan with API access (webhooks are part of it); `plan` another one. */
+async function business(input: { slug: string; name: string }, plan = 'enterprise') {
+  const id = await createTenant(pool, input);
+  await withTenant(pool, id, (_db, client) => client.query('SELECT platform_start_trial($1, $2, 14)', [id, plan]));
+  return id;
+}
+
 async function endpoint(tenantId: string, path: string, topics: string[], enabled = true) {
   return withTenant(pool, tenantId, async (db) => {
     const salt = newSigningSalt();
@@ -85,8 +92,8 @@ async function dispatchUntil(d: WebhookDispatcher, done: () => Promise<boolean>)
 
 describe('outbound webhooks', () => {
   it('an event becomes one signed delivery per listening endpoint of its business; nothing for others', async () => {
-    const a = await createTenant(pool, { slug: slug('wh-a'), name: 'Hooks A' });
-    const b = await createTenant(pool, { slug: slug('wh-b'), name: 'Hooks B' });
+    const a = await business({ slug: slug('wh-a'), name: 'Hooks A' });
+    const b = await business({ slug: slug('wh-b'), name: 'Hooks B' });
     const listening = await endpoint(a, '/ok/a', ['sale.completed']);
     const otherTopic = await endpoint(a, '/ok/a2', ['stock.low']);
     const disabled = await endpoint(a, '/ok/a3', ['sale.completed'], false);
@@ -112,7 +119,7 @@ describe('outbound webhooks', () => {
   });
 
   it('a failing receiver is retried, then given up on (DEAD); a slow one times out', async () => {
-    const t = await createTenant(pool, { slug: slug('wh-f'), name: 'Hooks F' });
+    const t = await business({ slug: slug('wh-f'), name: 'Hooks F' });
     const failing = await endpoint(t, '/fail', ['sale.returned']);
     const slow = await endpoint(t, '/slow', ['sale.voided']);
     await processed(t, await emit(t, 'sale.returned', { saleId: randomUUID() }));
@@ -126,7 +133,7 @@ describe('outbound webhooks', () => {
   }, 120_000);
 
   it('without the insecure allowance, http and private addresses are refused and nothing is sent', async () => {
-    const t = await createTenant(pool, { slug: slug('wh-s'), name: 'Hooks S' });
+    const t = await business({ slug: slug('wh-s'), name: 'Hooks S' });
     const local = await endpoint(t, '/ok/secure', ['sale.completed']);
     await processed(t, await emit(t, 'sale.completed', { saleId: randomUUID() }));
     const before = received.length;
@@ -137,7 +144,7 @@ describe('outbound webhooks', () => {
   });
 
   it('an https host that resolves to any private address is refused before connecting', async () => {
-    const t = await createTenant(pool, { slug: slug('wh-p'), name: 'Hooks P' });
+    const t = await business({ slug: slug('wh-p'), name: 'Hooks P' });
     const hook = await endpoint(t, 'https://hooks.example.test/in', ['sale.completed']);
     await processed(t, await emit(t, 'sale.completed', { saleId: randomUUID() }));
     const asked: string[] = [];
@@ -157,6 +164,14 @@ describe('outbound webhooks', () => {
     expect(got.headers.host).toBe(`rebind.invalid:${port}`);
     // Without a pinned address the name is looked up, and fails.
     await expect(postPinned(`http://rebind.invalid:${port}/ok/unpinned`, null, 1000, {}, '{}')).rejects.toMatchObject({ code: 'ENOTFOUND' });
+  });
+
+  it('nothing is sent for a business whose plan has no API access (its endpoints are kept)', async () => {
+    const t = await business({ slug: slug('wh-g'), name: 'Hooks G' }, 'growth');
+    const kept = await endpoint(t, '/ok/g', ['sale.completed']);
+    const eventId = await emit(t, 'sale.completed', { saleId: randomUUID(), saleNumber: 1 });
+    await processed(t, eventId);
+    expect(await deliveries(t, kept.id)).toEqual([]);
   });
 
   it('the worker reaches deliveries only through its functions; the API role cannot claim them', async () => {

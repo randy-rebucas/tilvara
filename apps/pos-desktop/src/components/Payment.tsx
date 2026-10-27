@@ -1,6 +1,6 @@
 import { CreditCard, QrCode } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { useT, type MessageKey } from '../i18n';
+import { translate, useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
 import { add, gte, isPositive, isZero, parseAmount, peso, quickTenders, sub } from '../lib/money';
 import type { PaymentIntent } from '../types';
@@ -13,8 +13,13 @@ export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: '
 /** No answer, or the server/database failed: the request may or may not have taken effect. */
 export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500);
 
+/** Refusals the API words in English only, in the cashier's language. */
+const REFUSALS: Record<string, MessageKey> = { SUBSCRIPTION_READ_ONLY: 'refusal.readOnly', TENANT_SUSPENDED: 'refusal.suspended' };
+
 export const errorText = (err: unknown, fallback: string, network: string) =>
-  err instanceof ApiFailure ? (unanswered(err) ? withReference(network, err) : err.error.message) : fallback;
+  err instanceof ApiFailure
+    ? unanswered(err) ? withReference(network, err) : REFUSALS[err.error.code] ? translate(REFUSALS[err.error.code]!) : err.error.message
+    : fallback;
 
 /** What recording this payment's sale gave: the sale, and whether it is an earlier version of the cart (see `submit`). */
 export interface Recorded {

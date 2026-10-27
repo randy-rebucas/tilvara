@@ -91,6 +91,64 @@ describe('subscription lifecycle', () => {
     const admin = await loginToken(app, (await addMember(owner, t.tenantId, 'admin')).email);
     await http().get('/v1/subscription').set(bearer(admin)).expect(200);
   });
+
+  it('every member learns from /me whether the business may make changes', async () => {
+    const t = await signup(app, 'meaccess');
+    const cashier = await loginToken(app, (await addMember(owner, t.tenantId, 'cashier')).email);
+    expect((await http().get('/v1/me').set(bearer(cashier)).expect(200)).body.activeTenant.access).toBe('FULL');
+    await setSubscription(t, 'growth', 'CANCELED');
+    expect((await http().get('/v1/me').set(bearer(cashier)).expect(200)).body.activeTenant).toMatchObject({ access: 'READ_ONLY', status: 'ACTIVE' });
+  });
+});
+
+describe('ops changes a subscription (support subscription-set, migration 0127)', () => {
+  const slugOf = (t: SignedUp) => asOwnerInTenant(owner, t.tenantId, async (c) => (await c.query<{ slug: string }>('SELECT slug FROM tenants WHERE id = $1', [t.tenantId])).rows[0]!.slug);
+  const change = (slug: string, plan: string, status: string, dates: { trial?: Date; paid?: Date; grace?: Date } = {}, reason = 'Paid by bank transfer') =>
+    owner.query('SELECT platform_change_subscription($1, $2, $3, $4, $5, $6, $7, $8, $9)', [slug, plan, status, dates.trial ?? null, dates.paid ?? null, dates.grace ?? null, 'ops-test', reason, 'T-1']);
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000);
+
+  it('refuses what makes no sense, and needs a reason and a ticket', async () => {
+    const t = await signup(app, 'subops');
+    const slug = await slugOf(t);
+    const refused = async (p: Promise<unknown>, message: RegExp) => expect(String(await p.catch((e: Error) => e))).toMatch(message);
+    await refused(change(slug, 'growth', 'ACTIVE', { paid: inDays(30) }, 'x'), /reason and ticket are required/);
+    await refused(change('no-such-shop', 'growth', 'ACTIVE', { paid: inDays(30) }), /no business with the address/);
+    await refused(change(slug, 'platinum', 'ACTIVE', { paid: inDays(30) }), /no active plan/);
+    await refused(change(slug, 'growth', 'ACTIVE'), /paid until/);
+    await refused(change(slug, 'growth', 'ACTIVE', { paid: inDays(-1) }), /paid until/);
+    await refused(change(slug, 'growth', 'PAST_DUE'), /grace/);
+    await refused(change(slug, 'growth', 'TRIALING', { trial: inDays(-1) }), /trial needs its end/);
+    await refused(change(slug, 'growth', 'PAUSED'), /status must be/);
+    // The runtime role cannot call it at all.
+    const appPool = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 1 });
+    try {
+      await expect(appPool.query(`SELECT platform_change_subscription($1, 'enterprise', 'ACTIVE', null, now() + interval '1 day', null, 'me', 'free upgrade', 'x')`, [slug])).rejects.toThrow(/permission denied/);
+    } finally {
+      await appPool.end();
+    }
+    expect((await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body).toMatchObject({ plan: { code: 'growth' }, status: 'TRIALING' });
+  });
+
+  it('changes the plan and status, and writes it in the business’s own audit log', async () => {
+    const t = await signup(app, 'subops2');
+    const slug = await slugOf(t);
+    await change(slug, 'growth', 'CANCELED', {}, 'Owner asked to leave');
+    expect((await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body).toMatchObject({ status: 'CANCELED', access: 'READ_ONLY' });
+    const paid = inDays(30);
+    await change(slug, 'starter', 'ACTIVE', { paid });
+    const sub = (await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body;
+    expect(sub).toMatchObject({ plan: { code: 'starter' }, status: 'ACTIVE', access: 'FULL', graceEndsAt: null });
+    expect(new Date(sub.currentPeriodEnd).getTime()).toBe(paid.getTime());
+    await change(slug, 'growth', 'TRIALING', { trial: inDays(7) }, 'Trial extended for the pilot');
+    expect((await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body).toMatchObject({ status: 'TRIALING', access: 'FULL' });
+
+    const log = (await http().get('/v1/audit-logs?action=subscription').set(bearer(t.access)).expect(200)).body.data as { action: string; actorType: string; metadata: Record<string, unknown> }[];
+    expect(log.map((r) => [r.action, r.actorType, r.metadata.fromStatus, r.metadata.status, r.metadata.plan, r.metadata.reason, r.metadata.ticket])).toEqual([
+      ['subscription.changed', 'SYSTEM', 'ACTIVE', 'TRIALING', 'growth', 'Trial extended for the pilot', 'T-1'],
+      ['subscription.changed', 'SYSTEM', 'CANCELED', 'ACTIVE', 'starter', 'Paid by bank transfer', 'T-1'],
+      ['subscription.changed', 'SYSTEM', 'TRIALING', 'CANCELED', 'growth', 'Owner asked to leave', 'T-1'],
+    ]);
+  });
 });
 
 describe('plan limits', () => {

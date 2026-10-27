@@ -416,15 +416,15 @@ export class AuthService {
    * The business's name, type, the features its plan includes, its usable extensions (what the
    * screens offer) and its look (session 39), read in its own context (support sessions have no membership row).
    */
-  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[]; extensions: string[]; branding: MeBranding }> {
+  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[]; extensions: string[]; access: 'FULL' | 'READ_ONLY'; branding: MeBranding }> {
     return this.tenantDb.tx(
       async (tx) => {
         await tx.setTenant(tenantId);
         const { rows } = await tx.client.query<{
-          name: string; business_type: BusinessType; features: PlanFeature[] | null; extensions: string[];
+          name: string; business_type: BusinessType; features: PlanFeature[] | null; extensions: string[]; writable: boolean;
           display_name: string | null; brand_color: string | null; logo_sha256: string | null; background_sha256: string | null;
         }>(
-          `SELECT t.name, t.business_type, p.features, app_usable_extensions() AS extensions,
+          `SELECT t.name, t.business_type, p.features, app_usable_extensions() AS extensions, app_subscription_write_allowed() AS writable,
                   b.display_name, b.brand_color, l.sha256 AS logo_sha256, g.sha256 AS background_sha256
              FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id LEFT JOIN plans p ON p.code = s.plan_code
              LEFT JOIN tenant_branding b ON b.tenant_id = t.id
@@ -438,6 +438,7 @@ export class AuthService {
           businessType: rows[0]?.business_type ?? 'RETAIL',
           features: rows[0]?.features ?? [],
           extensions: rows[0]?.extensions ?? [],
+          access: rows[0]?.writable ? 'FULL' : 'READ_ONLY',
           branding: {
             displayName: rows[0]?.display_name ?? null,
             brandColor: rows[0]?.brand_color ?? null,

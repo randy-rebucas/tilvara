@@ -25,7 +25,7 @@ export class ApiError extends Error {
 
 /**
  * Server-component fetch to the Tilvara API with the session's bearer token.
- * 401 → sign-in; other errors throw ApiError for the page to render as a state.
+ * 401 → sign-in (clearing the session's cookies); other errors throw ApiError for the page to render as a state.
  */
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = (await cookies()).get(ACCESS_COOKIE)?.value;
@@ -35,7 +35,8 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers: { ...visitorHeaders(await headers()), authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
     cache: 'no-store',
   });
-  if (res.status === 401) redirect('/sign-in');
+  // Through a route that can clear the refused cookies (a server component cannot).
+  if (res.status === 401) redirect('/api/session-ended');
   const body = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const e = (body as { error?: { code: string; message: string; details?: Record<string, unknown>; correlationId?: string } } | null)?.error;
@@ -165,6 +166,8 @@ export interface Me {
     extensions?: string[];
     /** The business's look (session 39); absent from older APIs (Tilvara's own). */
     branding?: MeBranding;
+    /** Whether the subscription lets the business make changes; absent from older APIs. */
+    access?: 'FULL' | 'READ_ONLY';
     permissions: string[];
   } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];

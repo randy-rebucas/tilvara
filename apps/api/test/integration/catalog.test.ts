@@ -186,8 +186,11 @@ describe('products', () => {
     const cycle = await http().patch(`/v1/categories/${root.body.id}`).set(s.auth).send({ parentId: child.body.id }).expect(422);
     expect(cycle.body.error.code).toBe('INVALID_STATE');
     await http().post('/v1/products').set(s.auth).send(product(s, { categoryId: child.body.id })).expect(201);
-    expect((await http().post(`/v1/categories/${child.body.id}/archive`).set(s.auth).expect(409)).body.error.code).toBe('HAS_ACTIVE_CHILDREN');
-    expect((await http().post(`/v1/categories/${root.body.id}/archive`).set(s.auth).expect(409)).body.error.code).toBe('HAS_ACTIVE_CHILDREN');
+    // The refusal names only what is in the way.
+    const withProducts = (await http().post(`/v1/categories/${child.body.id}/archive`).set(s.auth).expect(409)).body.error;
+    expect(withProducts).toMatchObject({ code: 'HAS_ACTIVE_CHILDREN', message: 'Move or archive its products first' });
+    const withChild = (await http().post(`/v1/categories/${root.body.id}/archive`).set(s.auth).expect(409)).body.error;
+    expect(withChild).toMatchObject({ code: 'HAS_ACTIVE_CHILDREN', message: 'Move or archive its sub-categories first' });
   });
 });
 

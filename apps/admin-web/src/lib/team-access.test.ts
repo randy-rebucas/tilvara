@@ -28,7 +28,9 @@ describe('what the viewer may grant', () => {
 describe('refusals in words', () => {
   it('maps by exact message first, then by code, else keeps the API message', () => {
     expect(refusalKey('HAS_ACTIVE_CHILDREN', 'Archive its registers first')).toBe('refusal.archiveRegistersFirst');
-    expect(refusalKey('HAS_ACTIVE_CHILDREN', 'Move or archive its sub-categories and products first')).toBeNull();
+    expect(refusalKey('HAS_ACTIVE_CHILDREN', 'Move or archive its products first')).toBe('refusal.moveProductsFirst');
+    expect(refusalKey('HAS_ACTIVE_CHILDREN', 'Move or archive its sub-categories first')).toBe('refusal.moveSubcategoriesFirst');
+    expect(refusalKey('HAS_ACTIVE_CHILDREN', 'Something else first')).toBeNull();
     expect(refusalKey('PRIVILEGE_ESCALATION', 'You cannot grant or change access beyond your own')).toBe('refusal.escalation');
     expect(refusalKey('SHIFT_OPEN', 'Close the open shift on this register before its Z-reading')).toBeNull();
   });

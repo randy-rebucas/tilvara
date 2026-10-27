@@ -143,8 +143,3 @@ export function datePresets(today: string): { key: PresetKey; from: string; to: 
       : { key: 'lastPayPeriod', from: at(y, m, 1), to: at(y, m, 15) },
   ];
 }
-
-export function daysUntil(iso: string | null | undefined): number | null {
-  if (!iso) return null;
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
-}

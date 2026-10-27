@@ -18,7 +18,8 @@ import {
   type Terminal,
 } from '@/lib/api';
 import { POS_URL } from '@/lib/config';
-import { daysUntil, formatDateTime, peso } from '@/lib/format';
+import { formatDateTime, peso } from '@/lib/format';
+import { planFacts } from '@/lib/subscription';
 import { getT } from '@/i18n/server';
 import type { MessageKey } from '@/i18n/messages';
 import { SampleCard } from './sample-card';
@@ -92,7 +93,8 @@ export default async function OverviewPage() {
   ];
 
   const firstBranch = active(branches)[0];
-  const trialDays = sub?.status === 'TRIALING' ? daysUntil(sub.trialEndsAt) : null;
+  // A trial shows its days left (or that it ended); any other status its name.
+  const trialFact = sub?.status === 'TRIALING' ? planFacts(sub)[0] : undefined;
   const statusKey = `status.${sub?.status}` as MessageKey;
   const shown = prices?.data.slice(0, 8) ?? [];
   const anyScheduled = shown.some((p) => p.scheduled);
@@ -116,7 +118,7 @@ export default async function OverviewPage() {
                 {sub.status === 'TRIALING' ? t('sub.trial', { plan: sub.plan.name }) : sub.plan.name}
               </span>
               <Serial className="mt-1 block">
-                {[trialDays !== null ? t('sub.daysLeft', { n: trialDays }) : t(statusKey), sub.access === 'FULL' ? t('sub.full') : t('common.readOnly')].join(' · ')}
+                {[trialFact ? t(trialFact.key, { ...(trialFact.n !== undefined && { n: trialFact.n }), ...(trialFact.date && { date: formatDateTime(trialFact.date, lang) }) }) : t(statusKey), sub.access === 'FULL' ? t('sub.full') : t('common.readOnly')].join(' · ')}
               </Serial>
             </Note>
           )}

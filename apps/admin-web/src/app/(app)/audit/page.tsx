@@ -32,7 +32,7 @@ const FAMILIES = [
   'sale', 'cash', 'customer', 'held_cart', 'payment', 'z_reading', 'offline_sale', 'terminal',
   'product', 'variant', 'barcode', 'category', 'uom', 'pack_link', 'sample_data', 'price', 'promotion',
   'stock', 'inventory', 'lot', 'goods', 'purchase', 'supplier', 'journal', 'account', 'period', 'tax',
-  'branch', 'register', 'legal_entity', 'member', 'role', 'invitation', 'auth', 'tenant', 'support', 'data_export', 'api_key', 'webhook',
+  'branch', 'register', 'legal_entity', 'member', 'role', 'invitation', 'auth', 'tenant', 'subscription', 'support', 'data_export', 'api_key', 'webhook',
 ] as const;
 
 /** Record types of today's app, named in words; others (the removed trades' history) keep their code. */
@@ -42,7 +42,7 @@ const RECORD_TYPES = new Set([
   'stock_transfer', 'stock_count', 'stock_count_sheet', 'stock_adjustment', 'stock_reservation', 'lot_hold',
   'goods_receipt', 'supplier_return', 'purchase_order', 'supplier', 'supplier_invoice', 'supplier_payment', 'supplier_note', 'journal_entry',
   'tax_category', 'tax_profile', 'branch', 'register', 'legal_entity', 'membership', 'role', 'invitation', 'user', 'account',
-  'tenant', 'tenant_extension', 'support_grant', 'data_export', 'api_key', 'webhook_endpoint',
+  'tenant', 'subscription', 'tenant_extension', 'support_grant', 'data_export', 'api_key', 'webhook_endpoint',
 ]);
 
 /** Where a record lives in the admin, when it has a page. */
@@ -71,6 +71,7 @@ function recordHref(type: string, id: string | null): string | null {
     case 'supplier_note': return `/purchasing/notes/${id}`;
     case 'stock_count_sheet': return `/inventory/count-sheets/${id}`;
     case 'lot_hold': return '/inventory/holds?released=1';
+    case 'subscription': return '/subscription';
     default: return null;
   }
 }

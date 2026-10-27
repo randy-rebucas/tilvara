@@ -134,6 +134,11 @@ The user audits one area at a time for what does not fit a retail shop.
 - ⬜ The till looks up an earlier recorded sale after `IDEMPOTENCY_KEY_REUSED` by resending under a new key (the server answers `DUPLICATE_TRANSACTION` with that sale); a `clientTransactionId` filter on `GET /v1/sales` would be cleaner.
 - ⬜ Branch-scoped managers: `/me` lists codes at any scope, so the admin may still offer a team action the API refuses for another branch (the refusal now reads in words).
 - ⬜ Not seen on real hardware: the cash drawer opening after a cash sale/refund/pay in-out (best effort, errors swallowed).
+- ✅ Subscriptions, functional audit (session 43): every member told when read-only or suspended (`/me` → `access`), the owner how to renew (`ONEPOS_SUPPORT_EMAIL`) and when a trial ends; "Trial ended"; the till's red line and refusals in words; `support subscription-set|show` audited (0127); webhooks stop without `api_access`; the band fits a long name at 390px.
+- ⬜ Kept until billing (D6): an ACTIVE subscription ignores `current_period_end` (nothing would renew it); the CLI records it. `platform_set_subscription` (billing and tests) still accepts PAST_DUE without grace or ACTIVE without a date; ops uses the CLI, which refuses them.
+- ⬜ No e-mail before a trial ends (only the 3-day notice to owners/admins): needs a scheduled job in the worker.
+- ⬜ Production needs `ONEPOS_SUPPORT_EMAIL` set on the admin server; without it the notices name Tilvara support without an address.
+- ⬜ Not seen: the desktop till's red line from its snapshot (`businessWritable`); the browser till's was.
 - ⬜ Next areas to audit: the user's call (every area ✅ twice).
 
 ## Session 33 — retail only (2026-10-25)

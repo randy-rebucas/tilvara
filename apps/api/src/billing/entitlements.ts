@@ -77,7 +77,10 @@ export async function assertWithinLimit(db: Database, limit: keyof PlanLimits, a
   }
 }
 
-/** Refuse a feature the plan does not include. Reads stay open, as after a plan change, so the records made before remain visible. */
+/**
+ * Refuse a feature the plan does not include. Call it on the feature's writes; the records it made stay
+ * readable elsewhere after a plan change. The analysis reports are the exception: reading them is the feature.
+ */
 export async function assertFeature(db: Database, feature: PlanFeature): Promise<void> {
   const plan = await currentPlan(db);
   if (!plan.features.includes(feature)) {

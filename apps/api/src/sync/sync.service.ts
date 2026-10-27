@@ -161,6 +161,8 @@ export class SyncService extends TenantService {
         snapshotId: snap!.id,
         asOf: asOf.toISOString(),
         validUntil: new Date(asOf.getTime() + this.env.OFFLINE_WINDOW_HOURS * 3_600_000).toISOString(),
+        // Whether sales rung on this snapshot are recorded (a lapsed or suspended business: they wait for review).
+        businessWritable: access?.writable === true,
         terminal: row.terminal,
         register: { id: row.register.id, code: row.register.code, name: row.register.name },
         branch: { id: row.branch.id, code: row.branch.code, name: row.branch.name, timezone: row.branch.timezone },

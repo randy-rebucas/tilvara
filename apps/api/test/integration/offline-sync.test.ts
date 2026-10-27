@@ -330,6 +330,8 @@ describe('a business that lapsed or was suspended while the till was offline (se
     const lapsed = await snapshot(s);
     expect(await stamped(s, active)).toEqual([{ business_writable: true }]);
     expect(await stamped(s, lapsed)).toEqual([{ business_writable: false }]);
+    // The till is told, so it can warn that sales rung now wait for review.
+    expect([active.businessWritable, lapsed.businessWritable]).toEqual([true, false]);
 
     const [onActive, onLapsed, onOld] = [sale(s, active), sale(s, lapsed), sale(s, old)];
     const res = (await sync(s.t1, [onActive, onLapsed, onOld]).expect(200)).body.results;

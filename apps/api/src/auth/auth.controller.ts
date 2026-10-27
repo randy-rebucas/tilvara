@@ -209,6 +209,9 @@ export class AuthController {
             // Usable extensions (ADR-0026: on, and allowed by the plan): the screens show their areas;
             // the server refuses their writes when off (`@RequiresExtension`, `assertExtension`).
             extensions: business!.extensions,
+            // Whether the subscription lets the business make changes (as `GET /subscription` → access), for
+            // every member: the screens say why a save is refused. A suspended business is `status` SUSPENDED.
+            access: business!.access,
             // The business's look (session 39): the band and the till; images from /business/branding/logo|background?v=<sha256>.
             branding: business!.branding,
             permissions: permissionCodes(auth.tenant.grants),
