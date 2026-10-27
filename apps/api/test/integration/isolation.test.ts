@@ -22,6 +22,8 @@ const today = () => new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 
 
 interface World {
   t: SignedUp;
+  /** The business's slug (its public sign-in page, session 39). */
+  slug: string;
   packVariantId: string;
   packLinkId: string;
   packOpeningId: string;
@@ -219,6 +221,10 @@ async function world(prefix: string): Promise<World> {
   const zReading = ok(await http().post(`/v1/registers/${zRegister.id}/z-readings`).set(auth).send({ day: zDay }));
   // Session 16: branch inventory settings and an open count sheet with one counted line.
   ok(await http().put(`/v1/branches/${branch.id}/inventory-settings`).set(auth).send({ negativeStockPolicy: 'ALLOW_WITH_FLAG', lowStockAlerts: true }), 200);
+  // Session 39: branding with a logo (its public sign-in page stays off).
+  ok(await http().put('/v1/business/branding').set(auth).send({ displayName: `${prefix} shop`, brandColor: '#1e5b3a', receiptFooter: 'Salamat!' }), 200);
+  ok(await http().put('/v1/business/branding/logo').set(auth).send({ data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' }), 200);
+  const slug = ok<{ slug: string }>(await http().get('/v1/business').set(auth), 200).slug;
   const sheet = ok(await http().post('/v1/stock/count-sheets').set(auth).send({ branchId: branch2.id, variantIds: [variantId] }));
   ok(await http().put(`/v1/stock/count-sheets/${sheet.id}/lines`).set(auth).send({ lines: [{ variantId, countedQuantity: '2' }] }), 200);
   // Phase 3 slice 4: the books every document above posted to (chart seeded with the entity).
@@ -300,6 +306,7 @@ async function world(prefix: string): Promise<World> {
   const dataExport = ok(await http().post('/v1/data-exports').set(auth), 202);
   return {
     t,
+    slug,
     auth,
     entityId: entity.id,
     branchId: branch.id,
@@ -531,6 +538,10 @@ function attackMatrix(): Record<string, () => request.Test> {
     'POST /v1/held-carts/:id/discard': () => http().post(`/v1/held-carts/${a.heldCartId}/discard`).set(auth),
     'GET /v1/data-exports/:id': () => http().get(`/v1/data-exports/${a.exportId}`).set(auth),
     'POST /v1/data-exports/:id/link': () => http().post(`/v1/data-exports/${a.exportId}/link`).set(auth),
+    // A business's public sign-in page shows nothing until it is switched on (A's is off).
+    'GET /v1/public/shops/:slug': () => http().get(`/v1/public/shops/${a.slug}`).set(auth),
+    'GET /v1/public/shops/:slug/logo': () => http().get(`/v1/public/shops/${a.slug}/logo`).set(auth),
+    'GET /v1/public/shops/:slug/background': () => http().get(`/v1/public/shops/${a.slug}/background`).set(auth),
     // A genuine link naming A's export but B's business opens nothing.
     'GET /v1/data-export-files/:token': () =>
       http().get(`/v1/data-export-files/${new ExportLinks(process.env.JWT_ACCESS_SECRET!).sign({ e: a.exportId, t: b.t.tenantId, u: b.t.userId, x: Math.floor(Date.now() / 1000) + 600 })}`),
@@ -768,7 +779,7 @@ describe('Phase 1 cross-tenant sweep', () => {
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
     const paths = [
-      '/v1/me', '/v1/business', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
+      '/v1/me', '/v1/business', '/v1/business/branding', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, '/v1/invitations',

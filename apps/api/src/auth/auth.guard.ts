@@ -239,6 +239,11 @@ export class AuthGuard implements CanActivate {
     req.auth = auth;
     enrichLogContext({ tenantId: r.tenant_id });
     const required = this.reflector.getAllAndOverride<PermissionCode[]>(REQUIRED_PERMISSIONS, targets) ?? [];
+    // Only a business's routes: one that needs no business (/me, the account's MFA and closure, staff
+    // support grants) is about the person signed in, and would answer as the key's creator.
+    if (required.length === 0 && !this.reflector.getAllAndOverride<boolean>(REQUIRES_TENANT, targets)) {
+      throw new AppError('FORBIDDEN', 'API keys cannot use this route', HttpStatus.FORBIDDEN);
+    }
     const missing = required.filter((p) => !hasPermission(grants, p));
     if (missing.length > 0) throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
     return true;

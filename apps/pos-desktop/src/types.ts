@@ -129,4 +129,14 @@ export interface Receipt {
   reason?: string;
   /** The customer the sale was rung up for (ADR-0018), with their TIN when they gave one. */
   customer?: { name: string; tin?: string };
+  /** The business's messages, contact lines and logo (session 39); absent from older servers. */
+  branding?: ReceiptBranding;
+}
+
+/** What a receipt prints from the business's branding, above and below what a receipt must show. */
+export interface ReceiptBranding {
+  header: string[];
+  footer: string[];
+  contact: string[];
+  logoSha256?: string | null;
 }

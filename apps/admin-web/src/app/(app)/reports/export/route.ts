@@ -4,6 +4,7 @@ import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
 import { reportPath, reportRows, toCsv, type CsvReport } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
 import { REPORT_PATHS } from '../paths';
+import { visitorHeaders } from '@/lib/visitor';
 
 const REPORTS: readonly CsvReport[] = ['sales', 'products', 'cashiers', 'refunds', 'tenders', 'tax', 'statutory', 'category', 'branches', 'discounts', 'purchases', 'payments', 'promotions', 'attributes'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   // Sales by size and colour: the attribute ("Size") the report totals by; the API checks it.
   const attribute = (q.get('attribute') ?? '').trim().slice(0, 50) || undefined;
   const range = { branchId, from: pick('from'), to: pick('to'), attribute };
-  const res = await fetch(`${API_URL}${reportPath(report, range)}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
+  const res = await fetch(`${API_URL}${reportPath(report, range)}`, { headers: { ...visitorHeaders(request.headers), authorization: `Bearer ${token}` }, cache: 'no-store' });
   if (!res.ok) {
     // Back to the report with the reason (a plain link, so the browser shows the page, not a JSON file).
     const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;

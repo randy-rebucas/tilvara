@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
@@ -22,8 +21,8 @@ const STEPS = [
 ] as const;
 
 /** Server refusals that belong to one field rather than the whole form, with their words. */
-const FIELD_CODES: Record<string, string> = { SLUG_UNAVAILABLE: 'tenantSlug', EMAIL_UNAVAILABLE: 'email' };
-const FIELD_WORDS = { SLUG_UNAVAILABLE: 'auth.slugTaken', EMAIL_UNAVAILABLE: 'auth.emailTaken' } as const;
+const FIELD_CODES: Record<string, string> = { SLUG_UNAVAILABLE: 'tenantSlug', SLUG_RESERVED: 'tenantSlug', EMAIL_UNAVAILABLE: 'email' };
+const FIELD_WORDS = { SLUG_UNAVAILABLE: 'auth.slugTaken', SLUG_RESERVED: 'auth.slugReserved', EMAIL_UNAVAILABLE: 'auth.emailTaken' } as const;
 
 /**
  * Sign-up in two steps: the business, then the owner's account (a retail business: the only type). Every step stays
@@ -31,7 +30,6 @@ const FIELD_WORDS = { SLUG_UNAVAILABLE: 'auth.slugTaken', EMAIL_UNAVAILABLE: 'au
  */
 export function SignUpForm() {
   const { t } = useT();
-  const router = useRouter();
   const { pending, error, submit, fieldError } = useSubmit();
   const [step, setStep] = useState(0);
   const [missing, setMissing] = useState<string[]>([]);
@@ -76,7 +74,8 @@ export function SignUpForm() {
       },
       { refresh: false },
     );
-    if (r.ok) return router.replace('/');
+    // A full load into the new session (nothing cached from a previous one).
+    if (r.ok) return window.location.assign('/');
     // Show the first refused field on its own step.
     const issues = (r.error.details?.issues as { path: string }[] | undefined) ?? [];
     const names = [FIELD_CODES[r.error.code], ...issues.map((i) => i.path)];

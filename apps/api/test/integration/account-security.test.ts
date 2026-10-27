@@ -227,6 +227,30 @@ describe('two-step sign-in (TOTP)', () => {
     expect(await tenantEvents(t.tenantId, t.userId)).toContain('member.mfa_reset');
   });
 
+  it('a member who is also in another business is not reset by this business (session 40): support does it', async () => {
+    const t = await signup(app, 'mfaother');
+    await enroll(t.access);
+    const acct = await addMember(owner, t.tenantId, 'accountant');
+    const acctToken = (await login(acct.email).expect(200)).body.tokens;
+    await enroll(acctToken.accessToken);
+    // The same person is also on another business's team.
+    const other = await signup(app, 'mfaother-b');
+    const c = await owner.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query("SELECT set_config('app.tenant_id', $1, true)", [other.tenantId]);
+      await c.query('INSERT INTO tenant_memberships (tenant_id, user_id) VALUES ($1, $2)', [other.tenantId, acct.userId]);
+      await c.query('COMMIT');
+    } finally {
+      c.release();
+    }
+    const refused = await http().post(`/v1/members/${acct.membershipId}/reset-mfa`).set(bearer(t.access)).send({ reason: 'Lost phone' }).expect(409);
+    expect(refused.body.error.code).toBe('MFA_RESET_OTHER_BUSINESS');
+    // Nothing happened to the account: the factor is still on and the session still refreshes.
+    expect((await http().get('/v1/auth/mfa').set(bearer(acctToken.accessToken)).expect(200)).body.enabled).toBe(true);
+    await http().post('/v1/auth/refresh').send({ refreshToken: acctToken.refreshToken, tenantId: t.tenantId }).expect(200);
+  });
+
   it('support resets an owner who lost phone and codes, only with ops credentials, a reason and a ticket', async () => {
     const t = await signup(app, 'mfasupport');
     await enroll(t.access);

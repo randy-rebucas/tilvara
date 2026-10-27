@@ -428,10 +428,13 @@ describe('data export (ADR-0016 slice 6)', () => {
 
   it('at most five a day', async () => {
     const t = await signup(app, 'exp-lim');
-    await asOwnerInTenant(owner, t.tenantId, (c) =>
-      c.query(`INSERT INTO data_exports (tenant_id, requested_by, status, completed_at, error)
-               SELECT $1, $2, 'FAILED', now(), 'fixture' FROM generate_series(1, 5)`, [t.tenantId, t.userId]),
-    );
+    // Each starts as a request (migration 0126) and fails, as the worker would mark it.
+    await asOwnerInTenant(owner, t.tenantId, async (c) => {
+      for (let i = 0; i < 5; i++) {
+        const { rows } = await c.query<{ id: string }>('INSERT INTO data_exports (tenant_id, requested_by) VALUES ($1, $2) RETURNING id', [t.tenantId, t.userId]);
+        await c.query(`UPDATE data_exports SET status = 'FAILED', completed_at = now(), error = 'fixture' WHERE id = $1`, [rows[0]!.id]);
+      }
+    });
     expect((await http().post('/v1/data-exports').set(bearer(t.access)).expect(429)).body.error.code).toBe('EXPORT_LIMIT');
   });
 

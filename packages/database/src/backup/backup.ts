@@ -276,10 +276,46 @@ export async function verifyRestored(url: string, manifest: BackupManifest): Pro
     const postureSha256 = sha256Hex(canonicalJson(posture));
     if (postureSha256 !== manifest.postureSha256) problems.push(...postureDiff(manifest.posture, posture).map((d) => `posture: ${d}`));
     problems.push(...(await isolationProblems(c)).map((p) => `isolation: ${p}`));
+    problems.push(...(await runtimeRoleProblems(c)).map((p) => `roles: ${p}`));
     return { problems, tables: Object.keys(counts).length, rows: Object.values(counts).reduce((a, b) => a + b, 0), migrations, postureSha256 };
   } finally {
     await c.end();
   }
+}
+
+/**
+ * Role attributes live in the cluster, not in the dump: a cluster rebuilt for a restore must still keep
+ * the runtime roles under RLS (2026-10-27). Then, as the API's role, a business's context sees none of the
+ * others' rows (one business is enough: an unknown business sees nothing at all).
+ */
+async function runtimeRoleProblems(c: pg.Client): Promise<string[]> {
+  const problems: string[] = [];
+  const { rows } = await c.query<{ rolname: string; rolsuper: boolean; rolbypassrls: boolean; rolcanlogin: boolean }>(
+    `SELECT rolname, rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname IN ('onepos_app', 'onepos_worker', 'onepos_readonly')`,
+  );
+  for (const name of ['onepos_app', 'onepos_worker', 'onepos_readonly']) {
+    const r = rows.find((x) => x.rolname === name);
+    if (!r) problems.push(`${name} is missing`);
+    else if (r.rolsuper || r.rolbypassrls) problems.push(`${name} bypasses row-level security`);
+    else if (name === 'onepos_readonly' && r.rolcanlogin) problems.push('onepos_readonly can log in');
+  }
+  const { rows: [can] } = await c.query<{ v: boolean }>(`SELECT pg_has_role(current_user, 'onepos_app', 'MEMBER') AS v`);
+  if (!can?.v) return [...problems, 'cannot act as onepos_app to probe isolation'];
+  const { rows: [t] } = await c.query<{ id: string | null }>('SELECT (SELECT id FROM tenants ORDER BY id LIMIT 1) AS id');
+  await c.query('BEGIN');
+  try {
+    await c.query('SET LOCAL ROLE onepos_app');
+    await c.query(`SELECT set_config('app.tenant_id', $1, true)`, [t?.id ?? '00000000-0000-0000-0000-000000000000']);
+    const { rows: [n] } = await c.query<{ tenants: string; sales: string; customers: string }>(
+      `SELECT (SELECT count(*) FROM tenants WHERE id <> app_current_tenant_id()) AS tenants,
+              (SELECT count(*) FROM sales WHERE tenant_id <> app_current_tenant_id()) AS sales,
+              (SELECT count(*) FROM customers WHERE tenant_id <> app_current_tenant_id()) AS customers`,
+    );
+    if (Number(n!.tenants) + Number(n!.sales) + Number(n!.customers) !== 0) problems.push(`one business's context sees another's rows (${JSON.stringify(n)})`);
+  } finally {
+    await c.query('ROLLBACK');
+  }
+  return problems;
 }
 
 /**

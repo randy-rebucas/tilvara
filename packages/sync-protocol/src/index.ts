@@ -80,6 +80,25 @@ export interface Snapshot {
    * from older servers (none). Switching one bumps `catalogVersion`. Never a reason to refuse a sale.
    */
   extensions?: string[];
+  /**
+   * The business's look and messages (session 39); absent from older servers (Tilvara's own look).
+   * Changing it bumps `catalogVersion`. The images are fetched apart, by hash.
+   */
+  branding?: SnapshotBranding;
+}
+
+/**
+ * Branding as the till uses it offline. `receipt` lines are printed as the server prints them on its
+ * receipts; images come from `GET /v1/terminal/branding/logo|background` and are kept by `sha256`.
+ */
+export interface SnapshotBranding {
+  displayName: string | null;
+  brandColor: string | null;
+  logoSha256: string | null;
+  backgroundSha256: string | null;
+  displayWelcome: string | null;
+  displayThanks: string | null;
+  receipt: { header: string[]; footer: string[]; contact: string[] };
 }
 
 /** `GET /v1/terminal/catalog-version`: cheap enough to ask every half minute. */

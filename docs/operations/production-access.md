@@ -21,7 +21,7 @@ the secret manager's policies) is described as requirements; the concrete steps 
 | `JWT_ACCESS_SECRET`, `MFA_ENCRYPTION_KEY` | Sign access tokens and export links; decrypt authenticator secrets | The API processes | Secret manager |
 | Provider keys (PayMongo D6, email D2) | Payments; mail as Tilvara | The API/worker processes | Secret manager |
 | Tilvara staff account (support) | Read-only view of a business **only while that business has an open grant**, every page audited in the business | Support staff, marked by ops | Their own password + authenticator |
-| `onepos_readonly` | Reads platform tables (tenants, users' public columns, permissions, memberships, the audit log) for diagnostics | Unused until a reporting need appears | — |
+| `onepos_readonly` | NOLOGIN; reads the global catalogs only (permissions, plans, extensions, discount schemes). As a login it could set `app.tenant_id` itself and read any business, so it was closed on 2026-10-27 (migration 0126) | Nobody: a reporting need gets its own design (e.g. a definer function per report) | — |
 
 The app, worker and read-only roles are not superusers and cannot bypass RLS; `rls-catalog.test.ts`
 checks every role's posture and grants.

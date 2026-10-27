@@ -74,14 +74,14 @@ export class CounterService extends TenantService {
     } else {
       let userId: string;
       try {
-        userId = await this.authService.verifySecondPerson(input.email, input.password!, input.code);
+        userId = await this.authService.verifySecondPerson(input.email, input.password!, input.code, tenantOf(auth).tenantId);
       } catch (e) {
         if (e instanceof AppError) await this.refused(auth, input, e.code);
         throw e;
       }
       const tenantId = tenantOf(auth).tenantId;
-      const membership = (await this.authService.memberships(userId)).find((m) => m.tenantId === tenantId);
-      const grants = membership ? await loadGrants(this.database.pool, tenantId, membership.membershipId, userId) : [];
+      const membershipId = await this.authService.memberOf(tenantId, userId);
+      const grants = membershipId ? await loadGrants(this.database.pool, tenantId, membershipId, userId) : [];
       if (!hasPermission(grants, 'sales.price_override', scope)) {
         await this.refused(auth, input, 'APPROVER_NOT_ALLOWED', userId);
         throw new AppError('APPROVER_NOT_ALLOWED', 'This person cannot approve price changes at this branch', HttpStatus.FORBIDDEN);

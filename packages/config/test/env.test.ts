@@ -96,6 +96,7 @@ describe('loadServerEnv', () => {
       MFA_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
       REDIS_URL: 'redis://cache.internal:6379/0',
       WEBHOOK_SIGNING_KEY: 'w'.repeat(40),
+      BFF_SHARED_SECRET: 'b'.repeat(40),
     });
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
@@ -127,6 +128,9 @@ describe('loadServerEnv', () => {
   it('requires Redis for shared rate limits in production', () => {
     const env = loadServerEnv({ ...base, JWT_ACCESS_SECRET: 'x'.repeat(48) });
     expect(productionIssues(env)).toContain('REDIS_URL: required in production (rate limits shared across API replicas)');
+    // Session 40: the admin's visitors are told apart only with the shared secret.
+    expect(productionIssues(env).some((i) => i.startsWith('BFF_SHARED_SECRET: required'))).toBe(true);
+    expect(() => loadServerEnv({ ...base, BFF_SHARED_SECRET: 'short' })).toThrow(/BFF_SHARED_SECRET/);
     expect(env.TRUST_PROXY_HOPS).toBe(0);
   });
 

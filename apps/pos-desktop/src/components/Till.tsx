@@ -3,7 +3,7 @@ import { Printer, Wifi, WifiOff } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { windowsPrinters, type PrinterTarget } from '../lib/desktop';
-import { offlineReceiptToPrintable, RECEIPT_WORDS } from '../lib/printing';
+import { brandFooter, brandHeader, offlineReceiptToPrintable, RECEIPT_WORDS } from '../lib/printing';
 import { useTill } from '../lib/till';
 import { AuthStub } from './AuthNote';
 import { Callout, Field, Note } from './ui';
@@ -46,8 +46,13 @@ export function TillSetup({ onSkip }: { onSkip: () => void }) {
     try {
       await setUp(String(f.get('terminalId') ?? '').trim(), String(f.get('credential') ?? '').trim(), String(f.get('apiUrl') ?? ''));
     } catch (err) {
-      const kind = (err as { kind?: string }).kind;
-      setError(kind === 'INVALID_URL' ? t('till.serverInvalid') : kind === 'NETWORK' ? t('till.setupOffline') : t('till.setupFailed'));
+      const { kind, pending } = err as { kind?: string; pending?: number };
+      setError(
+        kind === 'INVALID_URL' ? t('till.serverInvalid')
+          : kind === 'NETWORK' ? t('till.setupOffline')
+          : kind === 'UNSENT_SALES' ? t('till.setupUnsent', { n: String(pending ?? 0) })
+          : t('till.setupFailed'),
+      );
     } finally {
       setBusy(false);
     }
@@ -203,6 +208,7 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
       </div>
       <div ref={ref} aria-label={t('till.offlineReceipt')} className="printable note mx-auto w-full max-w-[420px] p-6 font-[family-name:var(--font-serial)] text-[0.875rem]">
         <header className="text-center">
+          {brandHeader(data.branding).map((l, i) => <p key={`b${i}`} className="font-semibold">{l}</p>)}
           <p className="text-[1.0625rem] font-semibold">{data.seller.name}</p>
           <p>{data.seller.registeredName}</p>
           {data.seller.tin && <p className="serial">{isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} {data.seller.tin}</p>}
@@ -232,6 +238,9 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
           ))}
         </div>
         <p className="mt-3 text-center text-muted">{RECEIPT_WORDS.cashier}: {data.cashierName} · {data.register.name}</p>
+        {brandFooter(data.branding).length > 0 && (
+          <div className="mt-2 text-center">{brandFooter(data.branding).map((l, i) => <p key={i} className="break-words">{l}</p>)}</div>
+        )}
       </div>
       {printError && (
         <div className="no-print mx-auto w-full max-w-[420px]">

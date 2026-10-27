@@ -41,10 +41,10 @@ export function writeSupportCookies(res: NextResponse, refreshed: TokenSet, supp
  * Turn a refresh token into a staff member's support token for a grant: a plain token first (the
  * open call refuses a support token), then the grant. `support` is null when the grant is refused.
  */
-export async function openSupport(apiUrl: string, refreshToken: string, grantId: string) {
+export async function openSupport(apiUrl: string, refreshToken: string, grantId: string, visitor: Record<string, string> = {}) {
   const r = await fetch(`${apiUrl}/auth/refresh`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { ...visitor, 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
     cache: 'no-store',
   }).catch(() => null);
@@ -52,7 +52,7 @@ export async function openSupport(apiUrl: string, refreshToken: string, grantId:
   const refreshed = ((await r.json()) as { tokens: TokenSet }).tokens;
   const o = await fetch(`${apiUrl}/support/grants/${encodeURIComponent(grantId)}/open`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${refreshed.accessToken}` },
+    headers: { ...visitor, 'content-type': 'application/json', authorization: `Bearer ${refreshed.accessToken}` },
     body: '{}',
     cache: 'no-store',
   }).catch(() => null);

@@ -1,7 +1,8 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { API_URL } from './config';
 import { ACCESS_COOKIE } from './cookies';
+import { visitorHeaders } from './visitor';
 
 export class ApiError extends Error {
   /**
@@ -31,7 +32,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!token) redirect('/sign-in');
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
+    headers: { ...visitorHeaders(await headers()), authorization: `Bearer ${token}`, 'content-type': 'application/json', ...init.headers },
     cache: 'no-store',
   });
   if (res.status === 401) redirect('/sign-in');
@@ -104,6 +105,50 @@ export interface Business {
   name: string;
 }
 
+/** The business's look as /me carries it; the images by hash (`brandImageUrl`). */
+export interface MeBranding {
+  displayName: string | null;
+  brandColor: string | null;
+  logoSha256: string | null;
+  backgroundSha256: string | null;
+}
+
+export interface BrandImage {
+  sha256: string;
+  contentType: string;
+  width: number;
+  height: number;
+  sizeBytes: number;
+}
+
+/** `GET /business/branding` (session 39). */
+export interface Branding {
+  displayName: string | null;
+  brandColor: string | null;
+  receiptHeader: string | null;
+  receiptFooter: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  website: string | null;
+  facebook: string | null;
+  instagram: string | null;
+  displayWelcome: string | null;
+  displayThanks: string | null;
+  publicSignIn: boolean;
+  logo: BrandImage | null;
+  background: BrandImage | null;
+  updatedAt: string | null;
+}
+
+/** `GET /public/shops/:slug`: what a shop's public sign-in page shows. */
+export interface PublicShop {
+  tenantId: string;
+  name: string;
+  brandColor: string | null;
+  logoSha256: string | null;
+  backgroundSha256: string | null;
+}
+
 export interface Me {
   userId: string;
   user: { email: string; displayName: string };
@@ -118,6 +163,8 @@ export interface Me {
     features?: string[];
     /** Usable extensions (ADR-0026); absent from older APIs. */
     extensions?: string[];
+    /** The business's look (session 39); absent from older APIs (Tilvara's own). */
+    branding?: MeBranding;
     permissions: string[];
   } | null;
   memberships: { membershipId: string; tenantId: string; tenantSlug: string; tenantName: string; tenantStatus: string }[];

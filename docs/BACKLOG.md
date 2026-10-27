@@ -284,6 +284,14 @@ Retail fit audit, per area (session 36, 2026-10-26): ✅ Subscription, ✅ Team,
 
 Products: filters, CSV export and import (session 37, 2026-10-27): ✅ the list filters by category (with sub-categories, or none), status, type, sold by, tax, stock, expiry, barcode, price on the default list and variants, sorts by name or age; Export CSV writes what the list shows, one row per variant; Import CSV checks a file (up to 2,000 rows) row by row and applies it all or nothing (`POST /v1/products/import[/preview]`).
 
+Branding (session 39, 2026-10-27): ✅ a business sets its logo, background image, brand colour, a short name for the till, receipt messages, contact and social lines, the customer display's words and, if it wants, its own sign-in page at /s/<slug> (Subscription → Branding; migrations 0122–0123). Shown on the till (band, buttons, sign-in backdrop; offline from the snapshot), the customer display, online and offline receipts (screen and thermal print), the admin's band and the shop's sign-in page. ⬜ A printed logo on thermal receipts (see LEFTOVER).
+
+Second tenant-isolation audit (session 42, 2026-10-27): ✅ 16 findings fixed — till re-pairing across businesses, read-only role closed, proxy allow-list, hand-off sessions bound, database guards for another business's rows and people, export file keys, API keys of departed makers, terminal rate-limit key; migrations 0125–0126; the shop sign-in loop under `-H 127.0.0.1` fixed. ⏳ Desktop E2E of re-pairing (LEFTOVER "Second tenant audit").
+
+Sign-in hand-off (session 41, 2026-10-27): ✅ a sign-in or a chosen business on the main address continues on the business's own address, signed in there by a one-time 60 s code (`POST /v1/auth/handoff`, `/handoff`).
+
+Shop address and tenant audit (session 40, 2026-10-27): ✅ a business's own subdomain `<slug>.<ONEPOS_SHOP_DOMAIN>` with its sign-in page and the session pinned to it; reserved slugs refused; API keys kept off routes that need no business. ✅ The audit's four findings (visitor IP through the admin, cross-business MFA reset, the till's manager approval, trial start and cookie hardening; migration 0124). ⏳ D1: wildcard DNS/TLS, the shared secret and proxy hops in hosting (LEFTOVER "Shop address and tenant audit").
+
 Audit 2026-10-21 (session 31): second full audit, `docs/AUDIT-2026-10-21.md`. ✅ Every defect and work item fixed, decisions A1–A6 taken as recommended; all gates, integration (608 tests) and 33 E2E suites pass. Open items are in `LEFTOVER.md`.
 
 ## Phase 7 — Differentiation (validated demand only)

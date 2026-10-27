@@ -185,7 +185,7 @@ export class IntegrationsService extends TenantService {
       await assertFeature(db, 'api_access');
       const [row] = await db
         .insert(webhookDeliveries)
-        .values({ tenantId: endpoint.tenantId, endpointId: id, topic: WEBHOOK_PING, payload: { endpointId: id, requestedBy: auth.userId }, maxAttempts: 1 })
+        .values({ tenantId: endpoint.tenantId, endpointId: id, topic: WEBHOOK_PING, payload: { endpointId: id }, maxAttempts: 1 })
         .returning();
       await this.audit(db, auth, 'webhook.ping', 'webhook_endpoint', id, { deliveryId: row!.id });
       return this.deliveryView(row!);

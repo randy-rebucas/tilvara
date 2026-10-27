@@ -17,6 +17,7 @@ export const titlesEn = {
   'books.periods': 'Periods',
   'books.trial-balance': 'Trial balance',
   'confirm-email': 'Confirm your new email',
+  handoff: 'Opening your business',
   customers: 'Customers',
   'customers.item': 'Customer',
   'forgot-password': 'Reset password',
@@ -80,6 +81,7 @@ export const titlesEn = {
   'sign-up': 'Create your business',
   subscription: 'Subscription',
   'subscription.business': 'Business',
+  'subscription.branding': 'Branding',
   'subscription.export': 'Your records',
   'subscription.extensions': 'Extensions',
   'subscription.integrations': 'Integrations',
@@ -89,6 +91,7 @@ export const titlesEn = {
   team: 'Team',
   'team.members.item': 'Member',
   'team.roles.item': 'Role',
+  welcome: 'Point of sale for Philippine shops',
 } as const;
 
 export type TitleKey = keyof typeof titlesEn;
@@ -104,6 +107,7 @@ export const titlesFil: Record<TitleKey, string> = {
   'books.periods': 'Mga period',
   'books.trial-balance': 'Trial balance',
   'confirm-email': 'Kumpirmahin ang bagong email',
+  handoff: 'Binubuksan ang negosyo mo',
   customers: 'Mga customer',
   'customers.item': 'Customer',
   'forgot-password': 'I-reset ang password',
@@ -167,6 +171,7 @@ export const titlesFil: Record<TitleKey, string> = {
   'sign-up': 'Gumawa ng negosyo',
   subscription: 'Subscription',
   'subscription.business': 'Negosyo',
+  'subscription.branding': 'Tatak ng tindahan',
   'subscription.export': 'Ang iyong mga rekord',
   'subscription.extensions': 'Mga extension',
   'subscription.integrations': 'Mga integrasyon',
@@ -176,6 +181,7 @@ export const titlesFil: Record<TitleKey, string> = {
   team: 'Koponan',
   'team.members.item': 'Miyembro',
   'team.roles.item': 'Tungkulin',
+  welcome: 'Point of sale para sa mga tindahan sa Pilipinas',
 };
 
 export function titleFor(lang: Lang, key: TitleKey): string {

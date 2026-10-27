@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { clearAuthCookies, writeAuthCookies, type TokenSet } from '@/lib/auth-cookies';
 import { API_URL } from '@/lib/config';
 import { REFRESH_COOKIE, SUPPORT_COOKIE } from '@/lib/cookies';
+import { visitorHeaders } from '@/lib/visitor';
 
 /**
  * The business ended (or the clock ended) a staff member's support view (ADR-0016 slice 6): drop
@@ -10,12 +11,13 @@ import { REFRESH_COOKIE, SUPPORT_COOKIE } from '@/lib/cookies';
  */
 export async function GET(request: NextRequest) {
   const reply = NextResponse.redirect(new URL('/support', request.url));
+  reply.headers.set('cache-control', 'private, no-store');
   reply.cookies.delete(SUPPORT_COOKIE);
   const refresh = request.cookies.get(REFRESH_COOKIE)?.value;
   const r = refresh
     ? await fetch(`${API_URL}/auth/refresh`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { ...visitorHeaders(request.headers), 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken: refresh }),
         cache: 'no-store',
       }).catch(() => null)

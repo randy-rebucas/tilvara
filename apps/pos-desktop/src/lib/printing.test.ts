@@ -155,3 +155,28 @@ describe('expiry lots on the receipt', () => {
     expect(lines[at('Cotton balls') + 1]!.trim()).toBe('1 x 20.00');
   });
 });
+
+describe('branding on the receipt (session 39)', () => {
+  const branding = { header: ['Open daily 7–9'], footer: ['Salamat po!'], contact: ['0917 000 0000', 'facebook.com/nena'], logoSha256: null };
+
+  it('prints the message above the names a receipt must show, and the footer and contact lines last', () => {
+    const doc = receiptToPrintable({ ...receipt, branding });
+    expect(doc.header).toEqual(['Open daily 7–9', ...receiptToPrintable(receipt).header]);
+    expect(doc.footer.slice(-3)).toEqual(['Salamat po!', '0917 000 0000', 'facebook.com/nena']);
+    expect(doc.notice).toBe(receipt.notice);
+    // Without branding (an older server), nothing is added.
+    expect(receiptToPrintable(receipt).footer.at(-1)).toMatch(/^Cashier:/);
+  });
+
+  it('an offline receipt prints the messages it was rung up with', () => {
+    const doc = offlineReceiptToPrintable({
+      localReference: 'R1-TAbCd-000001', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
+      seller: { name: 'Tindahan', registeredName: 'Nena Trading', tin: null, vatStatus: 'NON_VAT' }, cashierName: 'Maria',
+      lines: [{ name: 'Cola', quantity: '1', unitPrice: '20.00', amount: '20.00', flag: '' }],
+      totals: { gross: '20.00', vatableSales: '0.00', vatAmount: '0.00', vatExemptSales: '0.00', zeroRatedSales: '0.00', percentageTaxSales: '20.00', amountDue: '20.00' },
+      tendered: '20.00', change: '0.00', notice: 'NOT AN INVOICE', branding,
+    }, '2026-10-17 10:00');
+    expect(doc.header[0]).toBe('Open daily 7–9');
+    expect(doc.footer.slice(-3)).toEqual(['Salamat po!', '0917 000 0000', 'facebook.com/nena']);
+  });
+});

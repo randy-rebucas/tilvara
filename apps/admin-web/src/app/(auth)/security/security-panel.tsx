@@ -31,7 +31,8 @@ export function SecurityPanel({ status }: { status: MfaStatus }) {
 
   async function signOut() {
     await send('POST', '/api/auth/logout');
-    router.replace('/sign-in');
+    // A full load: nothing of the signed-out session stays in the router cache.
+    window.location.replace('/sign-in');
   }
 
   // A session older than the enrolment: the API keeps business pages closed until a fresh sign-in.

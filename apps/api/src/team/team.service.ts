@@ -247,6 +247,10 @@ export class TeamService extends TenantService {
       } catch (e) {
         const pg = pgError(e);
         if (pg.constraint === 'mfa_reset_forbidden') throw new AppError('FORBIDDEN', 'Only someone who manages the whole team can reset two-step sign-in', HttpStatus.FORBIDDEN, { missing: ['members.manage'] });
+        // The reset is account-wide: someone also in another business is reset by Tilvara support (session 40).
+        if (pg.constraint === 'mfa_reset_other_business') {
+          throw new AppError('MFA_RESET_OTHER_BUSINESS', 'This person is also a member of another business; Tilvara support resets their two-step sign-in', HttpStatus.CONFLICT);
+        }
         throw e;
       }
       if (!reset) throw new AppError('MFA_NOT_ENABLED', 'This member does not use two-step sign-in', HttpStatus.CONFLICT);

@@ -73,9 +73,20 @@ export const userSessions = pgTable(
     userAgent: text('user_agent'),
     /** Set when the session passed a second factor (at sign-in or by enrolling); copied on rotation. */
     mfaVerifiedAt: timestamp('mfa_verified_at', { withTimezone: true }),
+    /**
+     * A hand-off session (session 41) serves only this business on its own address; copied on rotation,
+     * refused for any other business by `auth_rotate_session` and `auth_resolve_context`.
+     */
+    boundTenantId: uuid('bound_tenant_id').references(() => tenants.id),
+    /** The session that made this hand-off: ending that one ends this one too. */
+    parentFamilyId: uuid('parent_family_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index('user_sessions_family_idx').on(t.familyId), index('user_sessions_user_idx').on(t.userId)],
+  (t) => [
+    index('user_sessions_family_idx').on(t.familyId),
+    index('user_sessions_user_idx').on(t.userId),
+    index('user_sessions_parent_idx').on(t.parentFamilyId).where(sql`${t.parentFamilyId} IS NOT NULL`),
+  ],
 );
 
 /**

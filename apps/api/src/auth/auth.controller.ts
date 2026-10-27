@@ -182,6 +182,14 @@ export class AuthController {
     return this.auth.switchTenant(auth, body.tenantId);
   }
 
+  /** A one-time sign-in for the business's own address (session 41; `AuthService.handoff`). */
+  @HttpCode(200)
+  @RateLimit({ bucket: 'auth-handoff', limit: 30, windowSeconds: 600 })
+  @Post('auth/handoff')
+  handoff(@Auth() auth: AuthContext, @Req() req: AuthedRequest) {
+    return this.auth.handoff(auth, meta(req));
+  }
+
   @Get('me')
   async me(@Auth() auth: AuthContext) {
     const business = auth.tenant ? await this.auth.tenantProfile(auth.tenant.tenantId, auth) : null;
@@ -201,6 +209,8 @@ export class AuthController {
             // Usable extensions (ADR-0026: on, and allowed by the plan): the screens show their areas;
             // the server refuses their writes when off (`@RequiresExtension`, `assertExtension`).
             extensions: business!.extensions,
+            // The business's look (session 39): the band and the till; images from /business/branding/logo|background?v=<sha256>.
+            branding: business!.branding,
             permissions: permissionCodes(auth.tenant.grants),
             grants: auth.tenant.grants,
           }

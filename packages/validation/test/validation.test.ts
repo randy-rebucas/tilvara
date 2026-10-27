@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BUSINESS_TYPES, businessUpdateSchema, CORE_PERMISSIONS, createProductSchema, createSaleSchema, isPrivilegedSet, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
+import { BUSINESS_TYPES, businessUpdateSchema, CORE_PERMISSIONS, createProductSchema, createSaleSchema, isPrivilegedSet, isSubdomainSlug, loginSchema, PERMISSIONS, ROLE_TEMPLATES, roleTemplatesFor, signupSchema, tendersSchema } from '../src/index.js';
 
 describe('signupSchema', () => {
   const valid = {
@@ -106,5 +106,29 @@ describe('role templates', () => {
   it('owner holds every base permission; admin cannot manage the subscription', () => {
     expect(ROLE_TEMPLATES.find((t) => t.key === 'owner')!.permissions).toHaveLength(CORE_PERMISSIONS.length);
     expect(ROLE_TEMPLATES.find((t) => t.key === 'admin')!.permissions).not.toContain('subscription.manage');
+  });
+});
+
+describe('branding (session 39)', () => {
+  it('takes a dark enough brand colour only, and reads blanks as none', async () => {
+    const { brandingUpdateSchema, whiteTextContrast, darken, lighten } = await import('../src/branding.js');
+    expect(whiteTextContrast('#2a5da8')).toBeGreaterThan(4.5);
+    expect(whiteTextContrast('#ffffff')).toBeCloseTo(1);
+    expect(brandingUpdateSchema.parse({ brandColor: '#2A5DA8', website: '', facebook: '@page.name' })).toMatchObject({ brandColor: '#2a5da8', website: null, facebook: 'page.name', publicSignIn: false });
+    expect(brandingUpdateSchema.safeParse({ brandColor: '#f0c000' }).success).toBe(false);
+    expect(brandingUpdateSchema.safeParse({ website: 'javascript:alert(1)' }).success).toBe(false);
+    expect(darken('#808080', 0.5)).toBe('#404040');
+    expect(lighten('#000000', 0.5)).toBe('#808080');
+  });
+});
+
+describe('subdomain slugs (session 40)', () => {
+  it('takes DNS labels that are not reserved', () => {
+    for (const s of ['alpha-mart', 'ab', 'a1', 'sari-sari-2']) expect(isSubdomainSlug(s), s).toBe(true);
+  });
+  it('refuses reserved names, a hyphen at the end and IDNA-style prefixes', () => {
+    for (const s of ['www', 'api', 'app', 'admin', 'tilvara', 'acme-', 'xn--abc', 'ab--c', 'a', 'Acme', 'a.b', 'a'.repeat(64)]) {
+      expect(isSubdomainSlug(s), s).toBe(false);
+    }
   });
 });

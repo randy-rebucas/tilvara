@@ -1,4 +1,4 @@
-import { eq, expiredSoldMail, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
+import { eq, expiredSoldMail, exportKey, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
@@ -25,7 +25,6 @@ export interface ExportOptions {
   maxAttempts?: number;
 }
 
-export const exportKey = (tenantId: string, exportId: string) => `exports/${tenantId}/${exportId}.zip`;
 
 export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Record<string, OutboxHandler> {
   return withWebhooks({
@@ -150,7 +149,9 @@ export async function expireDataExports(pool: Pool, storage: FileStorage, logger
   let n = 0;
   for (const r of rows) {
     try {
-      if (r.file_key) await storage.remove(r.file_key);
+      // Only the file this export wrote: a row naming another key (another business's) is never deleted.
+      if (r.file_key === exportKey(r.tenant_id, r.id)) await storage.remove(r.file_key);
+      else if (r.file_key) logger.error('data export names a file it did not write; not deleted', { exportId: r.id });
       const { rows: [m] } = await pool.query<{ ok: boolean }>('SELECT data_export_mark_expired($1, $2) AS ok', [r.tenant_id, r.id]);
       if (m?.ok) n++;
     } catch (e) {

@@ -1,6 +1,7 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { membershipRoles, tenantMemberships, type BusinessType, type PlanFeature, type Tx } from '@1pos/database';
 import {
+  isSubdomainSlug,
   roleTemplatesFor,
   type AuthResponse,
   type LoginInput,
@@ -22,6 +23,9 @@ import { PasswordService } from './password.service.js';
 import { addRoleTemplates } from './role-templates.js';
 import { InvalidTokenError, TokenService } from './token.service.js';
 import { hashRecoveryCode, matchTotp, SecretBox } from './totp.js';
+
+/** How long a handoff to a business's own address may wait to be redeemed (session 41). */
+const HANDOFF_TTL_MS = 60_000;
 
 const invalidCredentials = () =>
   new AppError('INVALID_CREDENTIALS', 'Email or password is incorrect', HttpStatus.UNAUTHORIZED);
@@ -62,6 +66,14 @@ export interface RequestMeta {
   correlationId?: string | undefined;
 }
 
+
+/** The business's look as every screen needs it (the band, the till); the images by hash, fetched apart. */
+export interface MeBranding {
+  displayName: string | null;
+  brandColor: string | null;
+  logoSha256: string | null;
+  backgroundSha256: string | null;
+}
 @Injectable()
 export class AuthService {
   constructor(
@@ -74,6 +86,10 @@ export class AuthService {
 
   /** Self-service onboarding: user + tenant + system roles + owner membership, atomically. */
   async signup(input: SignupInput, meta: RequestMeta): Promise<AuthResponse> {
+    // The slug is also the business's subdomain (session 40): Tilvara's own names and non-DNS labels are refused.
+    if (!isSubdomainSlug(input.tenantSlug)) {
+      throw new AppError('SLUG_RESERVED', 'This business URL cannot be used', HttpStatus.UNPROCESSABLE_ENTITY);
+    }
     const passwordHash = await this.passwords.hash(input.password);
     let ids: { userId: string; tenantId: string };
     try {
@@ -189,14 +205,16 @@ export class AuthService {
    * use two-step sign-in — without opening a session. Failures count towards their lockout. Answers
    * 403 rather than 401, so the cashier's own sign-in is not taken for expired. Returns the user id.
    */
-  async verifySecondPerson(email: string, password: string, code: string | undefined): Promise<string> {
+  async verifySecondPerson(email: string, password: string, code: string | undefined, tenantId: string): Promise<string> {
     const refused = () => new AppError('APPROVER_INVALID_CREDENTIALS', 'Email or password is incorrect', HttpStatus.FORBIDDEN);
     const { rows } = await this.database.pool.query<{ user_id: string; password_hash: string; status: string; locked_until: Date | null }>(
       'SELECT * FROM auth_get_login_record($1)',
       [email],
     );
     const rec = rows[0];
-    if (!rec) {
+    // Someone outside this business is answered as an unknown email, before their password is looked at
+    // (session 40): the till must not test other businesses' passwords, nor lock their accounts.
+    if (!rec || !(await this.memberOf(tenantId, rec.user_id))) {
       await this.passwords.verifyAgainstDummy(password);
       throw refused();
     }
@@ -269,22 +287,24 @@ export class AuthService {
     return rows[0]!.v;
   }
 
+  /**
+   * The database checks membership before rotating (a refresh for a business the person left keeps the
+   * session), and keeps a hand-off session to its own business (another one ends it, migration 0126).
+   */
   async refresh(refreshToken: string, tenantId: string | undefined): Promise<{ activeTenantId: string | null; tokens: TokenPair }> {
     const next = this.tokens.newRefreshToken();
-    const { rows } = await this.database.pool.query<{ outcome: string; user_id: string | null; family_id: string | null }>(
-      'SELECT * FROM auth_rotate_session($1, $2, $3)',
-      [TokenService.hashRefresh(refreshToken), next.hash, next.expiresAt],
-    );
+    const { rows } = await this.database.pool.query<{
+      outcome: string;
+      user_id: string | null;
+      family_id: string | null;
+      active_tenant_id: string | null;
+    }>('SELECT * FROM auth_rotate_session($1, $2, $3, $4)', [TokenService.hashRefresh(refreshToken), next.hash, next.expiresAt, tenantId ?? null]);
     const r = rows[0]!;
+    if (r.outcome === 'NOT_A_MEMBER') throw this.notMember();
     if (r.outcome !== 'ROTATED') {
       throw new AppError('INVALID_REFRESH_TOKEN', 'Session expired. Please sign in again.', HttpStatus.UNAUTHORIZED);
     }
-    let activeTenantId: string | null = null;
-    if (tenantId) {
-      const memberships = await this.memberships(r.user_id!);
-      if (!memberships.some((m) => m.tenantId === tenantId)) throw this.notMember();
-      activeTenantId = tenantId;
-    }
+    const activeTenantId = r.active_tenant_id;
     const access = await this.tokens.signAccess({ sub: r.user_id!, sid: r.family_id!, tid: activeTenantId });
     return {
       activeTenantId,
@@ -310,6 +330,52 @@ export class AuthService {
     const access = await this.tokens.signAccess({ sub: auth.userId, sid: auth.sessionId, tid: tenantId });
     await this.tenantAudit(tenantId, auth.userId, 'auth.switch_tenant', auth.correlationId);
     return { accessToken: access.token, accessTokenExpiresAt: access.expiresAt.toISOString() };
+  }
+
+  /**
+   * A one-time sign-in for this session's business on its own address, `<slug>.<shop domain>` (session 41):
+   * the admin's cookies belong to one address, so after signing in on the main one the browser carries this
+   * code there. It is the refresh token of a new session that lasts 60 s, redeemed by the ordinary refresh
+   * (one use: a second is refresh-token reuse and ends that session). It keeps this session's two-step mark.
+   * Only for a business whose own sign-in page is on, and never for a support session or an API key.
+   */
+  async handoff(auth: AuthContext, meta: RequestMeta): Promise<{ code: string; expiresAt: string; tenantSlug: string }> {
+    if (!auth.tenant || auth.support || auth.apiKey) {
+      throw new AppError('FORBIDDEN', 'Choose a business first', HttpStatus.FORBIDDEN);
+    }
+    const tenantId = auth.tenant.tenantId;
+    const shop = await this.tenantDb.tx(
+      async (tx) => {
+        await tx.setTenant(tenantId);
+        const { rows } = await tx.client.query<{ slug: string; public_sign_in: boolean | null }>(
+          'SELECT t.slug, b.public_sign_in FROM tenants t LEFT JOIN tenant_branding b ON b.tenant_id = t.id WHERE t.id = $1',
+          [tenantId],
+        );
+        return rows[0];
+      },
+      { userId: auth.userId, correlationId: auth.correlationId },
+    );
+    if (!shop?.public_sign_in || !isSubdomainSlug(shop.slug)) {
+      throw new AppError('NO_OWN_ADDRESS', 'This business has no address of its own', HttpStatus.CONFLICT);
+    }
+    const code = this.tokens.newRefreshToken();
+    const expiresAt = new Date(Date.now() + HANDOFF_TTL_MS);
+    // Bound to this business and to this session (migration 0126): redeemed for another business it ends,
+    // and signing out here ends it too. The two-step mark is the parent session's.
+    await this.tenantDb.tx(
+      (tx) =>
+        tx.client.query('SELECT auth_create_handoff_session($1, $2, $3, $4, $5, $6)', [
+          auth.sessionId,
+          auth.userId,
+          tenantId,
+          code.hash,
+          expiresAt,
+          meta.userAgent ?? null,
+        ]),
+      { userId: auth.userId, correlationId: auth.correlationId },
+    );
+    await this.tenantAudit(tenantId, auth.userId, 'auth.handoff', auth.correlationId);
+    return { code: code.token, expiresAt: expiresAt.toISOString(), tenantSlug: shop.slug };
   }
 
   private tenantAudit(tenantId: string, userId: string, action: string, correlationId: string | undefined): Promise<void> {
@@ -347,16 +413,23 @@ export class AuthService {
   }
 
   /**
-   * The business's name, type, the features its plan includes and its usable extensions (what the
-   * screens offer), read in its own context (support sessions have no membership row).
+   * The business's name, type, the features its plan includes, its usable extensions (what the
+   * screens offer) and its look (session 39), read in its own context (support sessions have no membership row).
    */
-  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[]; extensions: string[] }> {
+  tenantProfile(tenantId: string, auth: AuthContext): Promise<{ name: string; businessType: BusinessType; features: PlanFeature[]; extensions: string[]; branding: MeBranding }> {
     return this.tenantDb.tx(
       async (tx) => {
         await tx.setTenant(tenantId);
-        const { rows } = await tx.client.query<{ name: string; business_type: BusinessType; features: PlanFeature[] | null; extensions: string[] }>(
-          `SELECT t.name, t.business_type, p.features, app_usable_extensions() AS extensions
+        const { rows } = await tx.client.query<{
+          name: string; business_type: BusinessType; features: PlanFeature[] | null; extensions: string[];
+          display_name: string | null; brand_color: string | null; logo_sha256: string | null; background_sha256: string | null;
+        }>(
+          `SELECT t.name, t.business_type, p.features, app_usable_extensions() AS extensions,
+                  b.display_name, b.brand_color, l.sha256 AS logo_sha256, g.sha256 AS background_sha256
              FROM tenants t LEFT JOIN subscriptions s ON s.tenant_id = t.id LEFT JOIN plans p ON p.code = s.plan_code
+             LEFT JOIN tenant_branding b ON b.tenant_id = t.id
+             LEFT JOIN brand_assets l ON l.tenant_id = t.id AND l.id = b.logo_asset_id
+             LEFT JOIN brand_assets g ON g.tenant_id = t.id AND g.id = b.background_asset_id
             WHERE t.id = $1`,
           [tenantId],
         );
@@ -365,20 +438,37 @@ export class AuthService {
           businessType: rows[0]?.business_type ?? 'RETAIL',
           features: rows[0]?.features ?? [],
           extensions: rows[0]?.extensions ?? [],
+          branding: {
+            displayName: rows[0]?.display_name ?? null,
+            brandColor: rows[0]?.brand_color ?? null,
+            logoSha256: rows[0]?.logo_sha256 ?? null,
+            backgroundSha256: rows[0]?.background_sha256 ?? null,
+          },
         };
       },
       { userId: auth.userId, correlationId: auth.correlationId },
     );
   }
 
+  /**
+   * Every business of the signed-in person, or of the person a password or code just proved. The database
+   * answers only for `app.user_id` (migration 0126); someone else's membership of this business is
+   * `memberOf`'s question.
+   */
   async memberships(userId: string): Promise<MembershipSummary[]> {
-    const { rows } = await this.database.pool.query<{
-      membership_id: string;
-      tenant_id: string;
-      tenant_slug: string;
-      tenant_name: string;
-      tenant_status: string;
-    }>('SELECT * FROM auth_list_memberships($1)', [userId]);
+    const rows = await this.tenantDb.tx(
+      async (tx) =>
+        (
+          await tx.client.query<{
+            membership_id: string;
+            tenant_id: string;
+            tenant_slug: string;
+            tenant_name: string;
+            tenant_status: string;
+          }>('SELECT * FROM auth_list_memberships($1)', [userId])
+        ).rows,
+      { userId },
+    );
     return rows.map((r) => ({
       membershipId: r.membership_id,
       tenantId: r.tenant_id,
@@ -386,6 +476,19 @@ export class AuthService {
       tenantName: r.tenant_name,
       tenantStatus: r.tenant_status,
     }));
+  }
+
+  /** Someone's active membership of this business (e.g. an approver at the till), read under its RLS. */
+  async memberOf(tenantId: string, userId: string): Promise<string | null> {
+    return this.tenantDb.tx(async (tx) => {
+      await tx.setTenant(tenantId);
+      const { rows } = await tx.client.query<{ id: string }>(
+        `SELECT m.id FROM tenant_memberships m JOIN tenants t ON t.id = m.tenant_id
+          WHERE m.user_id = $1 AND m.status = 'ACTIVE' AND t.status IN ('ACTIVE', 'SUSPENDED')`,
+        [userId],
+      );
+      return rows[0]?.id ?? null;
+    });
   }
 
   /** Create a session and token pair (also used by invitation acceptance). */

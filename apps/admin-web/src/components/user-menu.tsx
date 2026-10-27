@@ -11,7 +11,8 @@ export function UserMenu({ tenantName, userName, multiple }: { tenantName: strin
   const router = useRouter();
   async function signOut() {
     await send('POST', '/api/auth/logout');
-    router.replace('/sign-in');
+    // A full load: nothing of the signed-out session stays in the router cache.
+    window.location.replace('/sign-in');
   }
   return (
     <div className="flex min-w-0 items-center gap-2">

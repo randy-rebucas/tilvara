@@ -301,4 +301,29 @@ describe('schema isolation catalog', () => {
       { fn: 'auth_mfa_support_reset(text, text, text, text)', app: false, worker: false, readonly: false, migrator: true },
     ]);
   });
+
+  it('the read-only role cannot log in and reads only the global catalogs (2026-10-27)', async () => {
+    // As a login it could set app.tenant_id itself and read every business: RLS keys on that setting.
+    const [role] = await q<{ login: boolean }>(`SELECT rolcanlogin AS login FROM pg_roles WHERE rolname = 'onepos_readonly'`);
+    expect(role!.login).toBe(false);
+    const tables = await q<{ t: string; priv: string }>(`
+      SELECT DISTINCT table_name AS t, privilege_type AS priv FROM information_schema.table_privileges
+       WHERE grantee = 'onepos_readonly' AND table_schema = 'public' ORDER BY 1, 2`);
+    expect(tables).toEqual(['discount_schemes', 'extensions', 'permissions', 'plans'].map((t) => ({ t, priv: 'SELECT' })));
+    const columns = await q(`SELECT DISTINCT table_name FROM information_schema.column_privileges WHERE grantee = 'onepos_readonly' AND table_schema = 'public'
+                              AND table_name NOT IN ('discount_schemes', 'extensions', 'permissions', 'plans')`);
+    expect(columns).toEqual([]);
+  });
+
+  it('a SECURITY DEFINER trigger that runs BEFORE the row is checked refuses another business first', async () => {
+    // RLS's WITH CHECK runs after BEFORE triggers: a definer trigger would act on a foreign row first.
+    const before = await q<{ fn: string; body: string }>(`
+      SELECT DISTINCT p.proname AS fn, p.prosrc AS body FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+       WHERE NOT t.tgisinternal AND p.prosecdef AND (t.tgtype & 2) = 2`);
+    expect(before.map((b) => b.fn)).toEqual(['app_cost_stock_movement']);
+    for (const b of before) expect([b.fn, /PERFORM app_assert_row_tenant\(NEW\.tenant_id\);/.test(b.body)]).toEqual([b.fn, true]);
+    // The API cannot read when someone signed in last (a former employer would see sign-ins elsewhere).
+    const [seen] = await q<{ v: boolean }>(`SELECT has_column_privilege('onepos_app', 'users', 'last_login_at', 'SELECT') AS v`);
+    expect(seen!.v).toBe(false);
+  });
 });

@@ -2,6 +2,7 @@ import { CircleHelp, LogOut } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useT } from '../i18n';
 import type { GuideTopic } from '../lib/guide';
+import { useBrand } from '../lib/brand';
 import { useTill } from '../lib/till';
 import { Guide } from './Guide';
 import { TillSettings, TillStatus } from './Till';
@@ -32,10 +33,16 @@ export interface HelpContext {
   extensions?: string[];
 }
 
-/** The blue band: wordmark, where you are (branch · register · shift), till status, help, language, sign-out. */
-export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; help?: HelpContext; children: ReactNode }) {
+/**
+ * The band: the business's logo or name (else the wordmark), where you are (branch · register · shift),
+ * till status, help, language, sign-out. `backdrop`: the business's background image behind the
+ * screens before the counter (sign-in, business, register).
+ */
+export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, backdrop = false, children }: { context?: ReactNode; nav?: ReactNode; onSignOut?: () => void; help?: HelpContext; backdrop?: boolean; children: ReactNode }) {
   const { t } = useT();
   const till = useTill();
+  const { brand } = useBrand();
+  const background = backdrop && brand?.backgroundUrl ? brand.backgroundUrl : null;
   // Till settings and the guide open over the current screen, which stays mounted (a cart survives a look).
   const [overlay, setOverlay] = useState<'till' | 'guide' | null>(null);
   const tillOpen = overlay === 'till' && till.mode === 'ready';
@@ -57,7 +64,7 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
     <div className="flex min-h-dvh flex-col">
       <header className="band sticky top-0 z-10 text-white">
         <div className="flex h-16 items-center gap-4 px-4 sm:px-6">
-          <span className="shrink-0 text-[1.5rem] font-bold tracking-[0.04em]">Tilvara</span>
+          <BandMark name={brand?.displayName ?? null} logoUrl={brand?.logoUrl ?? null} />
           {context && <div className="min-w-0 flex-1 truncate text-blue-ink">{context}</div>}
           {!context && <div className="flex-1" />}
           {nav && <div className="hidden lg:block">{nav}</div>}
@@ -89,7 +96,22 @@ export function Shell({ context, nav, onSignOut, help = { topic: 'start' }, chil
       )}
       {tillOpen && <TillSettings onBack={() => setOverlay(null)} />}
       {guideOpen && <Guide topic={help.topic} extensions={help.extensions ?? []} onBack={() => setOverlay(null)} />}
-      <main className="flex-1" hidden={tillOpen || guideOpen}>{children}</main>
+      <main
+        className={`flex-1 ${background ? 'bg-cover bg-center' : ''}`}
+        // A paper wash over the photo: the screens' text stays readable on any picture.
+        style={background ? { backgroundImage: `linear-gradient(rgb(244 241 232 / 0.8), rgb(244 241 232 / 0.8)), url(${background})` } : undefined}
+        data-testid={background ? 'brand-backdrop' : undefined}
+        hidden={tillOpen || guideOpen}
+      >
+        {children}
+      </main>
     </div>
   );
+}
+
+/** The business's logo (on a white mat, so it reads on any colour), else its short name, else the wordmark. */
+function BandMark({ name, logoUrl }: { name: string | null; logoUrl: string | null }) {
+  if (logoUrl) return <img src={logoUrl} alt={name ?? ''} data-testid="brand-logo" className="h-10 w-auto max-w-[120px] shrink-0 rounded-[3px] bg-white object-contain p-[3px]" />;
+  if (name) return <span className="max-w-[16rem] shrink-0 truncate text-[1.375rem] font-bold tracking-[0.02em]">{name}</span>;
+  return <span className="shrink-0 text-[1.5rem] font-bold tracking-[0.04em]">Tilvara</span>;
 }

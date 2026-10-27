@@ -1,17 +1,16 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { FormError } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 
 export function OpenGrantButton({ grantId }: { grantId: string }) {
   const { t } = useT();
-  const router = useRouter();
   const { pending, submit, error } = useSubmit();
   async function open() {
     const r = await submit('POST', '/api/auth/support-open', { grantId }, { refresh: false });
-    if (r.ok) router.replace('/');
+    // Full loads: the support view and the staff member's own session never share cached pages.
+    if (r.ok) window.location.assign('/');
   }
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
@@ -24,7 +23,6 @@ export function OpenGrantButton({ grantId }: { grantId: string }) {
 /** Back to the staff member's own session (no business). */
 export function LeaveSupportButton() {
   const { t } = useT();
-  const router = useRouter();
   const { pending, submit } = useSubmit();
   return (
     <button
@@ -33,7 +31,7 @@ export function LeaveSupportButton() {
       disabled={pending}
       onClick={async () => {
         await submit('POST', '/api/auth/support-leave', {}, { refresh: false });
-        router.replace('/support');
+        window.location.assign('/support');
       }}
     >
       {t('staff.leave')}

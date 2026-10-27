@@ -93,6 +93,9 @@ export interface DataExportResult {
  * keeps it to that business. Row counts are taken first in the same snapshot and checked against
  * the rows written.
  */
+/** Where an export's file lives; the API's download and the worker's sweep accept no other key for the row. */
+export const exportKey = (tenantId: string, exportId: string) => `exports/${tenantId}/${exportId}.zip`;
+
 export async function writeDataExport(client: PoolClient, out: Writable, info: DataExportInfo): Promise<DataExportResult> {
   await client.query(`SET LOCAL TimeZone = 'UTC'`);
   await client.query(`SET LOCAL DateStyle = 'ISO, YMD'`);
@@ -101,10 +104,15 @@ export async function writeDataExport(client: PoolClient, out: Writable, info: D
     `SELECT to_char(now(), 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now, current_setting('app.tenant_id', true) AS tenant_id`,
   );
   if (!meta?.tenant_id) throw new Error('writeDataExport needs a tenant context');
-  const { rows: [business] } = await client.query<{ id: string; slug: string; name: string; status: string; timezone: string; default_currency: string; business_type: string }>(
+  // RLS is what limits every table below to this business: a role that bypasses it would export them all.
+  const { rows: [role] } = await client.query<{ bypasses: boolean }>(
+    'SELECT rolsuper OR rolbypassrls AS bypasses FROM pg_roles WHERE rolname = current_user',
+  );
+  if (role?.bypasses !== false) throw new Error('writeDataExport refuses a role that bypasses row-level security');
+  const { rows: [business], rowCount: visible } = await client.query<{ id: string; slug: string; name: string; status: string; timezone: string; default_currency: string; business_type: string }>(
     'SELECT id, slug, name, status, timezone, default_currency, business_type FROM tenants',
   );
-  if (!business || business.id !== meta.tenant_id) throw new Error('the business is not visible in its own context');
+  if (!business || visible !== 1 || business.id !== meta.tenant_id) throw new Error('the business is not visible in its own context');
 
   const tables = await exportTables(client);
   const rowCounts: Record<string, number> = {};

@@ -34,7 +34,7 @@ describe('browser-tab titles', () => {
       const src = readFileSync(page, 'utf8');
       // A page that only redirects renders nothing to title.
       if (/\bredirect\(/.test(src) && !/return \(/.test(src)) continue;
-      const m = src.match(/export const generateMetadata = pageTitle\('([^']+)'\)/);
+      const m = src.match(/export const generateMetadata = pageTitle\('([^']+)'[,)]/);
       if (!m || /export const metadata\b/.test(src)) {
         missing.push(page.slice(SRC.length));
         continue;

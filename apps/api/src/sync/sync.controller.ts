@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import {
   snapshotItemsQuerySchema,
   snapshotPageQuerySchema,
@@ -8,7 +8,9 @@ import {
   type SyncSalesBatch,
 } from '@1pos/sync-protocol';
 import { dismissOfflineSchema, idParamSchema, offlineListQuerySchema, type DismissOfflineInput, type OfflineListQuery } from '@1pos/validation';
+import type { Response } from 'express';
 import { Auth, RequireTenant, TerminalAuth, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
+import { imageHeaders } from '../business/branding.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { SyncService } from './sync.service.js';
@@ -50,6 +52,23 @@ export class SyncController {
   @Get('terminal/snapshot/:id/items')
   async snapshotItems(@Req() req: AuthedRequest, @Param('id', id) snapshotId: string, @Query(new ZodPipe(snapshotItemsQuerySchema)) q: SnapshotItemsQuery) {
     return this.sync.snapshotItems(await this.sync.authenticate((h) => req.header(h), req.correlationId), snapshotId, q.after, q.pageSize);
+  }
+
+  /** The business's images, named by hash in the snapshot; the till keeps them (session 39). */
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @Get('terminal/branding/logo')
+  async brandLogo(@Req() req: AuthedRequest, @Res() res: Response): Promise<void> {
+    const img = await this.sync.brandImage(await this.sync.authenticate((h) => req.header(h), req.correlationId), 'LOGO');
+    res.status(200).set(imageHeaders(img, 'private')).end(img.bytes);
+  }
+
+  @TerminalAuth()
+  @RateLimit(...TERMINAL_LIMITS)
+  @Get('terminal/branding/background')
+  async brandBackground(@Req() req: AuthedRequest, @Res() res: Response): Promise<void> {
+    const img = await this.sync.brandImage(await this.sync.authenticate((h) => req.header(h), req.correlationId), 'BACKGROUND');
+    res.status(200).set(imageHeaders(img, 'private')).end(img.bytes);
   }
 
   @TerminalAuth()

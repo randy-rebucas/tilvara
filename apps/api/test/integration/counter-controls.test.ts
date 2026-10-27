@@ -111,18 +111,27 @@ describe('manager-approved price changes', () => {
     // A wrong password is a 403 (the cashier stays signed in) and counts towards the manager's lockout.
     expect((await ask(s.cashier, { email: s.managerEmail, password: 'not the password' }).expect(403)).body.error.code).toBe('APPROVER_INVALID_CREDENTIALS');
     expect((await ask(s.cashier, { email: `${uniq('nobody')}@example.ph`, password: PASSWORD }).expect(403)).body.error.code).toBe('APPROVER_INVALID_CREDENTIALS');
+    // Session 40: another business's owner, with their right password, is answered like an unknown email.
+    const outsider = await signup(app, 'approver-out');
+    expect((await ask(s.cashier, { email: outsider.email, password: PASSWORD }).expect(403)).body.error.code).toBe('APPROVER_INVALID_CREDENTIALS');
     // Another cashier's own password is right, but they may not approve prices.
     expect((await ask(s.cashier, { email: s.cashier2Email, password: PASSWORD }).expect(403)).body.error.code).toBe('APPROVER_NOT_ALLOWED');
     await ask(s.cashier, { email: s.managerEmail }).expect(400);
     expect((await ask(s.manager, { unitPrice: '22.40' }).expect(422)).body.error.code).toBe('PRICE_UNCHANGED');
 
     const refusedRows = await q<{ metadata: { code: string } }>(s, `SELECT metadata FROM audit_logs WHERE action = 'sale.price_override_refused' ORDER BY occurred_at`);
-    expect(refusedRows.map((r) => r.metadata.code)).toEqual(['APPROVER_INVALID_CREDENTIALS', 'APPROVER_INVALID_CREDENTIALS', 'APPROVER_NOT_ALLOWED']);
+    expect(refusedRows.map((r) => r.metadata.code)).toEqual(['APPROVER_INVALID_CREDENTIALS', 'APPROVER_INVALID_CREDENTIALS', 'APPROVER_INVALID_CREDENTIALS', 'APPROVER_NOT_ALLOWED']);
     const [locked] = await asOwnerInTenant(owner, s.t.tenantId, async (c) => {
       await c.query('SET LOCAL ROLE onepos_platform');
       return (await c.query<{ n: number }>(`SELECT failed_login_count AS n FROM users WHERE id = $1`, [s.managerId])).rows;
     });
     expect(locked!.n).toBeGreaterThanOrEqual(1);
+    // …and the outsider's account was never tried, so nothing counts towards their lockout.
+    const [untouched] = await asOwnerInTenant(owner, s.t.tenantId, async (c) => {
+      await c.query('SET LOCAL ROLE onepos_platform');
+      return (await c.query<{ n: number }>(`SELECT failed_login_count AS n FROM users WHERE id = $1`, [outsider.userId])).rows;
+    });
+    expect(untouched!.n).toBe(0);
   });
 
   it('prices one line of one sale by the cashier who asked, at the approved price', async () => {

@@ -7,6 +7,8 @@ export interface Transport {
   syncSales(sales: OfflineSale[]): Promise<SyncSalesResponse>;
   /** The server's catalog version (session 16); absent in transports for older servers and some tests. */
   catalogVersion?(): Promise<CatalogVersion>;
+  /** The business's logo or background as base64 (session 39); absent in transports for older servers and some tests. */
+  brandImage?(kind: 'logo' | 'background'): Promise<{ contentType: string; data: string }>;
 }
 
 /**
@@ -64,6 +66,22 @@ export function httpTransport(o: HttpTransportOptions): Transport {
     if (data === null) throw new TransportError('NETWORK', 'The server answered without a body');
     return data as T;
   };
+  const image = async (kind: 'logo' | 'background') => {
+    let res: Response;
+    try {
+      res = await doFetch(`${o.baseUrl.replace(/\/$/, '')}/v1/terminal/branding/${kind}`, {
+        headers: { [TERMINAL_ID_HEADER]: o.terminalId, authorization: `${TERMINAL_AUTH_SCHEME} ${o.credential}` },
+        signal: AbortSignal.timeout(o.timeoutMs ?? 15_000),
+      });
+    } catch (e) {
+      throw new TransportError('NETWORK', `No answer from the server: ${(e as Error).message}`);
+    }
+    if (!res.ok) throw new TransportError('HTTP', `HTTP ${res.status}`, res.status);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return { contentType: res.headers.get('content-type') ?? 'application/octet-stream', data: btoa(binary) };
+  };
   return {
     // Paged (ADR-0016 slice 5): every answer stays bounded however large the catalogue; the pages are
     // put together here, so the engine still stores one snapshot. A failed page fails the whole
@@ -84,5 +102,6 @@ export function httpTransport(o: HttpTransportOptions): Transport {
     },
     syncSales: (sales) => call<SyncSalesResponse>('POST', '/v1/sync/sales', { sales }),
     catalogVersion: () => call<CatalogVersion>('GET', '/v1/terminal/catalog-version'),
+    brandImage: image,
   };
 }

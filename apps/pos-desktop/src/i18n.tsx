@@ -168,6 +168,7 @@ const en = {
   'till.skip': 'Continue online only',
   'till.setupFailed': 'The server did not accept this terminal id and key. Check them in the admin (a revoked terminal cannot be used again).',
   'till.setupOffline': 'No connection to the server. Connect once to set up this till.',
+  'till.setupUnsent': '{n} sale(s) made on this till for another terminal are still waiting to be sent. Set the till up again with that terminal (or a new terminal of the same register) and let them be delivered first; connected to another business, they would be lost.',
   'till.settings': 'Till settings',
   'till.settingsBack': 'Back',
   'till.terminal': 'Terminal {id}',
@@ -249,6 +250,8 @@ const en = {
   'guide.till.s4': 'In the till settings, choose the receipt printer (a network printer or one installed in Windows) and print a test receipt.',
   'guide.till.t1': 'Prices are refreshed while online. If the till’s price list is past the time it is good for (24 hours unless your business set another limit), its offline sales are flagged for the manager.',
   'guide.till.t2': 'Till revoked? Ask an owner for a new key for this register, then disconnect and set the till up again. Sales still waiting are delivered then, not lost.',
+  'guide.till.t3': 'The logo, colour, background and receipt messages come from the back office (Subscription → Branding). The till picks up a change within a minute and keeps it for when it is offline.',
+  'guide.till.t4': 'Moving the till to another business or server? First let every waiting sale be sent; set-up refuses until they are. Then disconnect and set it up with the new terminal: the old business’s items, names, logo and receipts are removed from this computer.',
 
   'guide.trouble.title': 'When something goes wrong',
   'guide.trouble.lede': 'What the messages mean, and what to do.',
@@ -378,7 +381,7 @@ const en = {
   'till.why.TAX_REFUSED': 'the till could not price this cart. Wait for the connection.',
   'till.why.TERMINAL_REVOKED': 'this till was revoked. Ask an owner for a new key.',
   'till.why.INVALID_SALE': 'the sale cannot be kept as it is. Check the cart, or wait for the connection.',
-  'till.forgetConfirm': 'Disconnect this till from its terminal? {n} sale(s) still waiting stay on this computer and are sent once the till is set up again.',
+  'till.forgetConfirm': 'Disconnect this till from its terminal? {n} sale(s) still waiting stay on this computer and are sent once the till is set up again for this terminal or its register. It cannot be set up for another business until they are sent.',
   'till.forgetYes': 'Disconnect',
 } as const;
 
@@ -551,6 +554,7 @@ const fil: Record<MessageKey, string> = {
   'till.skip': 'Online lang muna',
   'till.setupFailed': 'Hindi tinanggap ng server ang terminal id at key na ito. Suriin sa admin (hindi na magagamit ang binawing terminal).',
   'till.setupOffline': 'Walang koneksyon sa server. Kumonekta muna para ma-set up ang till.',
+  'till.setupUnsent': 'May {n} bentang ginawa sa till na ito para sa ibang terminal na hindi pa naipapadala. I-set up ulit ang till gamit ang terminal na iyon (o bagong terminal ng parehong register) at hayaang maipadala muna ang mga ito; kapag ikinonekta sa ibang negosyo, mawawala ang mga ito.',
   'till.settings': 'Settings ng till',
   'till.settingsBack': 'Bumalik',
   'till.terminal': 'Terminal {id}',
@@ -631,6 +635,8 @@ const fil: Record<MessageKey, string> = {
   'guide.till.s4': 'Sa settings ng till, piliin ang printer ng resibo (network printer o naka-install sa Windows) at mag-print ng test na resibo.',
   'guide.till.t1': 'Ina-update ang mga presyo habang online. Kapag lampas na ang price list ng till sa panahong puwede itong gamitin (24 na oras maliban kung iba ang itinakda ng negosyo mo), mamarkahan para sa manager ang mga offline na benta nito.',
   'guide.till.t2': 'Binawi ang till? Humingi sa may-ari ng bagong key para sa register na ito, pagkatapos ay idiskonekta at i-set up ulit ang till. Maipapadala na noon ang mga bentang naghihintay pa, hindi mawawala.',
+  'guide.till.t3': 'Galing sa back office ang logo, kulay, background at mga mensahe sa resibo (Subscription → Tatak ng tindahan). Makukuha ng till ang pagbabago sa loob ng isang minuto at itatabi ito para kapag offline.',
+  'guide.till.t4': 'Ililipat ang till sa ibang negosyo o server? Hayaan munang maipadala ang lahat ng bentang naghihintay; tatanggi ang set-up hangga’t hindi pa. Pagkatapos ay idiskonekta at i-set up gamit ang bagong terminal: aalisin sa computer na ito ang mga item, pangalan, logo at resibo ng dating negosyo.',
 
   'guide.trouble.title': 'Kapag may nagkamali',
   'guide.trouble.lede': 'Ang ibig sabihin ng mga mensahe, at ang dapat gawin.',
@@ -760,7 +766,7 @@ const fil: Record<MessageKey, string> = {
   'till.why.TAX_REFUSED': 'hindi ma-presyuhan ng till ang cart na ito. Hintayin ang koneksyon.',
   'till.why.TERMINAL_REVOKED': 'binawi ang till na ito. Humingi sa may-ari ng bagong key.',
   'till.why.INVALID_SALE': 'hindi maitatabi ang benta gaya nito. Suriin ang cart, o hintayin ang koneksyon.',
-  'till.forgetConfirm': 'Idiskonekta ang till na ito sa terminal nito? Mananatili sa computer na ito ang {n} bentang naghihintay pa at ipapadala kapag na-set up ulit ang till.',
+  'till.forgetConfirm': 'Idiskonekta ang till na ito sa terminal nito? Mananatili sa computer na ito ang {n} bentang naghihintay pa at ipapadala kapag na-set up ulit ang till para sa terminal o register na ito. Hindi ito mase-set up para sa ibang negosyo hangga’t hindi naipapadala ang mga ito.',
   'till.forgetYes': 'Idiskonekta',
 };
 

@@ -26,6 +26,7 @@ import {
   inSequence,
   mapInSequence,
 } from '@1pos/database';
+import { readBranding, receiptBranding } from '../business/branding.js';
 import { buildReturnReceipt } from './receipt.js';
 import { Dec, roundTo, toDec, type RoundingMode } from '@1pos/money';
 import type { CreateSaleReturnInput, PreviewSaleReturnInput } from '@1pos/validation';
@@ -466,6 +467,7 @@ export class ReturnsService extends TenantService {
         branch: { name: branch!.name, code: branch!.code, birBranchCode: branch!.birBranchCode, address: branch!.address, timezone: branch!.timezone },
         register: { code: register!.code, name: register!.name },
         processedBy: person?.displayName ?? 'Staff',
+        branding: receiptBranding(await readBranding(db)),
         sale: { saleNumber: sale!.saleNumber, registerCode: register!.code, vatRate: snapshot.vatRate, currency: sale!.currency },
         doc: { ...doc, kind: doc.kind as 'RETURN' | 'VOID' },
         lines: lines.map((l) => ({

@@ -1,17 +1,18 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 
-type Reply = { activeTenantId: string | null; mfaRequired?: undefined } | { mfaRequired: true };
+type Reply = { activeTenantId: string | null; redirect?: string; mfaRequired?: undefined } | { mfaRequired: true };
 
-/** Email + password, then — for accounts with two-step sign-in — a code from the app or a recovery code. */
-export function SignInForm({ next }: { next: string }) {
+/**
+ * Email + password, then — for accounts with two-step sign-in — a code from the app or a recovery code.
+ * On a shop's own page (`/s/<slug>`) `tenantId` signs straight into that business.
+ */
+export function SignInForm({ next, tenantId }: { next: string; tenantId?: string }) {
   const { t } = useT();
-  const router = useRouter();
   const { pending, error, setError, submit } = useSubmit();
   const [step, setStep] = useState<'password' | 'code'>('password');
   const [useRecovery, setUseRecovery] = useState(false);
@@ -21,13 +22,16 @@ export function SignInForm({ next }: { next: string }) {
       setStep('code');
       return;
     }
-    router.replace(r.activeTenantId ? next : '/select-business');
+    // The business's own address (session 41) signs this browser in there with the code in the link.
+    if (r.redirect) window.location.assign(next === '/' ? r.redirect : `${r.redirect}&next=${encodeURIComponent(next)}`);
+    // A full load, so no page cached for the previous session survives (Back, prefetch).
+    else window.location.assign(r.activeTenantId ? next : '/select-business');
   }
 
   async function onPassword(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    const r = await submit<Reply>('POST', '/api/auth/login', { email: f.get('email'), password: f.get('password') }, { refresh: false });
+    const r = await submit<Reply>('POST', '/api/auth/login', { email: f.get('email'), password: f.get('password'), ...(tenantId && { tenantId }) }, { refresh: false });
     if (r.ok) finish(r.data);
   }
 
@@ -49,7 +53,9 @@ export function SignInForm({ next }: { next: string }) {
           ? t('auth.mfaInvalid')
           : error?.code === 'INVALID_MFA_CHALLENGE'
             ? t('auth.mfaExpired')
-            : error?.message;
+            : error?.code === 'NOT_A_MEMBER'
+              ? t('brand.notMember')
+              : error?.message;
 
   if (step === 'code') {
     return (

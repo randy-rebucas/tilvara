@@ -97,6 +97,11 @@ describe('tenant isolation (RLS)', () => {
     expect(err.message).toMatch(/row-level security/);
   });
 
+  it('cannot start a trial for another tenant (session 40: only the business in context)', async () => {
+    const err = await pgError(withTenant(pool, tenantA, (_db, client) => client.query(`SELECT platform_start_trial($1, 'starter', 14)`, [tenantB])));
+    expect(err.message).toMatch(/only for the business in context/);
+  });
+
   it('only sees its own audit rows (provisioning event recorded per tenant)', async () => {
     const rows = await withTenant(pool, tenantA, (db) => db.select().from(auditLogs));
     expect(rows.length).toBeGreaterThan(0);

@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
@@ -125,7 +124,6 @@ export function EmailForm({ mfaOn }: { mfaOn: boolean }) {
 
 export function CloseAccountForm({ mfaOn, closure }: { mfaOn: boolean; closure: ClosureStatus }) {
   const { t } = useT();
-  const router = useRouter();
   const { pending, error, submit, fieldError } = useSubmit();
   const message = useAccountMessage();
   const [understood, setUnderstood] = useState(false);
@@ -160,7 +158,7 @@ export function CloseAccountForm({ mfaOn, closure }: { mfaOn: boolean; closure: 
         e.preventDefault();
         const f = new FormData(e.currentTarget);
         const r = await submit('POST', '/api/auth/account-close', { password: f.get('password'), ...codeOf(f) }, { refresh: false });
-        if (r.ok) router.replace('/sign-in?closed=1');
+        if (r.ok) window.location.replace('/sign-in?closed=1');
       }}
     >
       {heading}

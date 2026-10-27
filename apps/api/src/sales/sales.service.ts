@@ -42,6 +42,7 @@ import { TaxService, unprocessable, type CartComputation } from '../tax/tax.serv
 import { expectedCash, loadSession } from './cash.service.js';
 import { ReturnsService } from './returns.service.js';
 import { activeCustomer, creditBalance } from '../customers/customers.service.js';
+import { readBranding, receiptBranding } from '../business/branding.js';
 import { buildReceipt } from './receipt.js';
 import { nextNumber } from '../common/sequence.js';
 import { salePosting } from '@1pos/accounting';
@@ -642,6 +643,7 @@ export class SalesService extends TenantService {
         branch: { name: branch!.name, code: branch!.code, birBranchCode: branch!.birBranchCode, address: branch!.address, timezone: branch!.timezone },
         register: { code: register!.code, name: register!.name },
         cashierName: cashier?.displayName ?? 'Cashier',
+        branding: receiptBranding(await readBranding(db)),
         sale: {
           ...Object.fromEntries([...MONEY_FIELDS, 'amountTendered', 'changeDue'].map((k) => [k, fixed(sale[k as keyof SaleRow] as string)])),
           saleNumber: sale.saleNumber,

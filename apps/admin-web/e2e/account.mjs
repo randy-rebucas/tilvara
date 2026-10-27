@@ -216,13 +216,14 @@ try {
     const s = await openBrowser({ base: stubBase, out: OUT, port: 9348 });
     try {
       await s.send('Network.enable');
-      await s.send('Network.setCookie', { name: 'onepos_at', value: 'stub-token', url: stubBase });
+      // `next start` runs as production: the session cookie is `__Host-` (session 40), Secure, Path=/.
+      await s.send('Network.setCookie', { name: '__Host-onepos_at', value: 'stub-token', url: stubBase, secure: true, path: '/' });
       await s.go('/');
       const ref = await s.waitFor(`document.querySelector('[data-testid="error-reference"]')`).then(() => s.evaluate(`document.querySelector('[data-testid="error-reference"]').innerText`), () => null);
       check('a page that fails on the API shows the API correlation id as its reference', ref === REF);
       check('…with a way to try again', await s.evaluate(`document.body.innerText.includes('This page could not be shown') && document.body.innerText.includes('Try again')`));
       await s.shot('error-reference.png');
-      await s.send('Network.deleteCookies', { name: 'onepos_at', url: stubBase });
+      await s.send('Network.deleteCookies', { name: '__Host-onepos_at', url: stubBase });
       await s.go('/sign-in');
       await s.fill('email', 'someone@example.ph');
       await s.fill('password', PASSWORD);

@@ -14,3 +14,4 @@ export * from './sync.js';
 export * from './support.js';
 export * from './integrations.js';
 export * from './extensions.js';
+export * from './branding.js';

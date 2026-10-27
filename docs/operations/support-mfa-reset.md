@@ -19,9 +19,11 @@ pages stay closed for them until they do. Audit: `member.mfa_reset` in the busin
 platform level (actor, business, reason).
 
 Refused: resetting yourself (use a recovery code instead), resetting someone whose roles you could not have
-granted, and anyone without `members.manage` for the whole business.
+granted, anyone without `members.manage` for the whole business, and (since session 40) a member who is also
+on another business's team (`MFA_RESET_OTHER_BUSINESS`): the reset is account-wide, so it would act on the
+other business too. Support resets them as in section 2.
 
-## 2. The owner (no one else can reset them)
+## 2. The owner, or a member who is also in another business (no one in the business can reset them)
 
 Support does it, with a ticket.
 

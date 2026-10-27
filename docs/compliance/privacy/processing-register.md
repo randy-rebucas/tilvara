@@ -44,7 +44,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Source | The business's owner or admin |
 | Basis | Contract (Sec. 12(b)) |
 | Recipients | Owners and admins of that business; the business's data export (`members.csv`: email, name) |
-| Tables | `tenant_memberships`, `membership_roles`, `member_invitations`; `tenant_extensions.changed_by` (the member who last switched an extension, ADR-0026) |
+| Tables | `tenant_memberships`, `membership_roles`, `member_invitations`; `tenant_extensions.changed_by` (the member who last switched an extension, ADR-0026); `tenant_branding.updated_by`, `brand_assets.created_by` (who last changed the branding or uploaded an image, session 39) |
 
 ### 3. Sales and SC/PWD discount records — PIP
 | | |

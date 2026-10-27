@@ -9,6 +9,7 @@ import { correlationIdMiddleware } from './infrastructure/correlation-id.middlew
 import { ENV } from './infrastructure/env.provider.js';
 import { ApiMetrics, httpMetrics } from './infrastructure/metrics.js';
 import { PinoNestLogger, requestLogger } from './infrastructure/logging.js';
+import { clientIpMiddleware } from './infrastructure/client-ip.js';
 
 /** Shared between main.ts and tests so the test app matches production wiring. */
 export function configureApp(app: INestApplication, logger?: Logger): void {
@@ -27,11 +28,15 @@ export function configureApp(app: INestApplication, logger?: Logger): void {
     }),
   );
   app.setGlobalPrefix('v1');
-  // A product file (up to 2,000 rows) is larger than the 100 kB every other route accepts. Parsed here,
+  // A product file (up to 2,000 rows) and a brand image are larger than the 100 kB every other route accepts. Parsed here,
   // before Nest's own parser, which then leaves the request alone. Not named `jsonParser`: Nest would take
   // it for its own and register no parser for the other routes.
   const importJson = bodyParser.json({ limit: '2mb' });
   app.use(['/v1/products/import', '/v1/products/import/preview'], function productImportJson(req: Request, res: Response, next: NextFunction) {
+    importJson(req, res, next);
+  });
+  // A logo (256 KB) or background (1 MB) arrives as base64 JSON.
+  app.use(['/v1/business/branding/logo', '/v1/business/branding/background'], function brandImageJson(req: Request, res: Response, next: NextFunction) {
     importJson(req, res, next);
   });
   app.use(correlationIdMiddleware);
@@ -46,6 +51,8 @@ export function configureApp(app: INestApplication, logger?: Logger): void {
     origins = env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
     // req.ip (per-IP rate limits, logs) believes X-Forwarded-For only from this many proxies.
     if (env.TRUST_PROXY_HOPS > 0) app.getHttpAdapter().getInstance().set('trust proxy', env.TRUST_PROXY_HOPS);
+    // The admin's visitors, each in their own per-IP bucket (session 40); ignored without the secret.
+    app.use(clientIpMiddleware(env.BFF_SHARED_SECRET));
   } catch {
     // Unit-test modules without the env provider: no CORS.
   }

@@ -2,8 +2,9 @@ import { Printer } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useT } from '../i18n';
 import type { ReceiptPrinter } from '../lib/devices';
+import { useBrand } from '../lib/brand';
 import { useTill } from '../lib/till';
-import { RECEIPT_WORDS, receiptToPrintable, SETTLEMENT, SIGNATURE, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
+import { brandFooter, brandHeader, RECEIPT_WORDS, receiptToPrintable, SETTLEMENT, SIGNATURE, signedTotal, tenderLabel, TOTAL_LABELS } from '../lib/printing';
 import type { Receipt as ReceiptData } from '../types';
 import { Callout, Money } from './ui';
 
@@ -16,6 +17,9 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
   // The desktop till's thermal printer when one is set up; the browser print dialog otherwise.
   const till = useTill();
   const printer = given ?? till.printer;
+  // The logo the receipt names, when the till has it (the business's current one).
+  const { brand } = useBrand();
+  const logoUrl = data.branding?.logoSha256 && brand?.logoUrl ? brand.logoUrl : null;
   const ref = useRef<HTMLDivElement>(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const print = async () => {
@@ -36,6 +40,8 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
     <div className="grid content-start gap-3">
       <div ref={ref} className="printable note mx-auto w-full max-w-[420px] p-6 font-[family-name:var(--font-serial)] text-[0.875rem]">
         <header className="text-center">
+          {logoUrl && <img src={logoUrl} alt="" className="mx-auto mb-2 max-h-16 w-auto max-w-[60%] object-contain" />}
+          {brandHeader(data.branding).map((l, i) => <p key={`b${i}`} className="font-semibold">{l}</p>)}
           <p className="text-[1.0625rem] font-semibold">{data.seller.name}</p>
           <p>{data.seller.registeredName}</p>
           {data.seller.address && <p>{data.seller.address}</p>}
@@ -101,6 +107,9 @@ export function Receipt({ data, printer: given }: { data: ReceiptData; printer?:
         {data.reason && <p className="mt-3">{RECEIPT_WORDS.reason}: {data.reason}</p>}
         {data.legend && <p className="mt-3 text-muted">{data.legend}</p>}
         <p className="mt-3 text-center text-muted">{RECEIPT_WORDS.cashier}: {data.transaction.cashier} · {data.transaction.register}</p>
+        {brandFooter(data.branding).length > 0 && (
+          <div className="mt-2 text-center">{brandFooter(data.branding).map((l, i) => <p key={i} className="break-words">{l}</p>)}</div>
+        )}
       </div>
       {printError && (
         <div className="no-print mx-auto w-full max-w-[420px]">

@@ -855,6 +855,41 @@
       "when": 1793064484508,
       "tag": "0121_supplier_return_lot",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1793072416181,
+      "tag": "0122_tenant_branding",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1793072428905,
+      "tag": "0123_tenant_branding_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1793080887329,
+      "tag": "0124_tenant_audit_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1793089472074,
+      "tag": "0125_handoff_session_binding",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1793089480463,
+      "tag": "0126_tenant_audit_second_pass",
+      "breakpoints": true
     }
   ]
 }

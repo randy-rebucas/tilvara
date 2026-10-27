@@ -1,14 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { FormError, TextField } from '@/components/fields';
 import { useSubmit } from '@/components/use-submit';
 import { useT } from '@/i18n/client';
 
 export function AcceptInviteForm({ token }: { token: string }) {
   const { t } = useT();
-  const router = useRouter();
   const { pending, error, submit, fieldError } = useSubmit();
   const existing = useSubmit();
 
@@ -16,14 +14,15 @@ export function AcceptInviteForm({ token }: { token: string }) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const r = await submit('POST', '/api/auth/accept-invite', { token, displayName: f.get('displayName'), password: f.get('password') }, { refresh: false });
-    if (r.ok) router.replace('/');
+    // Full loads: a new session or business, nothing cached from the previous one.
+    if (r.ok) window.location.assign('/');
   }
 
   async function acceptSignedIn() {
     const r = await existing.submit<{ tenantId: string }>('POST', '/api/auth/accept-invite-existing', { token }, { refresh: false });
     if (r.ok) {
       await existing.submit('POST', '/api/auth/switch', { tenantId: r.data.tenantId }, { refresh: false });
-      router.replace('/');
+      window.location.assign('/');
     }
   }
 

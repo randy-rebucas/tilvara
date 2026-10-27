@@ -3,7 +3,7 @@
 --   onepos_migrator : owns schema objects, runs migrations. Never used by the running app.
 --   onepos_app      : runtime role. NOT owner, NOBYPASSRLS -> Row-Level Security always applies.
 --   onepos_worker   : outbox worker. Claims/completes events and reads what its handlers need, under RLS.
---   onepos_readonly : reporting / support read access (still subject to RLS).
+--   onepos_readonly : NOLOGIN, reads the global catalogs only (unused; a login could set app.tenant_id itself).
 --   onepos_platform : NOLOGIN, BYPASSRLS; owner of audited cross-tenant SECURITY DEFINER functions.
 --   onepos_backup   : backups (pg_dump). Reads everything (BYPASSRLS + pg_read_all_data), writes nothing
 --                     except its own run records through platform_record_backup().
@@ -13,7 +13,7 @@
 CREATE ROLE onepos_migrator LOGIN PASSWORD 'onepos_migrator_dev' NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE onepos_app      LOGIN PASSWORD 'onepos_app_dev'      NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE onepos_worker   LOGIN PASSWORD 'onepos_worker_dev'   NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE onepos_readonly LOGIN PASSWORD 'onepos_readonly_dev' NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE onepos_readonly NOLOGIN NOSUPERUSER NOBYPASSRLS;
 -- onepos_platform: cannot log in. Owns the few audited SECURITY DEFINER functions that must
 -- act across tenants (e.g. platform_create_tenant). Only role with BYPASSRLS.
 CREATE ROLE onepos_platform NOLOGIN NOSUPERUSER BYPASSRLS;

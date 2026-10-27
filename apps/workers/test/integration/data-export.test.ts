@@ -1,11 +1,11 @@
-import { createTenant, DevFileStorage, sql, withTenant } from '@1pos/database';
+import { createTenant, DevFileStorage, exportKey, sql, withTenant } from '@1pos/database';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildHandlers, DevWorkerMailer, expireDataExports, exportKey } from '../../src/handlers.js';
+import { buildHandlers, DevWorkerMailer, expireDataExports } from '../../src/handlers.js';
 import { OutboxProcessor, type Logger } from '../../src/outbox-processor.js';
 
 /** ADR-0016 slice 6: the worker makes a business's export, gives up cleanly, and deletes old files. */

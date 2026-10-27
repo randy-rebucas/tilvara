@@ -88,7 +88,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   section('drawers', 'drawers.title', 'orange', 3, 3, { area: area('/offline-sales'), href: '/shifts' }),
   section('locations', 'nav.locations', 'violet', 5, 3, { area: area('/locations') }),
   section('team', 'nav.team', 'green', 4, 2, { area: area('/team') }),
-  section('subscription', 'nav.subscription', 'none', 6, 1, { area: area('/subscription') }),
+  section('subscription', 'nav.subscription', 'none', 7, 1, { area: area('/subscription') }),
   section('account', 'guide.account.title', 'none', 4, 2),
   section('till', 'guide.till.title', 'orange', 3, 1),
 ];

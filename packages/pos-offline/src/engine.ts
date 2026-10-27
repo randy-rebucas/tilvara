@@ -1,6 +1,6 @@
 import { Dec, isCurrencyCode, minorUnits, toDec } from '@1pos/money';
 import { applyPromotions, PromotionError, type PromotionLineResult } from '@1pos/pricing';
-import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type Snapshot, type SyncResult } from '@1pos/sync-protocol';
+import { offlineSaleSchema, parseScaleLabel, type OfflineSale, type Snapshot, type SnapshotBranding, type SyncResult } from '@1pos/sync-protocol';
 import type { CounterCartLine } from './counter.js';
 import { calculateTax, TaxError, type TaxResult } from '@1pos/tax';
 import { LocalStore, type OfflineReceipt, type QueuedSale } from './store.js';
@@ -28,6 +28,11 @@ export interface EngineOptions {
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   batchSize?: number;
+  /**
+   * The terminal whose credential `transport` carries: sales are tagged with it and only its own are
+   * sent. Absent (tests, tools): the terminal the file is set up for, else the one whose snapshot it holds.
+   */
+  terminalId?: string;
 }
 
 export interface SyncReport {
@@ -68,6 +73,8 @@ export class OfflineEngine {
   private readonly batch: number;
   private chain: Promise<unknown> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | undefined;
+  private readonly terminalId: string | undefined;
+  private closed = false;
 
   constructor(o: EngineOptions) {
     this.store = o.store;
@@ -78,6 +85,7 @@ export class OfflineEngine {
     this.base = o.baseBackoffMs ?? 2_000;
     this.max = o.maxBackoffMs ?? 5 * 60_000;
     this.batch = o.batchSize ?? 50;
+    this.terminalId = o.terminalId;
   }
 
   /** Prepare the local store (creates or upgrades tables). Call once on start; pending sales resume. */
@@ -95,6 +103,27 @@ export class OfflineEngine {
       await this.store.setMeta('auth_state', 'OK');
       return snap;
     });
+  }
+
+  /** The business's look and messages from the stored snapshot (session 39), or null (Tilvara's own). */
+  async branding(): Promise<SnapshotBranding | null> {
+    return (await this.store.snapshot())?.body.branding ?? null;
+  }
+
+  /**
+   * The business's logo or background as the snapshot names it, from the till's file, else fetched once
+   * and kept (offline the till shows what it kept). Null when there is none, or none kept while offline.
+   */
+  async brandImage(kind: 'logo' | 'background'): Promise<{ contentType: string; data: string } | null> {
+    const b = await this.branding();
+    const sha = kind === 'logo' ? b?.logoSha256 : b?.backgroundSha256;
+    if (!b || !sha) return null;
+    const kept = await this.store.brandImage(sha);
+    if (kept || !this.transport.brandImage) return kept;
+    const img = await this.transport.brandImage(kind).catch(() => null);
+    if (!img) return null;
+    await this.serial(() => this.store.saveBrandImage(sha, img.contentType, img.data, [b.logoSha256, b.backgroundSha256].filter((x): x is string => !!x)));
+    return img;
   }
 
   /**
@@ -218,9 +247,10 @@ export class OfflineEngine {
             zeroRatedSales: priced.totals.zeroRatedSales, percentageTaxSales: priced.totals.percentageTaxSales, amountDue: due.toFixed(2),
           },
           tendered: tendered.toFixed(2), change: tendered.minus(due).toFixed(2), notice: NOT_AN_INVOICE,
+          ...(snap.branding && { branding: snap.branding.receipt }),
         };
         return { envelope, receipt };
-      }, this.now());
+      }, this.now(), (await this.currentTerminal()) ?? snap.terminal.id);
       return { sale: queued, receipt: queued.receipt };
     });
   }
@@ -233,7 +263,10 @@ export class OfflineEngine {
   syncOnce(): Promise<SyncReport> {
     return this.serial(async () => {
       if ((await this.store.meta('auth_state')) === 'REVOKED') return { sent: 0, results: [], error: { code: 'TERMINAL_REVOKED', message: 'This till was revoked', retryable: false } };
-      const due = await this.store.due(this.now(), this.batch);
+      // Only this terminal's own sales go with its credential: another business's (a till set up for
+      // a new owner) would be quarantined there under the wrong business, and lost to their own.
+      const terminal = await this.currentTerminal();
+      const due = terminal ? await this.store.due(this.now(), this.batch, terminal) : [];
       if (!due.length) return { sent: 0, results: [] };
       let results: SyncResult[];
       try {
@@ -276,6 +309,16 @@ export class OfflineEngine {
   start(intervalMs = 10_000): void {
     this.stop();
     this.timer = setInterval(() => void this.syncOnce().catch(() => undefined), intervalMs);
+  }
+
+  /**
+   * Stop for good and wait for work in progress: nothing this engine was asked to do afterwards touches
+   * the file (a set-up for another terminal must not get the old one's snapshot written back).
+   */
+  async close(): Promise<void> {
+    this.stop();
+    this.closed = true;
+    await this.chain;
   }
 
   stop(): void {
@@ -327,8 +370,13 @@ export class OfflineEngine {
   }
 
   /** One thing at a time on the local database (one connection, no interleaved transactions). */
+  private async currentTerminal(): Promise<string | null> {
+    return this.terminalId ?? (await this.store.meta('terminal_id')) ?? (await this.store.snapshot())?.body.terminal.id ?? null;
+  }
+
   private serial<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.chain.then(fn, fn);
+    const guarded = () => (this.closed ? Promise.reject(new Error('ENGINE_CLOSED: this till was set up again')) : fn());
+    const run = this.chain.then(guarded, guarded);
     this.chain = run.catch(() => undefined);
     return run;
   }

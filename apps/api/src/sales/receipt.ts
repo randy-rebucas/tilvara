@@ -1,4 +1,7 @@
 import { Dec, toDec } from '@1pos/money';
+import type { ReceiptBranding } from '../business/branding.js';
+
+const NO_RECEIPT_BRANDING: ReceiptBranding = { header: [], footer: [], contact: [], logoSha256: null };
 
 /**
  * Receipt document for a completed sale. While a legal entity's invoicing mode is DISABLED this is
@@ -17,6 +20,8 @@ export interface ReceiptInput {
   branch: { name: string; code: string; birBranchCode: string; address: string | null; timezone: string };
   register: { code: string; name: string };
   cashierName: string;
+  /** The business's messages, contact lines and logo (session 39), as of printing: a reprint shows today's. */
+  branding?: ReceiptBranding;
   sale: {
     saleNumber: number;
     completedAt: Date;
@@ -85,6 +90,7 @@ export const VOID_NOTICE = 'VOID — NOT AN OFFICIAL INVOICE';
 
 export interface ReturnReceiptInput extends Pick<ReceiptInput, 'invoicingMode' | 'seller' | 'branch' | 'register'> {
   processedBy: string;
+  branding?: ReceiptBranding;
   sale: { saleNumber: number; registerCode: string; vatRate: string; currency: string };
   doc: {
     kind: 'RETURN' | 'VOID';
@@ -136,6 +142,7 @@ export function buildReturnReceipt(r: ReturnReceiptInput) {
       tin: formatTin(r.seller.tin, r.branch.birBranchCode),
       branch: r.branch.name,
     },
+    branding: r.branding ?? NO_RECEIPT_BRANDING,
     transaction: {
       reference: `${r.doc.kind === 'VOID' ? 'VOID' : 'RETURN'} ${r.doc.returnNumber} of ${saleRef}`,
       saleNumber: r.sale.saleNumber,
@@ -229,6 +236,7 @@ export function buildReceipt(r: ReceiptInput) {
       tin: formatTin(r.seller.tin, r.branch.birBranchCode),
       branch: r.branch.name,
     },
+    branding: r.branding ?? NO_RECEIPT_BRANDING,
     transaction: {
       reference: `${r.register.code}-${String(r.sale.saleNumber).padStart(6, '0')}`,
       saleNumber: r.sale.saleNumber,

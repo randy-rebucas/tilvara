@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import type { ServerEnv } from '@1pos/config';
-import { dataExports, desc, eq, sql, users, withTenant, type FileStorage } from '@1pos/database';
+import { dataExports, desc, eq, exportKey, sql, users, withTenant, type FileStorage } from '@1pos/database';
 import { recordAudit } from '../audit/audit.js';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -123,7 +123,7 @@ export class DataExportService extends TenantService {
       claims.t,
       async (db) => {
         const [e] = await db.select().from(dataExports).where(eq(dataExports.id, claims.e));
-        if (!e || e.status !== 'READY' || !e.fileKey || !e.expiresAt || e.expiresAt.getTime() <= (await dbNow(db)).getTime()) return null;
+        if (!e || e.status !== 'READY' || e.fileKey !== exportKey(claims.t, e.id) || !e.expiresAt || e.expiresAt.getTime() <= (await dbNow(db)).getTime()) return null;
         const { rows: [t] } = await db.execute<{ slug: string; day: string }>(
           sql`SELECT slug, to_char(${e.completedAt} AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD') AS day FROM tenants`,
         );

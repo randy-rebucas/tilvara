@@ -16,3 +16,4 @@ export * from './support.js';
 export * from './readings.js';
 export * from './integrations.js';
 export * from './extensions.js';
+export * from './branding.js';

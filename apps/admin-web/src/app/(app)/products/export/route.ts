@@ -7,6 +7,7 @@ import { COLUMNS, productExportRows } from '@/lib/product-csv';
 import { productApiQuery, readProductFilters } from '@/lib/product-filters';
 import { toCsv } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
+import { visitorHeaders } from '@/lib/visitor';
 
 /** Pages of 200; a catalogue larger than this is cut (the file says nothing about it, so keep it far above any shop). */
 const MAX_PAGES = 250;
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get('template') === '1') return file(toCsv([COLUMNS.filter((c) => c.key !== 'status').map((c) => t(c.label))]), 'tilvara-products-template.csv');
 
   const get = async <T,>(path: string): Promise<{ ok: true; body: T } | { ok: false; res: NextResponse }> => {
-    const res = await fetch(`${API_URL}${path}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
+    const res = await fetch(`${API_URL}${path}`, { headers: { ...visitorHeaders(request.headers), authorization: `Bearer ${token}` }, cache: 'no-store' });
     if (res.ok) return { ok: true, body: (await res.json()) as T };
     return { ok: false, res: NextResponse.json((await res.json().catch(() => null)) ?? { error: { code: 'ERROR', message: 'Export failed' } }, { status: res.status }) };
   };

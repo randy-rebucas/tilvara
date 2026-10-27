@@ -1,6 +1,6 @@
 import type { PrintableReceipt } from '@1pos/escpos';
 import type { OfflineReceipt } from '@1pos/pos-offline';
-import type { Receipt } from '../types';
+import type { Receipt, ReceiptBranding } from '../types';
 import { isZero, peso } from './money';
 
 /** Receipt wording stays in English, matching BIR document terminology (not UI copy). */
@@ -40,11 +40,15 @@ const promoDetail = (detail: string, promo?: { name: string; discount: string })
  */
 export const lotDetail = (detail: string, l: { lots?: string[] | undefined }) => [detail, ...(l.lots ?? [])].join(' | ');
 
+/** The business's messages (session 39): its header above the names a receipt must show, its footer and contact lines last. */
+export const brandHeader = (b: Pick<ReceiptBranding, 'header'> | undefined) => b?.header ?? [];
+export const brandFooter = (b: Pick<ReceiptBranding, 'footer' | 'contact'> | undefined) => [...(b?.footer ?? []), ...(b?.contact ?? [])];
+
 /** The server's receipt document as a thermal-printer receipt: same content, same order, same notice. */
 export function receiptToPrintable(r: Receipt): PrintableReceipt {
   const entries = Object.entries(r.totals).filter(([k]) => k !== 'currency' && k !== 'vatLabel');
   return {
-    header: [r.seller.name, r.seller.registeredName, ...(r.seller.address ? [r.seller.address] : []), ...(r.seller.tin ? [`${r.seller.tinLabel} ${r.seller.tin}`] : [])],
+    header: [...brandHeader(r.branding), r.seller.name, r.seller.registeredName, ...(r.seller.address ? [r.seller.address] : []), ...(r.seller.tin ? [`${r.seller.tinLabel} ${r.seller.tin}`] : [])],
     notice: r.notice,
     meta: [[r.transaction.reference, r.transaction.dateTime]],
     items: [
@@ -65,7 +69,7 @@ export function receiptToPrintable(r: Receipt): PrintableReceipt {
       pairs: r.statutory.length > 1 ? [[RECEIPT_WORDS.discount, peso(signedTotal('statutoryDiscount', s.discount))] as [string, string]] : [],
       ...(s.signatureLine && { signature: SIGNATURE }),
     })),
-    footer: [...(r.customer ? [`${RECEIPT_WORDS.customer}: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`${RECEIPT_WORDS.reason}: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `${RECEIPT_WORDS.cashier}: ${r.transaction.cashier} · ${r.transaction.register}`],
+    footer: [...(r.customer ? [`${RECEIPT_WORDS.customer}: ${r.customer.name}${r.customer.tin ? ` · TIN ${r.customer.tin}` : ''}`] : []), ...(r.reason ? [`${RECEIPT_WORDS.reason}: ${r.reason}`] : []), ...(r.legend ? [r.legend] : []), `${RECEIPT_WORDS.cashier}: ${r.transaction.cashier} · ${r.transaction.register}`, ...brandFooter(r.branding)],
   };
 }
 
@@ -78,13 +82,13 @@ export function offlineReceiptToPrintable(r: OfflineReceipt, dateTime: string): 
     ? [['gross', r.totals.gross], ...discount, ['vatableSales', r.totals.vatableSales], ['vatAmount', r.totals.vatAmount], ['vatExemptSales', r.totals.vatExemptSales], ['zeroRatedSales', r.totals.zeroRatedSales], ['amountDue', r.totals.amountDue]]
     : [['gross', r.totals.gross], ...discount, ['salesSubjectToPercentageTax', r.totals.percentageTaxSales], ['exemptSales', r.totals.vatExemptSales], ['amountDue', r.totals.amountDue]];
   return {
-    header: [r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
+    header: [...brandHeader(r.branding), r.seller.name, r.seller.registeredName, ...(r.seller.tin ? [`${isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} ${r.seller.tin}`] : [])],
     notice: r.notice,
     meta: [[r.localReference, dateTime]],
     items: r.lines.map((l) => ({ name: l.name, amount: `${l.amount} ${l.flag}`.trim(), detail: promoDetail(`${l.quantity} x ${l.unitPrice}`, l.promotion) })),
     totals: totals.map(([k, v]) => ({ label: k === 'vatAmount' ? (r.totals.vatLabel ?? TOTAL_LABELS.vatAmount!) : TOTAL_LABELS[k]!, amount: peso(signedTotal(k, v)), ...(k === 'amountDue' && { emphasis: true }) })),
     payments: [{ label: 'CASH', amount: peso(r.totals.amountDue) }, { label: 'Tendered', amount: peso(r.tendered) }, { label: 'Change', amount: peso(r.change) }],
-    footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `${RECEIPT_WORDS.cashier}: ${r.cashierName} · ${r.register.name}`],
+    footer: [...(isVat ? ['V = VATable, E = VAT-exempt, Z = zero-rated'] : []), `${RECEIPT_WORDS.cashier}: ${r.cashierName} · ${r.register.name}`, ...brandFooter(r.branding)],
   };
 }
 

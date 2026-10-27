@@ -20,7 +20,7 @@ import {
 } from '@1pos/database';
 import {
   canonicalJson, offlineSaleSchema, TERMINAL_AUTH_SCHEME, TERMINAL_ID_HEADER,
-  type CatalogVersion, type ReceivedEnvelope, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotItem, type SnapshotItemsPage, type SyncResult,
+  type CatalogVersion, type ReceivedEnvelope, type OfflineFlag, type OfflineSale, type Snapshot, type SnapshotBranding, type SnapshotItem, type SnapshotItemsPage, type SyncResult,
 } from '@1pos/sync-protocol';
 import type { DismissOfflineInput, OfflineListQuery } from '@1pos/validation';
 import { createHash } from 'node:crypto';
@@ -40,6 +40,7 @@ import { SalesService, type OfflineContext } from '../sales/sales.service.js';
 import { profilesInForce } from '../tax/tax-profiles.js';
 import { nextPromotionChange, promotionsInForce } from '../catalog/promotions.service.js';
 import { usableExtensions } from '../extensions/gate.js';
+import { readBranding, readBrandImage, receiptBranding, type BrandingView } from '../business/branding.js';
 
 /** A terminal that proved its credential (ADR-0015 §2). The tenant comes from the credential, never the request. */
 export interface TerminalPrincipal {
@@ -179,8 +180,16 @@ export class SyncService extends TenantService {
         ),
         promotions: await promotionsInForce(db, row.branch.id, asOf),
         extensions: await usableExtensions(db),
+        branding: snapshotBranding(await readBranding(db)),
       };
     });
+  }
+
+  /** The business's logo or background for the till to keep (session 39); the snapshot names it by hash. */
+  async brandImage(t: TerminalPrincipal, kind: 'LOGO' | 'BACKGROUND') {
+    const img = await withTenant(this.database.pool, t.tenantId, (db) => readBrandImage(db, kind));
+    if (!img) throw notFound(kind === 'LOGO' ? 'Logo' : 'Background');
+    return img;
   }
 
   /** The business's catalog version, and the next scheduled change at this terminal's branch (session 16). */
@@ -596,3 +605,16 @@ export class SyncService extends TenantService {
 }
 
 const tenantStatus = (auth: AuthContext) => auth.tenant?.status;
+
+function snapshotBranding(b: BrandingView): SnapshotBranding {
+  const { header, footer, contact } = receiptBranding(b);
+  return {
+    displayName: b.displayName,
+    brandColor: b.brandColor,
+    logoSha256: b.logo?.sha256 ?? null,
+    backgroundSha256: b.background?.sha256 ?? null,
+    displayWelcome: b.displayWelcome,
+    displayThanks: b.displayThanks,
+    receipt: { header, footer, contact },
+  };
+}

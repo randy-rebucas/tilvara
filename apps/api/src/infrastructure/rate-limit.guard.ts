@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import { AppError } from './http-error.filter.js';
 import { ENV } from './env.provider.js';
 import { RateLimitStore } from './rate-limit.store.js';
+import { clientIp } from './client-ip.js';
 
 export const RATE_LIMIT = 'onepos:rateLimit';
 
@@ -60,15 +61,18 @@ export class RateLimitGuard implements CanActivate {
 
 /** The counter key for a rule. Emails are hashed so Redis never holds personal data. */
 export function keyOf(rule: RateLimitRule, req: Pick<Request, 'ip' | 'body' | 'header'>): string {
-  const ip = `ip:${req.ip ?? 'unknown'}`;
+  const ip = `ip:${clientIp(req) ?? 'unknown'}`;
   if (rule.by === 'account') {
     const email = (req.body as { email?: unknown } | undefined)?.email;
     if (typeof email !== 'string' || email.trim() === '') return ip;
     return `acct:${createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 32)}`;
   }
   if (rule.by === 'terminal') {
+    // Counted per terminal id *and* credential (hashed): knowing another business's terminal id is not
+    // enough to use up its allowance; made-up credentials share the per-IP cap.
     const id = req.header('x-terminal-id');
-    return id && UUID.test(id) ? `term:${id.toLowerCase()}` : ip;
+    if (!id || !UUID.test(id)) return ip;
+    return `term:${createHash('sha256').update(`${id.toLowerCase()}\n${req.header('authorization') ?? ''}`).digest('hex').slice(0, 32)}`;
   }
   return ip;
 }

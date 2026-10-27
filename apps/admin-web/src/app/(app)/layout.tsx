@@ -7,6 +7,7 @@ import { getT } from '@/i18n/server';
 import { Callout } from '@/components/note';
 import { formatDateTime } from '@/lib/format';
 import { LeaveSupportButton } from '../(auth)/support/open-grant';
+import { brandImageUrl, brandVars } from '@/lib/brand';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const me = await api<Me>('/me');
@@ -22,13 +23,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Tilvara staff in a business's support view (ADR-0016 slice 6): no membership, so the name comes from the grant.
   const tenantName = current?.tenantName ?? me.support?.tenantName ?? '';
   const sub = await apiOrNull<Subscription>('/subscription');
+  const branding = me.activeTenant.branding;
+  const brandName = branding?.displayName || tenantName || 'Tilvara';
 
   return (
     <div className="min-h-dvh">
-      <header className="band sticky top-0 z-20 text-white print:hidden">
+      {/* The business's colour and logo (session 39) on the band only; the pages keep their denomination colours. */}
+      <header className="band sticky top-0 z-20 text-white print:hidden" style={brandVars(branding?.brandColor)}>
         <div className="mx-auto flex max-w-[1440px] flex-wrap items-center gap-x-6 px-4 sm:px-7 lg:h-16 lg:flex-nowrap lg:gap-x-4">
-          <a href="/" className="flex h-14 shrink-0 items-center text-[1.5rem] font-bold tracking-[0.04em] lg:h-auto">
-            Tilvara
+          {/* The business's logo and its own name (its Branding name, else its name; session 41). From lg the tabs
+              share this line: the logo gets 64px and the name 104px, whole on hover. */}
+          <a href="/" className="flex h-14 min-w-0 shrink items-center gap-2.5 text-[1.375rem] font-bold tracking-[0.02em] lg:h-auto lg:shrink-0">
+            {branding?.logoSha256 && (
+              <img src={brandImageUrl('logo', branding.logoSha256)} alt="" className="brand-logo h-10 w-auto max-w-[104px] object-contain lg:h-9 lg:max-w-[64px]" />
+            )}
+            <span data-testid="band-name" className="block max-w-[14rem] truncate lg:max-w-[104px] lg:text-[1.125rem]" title={brandName}>
+              {brandName}
+            </span>
           </a>
           {/* Below lg the tabs move to their own scrollable row under the band's first line. */}
           <div className="nav-fade order-last -mx-4 w-[calc(100%+2rem)] border-t border-white/15 px-3 py-1.5 sm:-mx-7 sm:w-[calc(100%+3.5rem)] sm:px-6 lg:order-none lg:mx-0 lg:w-auto lg:min-w-0 lg:border-0 lg:p-0">

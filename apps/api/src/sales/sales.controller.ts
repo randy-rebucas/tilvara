@@ -117,9 +117,10 @@ export class SalesController {
 
   /**
    * A price change on one item, approved by the cashier (if they may) or by a manager signing in on the
-   * spot. Rate-limited like a sign-in: per address, and per approver account named in the body.
+   * spot. Rate-limited like a sign-in: per address, and per approver account named in the body, in the
+   * same per-account bucket as sign-in (session 40), so the two together never allow more guesses than one.
    */
-  @RateLimit({ bucket: 'price-override', limit: 20, windowSeconds: 600 }, { bucket: 'price-override-account', limit: 10, windowSeconds: 600, by: 'account' })
+  @RateLimit({ bucket: 'price-override', limit: 20, windowSeconds: 600 }, { bucket: 'login-account', limit: 10, windowSeconds: 600, by: 'account' })
   @Post('price-overrides')
   createPriceOverride(@Auth() auth: AuthContext, @Body(new ZodPipe(createPriceOverrideSchema)) body: CreatePriceOverrideInput) {
     return this.counter.createPriceOverride(auth, body);

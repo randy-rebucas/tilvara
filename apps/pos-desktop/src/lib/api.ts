@@ -104,6 +104,14 @@ export async function api<T>(method: string, path: string, body?: unknown, heade
   return data as T;
 }
 
+/** An image or other file the API serves (the business's logo, session 39); one silent refresh on 401. */
+export async function apiBlob(path: string): Promise<Blob> {
+  let res = await raw('GET', path, undefined, {}, crypto.randomUUID());
+  if (res.status === 401 && (await refresh())) res = await raw('GET', path, undefined, {}, crypto.randomUUID());
+  if (!res.ok) throw new ApiFailure({ status: res.status, code: 'ERROR', message: res.statusText });
+  return res.blob();
+}
+
 export interface Membership {
   tenantId: string;
   tenantName: string;

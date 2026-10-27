@@ -73,6 +73,10 @@ describe('API keys', () => {
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
     await http().get('/v1/reports/sales-summary').query({ branchId: branchA, from: today, to: today }).set(key).expect(200);
     expect((await http().get('/v1/members').set(key).expect(403)).body.error.code).toBe('FORBIDDEN');
+    // Routes about the signed-in person (their account, their other businesses) are not the key's.
+    for (const path of ['/v1/me', '/v1/auth/mfa', '/v1/auth/account/closure', '/v1/support/grants']) {
+      expect((await http().get(path).set(key).expect(403)).body.error.code, path).toBe('FORBIDDEN');
+    }
     expect((await http().post('/v1/branches').set(key).send({ legalEntityId: randomUUID(), code: 'X', name: 'x' }).expect(403)).body.error.code).toBe('API_KEY_READ_ONLY');
     await http().get('/v1/branches').set(withKey(made.key.replace(/.$/, (ch: string) => (ch === 'A' ? 'B' : 'A')))).expect(401);
     await http().get('/v1/branches').set(withKey('tlv_short_x')).expect(401);

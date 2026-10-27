@@ -24,6 +24,7 @@ const BY_CODE: Record<string, MessageKey> = {
   ALREADY_MEMBER: 'refusal.alreadyMember',
   MFA_RESET_SELF: 'refusal.mfaResetSelf',
   MFA_NOT_ENABLED: 'refusal.mfaNotEnabled',
+  MFA_RESET_OTHER_BUSINESS: 'refusal.mfaResetOtherBusiness',
   EXTENSION_REQUIRES: 'refusal.extensionRequires',
   EXTENSION_REQUIRED_BY: 'refusal.extensionRequiredBy',
   EXTENSION_IN_USE: 'refusal.extensionInUse',

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ApiMetrics } from '../../src/infrastructure/metrics.js';
+import { keyOf } from '../../src/infrastructure/rate-limit.guard.js';
 import { RateLimitStore } from '../../src/infrastructure/rate-limit.store.js';
 import { createApp, PASSWORD, signup } from './helpers.js';
 
@@ -87,9 +88,15 @@ describe.skipIf(!REDIS)('rate limits shared through Redis', () => {
       const store = c.get(RateLimitStore);
       // Arrange counters directly: 600 hits for one terminal, 2,999 from this IP.
       const terminal = randomUUID();
-      for (let i = 0; i < 600; i++) await store.hit(`terminal:term:${terminal}`, 60_000);
-      const own = await request(c.getHttpServer()).get('/v1/terminal/snapshot').set('x-terminal-id', terminal);
+      const credential = 'Bearer the-terminal-credential';
+      const headers: Record<string, string> = { 'x-terminal-id': terminal, authorization: credential };
+      const key = keyOf({ bucket: 'terminal', limit: 600, windowSeconds: 60, by: 'terminal' }, { ip: '127.0.0.1', body: {}, header: ((n: string) => headers[n]) as never });
+      for (let i = 0; i < 600; i++) await store.hit(`terminal:${key}`, 60_000);
+      const own = await request(c.getHttpServer()).get('/v1/terminal/snapshot').set(headers);
       expect(own.status).toBe(429);
+      // Someone who knows the terminal id but not its credential has their own allowance (2026-10-27).
+      const guessed = await request(c.getHttpServer()).get('/v1/terminal/snapshot').set({ 'x-terminal-id': terminal, authorization: 'Bearer wrong' });
+      expect(guessed.status).toBe(401);
       // A fresh (forged) terminal id is not limited by that terminal's counter…
       const forged = await request(c.getHttpServer()).get('/v1/terminal/snapshot').set('x-terminal-id', randomUUID());
       expect(forged.status).toBe(401);
@@ -131,5 +138,36 @@ describe('rate limits when Redis is down', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('per-IP limits behind the admin web (session 40)', () => {
+  const SECRET = 's'.repeat(40);
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    // Counting in this process (no Redis) is enough: only the key matters here.
+    app = await createApp({ RATE_LIMITS_ENABLED: true, REDIS_URL: undefined, RATE_LIMIT_PREFIX: `test:${randomUUID()}:`, BFF_SHARED_SECRET: SECRET });
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  const signupFrom = (headers: Record<string, string>) => request(app.getHttpServer()).post('/v1/auth/signup').set(headers).send({}).then((r) => r.status);
+
+  it('the admin’s visitors each get their own bucket; a wrong secret or a non-address is the caller’s own', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i++) statuses.push(await signupFrom({ 'x-onepos-bff': SECRET, 'x-onepos-client-ip': '203.0.113.7' }));
+    expect(statuses).toEqual([400, 400, 400, 400, 400, 429]);
+    // Another visitor through the same admin server is not affected.
+    expect(await signupFrom({ 'x-onepos-bff': SECRET, 'x-onepos-client-ip': '198.51.100.20' })).toBe(400);
+    // Without the secret the claimed address is ignored: the caller's own address counts (fresh here).
+    expect(await signupFrom({ 'x-onepos-bff': 'x'.repeat(40), 'x-onepos-client-ip': '203.0.113.7' })).toBe(400);
+    expect(await signupFrom({ 'x-onepos-bff': SECRET, 'x-onepos-client-ip': 'not-an-ip' })).toBe(400);
+    // …and that caller's bucket is now the one filling: three more, then refused.
+    const own: number[] = [];
+    for (let i = 0; i < 4; i++) own.push(await signupFrom({ 'x-onepos-client-ip': '203.0.113.7' }));
+    expect(own).toEqual([400, 400, 400, 429]);
   });
 });

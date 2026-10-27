@@ -3,6 +3,7 @@ import { API_URL } from '@/lib/config';
 import { ACCESS_COOKIE, LANG_COOKIE } from '@/lib/cookies';
 import { toCsv } from '@/lib/report-csv';
 import { translate, type MessageKey } from '@/i18n/messages';
+import { visitorHeaders } from '@/lib/visitor';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
   if (!UUID.test(entity) || !DATE.test(from) || !DATE.test(to)) return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Choose an entity and a date range' } }, { status: 404 });
   const token = request.cookies.get(ACCESS_COOKIE)?.value;
   if (!token) return NextResponse.redirect(new URL('/sign-in', request.url));
-  const res = await fetch(`${API_URL}/journal-lines?legalEntityId=${entity}&from=${from}&to=${to}`, { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' });
+  const res = await fetch(`${API_URL}/journal-lines?legalEntityId=${entity}&from=${from}&to=${to}`, { headers: { ...visitorHeaders(request.headers), authorization: `Bearer ${token}` }, cache: 'no-store' });
   if (!res.ok) {
     // Back to the journal with the reason (a plain link, so the browser shows the page, not a JSON file).
     const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;

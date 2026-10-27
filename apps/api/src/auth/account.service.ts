@@ -124,7 +124,10 @@ export class AccountService {
   }
 
   async closureStatus(userId: string): Promise<ClosureStatus> {
-    const { rows } = await this.database.pool.query<{ kind: string; name: string | null }>('SELECT * FROM auth_account_closure_blockers($1)', [userId]);
+    const rows = await this.tenantDb.tx(
+      async (tx) => (await tx.client.query<{ kind: string; name: string | null }>('SELECT * FROM auth_account_closure_blockers($1)', [userId])).rows,
+      { userId },
+    );
     const businesses = rows.filter((r) => r.kind === 'MEMBERSHIP').map((r) => r.name!);
     const staff = rows.some((r) => r.kind === 'STAFF');
     return { canClose: businesses.length === 0 && !staff, businesses, staff };
@@ -136,7 +139,10 @@ export class AccountService {
     const status = await this.closureStatus(auth.userId);
     if (!status.canClose) throw blocked(status);
     try {
-      await this.database.pool.query('SELECT auth_account_close($1, $2)', [auth.userId, auth.correlationId ?? null]);
+      await this.tenantDb.tx((tx) => tx.client.query('SELECT auth_account_close($1, $2)', [auth.userId, auth.correlationId ?? null]), {
+        userId: auth.userId,
+        correlationId: auth.correlationId,
+      });
     } catch (e) {
       const pg = (e as { cause?: { constraint?: string }; constraint?: string });
       // A membership or staff role added between the check and the lock.

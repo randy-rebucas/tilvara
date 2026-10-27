@@ -9,6 +9,7 @@ import { Shell } from './components/Shell';
 import { TillSetup } from './components/Till';
 import { useT } from './i18n';
 import { tabsFor, type Tab } from './lib/tabs';
+import { useBrand } from './lib/brand';
 import { useTill } from './lib/till';
 import { api, session, signOut } from './lib/api';
 import type { Me } from './types';
@@ -39,37 +40,44 @@ function Counter() {
   const [tab, setTab] = useState<Tab>('sell');
   /** An exchange started from This shift, finished on Sell (session 20). */
   const [exchange, setExchange] = useState<ExchangeStart | null>(null);
+  const brand = useBrand();
 
-  useEffect(() => session.onSignedOut(() => setStage({ name: 'signin' })), []);
+  useEffect(() => session.onSignedOut(() => {
+    setStage({ name: 'signin' });
+    brand.clear();
+  }), [brand]);
 
   async function afterSignIn() {
     const me = await api<Me>('GET', '/v1/me');
     setStage(me.activeTenant ? { name: 'register', me } : { name: 'business', me });
+    // A till in a browser learns the business's look once it knows the business (a desktop till has it from its snapshot).
+    if (me.activeTenant) void brand.loadFromServer();
   }
 
   async function leave() {
     await signOut();
+    brand.clear();
     setStage({ name: 'signin' });
     setTab('sell');
   }
 
   if (stage.name === 'signin') {
     return (
-      <Shell>
+      <Shell backdrop>
         <SignIn onDone={() => void afterSignIn()} />
       </Shell>
     );
   }
   if (stage.name === 'business') {
     return (
-      <Shell onSignOut={leave}>
+      <Shell onSignOut={leave} backdrop>
         <BusinessPicker me={stage.me} onDone={() => void afterSignIn()} />
       </Shell>
     );
   }
   if (stage.name === 'register') {
     return (
-      <Shell onSignOut={leave} help={{ topic: 'start' }}>
+      <Shell onSignOut={leave} help={{ topic: 'start' }} backdrop>
         <RegisterPicker
           onReady={(shift) => {
             // A new or resumed shift always starts at the counter.

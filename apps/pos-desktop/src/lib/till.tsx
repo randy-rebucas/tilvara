@@ -22,10 +22,13 @@ export interface Till {
   apiUrl: string;
   /**
    * Check the server address, terminal id and one-time credential against the API, then keep them
-   * (credential in the OS store). Rejects with `INVALID_URL` for an address the till will not use.
+   * (credential in the OS store). Rejects with `INVALID_URL` for an address the till will not use, and
+   * with `UNSENT_SALES` (`TillPairingError`) for a terminal of another register, business or server
+   * while sales are still waiting to be sent. The same terminal, or another one of the same register,
+   * carries on with the file; any other wipes the previous business's data first (`LocalStore.pair`).
    */
   setUp(terminalId: string, credential: string, apiUrl: string): Promise<void>;
-  /** Forget this terminal (the queue stays in the file; a new set-up continues it). */
+  /** Forget this terminal (the queue stays in the file; a set-up for it, or its register, continues it). */
   forget(): Promise<void>;
   setPrinter(target: PrinterTarget | null): Promise<void>;
   /** Re-read the engine status now (after ringing up or syncing). */
@@ -66,9 +69,9 @@ export function TillProvider({ children }: { children: ReactNode }) {
   const engineRef = useRef<OfflineEngine | null>(null);
 
   const start = useCallback(async (id: string, credential: string) => {
-    engineRef.current?.stop();
+    await engineRef.current?.close();
     const transport = httpTransport({ baseUrl: apiBase(), terminalId: id, credential });
-    const e = new OfflineEngine({ store: store!, transport });
+    const e = new OfflineEngine({ store: store!, transport, terminalId: id });
     await e.open();
     engineRef.current = e;
     setEngine(e);
@@ -145,7 +148,13 @@ export function TillProvider({ children }: { children: ReactNode }) {
     const origin = normalizeApiUrl(url);
     if (!origin) throw Object.assign(new Error('Use an https:// server address'), { kind: 'INVALID_URL' });
     // Proves the address and the pair before keeping them: a wrong one is refused here, not at the first outage.
-    await httpTransport({ baseUrl: origin, terminalId: id, credential }).snapshot();
+    const snap = await httpTransport({ baseUrl: origin, terminalId: id, credential }).snapshot();
+    // Nothing of the old engine may touch the file while it changes hands.
+    await engineRef.current?.close();
+    engineRef.current = null;
+    // Whose data the file holds decides: carry on, take over the register's waiting sales, or wipe the
+    // previous business's data; refused (UNSENT_SALES) while another business's sales wait to be sent.
+    await store!.pair({ terminalId: id, origin, registerId: snap.register.id });
     await terminalSecret.set(credential);
     await store!.setMeta('api_url', origin);
     setApiBase(origin);
@@ -156,7 +165,7 @@ export function TillProvider({ children }: { children: ReactNode }) {
   }, [store, start]);
 
   const forget = useCallback(async () => {
-    engineRef.current?.stop();
+    await engineRef.current?.close();
     engineRef.current = null;
     await terminalSecret.clear();
     await store!.setMeta('terminal_id', null);

@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { LocalStore, OfflineEngine, OfflineSaleError, TransportError, type Transport } from '../src/index.js';
+import { LocalStore, OfflineEngine, OfflineSaleError, TillPairingError, TransportError, type SqlDriver, type Transport } from '../src/index.js';
 import { nodeSqliteDriver } from '../src/node-sqlite.js';
 
 const CASHIER = '0199f0a0-0000-7000-8000-00000000c0de';
@@ -293,5 +293,215 @@ describe('scale labels offline (session 16)', () => {
     const unit = '254321010000';
     expect(await engine.lookup(`${unit}${ean13CheckDigit(unit)}`)).toBeNull();
     expect(await engine.lookup(`${first12}${(ean13CheckDigit(first12) + 1) % 10}`)).toBeNull();
+  });
+});
+
+describe('branding (session 39)', () => {
+  const branding = {
+    displayName: 'Nena', brandColor: '#7a1f3d', logoSha256: 'a'.repeat(64), backgroundSha256: null,
+    displayWelcome: 'Welcome!', displayThanks: 'Salamat!',
+    receipt: { header: ['Open daily'], footer: ['Salamat po!'], contact: ['0917 000 0000'] },
+  };
+
+  it('offline receipts carry the messages; the logo is fetched once, kept, and shown offline', async () => {
+    const server = fakeServer();
+    let fetched = 0;
+    server.transport.snapshot = async () => ({ ...snapshot, branding });
+    server.transport.brandImage = async (kind) => {
+      fetched++;
+      if (kind !== 'logo') throw new TransportError('HTTP', 'none', 404);
+      return { contentType: 'image/png', data: 'iVBORw0K' };
+    };
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { engine } = await till(dbFile(), server, clock);
+    expect(await engine.branding()).toBeNull();
+    expect(await engine.brandImage('logo')).toBeNull(); // no snapshot yet
+    await engine.refreshSnapshot();
+    expect(await engine.branding()).toEqual(branding);
+    expect(await engine.brandImage('logo')).toEqual({ contentType: 'image/png', data: 'iVBORw0K' });
+    // Kept: offline (the server gone) the till still has it, without asking again.
+    server.transport.brandImage = async () => { throw new TransportError('NETWORK', 'down'); };
+    expect(await engine.brandImage('logo')).toEqual({ contentType: 'image/png', data: 'iVBORw0K' });
+    expect(fetched).toBe(1);
+    expect(await engine.brandImage('background')).toBeNull();
+    const { receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    expect(receipt.branding).toEqual(branding.receipt);
+  });
+
+  it('a till file from before branding is upgraded and keeps its queue', async () => {
+    const path = dbFile();
+    const driver = nodeSqliteDriver(path);
+    drivers.push(driver);
+    // Version 1 as it shipped: no brand_images table.
+    await driver.execute(`CREATE TABLE schema_version (version INTEGER NOT NULL)`);
+    await driver.execute(`INSERT INTO schema_version (version) VALUES (1)`);
+    await driver.execute(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    await driver.execute(`CREATE TABLE snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL, fetched_at INTEGER NOT NULL)`);
+    await createV1Outbox(driver);
+    await driver.execute(`INSERT INTO meta (key, value) VALUES ('terminal_id', 't1')`);
+    const store = new LocalStore(driver);
+    await store.migrate();
+    expect(await store.meta('terminal_id')).toBe('t1');
+    await store.saveBrandImage('b'.repeat(64), 'image/png', 'AAAA', []);
+    expect(await store.brandImage('b'.repeat(64))).toEqual({ contentType: 'image/png', data: 'AAAA' });
+    // A replaced image goes once the snapshot no longer names it.
+    await store.saveBrandImage('c'.repeat(64), 'image/png', 'BBBB', ['c'.repeat(64)]);
+    expect(await store.brandImage('b'.repeat(64))).toBeNull();
+  });
+});
+
+/** The outbox as schema version 1 shipped it (no terminal column). */
+async function createV1Outbox(driver: SqlDriver) {
+  await driver.execute(`CREATE TABLE outbox (
+    device_seq INTEGER PRIMARY KEY CHECK (device_seq > 0), terminal_txn_id TEXT NOT NULL UNIQUE, envelope TEXT NOT NULL, receipt TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('PENDING','RECORDED','QUARANTINED','DISMISSED','REJECTED')), attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER NOT NULL, last_error TEXT, result TEXT, created_at INTEGER NOT NULL, synced_at INTEGER)`);
+}
+
+describe('setting the till up for another terminal (whose data the file holds)', () => {
+  const A = { terminalId: snapshot.terminal.id, origin: 'https://a.example', registerId: snapshot.register.id };
+  const otherBusiness: Snapshot = {
+    ...snapshot, snapshotId: '0199f0a0-0000-7000-8000-000000005b00',
+    terminal: { id: '0199f0a0-0000-7000-8000-00000000te0b', name: 'Till B', credentialHint: 'WxYz' },
+    register: { id: 'rB', code: 'B1', name: 'Other shop' }, openSession: { ...snapshot.openSession!, id: '0199f0a0-0000-7000-8000-0000005e55b0' },
+  };
+  const B = { terminalId: otherBusiness.terminal.id, origin: 'https://a.example', registerId: otherBusiness.register.id };
+
+  /** A till file set up for A (as `setUp` does), with one sale rung offline and still waiting. */
+  async function tillOfA(clock: { t: number }) {
+    const server = fakeServer();
+    const driver = nodeSqliteDriver(dbFile());
+    drivers.push(driver);
+    const store = new LocalStore(driver);
+    await store.migrate();
+    expect(await store.pair(A)).toBe('NEW');
+    const engine = new OfflineEngine({ store, transport: server.transport, terminalId: A.terminalId, now: () => clock.t, random: () => 1 });
+    await engine.open();
+    await engine.refreshSnapshot();
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    return { server, driver, store, engine };
+  }
+
+  it('refuses another business, register or server while a sale is waiting, and keeps everything as it was', async () => {
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { store, engine } = await tillOfA(clock);
+    await expect(store.pair(B)).rejects.toMatchObject({ kind: 'UNSENT_SALES', pending: 1, owner: { terminalId: A.terminalId } });
+    await expect(store.pair(B)).rejects.toBeInstanceOf(TillPairingError);
+    // The same terminal id on another server is another owner too.
+    await expect(store.pair({ ...A, origin: 'https://b.example' })).rejects.toMatchObject({ kind: 'UNSENT_SALES' });
+    await expect(store.resetForNewOwner()).rejects.toMatchObject({ kind: 'UNSENT_SALES' });
+    expect(await store.owner()).toEqual(A);
+    expect((await store.snapshot())?.body.snapshotId).toBe(snapshot.snapshotId);
+    expect((await store.list('PENDING')).map((q) => q.terminalId)).toEqual([A.terminalId]);
+    expect(await engine.status()).toMatchObject({ pending: 1 });
+  });
+
+  it('with nothing waiting, wipes the previous business (snapshot, images, sales and receipts, sequence) and keeps the printer', async () => {
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { store, engine, driver } = await tillOfA(clock);
+    expect((await engine.syncOnce()).results).toHaveLength(1);
+    await store.saveBrandImage('a'.repeat(64), 'image/png', 'AAAA', []);
+    await store.setMeta('printer', '{"kind":"network","host":"10.0.0.5","port":9100}');
+    await store.setMeta('api_url', A.origin);
+    await engine.close();
+    await expect(engine.refreshSnapshot()).rejects.toThrow(/ENGINE_CLOSED/); // the old engine writes nothing back
+
+    expect(await store.pair(B)).toBe('RESET');
+    expect(await store.snapshot()).toBeNull();
+    expect(await store.list()).toEqual([]);
+    expect(await store.brandImage('a'.repeat(64))).toBeNull();
+    for (const key of ['next_device_seq', 'last_sync_at', 'auth_state', 'terminal_id']) expect(await store.meta(key)).toBeNull();
+    expect(await store.meta('printer')).toContain('10.0.0.5');
+    expect(await store.owner()).toEqual(B);
+
+    // B's till starts clean: its own price list, numbered from 1.
+    const serverB = fakeServer();
+    serverB.transport.snapshot = async () => otherBusiness;
+    const engineB = new OfflineEngine({ store: new LocalStore(driver), transport: serverB.transport, terminalId: B.terminalId, now: () => clock.t });
+    await engineB.open();
+    await engineB.refreshSnapshot();
+    const { sale } = await engineB.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    expect(sale).toMatchObject({ deviceSeq: 1, terminalId: B.terminalId });
+    await engineB.syncOnce();
+    expect(serverB.sent.flat().map((s) => s.snapshotId)).toEqual([otherBusiness.snapshotId]);
+  });
+
+  it('the same terminal on the same server carries on with its waiting sales', async () => {
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { store, server, engine } = await tillOfA(clock);
+    expect(await store.pair(A)).toBe('CONTINUED');
+    expect(await store.snapshot()).not.toBeNull();
+    const report = await engine.syncOnce();
+    expect(report.results).toMatchObject([{ status: 'RECORDED' }]);
+    expect(server.sent).toHaveLength(1);
+  });
+
+  it('another terminal of the same register (a revoked one replaced) takes over and delivers the waiting sales', async () => {
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { store, driver, engine } = await tillOfA(clock);
+    await engine.close();
+    const replacement = { ...A, terminalId: '0199f0a0-0000-7000-8000-00000000te02' };
+    expect(await store.pair(replacement)).toBe('REPLACED');
+    expect((await store.list('PENDING')).map((q) => q.terminalId)).toEqual([replacement.terminalId]);
+    const server = fakeServer();
+    const next = new OfflineEngine({ store: new LocalStore(driver), transport: server.transport, terminalId: replacement.terminalId, now: () => clock.t });
+    await next.open();
+    expect((await next.syncOnce()).results).toMatchObject([{ status: 'RECORDED' }]);
+    expect(server.sent.flat()).toHaveLength(1);
+  });
+
+  it('a file from before owners were kept is judged by the terminal it was set up for, or the one whose snapshot it holds', async () => {
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { store } = await tillOfA(clock);
+    for (const key of ['owner_terminal_id', 'owner_origin', 'owner_register_id']) await store.setMeta(key, null);
+    await store.setMeta('terminal_id', null); // disconnected with the old build
+    expect(await store.owner()).toEqual({ terminalId: A.terminalId, origin: null, registerId: A.registerId });
+    await expect(store.pair(B)).rejects.toMatchObject({ kind: 'UNSENT_SALES' });
+    expect(await store.pair(A)).toBe('CONTINUED');
+  });
+});
+
+describe('each sale goes only with the credential of the terminal it was rung on', () => {
+  it('sync sends only the current terminal’s sales; another terminal’s stay waiting, never sent', async () => {
+    const server = fakeServer();
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const driver = nodeSqliteDriver(dbFile());
+    drivers.push(driver);
+    const store = new LocalStore(driver);
+    const mine = new OfflineEngine({ store, transport: server.transport, terminalId: snapshot.terminal.id, now: () => clock.t });
+    await mine.open();
+    await mine.refreshSnapshot();
+    await mine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    await mine.close();
+    const other = new OfflineEngine({ store, transport: server.transport, terminalId: '0199f0a0-0000-7000-8000-00000000te09', now: () => clock.t });
+    await other.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: RICE, quantity: '1' }], tendered: '55' });
+
+    const report = await other.syncOnce();
+    expect(report.sent).toBe(1);
+    expect(server.sent.flat().map((s) => s.deviceSeq)).toEqual([2]);
+    const left = await store.list('PENDING');
+    expect(left.map((q) => [q.deviceSeq, q.terminalId])).toEqual([[1, snapshot.terminal.id]]);
+    expect((await other.drain()).at(-1)).toMatchObject({ sent: 0 });
+    expect(server.sent.flat()).toHaveLength(1);
+  });
+
+  it('upgrading a file tags the sales already queued with the terminal it is set up for', async () => {
+    const path = dbFile();
+    const driver = nodeSqliteDriver(path);
+    drivers.push(driver);
+    await driver.execute(`CREATE TABLE schema_version (version INTEGER NOT NULL)`);
+    await driver.execute(`INSERT INTO schema_version (version) VALUES (2)`);
+    await driver.execute(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+    await driver.execute(`CREATE TABLE snapshot (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL, fetched_at INTEGER NOT NULL)`);
+    await driver.execute(`CREATE TABLE brand_images (sha256 TEXT PRIMARY KEY, content_type TEXT NOT NULL, data TEXT NOT NULL)`);
+    await createV1Outbox(driver);
+    await driver.execute(`INSERT INTO snapshot (id, body, fetched_at) VALUES (1, ?, 0)`, [JSON.stringify(snapshot)]);
+    await driver.execute(
+      `INSERT INTO outbox (device_seq, terminal_txn_id, envelope, receipt, status, next_attempt_at, created_at) VALUES (1, 'x1', '{}', '{}', 'PENDING', 0, 0)`,
+    );
+    const store = new LocalStore(driver);
+    await store.migrate();
+    // Disconnected (no terminal_id): the snapshot's terminal.
+    expect((await store.get(1))?.terminalId).toBe(snapshot.terminal.id);
   });
 });

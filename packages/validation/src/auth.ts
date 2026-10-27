@@ -17,6 +17,25 @@ export const tenantSlugSchema = z
   .regex(/^[a-z0-9][a-z0-9-]{1,62}$/, 'Use 2–63 lowercase letters, digits or hyphens');
 
 /**
+ * Names a business may not take as its web address, because `<slug>.<shop domain>` is also the
+ * business's own address (session 40): Tilvara's own hosts and words people would take for them.
+ */
+export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
+  'admin', 'api', 'app', 'apps', 'assets', 'auth', 'billing', 'blog', 'cdn', 'console', 'dashboard', 'demo', 'dev',
+  'docs', 'email', 'ftp', 'help', 'imap', 'internal', 'login', 'mail', 'metrics', 'mx', 'my', 'ns1', 'ns2', 'onepos',
+  'pop', 'pos', 'public', 'root', 'security', 'shop', 'shops', 'sign-in', 'sign-up', 'signin', 'signup', 'smtp',
+  'staging', 'static', 'status', 'support', 'test', 'tilvara', 'till', 'webhooks', 'webmail', 'www', '1pos',
+]);
+
+/**
+ * Whether a slug can also be the business's subdomain: a DNS label (no hyphen at the end, no `xn--`-style
+ * prefix) that is not reserved. Older slugs that fail keep their `/s/<slug>` page, without a subdomain.
+ */
+export function isSubdomainSlug(slug: string): boolean {
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(slug) && slug.length >= 2 && slug.slice(2, 4) !== '--' && !RESERVED_SLUGS.has(slug);
+}
+
+/**
  * What the business does (`tenants.business_type`). Retail only for now: GROCERY, SALON, PHARMACY and
  * HYBRID were removed on 2026-10-25 (migration 0112), after RESTAURANT, LODGING and LAUNDRY (0110–0111).
  */

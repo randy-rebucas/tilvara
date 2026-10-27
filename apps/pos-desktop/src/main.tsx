@@ -8,6 +8,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { CustomerDisplay } from './components/CustomerDisplay';
 import { I18nProvider } from './i18n';
+import { BrandProvider } from './lib/brand';
 import { TillProvider } from './lib/till';
 import './styles.css';
 
@@ -21,7 +22,9 @@ createRoot(document.getElementById('root')!).render(
         <CustomerDisplay />
       ) : (
         <TillProvider>
-          <App />
+          <BrandProvider>
+            <App />
+          </BrandProvider>
         </TillProvider>
       )}
     </I18nProvider>

@@ -115,6 +115,12 @@ export const serverEnvSchema = z.object({
    * dodge per-IP limits, or put every client in one bucket.
    */
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  /**
+   * Shared with the admin web (session 40): the admin calls the API from its own server, so it sends the
+   * visitor's address in `x-onepos-client-ip` with this secret in `x-onepos-bff`; only then is that
+   * address used for per-IP limits. Unset = the header is ignored. Same value as the admin's `ONEPOS_BFF_SECRET`.
+   */
+  BFF_SHARED_SECRET: z.string().min(32).optional(),
   /** Test-only escape hatch; refused in production. */
   RATE_LIMITS_ENABLED: z
     .enum(['true', 'false'])
@@ -218,6 +224,9 @@ export function productionIssues(cfg: ServerEnv): string[] {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
   }
   if (cfg.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
+  if (!cfg.BFF_SHARED_SECRET || DEV_SECRET_MARKERS.some((m) => cfg.BFF_SHARED_SECRET!.toLowerCase().includes(m))) {
+    issues.push('BFF_SHARED_SECRET: required in production (32+ random characters, shared with the admin web), or every admin visitor shares one per-IP limit');
+  }
   issues.push(...metricsTokenIssue(cfg, cfg.API_METRICS_PORT), ...webhookIssues(cfg));
   return issues;
 }
