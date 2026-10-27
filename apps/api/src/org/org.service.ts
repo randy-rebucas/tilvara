@@ -9,6 +9,7 @@ import {
   legalEntities,
   registers,
   terminals,
+  sql,
   type Database,
   inSequence,
 } from '@1pos/database';
@@ -170,6 +171,30 @@ export class OrgService extends TenantService {
         .where(and(eq(registers.branchId, id), isNull(registers.archivedAt)))
         .limit(1);
       if (active.length > 0) throw new AppError('HAS_ACTIVE_CHILDREN', 'Archive its registers first', HttpStatus.CONFLICT);
+      // An archived branch takes no adjustment, count or dispatch, so stock left there (or on its way)
+      // would keep value in the Inventory account that no document could clear.
+      const { rows: stock } = await db.execute<{ n: string }>(sql`
+        SELECT count(*)::text AS n FROM stock_balances WHERE branch_id = ${id} AND (quantity <> 0 OR value <> 0)`);
+      if (Number(stock[0]?.n ?? 0) > 0) {
+        throw new AppError('BRANCH_HAS_STOCK', 'Move, count or write off the stock at this branch first', HttpStatus.CONFLICT, { items: Number(stock[0]!.n) });
+      }
+      const { rows: [open] = [] } = await db.execute<{ transfers: string; count_sheets: string; purchase_orders: string }>(sql`
+        SELECT (SELECT count(*) FROM stock_transfers WHERE status = 'DISPATCHED' AND (from_branch_id = ${id} OR to_branch_id = ${id}))::text AS transfers,
+               (SELECT count(*) FROM stock_count_sheets WHERE status = 'OPEN' AND branch_id = ${id})::text AS count_sheets,
+               (SELECT count(*) FROM purchase_orders WHERE status IN ('APPROVED','PARTIALLY_RECEIVED') AND branch_id = ${id})::text AS purchase_orders`);
+      const documents = {
+        transfers: Number(open?.transfers ?? 0),
+        countSheets: Number(open?.count_sheets ?? 0),
+        purchaseOrders: Number(open?.purchase_orders ?? 0),
+      };
+      if (documents.transfers + documents.countSheets + documents.purchaseOrders > 0) {
+        throw new AppError(
+          'BRANCH_HAS_OPEN_DOCUMENTS',
+          'Receive its transfers, post or cancel its count sheet and close or cancel its purchase orders first',
+          HttpStatus.CONFLICT,
+          documents,
+        );
+      }
       const [row] = await db.update(branches).set({ archivedAt: new Date() }).where(eq(branches.id, id)).returning();
       await this.audit(db, auth, 'branch.archived', 'branch', id);
       return row!;

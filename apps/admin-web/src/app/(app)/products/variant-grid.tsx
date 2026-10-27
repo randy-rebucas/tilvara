@@ -133,7 +133,7 @@ function AddCombinationsFields({ close, product }: { close: () => void; product:
         ...(price.trim() ? { price: price.trim() } : {}),
         ...(cost.trim() ? { referenceCost: cost.trim() } : {}),
       }, { idempotencyKey: keys.current.get(c.sku)! });
-      out[c.sku] = r.ok ? { ok: true } : { ok: false, message: r.error.message };
+      out[c.sku] = r.ok ? { ok: true } : { ok: false, message: r.error.status === 0 ? t('error.network') : r.error.message };
       setStatus({ ...out });
     }
     setBusy(false);

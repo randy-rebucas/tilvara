@@ -103,6 +103,31 @@ describe('ringing up offline', () => {
     expect(receipt.lines[0]).toMatchObject({ amount: '40.00', promotion: { name: '2 for 40', discount: '4.80' } });
   });
 
+  it('prints the address the snapshot gives and each line as gross − discount, like online receipts (audit 2026-10-27 #33)', async () => {
+    const server = fakeServer();
+    const TEA = '0199f0a0-0000-7000-8000-0000000007ea';
+    server.transport.snapshot = async () => ({
+      ...snapshot,
+      legalEntity: { ...snapshot.legalEntity, receiptAddress: '12 Aurora Blvd, Cubao' },
+      // A price before VAT: the line prints 2 × 10.00 = 20.00, the VAT is added in the totals.
+      items: [...snapshot.items, { variantId: TEA, sku: 'TEA', name: 'Tea', barcodes: [], priceId: 'p3', priceListId: 'l1', unitPrice: '10.0000', priceIncludesTax: false, vatTreatment: 'VATABLE', taxCategoryCode: 'VAT', wholeUnits: true, trackInventory: true }],
+    });
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const { receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: TEA, quantity: '2' }], tendered: '50' });
+    expect(receipt.seller.address).toBe('12 Aurora Blvd, Cubao');
+    expect(receipt.lines[0]).toMatchObject({ amount: '20.00', flag: 'V' });
+    expect(receipt.totals).toMatchObject({ vatAmount: '2.40', amountDue: '22.40' });
+  });
+
+  it('a snapshot from an older server (no address) prints none', async () => {
+    const server = fakeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const { receipt } = await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    expect(receipt.seller).not.toHaveProperty('address');
+  });
+
   it('refuses at the till what it cannot record: another cashier, unknown items, fractions of whole items, too little cash', async () => {
     const server = fakeServer();
     const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
@@ -192,6 +217,36 @@ describe('sync', () => {
     expect((await engine.status()).lastError).toBeNull();
   });
 
+  it('the server reachable again or "Send now" ends the wait: backed-off sales go at once, not minutes later', async () => {
+    const server = fakeServer();
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { engine } = await till(dbFile(), server, clock);
+    await engine.refreshSnapshot();
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '2' }], tendered: '50' });
+    server.set('down');
+    for (let i = 0; i < 4; i++) {
+      await engine.syncOnce();
+      clock.t += 8_000; // the cap: each failure waits it out
+    }
+    await engine.syncOnce(); // backed off again, up to 8 s
+    server.set('ok');
+    expect(await engine.drain()).toEqual([{ sent: 0, results: [] }]); // still waiting out the backoff
+    await engine.refreshSnapshot(); // the connection is back
+    const [first] = await engine.drain();
+    expect(first!.results.map((r) => r.status)).toEqual(['RECORDED', 'RECORDED']);
+
+    // "Send now" without a snapshot first (the cashier presses it once the connection is back).
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    server.set('down');
+    await engine.syncOnce();
+    server.set('ok');
+    expect((await engine.drain())[0]!.sent).toBe(0);
+    const reports = await engine.sendNow();
+    expect(reports[0]!.results).toMatchObject([{ status: 'RECORDED' }]);
+    expect((await engine.status()).pending).toBe(0);
+  });
+
   it('a server out of time (answers the oldest part of each batch) is drained at once, without backing off', async () => {
     const server = fakeServer();
     const clock = { t: Date.parse('2026-10-17T02:00:00Z') }; // the clock never moves: nothing may wait on a backoff
@@ -240,6 +295,75 @@ describe('sync', () => {
     expect(all.map((x) => x.sale.deviceSeq).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const sync = await Promise.all([engine.syncOnce(), engine.syncOnce()]);
     expect(sync.map((r) => r.sent)).toEqual([10, 0]);
+  });
+
+  it('caps a batch by its size as well as its count: 50 sales of 40 lines go in batches under 80 kB (audit 2026-10-27 #1)', async () => {
+    const server = fakeServer();
+    const { engine } = await till(dbFile(), server, { t: Date.parse('2026-10-17T02:00:00Z') });
+    await engine.refreshSnapshot();
+    const lines = Array.from({ length: 40 }, (_, i) => ({ variantId: i % 2 ? COLA : RICE, quantity: '1' }));
+    for (let i = 0; i < 50; i++) await engine.ringUp({ cashierUserId: CASHIER, lines, tendered: '10000' });
+    const reports = await engine.drain();
+    expect(server.sent.length).toBeGreaterThan(1);
+    for (const batch of server.sent) expect(new TextEncoder().encode(JSON.stringify({ sales: batch })).length).toBeLessThanOrEqual(80_000);
+    expect(server.sent.flat().map((s) => s.deviceSeq)).toEqual(Array.from({ length: 50 }, (_, i) => i + 1)); // device order, none skipped
+    expect(reports.every((r) => !r.error)).toBe(true);
+    expect(await engine.status()).toMatchObject({ pending: 0, recorded: 50 });
+  });
+
+  it('a single sale larger than the cap still goes, alone', async () => {
+    const server = fakeServer();
+    const driver = nodeSqliteDriver(dbFile());
+    drivers.push(driver);
+    const engine = new OfflineEngine({ store: new LocalStore(driver), transport: server.transport, now: () => Date.parse('2026-10-17T02:00:00Z'), maxBatchBytes: 500 });
+    await engine.open();
+    await engine.refreshSnapshot();
+    const lines = Array.from({ length: 20 }, () => ({ variantId: COLA, quantity: '1' }));
+    await engine.ringUp({ cashierUserId: CASHIER, lines, tendered: '1000' });
+    await engine.ringUp({ cashierUserId: CASHIER, lines, tendered: '1000' });
+    await engine.drain();
+    expect(server.sent.map((b) => b.length)).toEqual([1, 1]);
+  });
+
+  it('a 413 halves the batch at once (down to one), never backing off the same envelopes forever', async () => {
+    const server = fakeServer();
+    const ok = server.transport.syncSales;
+    // This server takes at most 3 sales at a time; more is "too large".
+    server.transport.syncSales = async (sales) => {
+      if (sales.length > 3) {
+        server.sent.push(sales);
+        throw new TransportError('HTTP', 'request entity too large', 413, 'PAYLOAD_TOO_LARGE');
+      }
+      return ok(sales);
+    };
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { engine } = await till(dbFile(), server, clock);
+    await engine.refreshSnapshot();
+    for (let i = 0; i < 20; i++) await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    const reports = await engine.drain();
+    // 20 refused → 10 refused → 5 refused → 2 at a time from then on.
+    expect(server.sent.map((b) => b.length).slice(0, 4)).toEqual([20, 10, 5, 2]);
+    expect(reports.every((r) => !r.error)).toBe(true);
+    expect(await engine.status()).toMatchObject({ pending: 0, recorded: 20 });
+  });
+
+  it('a 413 on a single sale backs it off like any other failure', async () => {
+    const server = fakeServer();
+    server.transport.syncSales = async (sales) => {
+      server.sent.push(sales);
+      throw new TransportError('HTTP', 'request entity too large', 413, 'PAYLOAD_TOO_LARGE');
+    };
+    const clock = { t: Date.parse('2026-10-17T02:00:00Z') };
+    const { engine } = await till(dbFile(), server, clock);
+    await engine.refreshSnapshot();
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    await engine.ringUp({ cashierUserId: CASHIER, lines: [{ variantId: COLA, quantity: '1' }], tendered: '50' });
+    const reports = await engine.drain();
+    expect(server.sent.map((b) => b.length)).toEqual([2, 1]);
+    expect(reports.at(-1)!.error).toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+    expect(await engine.syncOnce()).toMatchObject({ sent: 1 }); // the other one, alone
+    expect(await engine.syncOnce()).toMatchObject({ sent: 0 }); // both backed off
+    expect(await engine.status()).toMatchObject({ pending: 2 }); // kept
   });
 });
 

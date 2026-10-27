@@ -52,6 +52,8 @@ export const PERSONAL_KEYS = [
   'customerPhone',
   // Prescriptions and pharmacist licences (ADR-0025 §6): health data and licence numbers.
   'patientName', 'patientAddress', 'prescriberName', 'prescriberLicenseNo', 'prescriberS2No', 'yellowFormNo', 'licenseNo', 'prescriptions',
+  // A shop's branding contact details (session 39; may be a sole proprietor's own) and a bill's buyer (ADR-0027).
+  'contactPhone', 'contactEmail', 'buyer',
 ];
 
 /**

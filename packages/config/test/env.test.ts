@@ -101,8 +101,22 @@ describe('loadServerEnv', () => {
     expect(productionIssues(env)).toEqual([
       'MAILER_DRIVER: the dev mailer cannot be used in production (no real email provider configured yet)',
       'PAYMENT_PROVIDER: the dev payment simulator cannot be used in production',
+      'BILLING_PROVIDER: the dev billing simulator cannot be used in production (set paymongo)',
       'FILE_STORAGE_DRIVER: the dev file storage (a local folder) cannot be used in production (object storage waits for D1)',
     ]);
+  });
+
+  it('billing (ADR-0027): paymongo needs its secret key and webhook secret', () => {
+    expect(() => loadServerEnv({ ...base, BILLING_PROVIDER: 'paymongo' })).toThrow(/BILLING_PROVIDER: paymongo needs/);
+    expect(() => loadServerEnv({ ...base, BILLING_PROVIDER: 'paymongo', PAYMONGO_SECRET_KEY: 'sk_test_abc', PAYMONGO_WEBHOOK_SECRET: 'whsk_abc' })).not.toThrow();
+    // Production takes the live key only (audit 45 #16).
+    const testKey = loadServerEnv({ ...base, BILLING_PROVIDER: 'paymongo', PAYMONGO_SECRET_KEY: 'sk_test_abc', PAYMONGO_WEBHOOK_SECRET: 'whsk_abc' });
+    expect(productionIssues(testKey)).toContain('PAYMONGO_SECRET_KEY: production needs the live secret key (sk_live_…), not a test key');
+    expect(productionIssues({ ...testKey, PAYMONGO_SECRET_KEY: 'sk_live_abc' }).join(' ')).not.toMatch(/PAYMONGO_SECRET_KEY/);
+    // The shops' own addresses, where the payment page sends an owner back (same value as the admin's ONEPOS_SHOP_DOMAIN).
+    expect(loadServerEnv({ ...base, SHOP_DOMAIN: ' .Tilvara.PH. ' }).SHOP_DOMAIN).toBe('tilvara.ph');
+    expect(loadServerEnv(base).SHOP_DOMAIN).toBeUndefined();
+    expect(() => loadServerEnv({ ...base, SHOP_DOMAIN: 'https://x' })).toThrow(/SHOP_DOMAIN/);
   });
 
   it('webhooks (session 20): a real signing key in production, and never http or private addresses there', () => {

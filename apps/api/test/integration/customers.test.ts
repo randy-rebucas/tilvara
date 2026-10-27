@@ -246,7 +246,11 @@ describe('purchases and store credit', () => {
     const dump = (await http().post(`/v1/customers/${maria.id}/export`).set(s.manager).expect(200)).body;
     expect(dump).toMatchObject({ format: 'tilvara-customer-export/1', customer: { displayName: 'Maria Santos', phone: '09171234567' } });
     expect(dump.purchases.length).toBeGreaterThanOrEqual(3);
-    expect(dump.purchases[0].lines.map((l: { name: string }) => l.name)).toEqual(['Cola 290ml', 'Rice 1kg']);
+    // Purchases in the order they were completed (ties broken by sale number); the two-item sale with its lines in order.
+    const times = dump.purchases.map((p: { completedAt: string }) => Date.parse(p.completedAt));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    const twoItems = dump.purchases.filter((p: { amountDue: string }) => p.amountDue === '100.80');
+    expect(twoItems.map((p: { lines: { name: string }[] }) => p.lines.map((l) => l.name))).toEqual([['Cola 290ml', 'Rice 1kg']]);
     expect(dump.storeCredit.length).toBeGreaterThanOrEqual(3);
 
     const refused = await http().post(`/v1/customers/${maria.id}/anonymise`).set(s.manager).send({ reason: 'Customer asked' }).expect(409);

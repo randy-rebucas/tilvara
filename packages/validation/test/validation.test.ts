@@ -132,3 +132,67 @@ describe('subdomain slugs (session 40)', () => {
     }
   });
 });
+
+describe('audit 45', () => {
+  const u = (n: number) => `0195f0a0-0000-7000-8000-${String(n).padStart(12, '0')}`;
+
+  it('#13: money that changes hands takes centavos at most; prices keep 4 places', async () => {
+    const v = await import('../src/index.js');
+    expect(v.tendersSchema.safeParse([{ method: 'CASH', tendered: '100.50' }]).success).toBe(true);
+    expect(v.tendersSchema.safeParse([{ method: 'CASH', tendered: '100.505' }]).success).toBe(false);
+    expect(v.tendersSchema.safeParse([{ method: 'STORE_CREDIT', amount: '10.005' }]).success).toBe(false);
+    expect(v.tendersSchema.safeParse([{ method: 'STORE_CREDIT', amount: '10.01' }]).success).toBe(true);
+    expect(v.tendersSchema.safeParse([{ method: 'STORE_CREDIT', amount: '0.00' }]).success).toBe(false);
+    expect(v.createPaymentIntentSchema.safeParse({ cashierSessionId: u(1), clientTransactionId: 'c1', method: 'CARD', amount: '10.005' }).success).toBe(false);
+    expect(v.createPaymentIntentSchema.safeParse({ cashierSessionId: u(1), clientTransactionId: 'c1', method: 'CARD', amount: '10.01' }).success).toBe(true);
+    expect(v.cashMovementSchema.safeParse({ type: 'PAY_IN', amount: '5.125', reason: 'x' }).success).toBe(false);
+    expect(v.cashMovementSchema.safeParse({ type: 'PAY_OUT', amount: '5.12', reason: 'x' }).success).toBe(true);
+    expect(v.openCashierSessionSchema.safeParse({ registerId: u(1), openingFloat: '1000.0001' }).success).toBe(false);
+    expect(v.openCashierSessionSchema.safeParse({ registerId: u(1), openingFloat: '1000' }).success).toBe(true);
+    expect(v.closeCashierSessionSchema.safeParse({ countedCash: '999.999' }).success).toBe(false);
+    expect(v.closeCashierSessionSchema.safeParse({ countedCash: '999.99' }).success).toBe(true);
+    const exchange = (tendered: string) => ({
+      cashierSessionId: u(1), saleId: u(2), reason: 'size',
+      returnLines: [{ saleLineId: u(3), quantity: '1', disposition: 'RESTOCK' }],
+      sale: { clientTransactionId: 'x1', lines: [{ variantId: u(4), quantity: '1' }], tenders: [{ method: 'CASH', tendered }] },
+    });
+    expect(v.createExchangeSchema.safeParse(exchange('20.00')).success).toBe(true);
+    expect(v.createExchangeSchema.safeParse(exchange('20.001')).success).toBe(false);
+    // Prices and costs: still 4 places.
+    expect(v.amountSchema.safeParse('12.3456').success).toBe(true);
+  });
+
+  it('#31: an exchange returns each sale line once', async () => {
+    const { createExchangeSchema } = await import('../src/index.js');
+    const r = createExchangeSchema.safeParse({
+      cashierSessionId: u(1), saleId: u(2), reason: 'size',
+      returnLines: [{ saleLineId: u(3), quantity: '1', disposition: 'RESTOCK' }, { saleLineId: u(3), quantity: '1', disposition: 'DAMAGED' }],
+      sale: { clientTransactionId: 'x1', lines: [{ variantId: u(4), quantity: '1' }] },
+    });
+    expect(r.success).toBe(false);
+    expect(r.error!.issues.map((i) => [i.path.join('.'), i.message])).toContainEqual(['returnLines.1.saleLineId', 'Each sale line once per return']);
+  });
+
+  it('#37: receipts and journal lines compare decimal strings, not JS numbers', async () => {
+    const { createGoodsReceiptSchema, createJournalEntrySchema, createSupplierNoteSchema } = await import('../src/index.js');
+    const receipt = (quantity: string, rejectedQuantity?: string) => createGoodsReceiptSchema.safeParse({
+      branchId: u(1), supplierId: u(2),
+      lines: [{ variantId: u(3), quantity, unitCost: '1', ...(rejectedQuantity ? { rejectedQuantity, rejectionReason: 'torn' } : {}) }],
+    });
+    expect(receipt('0').success).toBe(false);
+    expect(receipt('0.0000').success).toBe(false);
+    expect(receipt('0.0001').success).toBe(true);
+    expect(receipt('0', '0.000').success).toBe(false);
+    expect(receipt('0', '2').success).toBe(true);
+    const entry = (a: Record<string, string>, b: Record<string, string>) => createJournalEntrySchema.safeParse({
+      legalEntityId: u(1), entryDate: '2026-10-27', memo: 'm', lines: [{ accountId: u(2), ...a }, { accountId: u(3), ...b }],
+    });
+    expect(entry({ debit: '10' }, { credit: '10' }).success).toBe(true);
+    expect(entry({ debit: '0.00', credit: '0.0001' }, { credit: '10' }).success).toBe(true);
+    expect(entry({ debit: '0.00' }, { credit: '10' }).success).toBe(false);
+    expect(entry({ debit: '1', credit: '1' }, { credit: '10' }).success).toBe(false);
+    const note = (netAmount: string, vatAmount: string) => createSupplierNoteSchema.safeParse({ kind: 'CREDIT', noteNumber: 'N1', noteDate: '2026-10-27', netAmount, vatAmount, reason: 'r' });
+    expect(note('0.00', '0').success).toBe(false);
+    expect(note('0', '0.01').success).toBe(true);
+  });
+});

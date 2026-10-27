@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Patch } from '@nestjs/common';
 import { businessUpdateSchema, type BusinessUpdateInput } from '@1pos/validation';
-import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { BusinessService } from './business.service.js';
 
@@ -10,6 +10,8 @@ import { BusinessService } from './business.service.js';
 export class BusinessController {
   constructor(@Inject(BusinessService) private readonly business: BusinessService) {}
 
+  /** Every member reads it; an API key needs org.read (audit 45 #21). */
+  @ApiKeyRequires('org.read')
   @Get()
   get(@Auth() auth: AuthContext) {
     return this.business.get(auth);

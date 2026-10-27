@@ -101,6 +101,8 @@ export const cashMovements = pgTable(
     // Declared later in this file; resolved lazily.
     foreignKey({ columns: [t.tenantId, t.saleReturnId], foreignColumns: [saleReturns.tenantId, saleReturns.id] }),
     index('cash_movements_session_idx').on(t.tenantId, t.cashierSessionId),
+    // Centavos only (audit 45 #13): a drawer never holds half a centavo.
+    check('cash_movements_centavos', sql`${t.amount} = round(${t.amount}, 2)`),
     check('cash_movements_type_check', sql`${t.type} IN ('OPENING_FLOAT','SALE','PAY_IN','PAY_OUT','REFUND','SUPPLIER_PAYMENT')`),
     check(
       'cash_movements_sign_check',
@@ -428,6 +430,7 @@ export const paymentIntents = pgTable(
     unique('payment_intents_tenant_id_id_unique').on(t.tenantId, t.id),
     // Payments of removed features stand and may still take the provider's answer (0119); a new one is for a sale
     // (trigger app_payment_intent_new_purpose).
+    check('payment_intents_centavos', sql`${t.amount} = round(${t.amount}, 2)`),
     check('payment_intents_purpose_check', sql`${t.purpose} IN ('SALE','TIP','FOLIO','JOB_ORDER')`),
     check(
       'payment_intents_consumer_check',
@@ -500,6 +503,7 @@ export const saleTenders = pgTable(
     check('sale_tenders_exchange_cash', sql`${t.exchangeReturnId} IS NULL OR ${t.method} = 'CASH'`),
     foreignKey({ columns: [t.tenantId, t.saleId], foreignColumns: [sales.tenantId, sales.id] }),
     index('sale_tenders_sale_idx').on(t.tenantId, t.saleId),
+    check('sale_tenders_centavos', sql`${t.amount} = round(${t.amount}, 2) AND ${t.tendered} = round(${t.tendered}, 2) AND ${t.change} = round(${t.change}, 2)`),
     check('sale_tenders_method_check', sql`${t.method} IN ('CASH','CARD','QR','EWALLET','STORE_CREDIT')`),
     check('sale_tenders_intent_check', sql`(${t.method} IN ('CASH','STORE_CREDIT')) = (${t.paymentIntentId} IS NULL)`),
     check('sale_tenders_no_electronic_change', sql`${t.method} = 'CASH' OR ${t.change} = 0`),
@@ -608,6 +612,7 @@ export const customerCreditEntries = pgTable(
     index('customer_credit_entries_customer_idx').on(t.tenantId, t.customerId, t.legalEntityId, t.createdAt),
     uniqueIndex('customer_credit_entries_return_once').on(t.tenantId, t.saleReturnId).where(sql`${t.saleReturnId} IS NOT NULL`),
     uniqueIndex('customer_credit_entries_sale_once').on(t.tenantId, t.saleId).where(sql`${t.saleId} IS NOT NULL`),
+    check('customer_credit_entries_centavos', sql`${t.amount} = round(${t.amount}, 2)`),
     check('customer_credit_entries_kind_check', sql`${t.kind} IN ('RETURN','REDEEM')`),
     check(
       'customer_credit_entries_link_check',
@@ -763,6 +768,12 @@ export const stockMovements = pgTable(
     lotId: uuid('lot_id'),
     /** Set by the costing trigger: an outbound movement that left the balance below zero (negative-stock policy). */
     belowZero: boolean('below_zero').notNull().default(false),
+    /**
+     * Set by the costing trigger under the balance lock: this movement's place in its balance's order
+     * (`stock_balances.movement_seq` after it). NULL for movements before migration 0134. Count sheets use it
+     * to tell what their frozen quantity already held (audit 45 #7).
+     */
+    balanceSeq: bigint('balance_seq', { mode: 'number' }),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -843,6 +854,8 @@ export const stockBalances = pgTable(
     value: money('value').notNull().default('0'),
     /** Weighted-average unit cost; kept from the last stock on hand while quantity ≤ 0. */
     avgCost: money('avg_cost').notNull().default('0'),
+    /** How many movements this balance has taken since migration 0134 (the costing trigger counts them). */
+    movementSeq: bigint('movement_seq', { mode: 'number' }).notNull().default(0),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

@@ -160,6 +160,11 @@ export const stockCountSheetLines = pgTable(
     countedQuantity: qty('counted_quantity'),
     countedBy: uuid('counted_by'),
     countedAt: timestamp('counted_at', { withTimezone: true }),
+    /**
+     * The balance's `movement_seq` when this line was frozen (audit 45 #7): movements with a higher
+     * `balance_seq` were not in `expected_quantity`. NULL on lines frozen before migration 0134.
+     */
+    frozenSeq: bigint('frozen_seq', { mode: 'number' }),
   },
   (t) => [
     unique('stock_count_sheet_lines_tenant_id_id_unique').on(t.tenantId, t.id),

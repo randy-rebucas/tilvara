@@ -22,6 +22,8 @@ export interface PostInput {
   reversesEntryId?: string | null;
   lines: PostingLine[];
   createdBy: string;
+  /** A REVERSAL only: post to archived accounts too (a manual entry stays reversible after its account is archived). */
+  allowArchived?: boolean;
 }
 
 /** Seed the default chart for a new legal entity (same list as migration 0029). */
@@ -58,7 +60,7 @@ export async function post(db: Database, input: PostInput) {
     throw new AppError('ACCOUNT_NOT_FOUND', 'An account for this posting is not in this entity’s chart', HttpStatus.NOT_FOUND, { accounts: missing });
   }
   const archivedUsed = keys.filter((k) => idOf(k)!.archivedAt);
-  if (archivedUsed.length) throw new AppError('ACCOUNT_ARCHIVED', 'Cannot post to an archived account', HttpStatus.CONFLICT, { accounts: archivedUsed });
+  if (archivedUsed.length && !(input.allowArchived && input.sourceType === 'REVERSAL')) throw new AppError('ACCOUNT_ARCHIVED', 'Cannot post to an archived account', HttpStatus.CONFLICT, { accounts: archivedUsed });
 
   let entryDate = input.entryDate;
   if (!entryDate) {

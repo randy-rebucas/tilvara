@@ -1,7 +1,7 @@
 // End-to-end test of stock rules and count sheets (session 16): the branch's negative-stock policy
 // and low-stock switch, a blind count sheet counted by someone who may only count (they never see
-// the frozen quantities), a sale during the count, the manager's review and posting (counted −
-// frozen, so the sale stays), the "below zero" mark on the movements report, phone width, Filipino.
+// the frozen quantities), a sale during the count, the manager's review and posting (counted − the
+// book when counted, so the sale is deducted once; ADR-0012 amendment 3), the "below zero" mark on the movements report, phone width, Filipino.
 // The count-only member is arranged in the dev database as the migrator (DATABASE_MIGRATOR_URL from
 // .env), as invitation links never leave the API process.
 // Usage: node apps/admin-web/e2e/stock.mjs [baseUrl] [screenshotDir] [apiUrl]
@@ -138,13 +138,13 @@ try {
   await shown('1 of 2 items counted');
   await evaluate(`[...document.querySelectorAll('label')].find((l) => l.textContent.includes('Show expected quantities')).querySelector('input').click()`);
   const coke = await lineText('Coke Mismo');
-  check('review: expected 10, counted 9, variance −1, and the 2 sold since the freeze shown', coke.includes('expected 10') && /variance\s*[−-]1/.test(coke) && /[−-]2 moved since the freeze/.test(coke));
+  check('review: expected 10, the 2 sold since the freeze shown, counted 9 against a book of 8: variance +1', coke.includes('expected 10') && /variance\s*\+?1/.test(coke) && /[−-]2 moved since the freeze/.test(coke));
   await clickText('Post 1 counted items');
   await waitFor(`location.pathname.startsWith('/inventory/counts/')`);
-  check('posting opens the count: the column says Expected, Coke 10 → 9', (await shown('Expected')) && await has('Coke Mismo 290ml'));
+  check('posting opens the count: the column says Expected, Coke 8 → 9', (await shown('Expected')) && await has('Coke Mismo 290ml'));
   await shot('stock-count-posted.png');
   const bal = (await call('GET', `/v1/stock/balances?branchId=${br.id}&variantId=${cola}`, tk)).data[0];
-  check('stock after posting: 10 − 2 sold − 1 missing = 7', bal.quantity === '7');
+  check('stock after posting: what was counted, 9 (10 − 2 sold + 1 found)', bal.quantity === '9');
   await go(sheetPath);
   check('the sheet is now posted and links to its count', (await shown('Posted')) && await has('Open the posted count'));
 

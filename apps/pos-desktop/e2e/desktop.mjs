@@ -80,7 +80,7 @@ const finish = list.finish;
 const check = async (name, ok) => {
   if (!ok) {
     console.log('  screen:', JSON.stringify(await text().catch(() => '?')).slice(0, 1200));
-    console.log('  errors:', JSON.stringify(await evaluate('window.__errors').catch(() => '?')).slice(0, 2000));
+    console.log('  errors:', String(JSON.stringify(await evaluate('window.__errors').catch(() => '?'))).slice(0, 2000));
   }
   list.check(name, ok);
 };
@@ -177,6 +177,12 @@ try {
   await clickText('New sale');
   await check('band: 2 to send', await shown('2 to send'));
   await shot('offline-band.png', false);
+  // Close shift waits for the sales still on the till (session 38).
+  const tab = (label) => evaluate(`[...document.querySelectorAll('nav[data-testid=counter-nav] button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}).click()`);
+  await tab('Close shift');
+  await check('Close shift says 2 sales of this shift are still on the till', await shown('2 sale(s) of this shift are still on this till'));
+  await shot('close-waiting.png', false);
+  await tab('Sell');
 
   // 4. The till restarts during the outage: the queue survives (selling needs sign-in, which needs the API).
   // Wait for the old process to be gone: a new one would otherwise find its debugging port still taken.
@@ -213,6 +219,84 @@ try {
   await proxyDown();
   await scan('CK-290');
   await check('a price changed online is on the till at once: offline, Coke is ₱25.00', await totalShows('₱25.00'));
+
+  // 7. Re-pairing (session 42): a sale waits on the till; it is disconnected and offered to another
+  //    business (refused: the sale would be lost), then to a new terminal of the same register (the sale
+  //    is delivered), and only then moved to the other business, which must not see the first one's items.
+  await clickText('₱50.00');
+  await clickEnabled('Record cash sale offline');
+  await shown('NOT AN OFFICIAL INVOICE', 30000);
+  await clickText('New sale');
+  await check('re-pair: one offline sale waits', await shown('1 to send'));
+  await evaluate(`document.querySelector('button[title="Connection and offline sales"]').click()`);
+  await clickText('Disconnect this terminal');
+  await check('disconnect asks first and says 1 sale stays on this computer', await shown('1 sale(s) still waiting stay on this computer'));
+  await shot('repair-confirm.png', false);
+  await evaluate(`document.querySelector('[data-testid="forget-confirm"] .btn-danger').click()`);
+  await check('disconnected: the till asks to be set up', await shown('Set up this till'));
+
+  const slugB = `till-b-${Date.now().toString(36)}`;
+  const ownerB = await call('POST', '/v1/auth/signup', null, { email: `${slugB}@example.ph`, password: PASSWORD, displayName: 'Ben Cruz', businessName: 'Ben’s Mart', tenantSlug: slugB });
+  const tkB = ownerB.tokens.accessToken;
+  const leB = await call('POST', '/v1/legal-entities', tkB, { registeredName: 'Ben Cruz Trading', tin: '987-654-321', vatStatus: 'VAT' });
+  const brB = await call('POST', '/v1/branches', tkB, { legalEntityId: leB.id, code: 'MK-01', name: 'Marikina' });
+  const regB = await call('POST', '/v1/registers', tkB, { branchId: brB.id, code: 'B1', name: 'Ben counter' });
+  const taxesB = Object.fromEntries((await call('GET', '/v1/tax-categories', tkB)).data.map((x) => [x.code, x.id]));
+  const pcB = (await call('GET', '/v1/uoms', tkB)).data.find((u) => u.code === 'PC').id;
+  await call('POST', '/v1/products', tkB, { name: 'Bear Brand 33g', taxCategoryId: taxesB.VAT, uomId: pcB, variants: [{ sku: 'BB-33', barcodes: [], price: '14.00' }] }, { 'idempotency-key': randomUUID() });
+  const termB = await call('POST', '/v1/terminals', tkB, { registerId: regB.id, name: 'Ben till' });
+
+  await proxyUp();
+  const setUpWith = async (t) => {
+    await fill('terminalId', t.terminal.id);
+    await fill('credential', t.credential);
+    await fill('apiUrl', `http://127.0.0.1:${PROXY_PORT}`);
+    await submitForm();
+  };
+  await setUpWith(termB);
+  await check('set-up for another business is refused while a sale waits', await shown('still waiting to be sent'));
+  await shot('repair-refused.png', false);
+  const recordedBefore = (await call('GET', '/v1/sync/transactions?status=RECORDED', tk)).data.length;
+  // The guide's way (guide.till.t2): the old terminal is revoked, a new one issued for the register.
+  // (The server takes the old terminal's snapshot only from a revoked one; see LEFTOVER.)
+  await call('POST', `/v1/terminals/${term.terminal.id}/revoke`, tk, { reason: 'Key replaced (E2E)' });
+  const term2 = await call('POST', '/v1/terminals', tk, { registerId: reg.id, name: 'Front till (new key)' });
+  await setUpWith(term2);
+  await check('a new terminal of the same register takes the till over', await waitFor(`document.querySelector('[name="email"]')`, 20000).then(() => true, () => false));
+  // Asked of the server: while the till changes hands its band is not drawn, so the screen proves nothing.
+  let recordedAfter = [];
+  for (let i = 0; i < 30 && recordedAfter.length !== recordedBefore + 1; i++) {
+    await sleep(2000);
+    recordedAfter = (await call('GET', '/v1/sync/transactions?status=RECORDED', tk)).data;
+  }
+  await check('the waiting sale is delivered to its own business through the new terminal', recordedAfter.length === recordedBefore + 1);
+  await check('the band says nothing is left to send', await waitFor(`document.querySelector('button[title="Connection and offline sales"]') && !document.body.innerText.toLowerCase().includes('to send')`, 30000).then(() => true, () => false));
+
+  await signIn();
+  await waitFor(`document.body.innerText.includes('Continue shift')`);
+  await evaluate(`document.querySelector('button[title="Connection and offline sales"]').click()`);
+  await clickText('Disconnect this terminal');
+  await check('nothing waiting: the confirmation says 0 sales', await shown('0 sale(s) still waiting'));
+  await evaluate(`document.querySelector('[data-testid="forget-confirm"] .btn-danger').click()`);
+  await shown('Set up this till');
+  await setUpWith(termB);
+  await check('with nothing waiting, the till moves to the other business', await waitFor(`document.querySelector('[name="email"]')`, 20000).then(() => true, () => false));
+  await fill('email', `${slugB}@example.ph`);
+  await fill('password', PASSWORD);
+  await submitForm();
+  await waitFor(`document.body.innerText.includes('Ben counter')`);
+  await clickText('Open shift');
+  await waitFor(`document.getElementById('float')`);
+  await fill('float', '500');
+  await submitForm();
+  await waitFor(`document.getElementById('scan')`);
+  await proxyDown();
+  await check('moved: the band no longer names the first business', !(await text()).includes('Tindahan ni Aling Nena'));
+  await scan('CK-290');
+  await check('moved: offline, the first business’s item is not on the till', !(await totalShows('₱25.00')) && !(await text()).includes('Coke Mismo'));
+  await scan('BB-33');
+  await check('moved: offline, the new business’s item sells from its own snapshot (₱14.00)', await totalShows('₱14.00'));
+  await shot('repair-moved.png', false);
 } catch (e) {
   console.error(e);
   await check('no unexpected error', false);

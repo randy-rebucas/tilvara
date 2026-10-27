@@ -8,7 +8,6 @@ import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
-import { negativeStockPolicy } from '../sales/stock-policy.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { reservedAt } from './reservations.service.js';
 import { unsellableAt } from './expiry.js';
@@ -248,7 +247,11 @@ export class PacksService extends TenantService {
     });
   }
 
-  /** Open whole packs by hand. Under BLOCK, never more packs than are available. */
+  /**
+   * Open whole packs by hand: never more packs than are free (on hand, less reserved, less held), whatever
+   * the negative-stock rule. Under ALLOW an opening of packs that are not there would bring pieces in at
+   * zero cost and leave the pack below zero (audit 2026-10-27 #35); only a sale opens packs it is short of.
+   */
   open(auth: AuthContext, input: PackOpeningInput) {
     return this.mutate(auth, async (db) => {
       const branch = await this.branch(db, input.branchId);
@@ -257,19 +260,20 @@ export class PacksService extends TenantService {
       const link = await this.link(db, input.conversionId);
       if (link.archivedAt) throw archived('Pack link');
       const packs = toDec(input.packs);
-      if ((await negativeStockPolicy(db, branch.id)) === 'BLOCK') {
-        // Both balances, sorted, as `recordOpening` and a sale opening packs lock them: locking the pack
-        // alone first and the piece later could deadlock against them.
-        const ids = [link.pack.variantId, link.piece.variantId].sort();
-        const { rows } = await db.execute<{ variant_id: string; quantity: string }>(
-          sql`SELECT variant_id, quantity::text FROM app_lock_stock_balances(${branch.id}, ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
-        );
-        const available = toDec(rows.find((r) => r.variant_id === link.pack.variantId)?.quantity ?? '0').minus((await reservedAt(db, branch.id, [link.pack.variantId])).get(link.pack.variantId) ?? 0);
-        if (packs.gt(available)) {
-          throw new AppError('INSUFFICIENT_STOCK', `Not enough stock: ${link.pack.name} (${available.toString()} available)`, HttpStatus.CONFLICT, {
-            lines: [{ variantId: link.pack.variantId, name: link.pack.name, available: available.toString(), requested: packs.toString() }],
-          });
-        }
+      // Both balances, sorted, as `recordOpening` and a sale opening packs lock them: locking the pack
+      // alone first and the piece later could deadlock against them.
+      const ids = [link.pack.variantId, link.piece.variantId].sort();
+      const { rows } = await db.execute<{ variant_id: string; quantity: string }>(
+        sql`SELECT variant_id, quantity::text FROM app_lock_stock_balances(${branch.id}, ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
+      );
+      const packId = link.pack.variantId;
+      const reserved = (await reservedAt(db, branch.id, [packId])).get(packId) ?? 0;
+      const held = (await unsellableAt(db, branch.id, [packId], { expired: false })).get(packId) ?? 0;
+      const available = Dec.max(toDec(rows.find((r) => r.variant_id === packId)?.quantity ?? '0').minus(reserved).minus(held), 0);
+      if (packs.gt(available)) {
+        throw new AppError('PACKS_NOT_ON_HAND', `Not enough packs: ${link.pack.name} (${available.toString()} free)`, HttpStatus.CONFLICT, {
+          lines: [{ variantId: packId, name: link.pack.name, available: available.toString(), requested: packs.toString() }],
+        });
       }
       const made = await recordOpening(
         db,

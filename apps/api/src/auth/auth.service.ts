@@ -33,6 +33,8 @@ const invalidCredentials = () =>
 const invalidChallenge = () =>
   new AppError('INVALID_MFA_CHALLENGE', 'Your sign-in expired. Enter your email and password again.', HttpStatus.UNAUTHORIZED);
 
+const isLocked = (lockedUntil: Date | null) => !!lockedUntil && lockedUntil.getTime() > Date.now();
+
 function assertNotLocked(lockedUntil: Date | null): void {
   if (lockedUntil && lockedUntil.getTime() > Date.now()) {
     const retryAfter = Math.ceil((lockedUntil.getTime() - Date.now()) / 1000);
@@ -145,7 +147,12 @@ export class AuthService {
       await this.passwords.verifyAgainstDummy(input.password);
       throw invalidCredentials();
     }
-    assertNotLocked(rec.locked_until);
+    // A locked account answers exactly like a wrong password (audit 45 #24: a distinct answer told
+    // which emails exist). The password is not checked while locked; the dummy keeps the timing alike.
+    if (isLocked(rec.locked_until)) {
+      await this.passwords.verifyAgainstDummy(input.password);
+      throw invalidCredentials();
+    }
     const ok = await this.passwords.verify(input.password, rec.password_hash);
     if (!ok || rec.status !== 'ACTIVE') {
       if (!ok) await this.recordLoginResult(rec.user_id, false);
@@ -218,7 +225,10 @@ export class AuthService {
       await this.passwords.verifyAgainstDummy(password);
       throw refused();
     }
-    assertNotLocked(rec.locked_until);
+    if (isLocked(rec.locked_until)) {
+      await this.passwords.verifyAgainstDummy(password);
+      throw refused();
+    }
     const ok = await this.passwords.verify(password, rec.password_hash);
     if (!ok || rec.status !== 'ACTIVE') {
       if (!ok) await this.recordLoginResult(rec.user_id, false);

@@ -271,8 +271,8 @@ describe('two-step sign-in (TOTP)', () => {
       const ch = (await login(t.email).expect(200)).body.challengeToken;
       await http().post('/v1/auth/mfa/verify').send({ challengeToken: ch, code: code(sec, 9) }).expect(401);
     }
-    // Locked now: the password is refused, and so is a right code on an earlier challenge.
-    await login(t.email).expect(429);
+    // Locked now: the password is refused (answered like a wrong one, audit 45 #24), and so is a right code on an earlier challenge.
+    expect((await login(t.email).expect(401)).body.error.code).toBe('INVALID_CREDENTIALS');
     expect(await platformEvents(t.userId)).toEqual(expect.arrayContaining(['auth.mfa.enabled', 'auth.lockout']));
   });
 
@@ -348,7 +348,7 @@ describe('password reset', () => {
   it('resets once with the newest link, unlocks and signs out every session', async () => {
     const t = await signup(app, 'reset');
     for (let i = 0; i < 5; i++) await login(t.email, 'wrong password!!').expect(401);
-    await login(t.email).expect(429);
+    await login(t.email).expect(401); // locked, answered like a wrong password (audit 45 #24)
 
     await http().post('/v1/auth/password-reset/request').send({ email: t.email.toUpperCase() }).expect(202);
     const firstToken = /token=([\w-]+)/.exec(mailer.lastTo(t.email)!.text)![1]!;

@@ -361,11 +361,12 @@ export default async function WelcomePage() {
                       <Serial className="mb-3 block text-gold">{t('land.b.l.s')}</Serial>
                     </div>
                   </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[380px] border-collapse text-[0.875rem]">
+                  {/* Below sm the document number sits above what happened: no sideways scroll at 390px. */}
+                  <div>
+                    <table className="w-full border-collapse text-[0.875rem]">
                       <thead>
                         <tr>
-                          <th className={th}>{t('land.b.l.doc')}</th>
+                          <th className={`${th} hidden sm:table-cell`}>{t('land.b.l.doc')}</th>
                           <th className={th}>{t('land.b.l.what')}</th>
                           <th className={`${th} text-right`}>{t('land.b.l.qty')}</th>
                           <th className={`${th} text-right`}>{t('land.b.l.bal')}</th>
@@ -382,8 +383,11 @@ export default async function WelcomePage() {
                           ] as const
                         ).map(([doc, what, qty, bal], n) => (
                           <tr key={doc} className="land-reveal" style={vars({ '--i': n })}>
-                            <td className={`${td} serial text-[0.75rem] text-gold`}>{doc}</td>
-                            <td className={td}>{t(what)}</td>
+                            <td className={`${td} serial hidden text-[0.75rem] text-gold sm:table-cell`}>{doc}</td>
+                            <td className={td}>
+                              <span className="serial block text-[0.75rem] text-gold sm:hidden">{doc}</span>
+                              {t(what)}
+                            </td>
                             <td className={`${td} money text-right font-semibold ${qty.startsWith('+') ? 'text-blue' : ''}`}>{qty}</td>
                             <td className={`${td} money text-right text-muted`}>{bal}</td>
                           </tr>

@@ -37,6 +37,7 @@ import { archived, notFound, TenantService, type ConflictMap } from '../common/t
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { emitEvent } from '../outbox/outbox.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
+import { productsWithStock } from './stock-held.js';
 
 type ProductRow = typeof products.$inferSelect;
 type VariantRow = typeof productVariants.$inferSelect;
@@ -322,6 +323,9 @@ export class CatalogService extends TenantService {
       // Expiry dates are kept on counted stock only (ADR-0020 §3).
       if ((input.tracksExpiry ?? current.tracksExpiry) && !(input.trackInventory ?? current.trackInventory)) {
         throw new AppError('EXPIRY_NEEDS_STOCK', 'Expiry dates need stock that is counted', HttpStatus.UNPROCESSABLE_ENTITY);
+      }
+      if (input.trackInventory === false && current.trackInventory && (await productsWithStock(db, [id])).size) {
+        throw new AppError('HAS_STOCK', 'Count or write off its stock at every branch first', HttpStatus.CONFLICT);
       }
       await db.update(products).set(input).where(eq(products.id, id));
       await this.audit(db, auth, 'product.updated', 'product', id, { fields: Object.keys(input) });

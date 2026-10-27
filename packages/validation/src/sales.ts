@@ -1,15 +1,17 @@
 import { z } from 'zod';
-import { amountSchema } from './catalog.js';
+import { amountSchema, money2Schema } from './catalog.js';
+import { isPositiveDecimal } from './decimal.js';
 import { oneDiscountRefinement, quantitySchema, rateSchema, taxQuoteLineObject } from './tax.js';
 
-const positiveAmount = amountSchema.refine((v) => Number(v) > 0, 'Amount must be greater than zero');
+/** A positive amount of money that changes hands: centavos at most (audit 45 #13). */
+const positiveMoney = money2Schema.refine(isPositiveDecimal, 'Amount must be greater than zero');
 const ref = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/, 'Use letters, digits, - or _');
 /** One tender. */
 export const tenderSchema = z.discriminatedUnion('method', [
-  z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+  z.object({ method: z.literal('CASH'), tendered: money2Schema }),
   z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
   /** The sale's customer's store credit (ADR-0018); applied after card/QR, before cash. */
-  z.object({ method: z.literal('STORE_CREDIT'), amount: positiveAmount }),
+  z.object({ method: z.literal('STORE_CREDIT'), amount: positiveMoney }),
 ]);
 /** Intent tenders (already-authorized non-cash payments) are applied first; cash covers the rest and gives change. */
 export const tendersSchema = z
@@ -23,20 +25,20 @@ export type TendersInput = z.infer<typeof tendersSchema>;
 
 export const openCashierSessionSchema = z.object({
   registerId: z.uuid(),
-  openingFloat: amountSchema,
+  openingFloat: money2Schema,
 });
 export type OpenCashierSessionInput = z.infer<typeof openCashierSessionSchema>;
 
 export const cashMovementSchema = z.object({
   type: z.enum(['PAY_IN', 'PAY_OUT']),
   /** Always positive; the type gives the direction. */
-  amount: positiveAmount,
+  amount: positiveMoney,
   reason: z.string().trim().min(1).max(200),
 });
 export type CashMovementInput = z.infer<typeof cashMovementSchema>;
 
 export const closeCashierSessionSchema = z.object({
-  countedCash: amountSchema,
+  countedCash: money2Schema,
   note: z.string().trim().max(500).nullable().optional(),
 });
 export type CloseCashierSessionInput = z.infer<typeof closeCashierSessionSchema>;
@@ -142,7 +144,7 @@ export const createPaymentIntentSchema = z.object({
   /** The checkout this payment belongs to (same id the sale will carry). */
   clientTransactionId: ref,
   method: z.enum(['CARD', 'QR', 'EWALLET']),
-  amount: positiveAmount,
+  amount: positiveMoney,
 });
 export type CreatePaymentIntentInput = z.infer<typeof createPaymentIntentSchema>;
 
@@ -293,7 +295,7 @@ export const createExchangeSchema = z.object({
     tenders: z
       .array(
         z.discriminatedUnion('method', [
-          z.object({ method: z.literal('CASH'), tendered: amountSchema }),
+          z.object({ method: z.literal('CASH'), tendered: money2Schema }),
           z.object({ method: z.literal('INTENT'), paymentIntentId: z.uuid() }),
         ]),
       )
@@ -302,6 +304,13 @@ export const createExchangeSchema = z.object({
     expectedAmountDue: amountSchema.optional(),
     customerId: z.uuid().optional(),
   }).superRefine(checkSaleRefs),
+}).superRefine((v, ctx) => {
+  // Like a return: each sale line once (a repeat hit the unique constraint as a 500, retried forever; audit 45 #31).
+  const ids = new Set<string>();
+  for (const [i, l] of v.returnLines.entries()) {
+    if (ids.has(l.saleLineId)) ctx.addIssue({ code: 'custom', path: ['returnLines', i, 'saleLineId'], message: 'Each sale line once per return' });
+    ids.add(l.saleLineId);
+  }
 });
 export type CreateExchangeInput = z.infer<typeof createExchangeSchema>;
 

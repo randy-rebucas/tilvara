@@ -1,11 +1,12 @@
 // End-to-end smoke test for the admin web, driven over the Chrome DevTools Protocol with a
 // locally installed Edge/Chrome (no Playwright download needed on this machine).
-// Usage: node e2e/smoke.mjs [baseUrl] [screenshotDir]
+// Usage: node e2e/smoke.mjs [baseUrl] [screenshotDir] [apiUrl]
 // Requires the API (4320) and admin web (3320) to be running.
 import { checklist, openBrowser } from './cdp.mjs';
 
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3320';
 const OUT = process.argv[3] ?? '.impeccable/review';
+const API = process.argv[4] ?? 'http://127.0.0.1:4320';
 const { check, finish } = checklist();
 const b = await openBrowser({ base: BASE, out: OUT });
 const { evaluate, viewport, waitFor, go, fill, clickText, shot, bff } = b;
@@ -58,10 +59,11 @@ try {
   await waitFor(`document.body.innerText.includes('Sari-Sari Smoke Trading Corp')`);
   check('legal entity created via UI with formatted TIN', await evaluate(`document.body.innerText.includes('123-456-789')`));
 
-  // 5. Rest of the setup through the BFF proxy
-  const entities = await bff('GET', '/api/v1/legal-entities');
-  const entityId = (await evaluate(`fetch('/api/v1/legal-entities').then((r) => r.json())`)).data[0].id;
-  void entities;
+  // 5. Rest of the setup through the BFF proxy (writes); reads go to the API with the owner's token.
+  const tk = (await fetch(`${API}/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: `${slug}@example.ph`, password: 'correct horse battery staple' }) }).then((r) => r.json())).tokens.accessToken;
+  const apiGet = async (path) => ({ body: await fetch(API + path, { headers: { authorization: `Bearer ${tk}` } }).then((r) => r.json()) });
+  check('the proxy forwards no GET the browser does not make itself', (await bff('GET', '/api/v1/legal-entities')).status === 404);
+  const entityId = (await apiGet('/v1/legal-entities')).body.data[0].id;
   const br = await bff('POST', '/api/v1/branches', { legalEntityId: entityId, code: 'MKT-01', name: 'Makati Main' }, true);
   if (br.status !== 201) console.log('branch response:', JSON.stringify(br));
   check('branch created through BFF (201)', br.status === 201);
@@ -69,8 +71,8 @@ try {
   check('register created (201)', reg.status === 201);
   const term = await bff('POST', '/api/v1/terminals', { registerId: reg.body.id, name: 'iPad Counter 1' });
   check('terminal paired, one-time credential returned', term.status === 201 && term.body.credential.startsWith('tpk_'));
-  const uoms = await evaluate(`fetch('/api/v1/uoms').then((r) => r.json())`);
-  const taxes = await evaluate(`fetch('/api/v1/tax-categories').then((r) => r.json())`);
+  const uoms = (await apiGet('/v1/uoms')).body;
+  const taxes = (await apiGet('/v1/tax-categories')).body;
   const pc = uoms.data.find((u) => u.code === 'PC').id;
   const vat = taxes.data.find((x) => x.code === 'VAT').id;
   const items = [
@@ -113,7 +115,7 @@ try {
   const bgc = await bff('POST', '/api/v1/branches', { legalEntityId: entityId, code: 'BGC-02', name: 'BGC Annex', birBranchCode: '00001' }, true);
   if (bgc.status !== 201) console.log('second branch response:', JSON.stringify(bgc));
   check('second branch of the same entity (201)', bgc.status === 201);
-  const variants = (await bff('GET', '/api/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
+  const variants = (await apiGet('/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
   const coke = variants.find((v) => v.sku === 'CK-290').id;
   const canton = variants.find((v) => v.sku === 'LM-PC-CHILI').id;
 
@@ -224,7 +226,7 @@ try {
   await waitFor(`!document.body.innerText.includes('Reopen')`);
   check('closed month reopened with a reason', await text('Open'));
 
-  const accounts = (await bff('GET', `/api/v1/accounts?legalEntityId=${entityId}`)).body.data;
+  const accounts = (await apiGet(`/v1/accounts?legalEntityId=${entityId}`)).body.data;
   await go('/books');
   await clickText('Manual entry');
   await waitFor(`document.querySelector('[name="lines.1.accountId"]')`);

@@ -5,6 +5,7 @@ import { openDrawerFor } from '../lib/drawer';
 import { isPositive, peso } from '../lib/money';
 import { RETIRED_TENDERS } from '../lib/printing';
 import { leftOn, returnOptions } from '../lib/return-options';
+import { shiftSales } from '../lib/shift-sales';
 import { useTill } from '../lib/till';
 import { errorText } from './Payment';
 import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } from '../types';
@@ -51,9 +52,11 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   const reasons = options && (canVoid || canReturn) ? options.why.filter((k) => (k === 'history.exchangeCredit' ? canExchange : k === 'history.nothingLeft' || canVoid)) : [];
   const readError = (e: unknown) => errorText(e, t('common.error'), t('common.network'));
 
+  // Every sale of the shift (audit 2026-10-27 #15): the list follows the API's pages to the end, so an
+  // early sale of a busy shift can still be reprinted, voided or returned.
   const load = () =>
-    api<{ data: SaleSummary[] }>('GET', `/v1/sales?cashierSessionId=${shift.sessionId}`)
-      .then((r) => setSales(r.data))
+    shiftSales(shift.sessionId)
+      .then(setSales)
       .catch((e) => setMessage({ kind: 'error', text: readError(e) }));
   useEffect(() => {
     void load();

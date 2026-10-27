@@ -18,7 +18,7 @@ const DEMO = 'e2e_demo';
 const call = client(API);
 const stamp = Date.now().toString(36);
 const email = `ext-${stamp}@example.ph`;
-await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Ana Cruz', businessName: `Botika ni Ana ${stamp}`, tenantSlug: `ext-${stamp}` });
+const tk = (await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Ana Cruz', businessName: `Botika ni Ana ${stamp}`, tenantSlug: `ext-${stamp}` })).tokens.accessToken;
 
 const db = new pg.Client({ connectionString: process.env.DATABASE_MIGRATOR_URL });
 await db.connect();
@@ -47,7 +47,7 @@ const { evaluate, viewport, waitFor, go, fill, clickText, shot, noHorizontalScro
 const shown = (s, ms) => waitFor(`document.body.innerText.includes(${JSON.stringify(s)})`, ms).then(() => true, () => false);
 // Lower-cased: the status line is drawn in capitals (innerText follows text-transform).
 const card = async () => (await evaluate(`document.querySelector('[data-extension="${DEMO}"]')?.innerText ?? ''`)).toLowerCase();
-const meExtensions = async () => (await bff('GET', '/api/v1/me')).body?.activeTenant?.extensions ?? null;
+const meExtensions = async () => (await call('GET', '/v1/me', tk))?.activeTenant?.extensions ?? null;
 
 try {
   await demo(false);

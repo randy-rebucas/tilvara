@@ -1,9 +1,15 @@
 /**
- * The API resources the same-origin proxy (`/api/v1/[...path]`) forwards to. Accepting an invitation
- * goes through `/api/auth` (it sets the session cookies), never through the proxy.
+ * The API resources the same-origin proxy (`/api/v1/[...path]`) forwards writes (POST, PATCH, PUT) to.
+ * Accepting an invitation goes through `/api/auth` (it sets the session cookies), never through the proxy.
  */
-export const PROXY_ALLOWED =
-  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments(?:\/[0-9a-f-]{36}\/void)?|stock|accounts|journal-entries|accounting|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|extensions|data-exports|data-export-files|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance)(\/|$)/;
+export const PROXY_WRITES =
+  /^(legal-entities|branches|registers|terminals|uoms|tax-categories|categories|products|variants|pack-conversions|barcodes|price-lists|promotions|members|roles|invitations(?!\/accept)|me|suppliers|supplier-items|customers|purchase-orders|goods-receipts|supplier-returns|supplier-invoices|supplier-payments|stock|accounts|journal-entries|accounting|sync\/transactions|support-access|api-keys|webhooks|webhook-deliveries|business|extensions|data-exports|sample-data|cashier-sessions\/[0-9a-f-]{36}\/approve-variance|subscription\/(?:plan|cancel|bills\/[0-9a-f-]{36}\/checkout))(\/|$)/;
+
+/**
+ * What the browser itself GETs through the proxy: the branding images (`brandImageUrl`) and a data
+ * export's file behind its signed link. Server components call the API directly, never through here.
+ */
+export const PROXY_READS = /^(business\/branding\/(?:logo|background)|data-export-files\/[^/]+)$/;
 
 // Next decodes each catch-all segment, so `%2F` arrives as `/` inside one segment: a segment may never
 // carry a separator, a dot segment, a percent (double encoding) or a control character.
@@ -11,13 +17,15 @@ export const PROXY_ALLOWED =
 const BAD_SEGMENT = /[/\\%\u0000-\u001f\u007f]/;
 
 /**
- * The URL the proxy forwards to, or null (404) when the path is not an allowed resource or would
+ * The URL the proxy forwards to, or null (404) when the path is not allowed for this method or would
  * resolve anywhere else under the API: `API_URL` + the encoded segments + the request's query.
+ * Writes reach the allow-listed resources; GET only what the browser itself loads (`PROXY_READS`).
  */
-export function proxyTarget(apiUrl: string, segments: readonly string[], search = ''): string | null {
+export function proxyTarget(apiUrl: string, segments: readonly string[], search = '', method = 'GET'): string | null {
   if (segments.length === 0) return null;
   if (segments.some((s) => s === '' || s === '.' || s === '..' || BAD_SEGMENT.test(s))) return null;
-  if (!PROXY_ALLOWED.test(segments.join('/'))) return null;
+  const allowed = method === 'GET' ? PROXY_READS : method === 'POST' || method === 'PATCH' || method === 'PUT' ? PROXY_WRITES : null;
+  if (!allowed?.test(segments.join('/'))) return null;
   const encoded = segments.map(encodeURIComponent).join('/');
   const base = new URL(apiUrl);
   const basePath = base.pathname.replace(/\/+$/, '');

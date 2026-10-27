@@ -98,6 +98,11 @@ export class ApiMetrics {
     help: 'Card/QR provider outcomes by step (authorize, reconcile) and status (succeeded, failed, unknown).',
     labelNames: ['provider', 'step', 'outcome'],
   });
+  readonly billing = this.registry.counter({
+    name: 'onepos_billing_events_total',
+    help: 'Subscription billing (ADR-0027) by step (checkout, webhook) and outcome (opened, failed, applied, unapplied, duplicate, unknown_checkout, ignored, bad_signature).',
+    labelNames: ['provider', 'step', 'outcome'],
+  });
   readonly provisioning = this.registry.counter({
     name: 'onepos_provisioning_total',
     help: 'Business sign-ups by outcome: ok, refused (4xx), failed (5xx).',

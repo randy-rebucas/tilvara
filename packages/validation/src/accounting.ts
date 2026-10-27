@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPositiveDecimal } from './decimal.js';
 import { amountSchema } from './catalog.js';
 
 const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Use YYYY-MM');
@@ -55,9 +56,7 @@ export const createJournalEntrySchema = z
   })
   .superRefine((v, ctx) => {
     v.lines.forEach((l, i) => {
-      const d = Number(l.debit ?? 0);
-      const c = Number(l.credit ?? 0);
-      if ((d > 0) === (c > 0)) ctx.addIssue({ code: 'custom', path: ['lines', i], message: 'Each line is either a debit or a credit' });
+      if (isPositiveDecimal(l.debit) === isPositiveDecimal(l.credit)) ctx.addIssue({ code: 'custom', path: ['lines', i], message: 'Each line is either a debit or a credit' });
     });
   });
 export type CreateJournalEntryInput = z.infer<typeof createJournalEntrySchema>;

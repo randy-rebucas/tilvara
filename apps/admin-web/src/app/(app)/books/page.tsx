@@ -9,6 +9,7 @@ import type { MessageKey } from '@/i18n/messages';
 import { getT } from '@/i18n/server';
 import { BooksChrome, booksEntity, sourceHref } from './chrome';
 import { ManualEntryForm } from './forms';
+import { manualEntryAccount } from '@/lib/manual-entry';
 import { pageTitle } from '@/i18n/page-title';
 import { exportErrorMessage } from '@/lib/report-csv';
 
@@ -64,7 +65,7 @@ export default async function JournalPage({ searchParams }: { searchParams: Prom
         <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <h2 className="section-title pt-2">{t('books.tab.journal')}</h2>
           {canPost && entity && accounts && !filter && (
-            <ManualEntryForm legalEntityId={entity.id} accounts={accounts.data.filter((a) => !a.archivedAt).map((a) => ({ id: a.id, label: `${a.code} · ${a.name}` }))} />
+            <ManualEntryForm legalEntityId={entity.id} accounts={accounts.data.filter(manualEntryAccount).map((a) => ({ id: a.id, label: `${a.code} · ${a.name}` }))} />
           )}
         </div>
         {filter && (

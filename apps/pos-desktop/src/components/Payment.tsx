@@ -2,6 +2,7 @@ import { CreditCard, QrCode } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { translate, useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid, withReference } from '../lib/api';
+import { refusalText } from '../lib/refusals';
 import { add, gte, isPositive, isZero, parseAmount, peso, quickTenders, sub } from '../lib/money';
 import type { PaymentIntent } from '../types';
 import type { Shift } from './Registers';
@@ -12,13 +13,20 @@ export type Tender = { method: 'INTENT'; paymentIntentId: string } | { method: '
 
 /** No answer, or the server/database failed: the request may or may not have taken effect. */
 export const unanswered = (err: unknown) => err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500);
+/**
+ * Refusals the API gives before it reads the Idempotency-Key (guards, rate limits, a suspended or
+ * read-only business, `TenantService.mutate`): unlike every later refusal, they do not prove that
+ * nothing was recorded under the key by an earlier, unanswered attempt.
+ */
+export const beforeReplay = (err: unknown) => err instanceof ApiFailure && [401, 402, 403, 429].includes(err.error.status);
 
-/** Refusals the API words in English only, in the cashier's language. */
-const REFUSALS: Record<string, MessageKey> = { SUBSCRIPTION_READ_ONLY: 'refusal.readOnly', TENANT_SUSPENDED: 'refusal.suspended' };
-
+/**
+ * What went wrong, in the cashier's language: no answer → `network` (with the reference); a refusal the
+ * till words itself (`lib/refusals.ts`) → its copy; any other refusal → the API's message.
+ */
 export const errorText = (err: unknown, fallback: string, network: string) =>
   err instanceof ApiFailure
-    ? unanswered(err) ? withReference(network, err) : REFUSALS[err.error.code] ? translate(REFUSALS[err.error.code]!) : err.error.message
+    ? unanswered(err) ? withReference(network, err) : (refusalText(err.error.code, err.error.details, translate) ?? err.error.message)
     : fallback;
 
 /** What recording this payment's sale gave: the sale, and whether it is an earlier version of the cart (see `submit`). */
@@ -164,22 +172,29 @@ export function usePayment({ shift, due, setNotice }: {
       if (err instanceof ApiFailure && err.error.code === 'IDEMPOTENCY_KEY_REUSED') {
         // The first request under this key was recorded, with another body: that sale, by this transaction id.
         try {
-          await send({ clientTransactionId: txId, tenders }, uuid());
+          const sale = await send({ clientTransactionId: txId, tenders }, uuid());
+          setNotice(null);
+          setUnknown(false);
+          return { id: sale.id, earlier: false };
         } catch (again) {
           const earlier = duplicateOf(again);
           if (earlier) {
             setUnknown(false);
             return { id: earlier, earlier: true };
           }
-          if (unanswered(again)) {
-            setNotice({ kind: 'warn', text: t('pay.unconfirmed') });
-            setUnknown(true);
-            return null;
-          }
+          // A sale is recorded under this key: whatever the resend got, the cart stays locked on its key,
+          // never handed back to be emptied (which would forget it) or rung again.
+          setUnknown(true);
+          setNotice(unanswered(again) ? { kind: 'warn', text: t('pay.unconfirmed') } : { kind: 'error', text: errorText(again, t('common.error'), t('common.network')) });
+          return null;
         }
-        setSaleKey(uuid());
-        setUnknown(false);
-        setNotice({ kind: 'error', text: t('common.error') });
+      }
+      if (beforeReplay(err)) {
+        // Refused before the server looked the key up (sign-in, permission, rate limit, a suspended or
+        // read-only business): it says nothing of an earlier attempt, so the key and the lock stay as
+        // they were, and the same request goes again once the cause is gone.
+        setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.network')) });
+        onRefused?.(err);
         return null;
       }
       setSaleKey(uuid());

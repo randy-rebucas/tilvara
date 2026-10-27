@@ -39,6 +39,16 @@ export function configureApp(app: INestApplication, logger?: Logger): void {
   app.use(['/v1/business/branding/logo', '/v1/business/branding/background'], function brandImageJson(req: Request, res: Response, next: NextFunction) {
     importJson(req, res, next);
   });
+  // A till's offline batch after a long outage (audit 2026-10-27 #1): the till caps a batch at about
+  // 80 kB, but a single large sale still goes alone; 2 MB leaves room for it.
+  app.use('/v1/sync/sales', function syncSalesJson(req: Request, res: Response, next: NextFunction) {
+    importJson(req, res, next);
+  });
+  // The payment provider's webhook is signed over its exact bytes: kept raw (a Buffer) for the check.
+  const rawWebhook = bodyParser.raw({ type: () => true, limit: '256kb' });
+  app.use('/v1/billing/webhooks/paymongo', function billingWebhookRaw(req: Request, res: Response, next: NextFunction) {
+    rawWebhook(req, res, next);
+  });
   app.use(correlationIdMiddleware);
   if (logger) {
     app.useLogger(new PinoNestLogger(logger));

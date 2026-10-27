@@ -29,6 +29,11 @@ export interface EngineOptions {
   maxBackoffMs?: number;
   batchSize?: number;
   /**
+   * Most bytes of envelopes (as JSON) sent in one batch; the first envelope always goes, however large.
+   * Keeps a batch under the API's body limit (audit 2026-10-27 #1).
+   */
+  maxBatchBytes?: number;
+  /**
    * The terminal whose credential `transport` carries: sales are tagged with it and only its own are
    * sent. Absent (tests, tools): the terminal the file is set up for, else the one whose snapshot it holds.
    */
@@ -75,6 +80,9 @@ export class OfflineEngine {
   private readonly base: number;
   private readonly max: number;
   private readonly batch: number;
+  private readonly maxBytes: number;
+  /** How many envelopes a batch may hold now: halved on a 413 (down to 1), until the engine restarts. */
+  private cap: number;
   private chain: Promise<unknown> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | undefined;
   private readonly terminalId: string | undefined;
@@ -89,6 +97,8 @@ export class OfflineEngine {
     this.base = o.baseBackoffMs ?? 2_000;
     this.max = o.maxBackoffMs ?? 5 * 60_000;
     this.batch = o.batchSize ?? 50;
+    this.maxBytes = o.maxBatchBytes ?? 80_000;
+    this.cap = this.batch;
     this.terminalId = o.terminalId;
   }
 
@@ -105,8 +115,21 @@ export class OfflineEngine {
       // A lost or restored till file restarts its counter: continue after what the server has.
       if (snap.lastDeviceSeq) await this.store.raiseSequence(snap.lastDeviceSeq);
       await this.store.setMeta('auth_state', 'OK');
+      // The server answered: sales backed off during an outage (up to the cap) go with the next sync,
+      // not minutes later (a new terminal of the register taking over starts here too).
+      const terminal = await this.currentTerminal();
+      if (terminal) await this.store.makeDue(terminal, this.now());
       return snap;
     });
+  }
+
+  /** The cashier's "Send now": every waiting sale of this terminal, without waiting out a backoff. */
+  async sendNow(): Promise<SyncReport[]> {
+    await this.serial(async () => {
+      const terminal = await this.currentTerminal();
+      if (terminal) await this.store.makeDue(terminal, this.now());
+    });
+    return this.drain();
   }
 
   /** The business's look and messages from the stored snapshot (session 39), or null (Tilvara's own). */
@@ -231,6 +254,7 @@ export class OfflineEngine {
           localReference, occurredAt, register: { code: snap.register.code, name: snap.register.name }, branch: { name: snap.branch.name },
           seller: {
             name: snap.legalEntity.tradeName ?? snap.legalEntity.registeredName, registeredName: snap.legalEntity.registeredName,
+            ...(snap.legalEntity.receiptAddress && { address: snap.legalEntity.receiptAddress }),
             // As online receipts print it; a snapshot from before `receiptTin` existed has only the bare TIN.
             tin: snap.legalEntity.receiptTin ?? snap.legalEntity.tin, vatStatus: snap.taxProfile.vatStatus,
           },
@@ -239,7 +263,8 @@ export class OfflineEngine {
             const item = priced.items[i]!;
             return {
               name: item.name,
-              quantity: input.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.amountDue).toFixed(2),
+              // Gross − discount, as online receipts print a line (audit 2026-10-27 #33): the price basis, before VAT added on top.
+              quantity: input.lines[i]!.quantity, unitPrice: toDec(item.unitPrice).toFixed(2), amount: toDec(l.gross).minus(l.discount).toFixed(2),
               flag: !isVat ? '' : item.vatTreatment === 'ZERO_RATED' ? 'Z' : item.vatTreatment === 'VAT_EXEMPT' ? 'E' : 'V',
               ...promotionOf(snap, priced.promotions[i]!),
             };
@@ -270,7 +295,7 @@ export class OfflineEngine {
       // Only this terminal's own sales go with its credential: another business's (a till set up for
       // a new owner) would be quarantined there under the wrong business, and lost to their own.
       const terminal = await this.currentTerminal();
-      const due = terminal ? await this.store.due(this.now(), this.batch, terminal) : [];
+      const due = fitBatch(terminal ? await this.store.due(this.now(), this.cap, terminal) : [], this.maxBytes);
       if (!due.length) return { sent: 0, results: [] };
       let results: SyncResult[];
       try {
@@ -279,6 +304,12 @@ export class OfflineEngine {
         const err = e instanceof TransportError ? e : new TransportError('NETWORK', (e as Error).message);
         if (err.status === 401) {
           await this.noteAuthState(err);
+        } else if (err.status === 413 && due.length > 1) {
+          // Too large for the server: send half as many next time, at once (the same envelopes, in
+          // smaller batches). Nothing is backed off, so drain() goes on.
+          this.cap = Math.max(1, Math.floor(due.length / 2));
+          await this.store.setMeta('last_error', `${err.code ?? err.kind}: ${err.message}`);
+          return { sent: due.length, results: [] };
         } else {
           await this.store.backOff(due.map((q) => q.deviceSeq), (n) => this.nextAttempt(n), `${err.code ?? err.kind}: ${err.message}`);
         }
@@ -385,6 +416,22 @@ export class OfflineEngine {
     this.chain = run.catch(() => undefined);
     return run;
   }
+}
+
+/**
+ * The oldest envelopes whose JSON together stays within `maxBytes` (always at least one: a single sale
+ * larger than that still goes, alone). Order is kept, so device order is never skipped.
+ */
+export function fitBatch(due: QueuedSale[], maxBytes: number): QueuedSale[] {
+  let bytes = 2;
+  const out: QueuedSale[] = [];
+  for (const q of due) {
+    const size = new TextEncoder().encode(JSON.stringify(q.envelope)).length + 1;
+    if (out.length && bytes + size > maxBytes) break;
+    out.push(q);
+    bytes += size;
+  }
+  return out;
 }
 
 /** A receipt line's promotion: its name and the discount it gave (none when it took part for nothing). */

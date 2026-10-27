@@ -26,7 +26,8 @@ export interface OfflineReceipt {
   occurredAt: string;
   register: { code: string; name: string };
   branch: { name: string };
-  seller: { name: string; registeredName: string; tin: string | null; vatStatus: 'VAT' | 'NON_VAT' };
+  /** `address`: as online receipts print it (absent on receipts queued before it was kept, or from an older snapshot). */
+  seller: { name: string; registeredName: string; address?: string; tin: string | null; vatStatus: 'VAT' | 'NON_VAT' };
   cashierName: string;
   /** `promotion`: the promotion that priced the line and its discount (ADR-0021). */
   lines: { name: string; quantity: string; unitPrice: string; amount: string; flag: string; promotion?: { name: string; discount: string } }[];
@@ -273,6 +274,11 @@ export class LocalStore {
         q.attempts + 1, nextAttemptAt(q.attempts + 1), error, seq,
       ]);
     }
+  }
+
+  /** Ends the wait of `terminalId`'s backed-off sales: the server is reachable again, or the cashier asked. */
+  async makeDue(terminalId: string, now: number): Promise<void> {
+    await this.sql.execute(`UPDATE outbox SET next_attempt_at = ? WHERE status = 'PENDING' AND terminal_id = ? AND next_attempt_at > ?`, [now, terminalId, now]);
   }
 
   /**

@@ -103,6 +103,27 @@ groups:
         annotations:
           summary: Many card/QR payments declined or timed out in 15 minutes.
           runbook_url: docs/operations/monitoring.md#onepospaymentfailures
+      - alert: OneposBillingPaymentNotApplied
+        expr: sum(increase(onepos_billing_events_total{step="webhook",outcome=~"unapplied|unknown_checkout|no_payment"}[1h])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: A business's subscription payment arrived but settled no bill (ADR-0027); money may need a refund.
+          runbook_url: docs/operations/monitoring.md#oneposbillingpaymentnotapplied
+      - alert: OneposBillingWebhookRefused
+        expr: sum(increase(onepos_billing_events_total{step="webhook",outcome="bad_signature"}[15m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: Subscription payment webhooks are arriving with a wrong or stale signature.
+          runbook_url: docs/operations/monitoring.md#oneposbillingwebhookrefused
+      - alert: OneposBillingCheckoutFailing
+        expr: sum(increase(onepos_billing_events_total{step="checkout",outcome="failed"}[15m])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: Owners cannot open the subscription payment page (the payment provider is not answering).
+          runbook_url: docs/operations/monitoring.md#oneposbillingcheckoutfailing
 
   - name: onepos-offline
     rules:
@@ -154,6 +175,13 @@ groups:
         annotations:
           summary: The worker loop keeps failing (database unreachable or claim errors).
           runbook_url: docs/operations/monitoring.md#oneposworkerlooperrors
+      - alert: OneposWorkerHourlyPassFailing
+        expr: (time() - max(onepos_worker_billing_tick_last_success_timestamp_seconds) > 7200) or (sum(increase(onepos_worker_hourly_errors_total[2h])) > 0)
+        labels:
+          severity: warning
+        annotations:
+          summary: The hourly pass (billing, expiry flags, idempotency purge, export expiry) failed a step or billing has not run for 2 h.
+          runbook_url: docs/operations/monitoring.md#oneposworkerhourlypassfailing
       - alert: OneposWebhookDeliveriesDead
         expr: sum(increase(onepos_worker_webhook_deliveries_total{outcome="dead"}[1h])) > 0
         labels:

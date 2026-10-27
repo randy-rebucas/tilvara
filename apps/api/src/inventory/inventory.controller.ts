@@ -207,6 +207,9 @@ export class InventoryController {
   }
 
   // Count sheets (blind counts): open and freeze, count, post or cancel.
+  // A sheet whose answer was lost is opened again with the same key and gets it back, not SHEET_OPEN
+  // (audit 2026-10-27 #43). Optional, so a client without a key still opens one.
+  @Idempotent()
   @Post('stock/count-sheets')
   openCountSheet(@Auth() auth: AuthContext, @Body(new ZodPipe(createCountSheetSchema)) body: CreateCountSheetInput) {
     return this.inventory.openCountSheet(auth, body);

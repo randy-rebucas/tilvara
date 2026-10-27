@@ -582,15 +582,20 @@ describe('voids and returns (ADR-0011)', () => {
     const cola = await productOf(s.cola);
     const session = await openSession(s);
     const tracked = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '2' }], '50.00')).expect(201)).body;
-    // Sold while tracked, returned after tracking was switched off: the units still come back.
+    // Sold while tracked, returned after tracking was switched off: the units still come back. Tracking
+    // is switched off only once the shelf is empty (audit 2026-10-27 #9), so the 3 left are written off first.
+    expect((await http().patch(`/v1/products/${cola}`).set(s.auth).send({ trackInventory: false }).expect(409)).body.error.code).toBe('HAS_STOCK');
+    await http().post('/v1/stock/adjustments').set(s.manager).set('Idempotency-Key', randomUUID()).send({ branchId: s.branchId, kind: 'WASTE', reason: 'Damaged', items: [{ variantId: s.cola, quantity: '-3' }] }).expect(201);
+    expect(await balance(s, s.cola)).toBe('0');
     await http().patch(`/v1/products/${cola}`).set(s.auth).send({ trackInventory: false }).expect(200);
     await ret(s.manager, tracked.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Wrong size', lines: [{ saleLineId: tracked.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
-    expect(await balance(s, s.cola)).toBe('4');
+    expect(await balance(s, s.cola)).toBe('1');
     // Sold while untracked, returned after tracking was switched on: nothing left stock, nothing comes back.
     const untracked = (await post(s.cashier, sale(session.id, [{ variantId: s.cola, quantity: '1' }], '50.00')).expect(201)).body;
+    expect(await balance(s, s.cola)).toBe('1');
     await http().patch(`/v1/products/${cola}`).set(s.auth).send({ trackInventory: true }).expect(200);
     await ret(s.manager, untracked.id, { cashierSessionId: session.id, kind: 'RETURN', reason: 'Wrong size', lines: [{ saleLineId: untracked.lines[0].id, quantity: '1', disposition: 'RESTOCK' }] }).expect(201);
-    expect(await balance(s, s.cola)).toBe('4');
+    expect(await balance(s, s.cola)).toBe('1');
   });
 
   it('a whole-unit item comes back in whole units', async () => {

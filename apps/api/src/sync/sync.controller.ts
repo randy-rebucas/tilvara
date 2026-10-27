@@ -9,7 +9,7 @@ import {
 } from '@1pos/sync-protocol';
 import { dismissOfflineSchema, idParamSchema, offlineListQuerySchema, type DismissOfflineInput, type OfflineListQuery } from '@1pos/validation';
 import type { Response } from 'express';
-import { Auth, RequireTenant, TerminalAuth, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
+import { AllowReadOnlyBusiness, Auth, RequireTenant, TerminalAuth, type AuthContext, type AuthedRequest } from '../auth/auth-context.js';
 import { imageHeaders } from '../business/branding.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
@@ -101,6 +101,9 @@ export class SyncController {
 
   @RequireTenant()
   @HttpCode(200)
+  // A lapsed business must still review its offline sales to close its shifts (audit 2026-10-27 #26);
+  // a suspended one is still refused by the service.
+  @AllowReadOnlyBusiness()
   @Post('sync/transactions/:id/retry')
   retry(@Auth() auth: AuthContext, @Param('id', id) txId: string) {
     return this.sync.retry(auth, txId);
@@ -108,6 +111,9 @@ export class SyncController {
 
   @RequireTenant()
   @HttpCode(200)
+  // A lapsed business must still review its offline sales to close its shifts (audit 2026-10-27 #26);
+  // a suspended one is still refused by the service.
+  @AllowReadOnlyBusiness()
   @Post('sync/transactions/:id/dismiss')
   dismiss(@Auth() auth: AuthContext, @Param('id', id) txId: string, @Body(new ZodPipe(dismissOfflineSchema)) body: DismissOfflineInput) {
     return this.sync.dismiss(auth, txId, body);

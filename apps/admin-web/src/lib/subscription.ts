@@ -34,6 +34,16 @@ export function planFacts(sub: Pick<Subscription, 'status' | 'trialEndsAt' | 'cu
   }
 }
 
+/** Days before a bill's due date that owners see it above every page (ADR-0027). */
+export const BILL_NOTICE_DAYS = 7;
+
+/** The open bill owners are reminded of: due within a week, or overdue while the business can still write; else null. */
+export function billDueSoon(sub: Pick<Subscription, 'access' | 'openBill'>, now = Date.now()): NonNullable<Subscription['openBill']> | null {
+  const bill = sub.openBill;
+  if (!bill || sub.access !== 'FULL') return null;
+  return new Date(bill.dueAt).getTime() - now <= BILL_NOTICE_DAYS * DAY ? bill : null;
+}
+
 /** The trial's end when it is within its last days and the business can still write; else null. */
 export function trialEndingSoon(sub: Pick<Subscription, 'status' | 'access' | 'trialEndsAt'>, now = Date.now()): string | null {
   if (sub.status !== 'TRIALING' || sub.access !== 'FULL' || !sub.trialEndsAt) return null;

@@ -1,7 +1,7 @@
 import { Dec } from '@1pos/money';
 import { sql, taxProfiles, type Database } from '@1pos/database';
 import type { TaxProfile } from '@1pos/tax';
-import { effectiveNowSql } from '../common/clock.js';
+import { EFFECTIVE_SKEW, effectiveNowSql } from '../common/clock.js';
 
 /** Defaults are configuration, not law (ADR-0008); a tax adviser confirms them per entity. */
 export const DEFAULT_VAT_RATE = '0.12';
@@ -65,14 +65,20 @@ export function profileView(r: Row | RawRow): TaxProfileView {
 
 const atOrNow = (at?: Date) => (at ? sql`${at.toISOString()}::timestamptz` : effectiveNowSql);
 
-/** The profile in force at `at` (default: DB now) for each entity (latest effective_from <= at). */
-export async function profilesInForce(db: Database, legalEntityIds: readonly string[], at?: Date): Promise<Map<string, TaxProfileView>> {
+/**
+ * The profile in force at `at` (default: DB now) for each entity (latest effective_from <= at). With
+ * `knownAt` (an offline sale re-priced as of its snapshot, audit 45 #12a), a profile created after that
+ * instant (plus the clock skew allowance) is ignored, like price rows and promotions: a profile
+ * back-dated after the till took its snapshot cannot turn the sale into a total mismatch.
+ */
+export async function profilesInForce(db: Database, legalEntityIds: readonly string[], at?: Date, knownAt?: Date): Promise<Map<string, TaxProfileView>> {
   if (legalEntityIds.length === 0) return new Map();
   const { rows } = await db.execute<RawRow>(sql`
     SELECT DISTINCT ON (legal_entity_id) *
       FROM tax_profiles
      WHERE legal_entity_id IN (${sql.join(legalEntityIds.map((id) => sql`${id}::uuid`), sql`, `)})
        AND effective_from <= ${atOrNow(at)}
+       ${knownAt ? sql`AND created_at <= ${knownAt.toISOString()}::timestamptz + ${sql.raw(EFFECTIVE_SKEW)}` : sql``}
      ORDER BY legal_entity_id, effective_from DESC`);
   return new Map(rows.map((r) => [r.legal_entity_id, profileView(r)]));
 }

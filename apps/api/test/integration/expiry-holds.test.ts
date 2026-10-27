@@ -224,11 +224,11 @@ describe('expired and held stock where the branch blocks it', () => {
     const rc = ((await http().get('/v1/stock/lots').query({ branchId: s.branchId, variantId: tea }).set(s.auth).expect(200)).body.data as { lotId: string; lotCode: string }[]).find((l) => l.lotCode === 'RC-7')!;
     const other = await s.product('Other tea', '20.00');
     const wrong = await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID()).send({
-      branchId: s.branchId, supplierId: supplier.id, reason: 'Recall', lines: [{ variantId: other, quantity: '1', creditUnitCost: '12.00', lotId: rc.lotId }],
+      branchId: s.branchId, supplierId: supplier.id, goodsReceiptId: receipt.id, reason: 'Recall', lines: [{ variantId: other, quantity: '1', creditUnitCost: '12.00', lotId: rc.lotId }],
     }).expect(422);
     expect(wrong.body.error.code).toBe('LOT_MISMATCH');
     await http().post('/v1/supplier-returns').set(s.auth).set('Idempotency-Key', randomUUID()).send({
-      branchId: s.branchId, supplierId: supplier.id, reason: 'Recall', lines: [{ variantId: tea, quantity: '2', creditUnitCost: '12.00', lotId: rc.lotId }],
+      branchId: s.branchId, supplierId: supplier.id, goodsReceiptId: receipt.id, reason: 'Recall', lines: [{ variantId: tea, quantity: '2', creditUnitCost: '12.00', lotId: rc.lotId }],
     }).expect(201);
     expect(await lots()).toEqual({ 'OK-2': '5' });
     // Nothing held is left on hand: all five good ones sell at the counter.

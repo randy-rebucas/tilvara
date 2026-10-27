@@ -224,14 +224,15 @@ describe('count sheets (blind counts)', () => {
     expect(blind.expectedShown).toBe(false);
     expect(JSON.stringify(blind.lines)).not.toMatch(/expectedQuantity|varianceQuantity|movedSinceFreeze/);
 
-    // Two colas sell while people count (they were on the shelf at the freeze, so counted 9 means 1 missing).
+    // Two colas sell after the freeze and before the count (ADR-0012 amendment 3): the book when counted is 8, so
+    // counting 9 means one more than the books, not one missing (the sale is not deducted twice).
     const session = await openSession(s);
     await sell(s, session, [{ variantId: cola, quantity: '2' }]).expect(201);
     const counted = (await http().put(`/v1/stock/count-sheets/${opened.id}/lines`).set(clerk).send({ lines: [{ variantId: cola, countedQuantity: '9' }, { variantId: gum, countedQuantity: '3' }] }).expect(200)).body;
     expect(counted.lines.find((l: { name: string }) => l.name === 'Gum')).toMatchObject({ countedQuantity: '3', countedBy: 'stock_counter' });
     expect(counted.expectedShown).toBe(false);
     const review = (await http().get(`/v1/stock/count-sheets/${opened.id}`).set(s.manager).expect(200)).body;
-    expect(review.lines.find((l: { name: string }) => l.name === 'Cola')).toMatchObject({ expectedQuantity: '10', countedQuantity: '9', varianceQuantity: '-1', movedSinceFreeze: '-2' });
+    expect(review.lines.find((l: { name: string }) => l.name === 'Cola')).toMatchObject({ expectedQuantity: '10', countedQuantity: '9', varianceQuantity: '1', movedSinceFreeze: '-2' });
     // Gum was found though not on the sheet: frozen at on hand when added (0).
     expect(review.lines.find((l: { name: string }) => l.name === 'Gum')).toMatchObject({ expectedQuantity: '0', varianceQuantity: '3' });
 
@@ -242,11 +243,11 @@ describe('count sheets (blind counts)', () => {
     const posted = (await http().post(`/v1/stock/count-sheets/${opened.id}/post`).set(s.manager).set('Idempotency-Key', key).expect(200)).body;
     expect(posted).toMatchObject({ uncounted: 1, sheet: { status: 'POSTED', stockCountId: posted.count.id } });
     expect(posted.count.lines.map((l: { name: string; systemQuantity: string; varianceQuantity: string; frozen: boolean }) => [l.name, l.systemQuantity, l.varianceQuantity, l.frozen]).sort()).toEqual([
-      ['Cola', '10', '-1', true],
+      ['Cola', '8', '1', true],
       ['Gum', '0', '3', true],
     ]);
-    // 10 − 2 sold − 1 missing = 7; chips untouched (not counted); gum found.
-    expect(await onHand(s, cola)).toBe('7');
+    // What was counted: 9 (10 − 2 sold + 1 found); chips untouched (not counted); gum found.
+    expect(await onHand(s, cola)).toBe('9');
     expect(await onHand(s, chips)).toBe('4');
     expect(await onHand(s, gum)).toBe('3');
     // A replay answers the same; the sheet is closed for counting and posting.

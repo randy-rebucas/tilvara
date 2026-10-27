@@ -2,6 +2,10 @@ import { MetricsRegistry, registerProcessMetrics } from '@1pos/observability';
 import type { Pool } from 'pg';
 import type { RunResult } from './outbox-processor.js';
 
+/** The worker's hourly steps (the fixed label set of onepos_worker_hourly_errors_total). */
+export const HOURLY_STEPS = ['purge_idempotency', 'flag_expiring_lots', 'billing_tick', 'billing_business', 'expire_data_exports'] as const;
+export type HourlyStep = (typeof HOURLY_STEPS)[number];
+
 /** Heartbeats are written at most this often; the API counts a worker alive for 60 s after one. */
 export const HEARTBEAT_EVERY_MS = 15_000;
 
@@ -31,6 +35,19 @@ export class WorkerMonitor {
     name: 'onepos_worker_last_loop_timestamp_seconds',
     help: 'When the worker loop last completed an iteration, Unix seconds.',
   });
+  /**
+   * Hourly steps that failed (audit 45 #5), by step from HOURLY_STEPS; `billing_business` counts businesses the
+   * billing pass rolled back alone (its `errors`), the others a whole step that threw.
+   */
+  readonly hourlyErrors = this.registry.counter({
+    name: 'onepos_worker_hourly_errors_total',
+    help: 'Hourly worker steps that failed, by step (billing_business: one business skipped by the billing pass).',
+    labelNames: ['step'],
+  });
+  readonly lastBillingTick = this.registry.gauge({
+    name: 'onepos_worker_billing_tick_last_success_timestamp_seconds',
+    help: 'When the hourly billing pass last completed (or found another worker running it), Unix seconds.',
+  });
   readonly lastHeartbeat = this.registry.gauge({
     name: 'onepos_worker_last_heartbeat_timestamp_seconds',
     help: 'When this worker last wrote its heartbeat row, Unix seconds.',
@@ -53,11 +70,17 @@ export class WorkerMonitor {
     private readonly version: string,
   ) {
     registerProcessMetrics(this.registry);
+    // Every step shows (at 0) from the start, so an alert on increase() sees the first failure.
+    for (const step of HOURLY_STEPS) this.hourlyErrors.inc({ step }, 0);
     this.registry.onCollect(() => {
       this.pool.set({ state: 'total' }, db.totalCount);
       this.pool.set({ state: 'idle' }, db.idleCount);
       this.pool.set({ state: 'waiting' }, db.waitingCount);
     });
+  }
+
+  hourlyFailed(step: HourlyStep, count = 1): void {
+    if (count > 0) this.hourlyErrors.inc({ step }, count);
   }
 
   recordWebhooks(r: { delivered: number; retried: number; dead: number }): void {

@@ -115,13 +115,18 @@ export class SyncService extends TenantService {
     const authz = header('authorization');
     const prefix = `${TERMINAL_AUTH_SCHEME} `;
     if (!id || !UUID.test(id) || !authz?.startsWith(prefix)) throw unauthenticated();
-    const { rows } = await this.database.pool.query<{ tenant_id: string; register_id: string; status: string }>(
+    const { rows } = await this.database.pool.query<{ tenant_id: string; register_id: string; status: string; tenant_status: string }>(
       'SELECT * FROM auth_terminal($1, $2)',
       [id, sha256(authz.slice(prefix.length).trim())],
     );
     const t = rows[0];
     if (!t) throw unauthenticated();
     if (t.status !== 'ACTIVE') throw unauthenticated('TERMINAL_REVOKED', 'This terminal was revoked; keep its unsent sales and ask a manager');
+    // A business being closed (OFFBOARDING, CLOSED) gets no snapshot and records no sale (audit 45 #28). A suspended
+    // or lapsed one still syncs: its sales are recorded or quarantined by the read-only rules (ADR-0015).
+    if (t.tenant_status !== 'ACTIVE' && t.tenant_status !== 'SUSPENDED') {
+      throw unauthenticated('BUSINESS_CLOSED', 'This business is closed on Tilvara; keep the till\'s unsent sales and contact support');
+    }
     return { terminalId: id, tenantId: t.tenant_id, registerId: t.register_id, correlationId };
   }
 
@@ -169,6 +174,8 @@ export class SyncService extends TenantService {
         legalEntity: {
           id: row.entity.id, registeredName: row.entity.registeredName, tradeName: row.entity.tradeName, tin: row.entity.tin,
           receiptTin: formatTin(row.entity.tin, row.branch.birBranchCode),
+          // As online receipts print it (`receipt.ts`): the branch's address, else the registered one.
+          receiptAddress: row.branch.address ?? row.entity.registeredAddress ?? null,
         },
         currency: items[0]?.currency ?? 'PHP',
         taxProfile: { id: profile.id, effectiveFrom: profile.effectiveFrom, vatStatus: profile.vatStatus, vatRate: profile.vatRate, roundingMode: profile.roundingMode },
@@ -515,16 +522,31 @@ export class SyncService extends TenantService {
         ...this.offlineContext(t, snap, env, d.payloadHash, d.id),
         ...(snap.recoveredFrom && { recoveredFrom: snap.recoveredFrom }),
       });
-      await this.tenantDb.run(auth, (db) => this.audit(db, auth, 'offline_sale.retried', 'terminal_transaction', id, { saleId: r.saleId }));
+      await this.mutate(auth, (db) => this.audit(db, auth, 'offline_sale.retried', 'terminal_transaction', id, { saleId: r.saleId }), { allowReadOnlyBusiness: true });
       return this.get(auth, id);
     } catch (e) {
       if (!(e instanceof AppError) || e.getStatus() >= 500) throw e;
-      await this.tenantDb.run(auth, async (db) => {
-        await db.update(terminalTransactions)
+      if (e.code === 'DUPLICATE_TRANSACTION') {
+        // Another retry of this sale (a second tab, a double click) recorded it first: answer as recorded.
+        const now = await this.get(auth, id);
+        if (now.status !== 'QUARANTINED') return now;
+      }
+      // Through mutate (audit 2026-10-27 #26): a lapsed business must still be able to review and close
+      // its shifts, so read-only is allowed. Only a row still waiting for review takes the error: a
+      // concurrent retry that recorded it must not be stamped with this one's failure.
+      const stamped = await this.mutate(auth, async (db) => {
+        const [row] = await db.update(terminalTransactions)
           .set({ errorCode: e.code, errorDetail: { message: e.message, ...(e.details && { details: e.details }) }, attempts: sql`${terminalTransactions.attempts} + 1` })
-          .where(eq(terminalTransactions.id, id));
-        await this.audit(db, auth, 'offline_sale.retry_failed', 'terminal_transaction', id, { code: e.code });
-      });
+          .where(and(eq(terminalTransactions.id, id), eq(terminalTransactions.status, 'QUARANTINED')))
+          .returning({ id: terminalTransactions.id });
+        if (row) await this.audit(db, auth, 'offline_sale.retry_failed', 'terminal_transaction', id, { code: e.code });
+        return !!row;
+      }, { allowReadOnlyBusiness: true });
+      if (!stamped) {
+        const now = await this.get(auth, id);
+        if (now.status === 'RECORDED') return now;
+        throw new AppError('NOT_QUARANTINED', 'This offline sale is no longer waiting for review', HttpStatus.CONFLICT);
+      }
       throw new AppError('STILL_QUARANTINED', `Still not recordable: ${e.message}`, HttpStatus.CONFLICT, { code: e.code });
     }
   }
@@ -532,14 +554,15 @@ export class SyncService extends TenantService {
   /** Give up on a quarantined sale with a reason; any cash it took shows as a drawer variance. */
   async dismiss(auth: AuthContext, id: string, input: DismissOfflineInput) {
     await this.reviewable(auth, id);
-    await this.tenantDb.run(auth, async (db) => {
+    // Through mutate (audit 2026-10-27 #26), read-only allowed: a lapsed business must still close its shifts.
+    await this.mutate(auth, async (db) => {
       const [row] = await db.update(terminalTransactions)
         .set({ status: 'DISMISSED', resolvedAt: sql`now()`, resolvedBy: auth.userId, resolveReason: input.reason })
         .where(and(eq(terminalTransactions.id, id), eq(terminalTransactions.status, 'QUARANTINED')))
         .returning({ id: terminalTransactions.id });
       if (!row) throw new AppError('NOT_QUARANTINED', 'This offline sale is no longer waiting for review', HttpStatus.CONFLICT);
       await this.audit(db, auth, 'offline_sale.dismissed', 'terminal_transaction', id, { reason: input.reason });
-    });
+    }, { allowReadOnlyBusiness: true });
     return this.get(auth, id);
   }
 

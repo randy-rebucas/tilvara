@@ -41,6 +41,7 @@
     "test:e2e:web:account": "node apps/admin-web/e2e/account.mjs",
     "test:e2e:web:guide": "node apps/admin-web/e2e/guide.mjs",
     "test:e2e:web:extensions": "node apps/admin-web/e2e/extensions.mjs",
+    "test:e2e:web:billing": "node apps/admin-web/e2e/billing.mjs",
     "test:e2e:web:branding": "node apps/admin-web/e2e/branding.mjs",
     "test:e2e:web:shop-address": "node apps/admin-web/e2e/shop-address.mjs",
     "test:e2e:web:drawers": "node apps/admin-web/e2e/drawers.mjs",

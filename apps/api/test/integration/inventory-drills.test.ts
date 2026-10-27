@@ -211,7 +211,7 @@ describe('closing a month while posting into it', () => {
   };
   const manual = async (s: Shop) => {
     const acc = Object.fromEntries(((await http().get('/v1/accounts').query({ legalEntityId: s.le }).set(s.auth)).body.data as { id: string; systemKey: string }[]).map((a) => [a.systemKey, a.id]));
-    return { legalEntityId: s.le, entryDate: `${lastMonth()}-28`, memo: 'Late accrual', lines: [{ accountId: acc.INVENTORY_ADJUSTMENTS, debit: '5.00' }, { accountId: acc.INVENTORY, credit: '5.00' }] };
+    return { legalEntityId: s.le, entryDate: `${lastMonth()}-28`, memo: 'Late bank deposit', lines: [{ accountId: acc.CASH_IN_BANK, debit: '5.00' }, { accountId: acc.CASH_TRANSFERS, credit: '5.00' }] };
   };
   /** An uncommitted posting into last month, written the way any writer would. */
   async function postingInFlight(s: Shop) {

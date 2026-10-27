@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { reservedAt } from '../inventory/reservations.service.js';
-import { and, branches, eq, inArray, mapInSequence, productVariants, sql, stockAdjustments, stockBalances, stockLots, stockMovements, type Database } from '@1pos/database';
+import { and, branches, eq, inArray, mapInSequence, productVariants, products, sql, stockAdjustments, stockBalances, stockLots, stockMovements, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import { stockChangePosting } from '@1pos/accounting';
 import { post } from '../accounting/ledger.js';
@@ -27,11 +27,16 @@ export class StockService extends TenantService {
       if (branch.archivedAt) throw archived('Branch');
       const ids = [...new Set(input.items.map((i) => i.variantId))];
       const found = await db
-        .select({ id: productVariants.id, referenceCost: productVariants.referenceCost })
+        .select({ id: productVariants.id, referenceCost: productVariants.referenceCost, track: products.trackInventory })
         .from(productVariants)
+        .innerJoin(products, eq(products.id, productVariants.productId))
         .where(inArray(productVariants.id, ids));
       const missing = ids.filter((id) => !found.some((f) => f.id === id));
       if (missing.length) throw new AppError('NOT_FOUND', 'Variant not found', HttpStatus.NOT_FOUND, { variantIds: missing });
+      // Only stock-tracked items have stock to adjust (as transfers and counts): stock put on an untracked
+      // item would never leave it, since its sales move none.
+      const untracked = found.filter((f) => !f.track).map((f) => f.id);
+      if (untracked.length) throw new AppError('NOT_STOCKED', 'These items do not track stock', HttpStatus.UNPROCESSABLE_ENTITY, { variantIds: untracked });
       const tenantId = tenantOf(auth).tenantId;
       // A lot named for a removal must be one this business can see (the trigger checks item and branch).
       const lotIds = [...new Set(input.items.flatMap((i) => (i.lotId ? [i.lotId] : [])))];

@@ -49,7 +49,8 @@ async function day() {
   await http().post(`/v1/purchase-orders/${po.id}/approve`).set(auth).expect(200);
   const receipt = (await idem('/v1/goods-receipts', { branchId: b1, supplierId: supplier, purchaseOrderId: po.id, lines: [{ purchaseOrderLineId: po.lines[0].id, variantId: cola, quantity: '20', rejectedQuantity: '4', rejectionReason: 'Dented' }, { variantId: fee, quantity: '1', unitCost: '80.00' }] }).expect(201)).body;
   await idem('/v1/supplier-returns', { branchId: b1, supplierId: supplier, goodsReceiptId: receipt.id, reason: 'Leaking', lines: [{ goodsReceiptLineId: receipt.lines.find((l: { variantId: string }) => l.variantId === cola).id, variantId: cola, quantity: '2' }] }).expect(201);
-  await idem('/v1/supplier-returns', { branchId: b1, supplierId: supplier, reason: 'Recall', lines: [{ variantId: soap, quantity: '1' }] }).expect(201);
+  // Stocked goods go back against the receipt they came in on (audit 2026-10-27 #10): soap came in by an adjustment.
+  expect((await idem('/v1/supplier-returns', { branchId: b1, supplierId: supplier, reason: 'Recall', lines: [{ variantId: soap, quantity: '1' }] }).expect(422)).body.error.code).toBe('GOODS_RECEIPT_REQUIRED');
 
   const reg = (await http().post('/v1/registers').set(auth).send({ branchId: b1, code: 'R1', name: 'Counter' }).expect(201)).body.id;
   const session = (await http().post('/v1/cashier-sessions').set(auth).send({ registerId: reg, openingFloat: '500.00' }).expect(201)).body.id;

@@ -91,6 +91,26 @@ export const serverEnvSchema = z.object({
   PAYMONGO_SECRET_KEY: optionalKey(/^sk_(test|live)_\w+$/, 'must be a PayMongo secret key (sk_test_… or sk_live_…)'),
   PAYMONGO_PUBLIC_KEY: optionalKey(/^pk_(test|live)_\w+$/, 'must be a PayMongo public key (pk_test_… or pk_live_…)'),
   PAYMONGO_WEBHOOK_SECRET: optionalKey(/^whsk_\w+$/, 'must be a PayMongo webhook signing secret (whsk_…)'),
+  /**
+   * Who takes the businesses' subscription payments (ADR-0027). 'dev' is a simulator: its checkout
+   * page, served by this API at API_PUBLIC_URL, pays the bill on a click; refused in production.
+   * 'paymongo' needs PAYMONGO_SECRET_KEY and PAYMONGO_WEBHOOK_SECRET.
+   */
+  BILLING_PROVIDER: z.enum(['dev', 'paymongo']).default('dev'),
+  /**
+   * The shops' own addresses, `<slug>.<SHOP_DOMAIN>` (same value as the admin's ONEPOS_SHOP_DOMAIN; session 40).
+   * Set, a business whose own sign-in page is on comes back from the payment page to its own address
+   * (scheme and port as APP_PUBLIC_URL); unset, to APP_PUBLIC_URL.
+   */
+  SHOP_DOMAIN: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9.-]*$/, 'must be a domain name such as tilvara.ph')
+    .transform((v) => v.replace(/^\.+|\.+$/g, '') || undefined)
+    .optional(),
+  /** This API's address as a browser reaches it (the dev billing checkout page). */
+  API_PUBLIC_URL: z.url().default('http://127.0.0.1:4320'),
   /** Provider call timeout; a timed-out authorization is reconciled, never retried blindly. */
   PAYMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).default(15_000),
   /** How long a terminal snapshot may price offline sales before they are flagged SNAPSHOT_EXPIRED (ADR-0015). */
@@ -162,6 +182,12 @@ export const workerEnvSchema = z.object({
   ...webhooks,
   /** One webhook POST may take this long before it counts as failed and is retried. */
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30_000).default(10_000),
+  /**
+   * Same values as the API's (ADR-0027): the worker closes a voided or settled bill's open PayMongo pages
+   * (`billing.checkout_expired`, audit 45 #3). 'dev' needs nothing (the simulator's page asks the database).
+   */
+  BILLING_PROVIDER: z.enum(['dev', 'paymongo']).default('dev'),
+  PAYMONGO_SECRET_KEY: optionalKey(/^sk_(test|live)_\w+$/, 'must be a PayMongo secret key (sk_test_… or sk_live_…)'),
 });
 export type WorkerEnv = z.infer<typeof workerEnvSchema>;
 
@@ -177,6 +203,15 @@ export function loadWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv {
     issues.push('WORKER_DATABASE_URL: required in production (the worker connects as onepos_worker, not the API role)');
   }
   if (isProd(env)) issues.push(...metricsTokenIssue(parsed.data, parsed.data.WORKER_METRICS_PORT), ...webhookIssues(parsed.data));
+  if (parsed.data.BILLING_PROVIDER === 'paymongo' && !parsed.data.PAYMONGO_SECRET_KEY) {
+    issues.push('BILLING_PROVIDER: paymongo needs PAYMONGO_SECRET_KEY (the worker closes stale payment pages)');
+  }
+  if (isProd(env) && parsed.data.BILLING_PROVIDER === 'dev') {
+    issues.push('BILLING_PROVIDER: the dev billing simulator cannot be used in production (set paymongo, as on the API)');
+  }
+  if (!isProd(env) && parsed.data.PAYMONGO_SECRET_KEY?.includes('_live_')) {
+    issues.push('PAYMONGO_SECRET_KEY: live keys are only allowed in production; use the test-mode key');
+  }
   if (issues.length > 0) throw new EnvValidationError(issues);
   return parsed.data;
 }
@@ -201,6 +236,9 @@ export function loadServerEnv(env: NodeJS.ProcessEnv = process.env): ServerEnv {
   if (parsed.data.MFA_ENCRYPTION_KEY_PREVIOUS && parsed.data.MFA_ENCRYPTION_KEY_PREVIOUS === parsed.data.MFA_ENCRYPTION_KEY) {
     issues.push('MFA_ENCRYPTION_KEY_PREVIOUS: must differ from MFA_ENCRYPTION_KEY');
   }
+  if (parsed.data.BILLING_PROVIDER === 'paymongo' && (!parsed.data.PAYMONGO_SECRET_KEY || !parsed.data.PAYMONGO_WEBHOOK_SECRET)) {
+    issues.push('BILLING_PROVIDER: paymongo needs PAYMONGO_SECRET_KEY and PAYMONGO_WEBHOOK_SECRET');
+  }
   if (parsed.data.API_METRICS_PORT !== 0 && parsed.data.API_METRICS_PORT === parsed.data.API_PORT) {
     issues.push('API_METRICS_PORT: must differ from API_PORT (metrics are never served on the public listener)');
   }
@@ -222,6 +260,13 @@ export function productionIssues(cfg: ServerEnv): string[] {
   }
   if (cfg.PAYMENT_PROVIDER === 'dev') {
     issues.push('PAYMENT_PROVIDER: the dev payment simulator cannot be used in production');
+  }
+  if (cfg.BILLING_PROVIDER === 'dev') {
+    issues.push('BILLING_PROVIDER: the dev billing simulator cannot be used in production (set paymongo)');
+  }
+  // A test key in production takes no real money while every bill would look paid (audit 45 #16).
+  if (cfg.BILLING_PROVIDER === 'paymongo' && !cfg.PAYMONGO_SECRET_KEY?.startsWith('sk_live_')) {
+    issues.push('PAYMONGO_SECRET_KEY: production needs the live secret key (sk_live_…), not a test key');
   }
   if (cfg.FILE_STORAGE_DRIVER === 'dev') issues.push(DEV_STORAGE_ISSUE);
   if (!cfg.BFF_SHARED_SECRET || DEV_SECRET_MARKERS.some((m) => cfg.BFF_SHARED_SECRET!.toLowerCase().includes(m))) {

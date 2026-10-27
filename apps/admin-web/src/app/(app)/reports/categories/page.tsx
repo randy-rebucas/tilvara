@@ -65,6 +65,7 @@ export default async function ByCategoryPage({ searchParams }: { searchParams: P
             />
           </Note>
           <p className="text-[0.8125rem] text-muted">{t('rep.estimatedMargin')}</p>
+          <p className="text-[0.8125rem] text-muted">{t('rep.cogsVsBooks')}</p>
         </>
       ) : (
         <Note><Empty>{t('rep.noData')}</Empty></Note>

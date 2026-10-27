@@ -4,7 +4,7 @@ import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ExportLinks } from '../../src/exports/export-links.js';
-import { addMember, asOwnerInTenant, bearer, createApp, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
+import { addMember, asOwnerInTenant, bearer, createApp, ensurePlanPrices, ownerPool, signup, uniq, type SignedUp } from './helpers.js';
 import { FIXTURE, seedExtensionFixtures } from './fixtures/extension-fixture.js';
 
 /**
@@ -88,6 +88,10 @@ interface World {
   serviceId: string;
   datedId: string;
   lotHoldId: string;
+  /** ADR-0027: a bill paid through the dev checkout (bill, checkout and payment rows). */
+  billId: string;
+  /** …and its system-generated receipt. */
+  receiptId: string;
 }
 
 async function world(prefix: string): Promise<World> {
@@ -304,6 +308,12 @@ async function world(prefix: string): Promise<World> {
   // Phase 6 slice 6: support access and a data export request (the worker does not run here).
   const grant = ok(await http().post('/v1/support-access').set(auth).send({ purpose: 'Fixture support access', hours: 2 }));
   const dataExport = ok(await http().post('/v1/data-exports').set(auth), 202);
+  // ADR-0027: the owner chooses a plan, opens the dev payment page and pays it.
+  const chosen = ok<{ billId: string }>(await http().put('/v1/subscription/plan').set(auth).send({ planCode: 'growth' }), 200);
+  const page = ok<{ url: string }>(await http().post(`/v1/subscription/bills/${chosen.billId}/checkout`).set(auth), 200);
+  ok(await http().post(`/v1/billing/dev-checkout/pay?id=${new URL(page.url).searchParams.get('id')}`).type('form').send({ method: 'GCASH' }), 303);
+  const billRows = ok<{ data: { id: string; receipt: { id: string } | null }[] }>(await http().get('/v1/subscription/bills').set(auth), 200).data;
+  const receiptId = billRows.find((x) => x.id === chosen.billId)!.receipt!.id;
   return {
     t,
     slug,
@@ -328,6 +338,8 @@ async function world(prefix: string): Promise<World> {
     closedSessionId: closedSession.id,
     saleId: sold.id,
     saleReturnId: saleReturn.id,
+    billId: chosen.billId,
+    receiptId,
     cashMovementId: payIn.id,
     paymentIntentId: payment.id,
     openSessionCash,
@@ -391,6 +403,7 @@ beforeAll(async () => {
   owner = ownerPool();
   runtime = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL, max: 2 });
   await seedExtensionFixtures(owner);
+  await ensurePlanPrices(owner);
   [a, b] = await Promise.all([world('iso-a'), world('iso-b')]);
   // Two full businesses with a row in every tenant table: ~10 s alone, past 60 s late in a full gate run.
 }, 180_000);
@@ -409,6 +422,8 @@ function attackMatrix(): Record<string, () => request.Test> {
     // switching an extension changes nothing for another (extensions.test.ts).
     'POST /v1/extensions/:code/enable': () => http().post('/v1/extensions/no_such_extension/enable').set(auth),
     'POST /v1/extensions/:code/disable': () => http().post('/v1/extensions/no_such_extension/disable').set(auth),
+    'POST /v1/subscription/bills/:id/checkout': () => http().post(`/v1/subscription/bills/${a.billId}/checkout`).set(auth),
+    'GET /v1/subscription/receipts/:id': () => http().get(`/v1/subscription/receipts/${a.receiptId}`).set(auth),
     'PATCH /v1/legal-entities/:id': () => http().patch(`/v1/legal-entities/${a.entityId}`).set(auth).send({ registeredName: 'pwned' }),
     'POST /v1/legal-entities/:id/archive': () => http().post(`/v1/legal-entities/${a.entityId}/archive`).set(auth),
     'GET /v1/legal-entities/:id/tax-profiles': () => http().get(`/v1/legal-entities/${a.entityId}/tax-profiles`).set(auth),
@@ -779,7 +794,7 @@ describe('Phase 1 cross-tenant sweep', () => {
 
   it("no list or read endpoint returns any of the other tenant's ids", async () => {
     const paths = [
-      '/v1/me', '/v1/business', '/v1/business/branding', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
+      '/v1/me', '/v1/business', '/v1/business/branding', '/v1/support-access', '/v1/data-exports', `/v1/data-exports/${b.exportId}`, '/v1/sample-data', '/v1/members', '/v1/members/mfa', '/v1/roles', '/v1/audit-logs?limit=200', `/v1/audit-logs?actorUserId=${a.t.userId}`, '/v1/subscription', '/v1/subscription/bills', '/v1/subscription/plans', '/v1/legal-entities', '/v1/branches', '/v1/registers', '/v1/terminals',
       `/v1/legal-entities/${b.entityId}/tax-profiles`, '/v1/discount-schemes',
       '/v1/uoms', '/v1/tax-categories', '/v1/categories', '/v1/products', '/v1/price-lists', `/v1/price-lists/${b.priceListId}/prices`,
       `/v1/variants/${b.variantId}/price-history`, '/v1/invitations',

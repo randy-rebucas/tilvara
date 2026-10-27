@@ -31,7 +31,7 @@ async function shiftSales(id: string): Promise<{ data: Sale[]; more: boolean } |
 }
 
 /** Cash movement types as the API names them; the last three are history of the removed lodging and laundry (no longer made). */
-const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'SUPPLIER_PAYMENT', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT'] as const;
+const CASH_TYPES = ['OPENING_FLOAT', 'SALE', 'PAY_IN', 'PAY_OUT', 'REFUND', 'SUPPLIER_PAYMENT', 'FOLIO_PAYMENT', 'DEPOSIT', 'JOB_DEPOSIT', 'DEPOSIT_REFUND', 'JOB_DEPOSIT_REFUND'] as const;
 
 /** A cashier shift: the drawer from float to count, what went in and out of it, its pay-ins and pay-outs, the variance and its approval, and its sales. */
 export default async function ShiftPage({ params }: { params: Promise<{ id: string }> }) {

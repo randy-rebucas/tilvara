@@ -52,6 +52,7 @@ export default async function ByProductPage({ searchParams }: { searchParams: Pr
           {r.data.charges.map((c) => `${t('doc.serviceCharge')}: ${peso(c.net)} (${t('rep.revenueExVat')} ${peso(c.netExVat)})`).join(' · ')}
         </p>
       )}
+      {rows.length > 0 && <p className="text-[0.8125rem] text-muted">{t('rep.cogsVsBooks')}</p>}
     </ReportsChrome>
   );
 }

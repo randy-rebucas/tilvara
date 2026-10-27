@@ -190,6 +190,8 @@ export class SalesService extends TenantService {
     terminal_transactions_txn_unique: ['DUPLICATE_TRANSACTION', 'This terminal already delivered this transaction'],
     sale_lines_price_override_once: ['PRICE_OVERRIDE_USED', 'This approved price was already used on a sale'],
     sale_tenders_exchange_once: ['ALREADY_EXCHANGED', 'This return already paid for an exchange'],
+    // An exchange's return lines name each sale line once (the schema refuses repeats first; audit 45 #31).
+    sale_return_lines_once_per_return: ['DUPLICATE_RETURN_LINE', 'Each sale line once per return'],
   };
 
   constructor(
@@ -557,7 +559,10 @@ export class SalesService extends TenantService {
     const moved = stock.length
       ? await db.insert(stockMovements).values(stock.sort((a, b) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0))).returning({ value: stockMovements.value })
       : [];
-    const expiredOut = expiredRule === 'BLOCK' && stock.length ? await expiredDraws(db, sale!.id) : [];
+    // What came out of expired or held lots (the lot trigger marks both, whatever the rule): an online sale
+    // can only draw them where the rule lets it pass (held ones never); an offline sale draws them at any
+    // branch, held lots included under ALLOW, so it is always checked (audit 45 #30).
+    const expiredOut = stock.length && (expiredRule === 'BLOCK' || priced.offline) ? await expiredDraws(db, sale!.id) : [];
     if (expiredOut.length) {
       await emitEvent(db, { tenantId, topic: 'stock.expired_sold', payload: { saleId: sale!.id, branchId: session.branchId, lots: expiredOut.length }, correlationId: auth.correlationId });
     }

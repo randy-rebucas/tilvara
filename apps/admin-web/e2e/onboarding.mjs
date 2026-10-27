@@ -36,7 +36,7 @@ function totp(secret, offset = 0) {
 const call = client(API);
 const stamp = Date.now().toString(36);
 const ownerEmail = `onb-${stamp}@example.ph`;
-await call('POST', '/v1/auth/signup', null, { email: ownerEmail, password: PASSWORD, displayName: 'Marites', businessName: `Kapihan ni Marites ${stamp}`, tenantSlug: `onb-${stamp}` });
+const ownerTk = (await call('POST', '/v1/auth/signup', null, { email: ownerEmail, password: PASSWORD, displayName: 'Marites', businessName: `Kapihan ni Marites ${stamp}`, tenantSlug: `onb-${stamp}` })).tokens.accessToken;
 // The staff member: an account of their own with two-step sign-in, then added by ops.
 const staffEmail = `staff-${stamp}@1pos.example`;
 const staff = await call('POST', '/v1/auth/signup', null, { email: staffEmail, password: PASSWORD, displayName: 'Sam Support', businessName: `Support desk ${stamp}`, tenantSlug: `desk-${stamp}` });
@@ -114,13 +114,13 @@ try {
   }
   check('the worker finishes it (Ready, with a checksum)', ready && (await text()).includes('Checksum (SHA-256)'));
   await shot('onboarding-export.png');
+  const readyCopy = (await call('GET', '/v1/data-exports', ownerTk)).data.find((e) => e.status === 'READY');
   const dl = await evaluate(`(async () => {
-    const exports = await (await fetch('/api/v1/data-exports')).json();
-    const id = exports.data.find((e) => e.status === 'READY').id;
+    const id = ${JSON.stringify(readyCopy.id)};
     const link = await (await fetch('/api/v1/data-exports/' + id + '/link', { method: 'POST', headers: { 'x-onepos-request': '1' } })).json();
     const r = await fetch('/api' + link.url);
     const bytes = new Uint8Array(await r.arrayBuffer());
-    return { status: r.status, type: r.headers.get('content-type'), pk: bytes[0] === 0x50 && bytes[1] === 0x4b, size: bytes.length, expected: exports.data.find((e) => e.id === id).sizeBytes, disposition: r.headers.get('content-disposition') };
+    return { status: r.status, type: r.headers.get('content-type'), pk: bytes[0] === 0x50 && bytes[1] === 0x4b, size: bytes.length, expected: ${readyCopy.sizeBytes}, disposition: r.headers.get('content-disposition') };
   })()`);
   check('the download through the back office is the exact ZIP (bytes, size, file name)', dl.status === 200 && dl.type === 'application/zip' && dl.pk && dl.size === dl.expected && /attachment; filename="tilvara-export-/.test(dl.disposition ?? ''));
 

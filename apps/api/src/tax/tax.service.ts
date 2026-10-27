@@ -142,7 +142,7 @@ export class TaxService extends TenantService {
    * stood at an earlier instant (an offline sale at its snapshot, ADR-0015 §5); prices and tax profiles
    * are append-only and effective-dated, so the result is what was in force then.
    * Promotions in force are applied (ADR-0021 §1), the same for the quote, counter and offline sales.
-   * `knownAt` (an offline sale at its snapshot): price rows and promotions created after this instant
+   * `knownAt` (an offline sale at its snapshot): price rows, promotions and tax profiles created after this instant
    * are ignored, even back-dated ones, so the server sees what the till's snapshot could hold.
    */
   async computeCart(db: Database, auth: AuthContext, input: TaxQuoteInput, asOf?: Date, opts: { knownAt?: Date } = {}) {
@@ -162,7 +162,7 @@ export class TaxService extends TenantService {
     if (branch.archivedAt) throw archived('Branch');
     if (input.lines.some((l) => (l.discount && !toDec(l.discount).isZero()) || l.discountRate)) this.assertCan(auth, 'sales.discount', scope);
 
-    const profile = (await profilesInForce(db, [branch.legalEntityId], at)).get(branch.legalEntityId);
+    const profile = (await profilesInForce(db, [branch.legalEntityId], at, opts.knownAt)).get(branch.legalEntityId);
     if (!profile) throw new AppError('TAX_PROFILE_MISSING', 'The legal entity has no tax profile in force', HttpStatus.CONFLICT);
 
     const variantIds = [...new Set(input.lines.map((l) => l.variantId))];

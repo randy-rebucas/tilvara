@@ -23,6 +23,11 @@ const BY_CODE: Record<string, MessageKey> = {
   ENTITLEMENT_LIMIT_REACHED: 'refusal.planLimit',
   SUBSCRIPTION_READ_ONLY: 'refusal.readOnly',
   TENANT_SUSPENDED: 'refusal.suspended',
+  PLAN_LIMITS_EXCEEDED: 'refusal.planLimits',
+  PLAN_NOT_PRICED: 'refusal.planNotPriced',
+  BILL_NOT_OPEN: 'refusal.billNotOpen',
+  NOT_ACTIVE: 'refusal.notActive',
+  BILLING_PROVIDER_UNAVAILABLE: 'refusal.billingUnavailable',
   TAX_PROFILE_BACKDATED: 'refusal.taxBackdated',
   SYSTEM_ROLE_READONLY: 'refusal.systemRole',
   ROLE_IN_USE: 'refusal.roleInUse',
@@ -33,6 +38,13 @@ const BY_CODE: Record<string, MessageKey> = {
   EXTENSION_REQUIRES: 'refusal.extensionRequires',
   EXTENSION_REQUIRED_BY: 'refusal.extensionRequiredBy',
   EXTENSION_IN_USE: 'refusal.extensionInUse',
+  SYSTEM_ACCOUNT_NOT_ALLOWED: 'refusal.systemAccount',
+  HAS_STOCK: 'refusal.hasStock',
+  BRANCH_HAS_STOCK: 'refusal.branchHasStock',
+  BRANCH_HAS_OPEN_DOCUMENTS: 'refusal.branchHasOpenDocuments',
+  BRANCH_ARCHIVED: 'refusal.branchArchived',
+  GOODS_RECEIPT_REQUIRED: 'refusal.goodsReceiptRequired',
+  PACKS_NOT_ON_HAND: 'refusal.packsNotOnHand',
 };
 
 /** The copy key for a refusal, or null to show the API's own message. */

@@ -44,6 +44,8 @@ export function SignInForm({ next, tenantId }: { next: string; tenantId?: string
     else if (r.error.code === 'INVALID_MFA_CHALLENGE') setStep('password');
   }
 
+  // A locked account answers INVALID_CREDENTIALS to the password; TOO_MANY_ATTEMPTS still comes from the
+  // code step, once too many wrong codes lock the two-step factor (verifyMfa).
   const message =
     error?.code === 'INVALID_CREDENTIALS'
       ? t('auth.invalid')

@@ -34,7 +34,7 @@ load balancer stops sending traffic. A Redis outage does **not** fail readiness:
 per-instance counting (ADR-0016 slice 2), and draining every replica would turn a Redis outage into a full
 outage. The answer then is `200 {"status":"degraded"}` and `OneposRedisDown` fires.
 
-Not measured yet: backup age (slice 4, backup and restore), billing failures (no billing integration yet),
+Not measured yet: backup age (slice 4, backup and restore),
 traces (the OTel exporter waits for the hosting decision, D1).
 
 ## Severities
@@ -121,6 +121,25 @@ Many payments were declined or timed out in 15 minutes. Check the provider's sta
 outcome split: `sum by (outcome) (increase(onepos_payment_outcomes_total[15m]))`. Many `unknown` outcomes
 mean timeouts: check the network path to the provider and `PAYMENT_TIMEOUT_MS`.
 
+### OneposBillingPaymentNotApplied
+A subscription payment (ADR-0027) reached the webhook but settled no bill: `unapplied` (the bill was already
+paid or voided, or the amount differs), `unknown_checkout` (a payment page Tilvara did not open, or another
+environment's) or `no_payment` (a paid event without a paid payment). The money is with the provider and
+recorded in `billing_payments` (`applied = false`) when the page was ours. Follow `billing.md` §4: find the
+business with `support billing-bills`, then refund it in the PayMongo dashboard or record it against the
+right bill.
+
+### OneposBillingWebhookRefused
+Webhooks are failing the signature check. After a rotation, `PAYMONGO_WEBHOOK_SECRET` may not match the
+webhook's secret in the PayMongo dashboard; the server clock may be off by more than 5 minutes; or someone is
+probing the endpoint (the rate limit holds them). PayMongo retries refused events, so nothing is lost once
+the secret is fixed.
+
+### OneposBillingCheckoutFailing
+Owners pressing Pay get "the payment page could not be opened". Check PayMongo's status page and
+`PAYMONGO_SECRET_KEY` (a revoked key answers 401). Bills stay open; owners can pay later or by bank transfer
+(`support billing-payment`).
+
 ## Offline tills
 
 ### OneposTillSilent
@@ -170,6 +189,25 @@ themselves with backoff.
 ### OneposWorkerLoopErrors
 The worker loop keeps failing: it cannot claim events, usually because the database is unreachable or the
 worker's role lost a grant after a migration. The worker log says `worker loop error` with the database error.
+
+### OneposWorkerHourlyPassFailing
+Once an hour the worker purges old idempotency records, flags lots entering their expiry window, runs the
+subscription billing pass (`platform_billing_tick()`: renewal and first bills, past due and canceled at the
+paid-until date, reminders) and deletes expired data exports. Each step runs on its own (audit 45 #5): one that
+fails is counted in `onepos_worker_hourly_errors_total{step}` and the others still run. The billing pass also runs
+each business on its own savepoint: a business it could not process is rolled back alone, logged by Postgres as a
+`WARNING: billing pass: business <id>: …` and counted as `step="billing_business"`. The rule fires when any step
+failed in the last 2 hours, or when no worker has completed a billing pass for 2 hours
+(`onepos_worker_billing_tick_last_success_timestamp_seconds`; a pass skipped because another worker holds it counts
+as done).
+1. The worker log says `hourly step failed` with the step and the database error, or `billing pass skipped
+   businesses` with a count. For `billing_business`, find the business ids in the database log WARNINGs.
+2. A grant or function error after a migration: check the migration ran on this database and the worker role's
+   grants (`rls-catalog.test.ts` lists what it may read). A data problem in one business: fix it (support CLI,
+   `support subscription-show`), then wait for the next pass; nothing needs replaying, the pass is idempotent.
+3. No pass for 2 h with no errors: the worker is stuck or down (see OneposWorkerDown), or the billing pass is held by
+   a session that never ended (`pg_locks`, advisory lock on `hashtextextended('platform_billing_tick', 0)`).
+4. Bills are late, never lost: the next successful pass issues every renewal, start bill and reminder still due.
 
 ### OneposWebhookDeliveriesDead
 A business's webhook endpoint (ADR-0019) failed every attempt for a delivery: 8 attempts over about a day

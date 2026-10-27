@@ -3,7 +3,9 @@ import { createLogger, startMetricsServer, type MetricsServer } from '@1pos/obse
 import { hostname } from 'node:os';
 import { DevFileStorage } from '@1pos/database';
 import pg from 'pg';
-import { buildHandlers, DevWorkerMailer, expireDataExports } from './handlers.js';
+import { checkoutExpirerFor } from './billing-checkouts.js';
+import { buildHandlers, DevWorkerMailer } from './handlers.js';
+import { runHourly } from './hourly.js';
 import { WorkerMonitor } from './monitoring.js';
 import { OutboxProcessor, type Logger } from './outbox-processor.js';
 import { WebhookDispatcher } from './webhook-dispatcher.js';
@@ -25,7 +27,7 @@ async function main(): Promise<void> {
   const processor = new OutboxProcessor({
     pool,
     workerId,
-    handlers: buildHandlers(new DevWorkerMailer(logger), { storage, retentionDays: env.DATA_EXPORT_RETENTION_DAYS }),
+    handlers: buildHandlers(new DevWorkerMailer(logger), { storage, retentionDays: env.DATA_EXPORT_RETENTION_DAYS }, { checkouts: checkoutExpirerFor(env), logger }),
     batchSize: env.OUTBOX_BATCH,
     leaseSeconds: env.OUTBOX_LEASE_SECONDS,
     logger,
@@ -58,14 +60,9 @@ async function main(): Promise<void> {
       monitor.recordWebhooks(w);
       if (w.claimed > 0) logger.info('webhook batch', { ...w });
       if (Date.now() - lastPurge > 3_600_000) {
-        const { rows } = await pool.query<{ n: number }>('SELECT platform_purge_expired_idempotency() AS n');
+        // Each step on its own: one failing never stops the others (audit 45 #5); counted and alerted.
         lastPurge = Date.now();
-        if (rows[0]?.n) logger.info('purged idempotency records', { count: rows[0].n });
-        // Lots entering their branch's expiry window: one stock.expiring event per branch (ADR-0020 §3).
-        const { rows: flagged } = await pool.query<{ n: number }>('SELECT platform_flag_expiring_lots() AS n');
-        if (flagged[0]?.n) logger.info('flagged expiring lots', { count: flagged[0].n });
-        const expired = await expireDataExports(pool, storage, logger);
-        if (expired) logger.info('expired data exports', { count: expired });
+        await runHourly(pool, storage, monitor, logger);
       }
       if (r.claimed === 0 && w.claimed === 0) await new Promise((res) => setTimeout(res, env.OUTBOX_POLL_MS));
     } catch (err) {

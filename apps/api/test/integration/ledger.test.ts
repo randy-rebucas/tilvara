@@ -237,7 +237,7 @@ describe('corrections and periods', () => {
     const lastMonth = d.toISOString().slice(0, 7);
     expect((await http().post('/v1/accounting/periods/close').set(s.accountant).send({ legalEntityId: s.le, month: thisMonth }).expect(422)).body.error.code).toBe('PERIOD_IN_PROGRESS');
     await http().post('/v1/accounting/periods/close').set(s.accountant).send({ legalEntityId: s.le, month: lastMonth }).expect(200);
-    const entry = { legalEntityId: s.le, entryDate: `${lastMonth}-15`, memo: 'Late accrual', lines: [{ accountId: id('INVENTORY_ADJUSTMENTS'), debit: '10.00' }, { accountId: id('INVENTORY'), credit: '10.00' }] };
+    const entry = { legalEntityId: s.le, entryDate: `${lastMonth}-15`, memo: 'Late bank deposit', lines: [{ accountId: id('CASH_IN_BANK'), debit: '10.00' }, { accountId: id('CASH_TRANSFERS'), credit: '10.00' }] };
     expect((await idem(s, '/v1/journal-entries', entry, s.accountant).expect(409)).body.error.code).toBe('PERIOD_CLOSED');
     await http().post('/v1/accounting/periods/reopen').set(s.accountant).send({ legalEntityId: s.le, month: lastMonth }).expect(400);
     await http().post('/v1/accounting/periods/reopen').set(s.accountant).send({ legalEntityId: s.le, month: lastMonth, reason: 'Supplier invoice found' }).expect(200);

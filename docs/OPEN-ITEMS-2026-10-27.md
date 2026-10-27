@@ -41,20 +41,19 @@ not forgotten; not part of this audit.
 
 ## 2. Not seen working yet (verification gaps)
 
-### 2.1 ⬜ Desktop till build and E2E
-- Not run in session 38. The till changes (locked cart, Close shift waiting, drawer, offline receipt) went through
-  `apps/pos-desktop` and `packages/pos-offline`, which the desktop shell loads.
-- **To close:** `cd apps/pos-desktop && pnpm tauri build --debug --no-bundle`, API with `RATE_LIMITS_ENABLED=false`,
-  then `pnpm test:e2e:desktop [exe] [outDir] [apiUrl]` (CLAUDE.md, "Desktop till"). Look at the screenshots.
+### 2.1 ✅ Desktop till build and E2E (session 46)
+- Built and run: `pnpm test:e2e:desktop` 36/36, with a new step 7 (re-pairing, see LEFTOVER "Second tenant
+  audit"). Fixed on the way: waiting sales kept their outage backoff after the connection came back and "Send now"
+  skipped them; Close shift said "Something went wrong" offline instead of "No connection".
 
-### 2.2 ⬜ The till's new screens on screen
-Unit-tested only (`return-options.test.ts`, `drawer.test.ts`, `printing.test.ts`, `engine.test.ts`):
+### 2.2 🟡 The till's new screens on screen
+Now on screen (session 46): Close shift waiting for offline sales (`desktop.mjs`, `close-waiting.png`), the reason
+instead of Void for an earlier shift's sale (`counter-extras.mjs`), the "Disconnect this terminal" confirmation
+(`repair-confirm.png`). Still unit-tested only:
 - the locked cart after an unanswered checkout and "Complete sale again"; the "an earlier version was recorded"
   notice (`pay.earlierRecorded`);
-- Close shift waiting for offline sales, "Send now" (`close.offlineWaiting`);
-- the reasons shown instead of Void / Return / Exchange (`history.voidOtherShift`, …);
-- the offline receipt's Discount and "VAT 12%" rows;
-- "Disconnect this terminal" confirmation.
+- the other reasons instead of Void / Return / Exchange (`history.voidAfterReturn`, `history.exchangeCredit`, …);
+- the offline receipt's Discount and "VAT 12%" rows.
 - **To close:** add steps to `apps/pos-desktop/e2e/counter-controls.mjs` / `counter-extras.mjs` (an unanswered
   checkout can be staged with `PAYMENT_TIMEOUT_MS` or by cutting the API through the desktop E2E's proxy on :4399),
   take 1440 and 390 px screenshots.
@@ -69,7 +68,14 @@ Unit-tested only (`return-options.test.ts`, `drawer.test.ts`, `printing.test.ts`
 - The offline review's `off.why.other` fallback: no reachable code produces it on the dev DB (LEFTOVER, Offline sales).
 - The till's Close shift listing a supplier paid from its drawer (LEFTOVER, Purchasing).
 
-### 2.5 ⬜ A fresh review of the fixes themselves
+### 2.5 ✅ A fresh review of the fixes themselves (session 46)
+Read-only review done. Fixed: `Payment.tsx` no longer unlocks the cart or changes its key on a refusal given before
+the key is looked up (401/402/403/429, `beforeReplay`) or after `IDEMPOTENCY_KEY_REUSED` (a recorded sale could be
+forgotten and rung again); `sheets.tsx` keeps a count retyped while a save was on its way. Passed to session 45
+(rewriting count-sheet posting): `countSheetLines` adds items to a sheet without `lockCounting` (a quick count
+racing it is booked twice). Checked and not defects: a save racing a post (trigger `app_count_sheet_line_open`
+locks the sheet), a stocked return line not on its receipt (credited at average on purpose, `purchasing.test.ts`),
+`refusals.ts` (every message and code matches the API). The original brief:
 The 62 fixes were checked by tests (unit, 434 API integration, 33 database integration, 23 E2E suites) and
 screenshots, but no read-only review read the new code afresh. Worth one pass before a pilot, especially:
 - `apps/pos-desktop/src/components/Payment.tsx` and `Sell.tsx` (unknown outcome, key rotation, `earlier`);

@@ -34,7 +34,7 @@ import {
   type StockAdjustmentInput,
   type StockQuery,
 } from '@1pos/validation';
-import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { CounterService } from './counter.service.js';
@@ -138,6 +138,9 @@ export class SalesController {
     return this.counter.holdCart(auth, body);
   }
 
+  // A resume whose answer was lost is sent again with the same key and gets the same lines back (the
+  // cart forgets them once resumed). Optional, so an older till still resumes (audit 2026-10-27 #32).
+  @Idempotent()
   @HttpCode(200)
   @Post('held-carts/:id/resume')
   resumeCart(@Auth() auth: AuthContext, @Param('id', id) cartId: string, @Body(new ZodPipe(resumeHeldCartSchema)) body: ResumeHeldCartInput) {
@@ -150,11 +153,15 @@ export class SalesController {
     return this.counter.discardCart(auth, cartId);
   }
 
+  // A cashier reads their own sales without sales.read; an API key answers as the person who made it,
+  // so it needs the scope (audit 2026-10-27 #21).
+  @ApiKeyRequires('sales.read')
   @Get('sales')
   listSales(@Auth() auth: AuthContext, @Query(new ZodPipe(saleListQuerySchema)) q: SaleListQuery) {
     return this.sales.list(auth, q);
   }
 
+  @ApiKeyRequires('sales.read')
   @Get('sales/:id')
   getSale(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
     return this.sales.get(auth, saleId);
@@ -174,16 +181,19 @@ export class SalesController {
     return this.returns.preview(auth, saleId, body);
   }
 
+  @ApiKeyRequires('sales.read')
   @Get('sales/:id/returns')
   listReturns(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
     return this.returns.list(auth, saleId);
   }
 
+  @ApiKeyRequires('sales.read')
   @Get('sale-returns/:id')
   getReturn(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
     return this.returns.get(auth, returnId);
   }
 
+  @ApiKeyRequires('sales.read')
   @Get('sale-returns/:id/receipt')
   returnReceipt(@Auth() auth: AuthContext, @Param('id', id) returnId: string) {
     return this.returns.receipt(auth, returnId);
@@ -194,6 +204,7 @@ export class SalesController {
     return this.cash.getMovement(auth, movementId);
   }
 
+  @ApiKeyRequires('sales.read')
   @Get('sales/:id/receipt')
   receipt(@Auth() auth: AuthContext, @Param('id', id) saleId: string) {
     return this.sales.receipt(auth, saleId);

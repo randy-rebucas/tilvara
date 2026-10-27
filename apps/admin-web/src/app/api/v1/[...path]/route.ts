@@ -14,7 +14,8 @@ const NO_STORE = { 'cache-control': PROXY_NO_STORE, vary: 'Cookie' };
 const notFound = () => NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Not found' } }, { status: 404, headers: NO_STORE });
 
 async function forward(request: NextRequest, path: string[]) {
-  const target = proxyTarget(API_URL, path, request.nextUrl.search);
+  // Method-aware: writes reach the allow-listed resources, GET only what the browser itself loads.
+  const target = proxyTarget(API_URL, path, request.nextUrl.search, request.method);
   if (!target) return notFound();
   if (request.method !== 'GET') {
     const refused = rejectCrossSite(request);

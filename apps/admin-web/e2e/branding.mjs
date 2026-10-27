@@ -60,7 +60,7 @@ const stamp = Date.now().toString(36);
 const slug = `brand-${stamp}`;
 const email = `brand-${stamp}@example.ph`;
 const outsider = `brand-out-${stamp}@example.ph`;
-await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Nena Santos', businessName: `Tindahan ni Nena ${stamp}`, tenantSlug: slug });
+const tk = (await call('POST', '/v1/auth/signup', null, { email, password: PASSWORD, displayName: 'Nena Santos', businessName: `Tindahan ni Nena ${stamp}`, tenantSlug: slug })).tokens.accessToken;
 await call('POST', '/v1/auth/signup', null, { email: outsider, password: PASSWORD, displayName: 'Other Owner', businessName: `Other ${stamp}`, tenantSlug: `brand-out-${stamp}` });
 
 const { check, finish } = checklist();
@@ -128,10 +128,10 @@ try {
   // A colour white text cannot be read on: refused on the page, nothing sent.
   await fill('brandColor', '#f5e663');
   check('a too-light colour is refused before saving', await shown('Too light'));
-  const before = (await bff('GET', '/api/v1/business/branding')).body;
+  const before = (await call('GET', '/v1/business/branding', tk));
   await clickText('Save');
   await sleep(600);
-  check('…and nothing was saved', (await bff('GET', '/api/v1/business/branding')).body.brandColor === before.brandColor);
+  check('…and nothing was saved', (await call('GET', '/v1/business/branding', tk)).brandColor === before.brandColor);
 
   await fill('displayName', 'Tindahan ni Nena');
   await fill('brandColor', '#7a1f3d');
@@ -152,9 +152,9 @@ try {
   check('saved', await shown('Branding saved.', 8000));
   await waitFor(`getComputedStyle(document.querySelector('header.band')).backgroundColor === 'rgb(122, 31, 61)'`, 8000).catch(() => {});
   check('the band takes the brand colour', (await bandColor()) === 'rgb(122, 31, 61)');
-  const saved = (await bff('GET', '/api/v1/business/branding')).body;
+  const saved = (await call('GET', '/v1/business/branding', tk));
   check('the API has it all, the website with https:// and the page name without @', saved.website === 'https://nena.example.ph' && saved.facebook === 'TindahanNiNena' && saved.publicSignIn === true && saved.receiptFooter.includes('\n'));
-  const me = (await bff('GET', '/api/v1/me')).body.activeTenant.branding;
+  const me = (await call('GET', '/v1/me', tk)).activeTenant.branding;
   check('/me carries the name, colour and image hashes', me.displayName === 'Tindahan ni Nena' && me.brandColor === '#7a1f3d' && /^[0-9a-f]{64}$/.test(me.logoSha256) && /^[0-9a-f]{64}$/.test(me.backgroundSha256));
   await shot('branding-1440.png', true);
 
@@ -183,7 +183,7 @@ try {
   check('an account outside the shop is refused with words', await shown('not part of this shop', 8000));
   await signIn(`/s/${slug}`, email);
   await waitFor(`location.pathname === '/'`, 15000);
-  check('a member signs straight into the business', (await bff('GET', '/api/v1/me')).body.activeTenant?.branding?.displayName === 'Tindahan ni Nena');
+  check('a member signs straight into the business', (await evaluate(`document.querySelector('[data-testid="band-name"]')?.textContent`)) === 'Tindahan ni Nena');
 
   await viewport(390, 844, true);
   await go('/subscription/branding');

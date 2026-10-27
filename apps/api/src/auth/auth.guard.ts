@@ -9,7 +9,7 @@ import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { recordAudit } from '../audit/audit.js';
-import { ALLOW_READ_ONLY_BUSINESS, AuthContext, AuthedRequest, IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from './auth-context.js';
+import { ALLOW_READ_ONLY_BUSINESS, API_KEY_PERMISSIONS, AuthContext, AuthedRequest, IS_PUBLIC, REQUIRED_PERMISSIONS, REQUIRES_TENANT } from './auth-context.js';
 import { Grant, hasPermission } from './authorization.js';
 import { InvalidTokenError, TokenService } from './token.service.js';
 import { API_KEY_FORMAT, hashApiKey } from '../integrations/integrations.service.js';
@@ -244,7 +244,9 @@ export class AuthGuard implements CanActivate {
     if (required.length === 0 && !this.reflector.getAllAndOverride<boolean>(REQUIRES_TENANT, targets)) {
       throw new AppError('FORBIDDEN', 'API keys cannot use this route', HttpStatus.FORBIDDEN);
     }
-    const missing = required.filter((p) => !hasPermission(grants, p));
+    // A route every member may read (the business's details, its branding) still asks a key for a scope.
+    const keyRequired = this.reflector.getAllAndOverride<PermissionCode[]>(API_KEY_PERMISSIONS, targets) ?? [];
+    const missing = [...new Set([...required, ...keyRequired])].filter((p) => !hasPermission(grants, p));
     if (missing.length > 0) throw new AppError('FORBIDDEN', 'You do not have permission to do this', HttpStatus.FORBIDDEN, { missing });
     return true;
   }

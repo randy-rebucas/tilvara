@@ -32,6 +32,31 @@ describe('webhook signing (ADR-0019)', () => {
     for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1']) {
       expect([ip, isPublicAddress(ip)]).toEqual([ip, false]);
     }
-    for (const ip of ['8.8.8.8', '172.32.0.1', '203.0.113.9', '2606:4700::1111']) expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
+    for (const ip of ['8.8.8.8', '172.32.0.1', '2606:4700::1111']) expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
+  });
+
+  it('judges an IPv6 address that carries an IPv4 one by that address (audit 45 #2)', () => {
+    const refused = [
+      // what WHATWG URL makes of [::ffff:127.0.0.1] and friends
+      '::ffff:7f00:1', '::ffff:a9fe:a9fe', '::ffff:127.0.0.1', '::FFFF:169.254.169.254', '0:0:0:0:0:ffff:a00:1',
+      '::7f00:1', '::127.0.0.1', '::ffff:0:a00:1', // IPv4-compatible and SIIT
+      '64:ff9b::a9fe:a9fe', '64:ff9b::127.0.0.1', '64:ff9b::a00:1', '64:ff9b:1::808:808', // NAT64
+      '2002:7f00:1::', '2002:a9fe:a9fe::1', '2002:c0a8:101::', // 6to4
+      '2001:0:4136:e378:8000:63bf:3fff:fdd2', // Teredo
+    ];
+    for (const ip of refused) expect([ip, isPublicAddress(ip)]).toEqual([ip, false]);
+    for (const ip of ['::ffff:808:808', '::ffff:8.8.8.8', '64:ff9b::808:808', '2002:808:808::1', '2a00:1450:4001:80b::200e', '2606:4700:4700::1111', '1.1.1.1', '93.184.216.34']) {
+      expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
+    }
+  });
+
+  it('refuses special-purpose, documentation, benchmarking and reserved ranges', () => {
+    const refused = [
+      '0.1.2.3', '192.0.0.8', '192.0.2.1', '198.18.0.1', '198.19.255.255', '198.51.100.7', '203.0.113.9',
+      '239.255.255.250', '240.0.0.1', '255.255.255.255', '100.127.255.255', '172.20.0.1',
+      'ff02::1', 'fe80::1%eth0', 'febf::1', 'fc00::1', '2001:db8::1', '0:0:0:0:0:0:0:1', 'not-an-ip', '1.2.3', '',
+    ];
+    for (const ip of refused) expect([ip, isPublicAddress(ip)]).toEqual([ip, false]);
+    for (const ip of ['100.128.0.1', '198.20.0.1', '192.0.3.1', '223.255.255.255', 'fec0::1', '2001:db9::1']) expect([ip, isPublicAddress(ip)]).toEqual([ip, true]);
   });
 });

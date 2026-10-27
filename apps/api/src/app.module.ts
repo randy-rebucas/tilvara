@@ -19,13 +19,12 @@ import { SyncModule } from './sync/sync.module.js';
 import { SupportModule } from './support/support.module.js';
 import { BusinessModule } from './business/business.module.js';
 import { ExtensionsModule } from './extensions/extensions.module.js';
-import { BillingController } from './billing/billing.controller.js';
+import { BillingModule } from './billing/billing.module.js';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { IdempotencyInterceptor } from './infrastructure/idempotency.js';
 
 @Module({
-  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, CustomersModule, IntegrationsModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, SyncModule, SupportModule, BusinessModule, ExtensionsModule],
-  controllers: [BillingController],
+  imports: [InfrastructureModule, NotificationsModule, AuthModule, HealthModule, OrgModule, CatalogModule, TeamModule, TaxModule, SalesModule, CustomersModule, IntegrationsModule, PaymentsModule, ReportsModule, PurchasingModule, InventoryModule, AccountingModule, SyncModule, SupportModule, BusinessModule, ExtensionsModule, BillingModule],
   providers: [{ provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor }],
 })
 export class AppModule {}

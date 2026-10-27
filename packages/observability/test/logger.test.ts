@@ -58,7 +58,7 @@ describe('createLogger', () => {
   it('redacts personal data and secrets under every listed key, at the top level and three objects deep', () => {
     const { lines, logger } = capture();
     // A literal list: taking a key out of PERSONAL_KEYS must fail here, not shrink the test with it.
-    const personal = ['email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary', 'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient', 'guestName', 'nationality', 'idType', 'birthDate', 'contact', 'customerPhone', 'patientName', 'patientAddress', 'prescriberName', 'prescriberLicenseNo', 'prescriberS2No', 'yellowFormNo', 'licenseNo', 'prescriptions'];
+    const personal = ['email', 'newEmail', 'displayName', 'fullName', 'customerName', 'beneficiaryName', 'beneficiaries', 'beneficiary', 'idNumber', 'tin', 'phone', 'address', 'userAgent', 'ip', 'ipAddress', 'remoteAddress', 'recipient', 'guestName', 'nationality', 'idType', 'birthDate', 'contact', 'customerPhone', 'patientName', 'patientAddress', 'prescriberName', 'prescriberLicenseNo', 'prescriberS2No', 'yellowFormNo', 'licenseNo', 'prescriptions', 'contactPhone', 'contactEmail', 'buyer'];
     expect([...PERSONAL_KEYS].sort()).toEqual([...personal].sort());
     const keys = [...personal, 'password', 'passwordHash', 'token', 'accessToken', 'refreshToken', 'secret', 'credential', 'apiKey', 'authorization', 'cookie'];
     for (const key of keys) {

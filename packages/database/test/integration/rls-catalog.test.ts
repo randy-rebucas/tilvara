@@ -83,7 +83,7 @@ describe('schema isolation catalog', () => {
   it('allow-listed non-tenant tables keep their reviewed posture', async () => {
     const byName = Object.fromEntries((await publicTables()).map((t) => [t.name, t]));
     const credentialTables = ['user_sessions', 'user_mfa_factors', 'user_mfa_recovery_codes', 'password_reset_tokens', 'email_change_tokens'];
-    for (const name of ['tenants', 'users', 'worker_heartbeats', 'backup_runs', 'platform_staff', ...credentialTables]) {
+    for (const name of ['tenants', 'users', 'worker_heartbeats', 'backup_runs', 'platform_staff', 'billing_provider_events', 'billing_seller', ...credentialTables]) {
       expect([name, byName[name]?.rls, byName[name]?.forced]).toEqual([name, true, true]);
     }
     // Platform-only tables: reached through SECURITY DEFINER functions, never by a login role
@@ -91,7 +91,7 @@ describe('schema isolation catalog', () => {
     const platformOnly = await q(
       `SELECT table_name, grantee, privilege_type FROM information_schema.table_privileges
         WHERE grantee IN ('onepos_app', 'onepos_readonly', 'onepos_worker', 'onepos_backup')
-          AND table_name IN ('worker_heartbeats', 'backup_runs', 'platform_staff')`,
+          AND table_name IN ('worker_heartbeats', 'backup_runs', 'platform_staff', 'billing_provider_events', 'billing_seller')`,
     );
     expect(platformOnly).toEqual([]);
     // Credential tables: no privilege of any kind for the runtime or read-only roles.

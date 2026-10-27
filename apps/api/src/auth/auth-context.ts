@@ -47,6 +47,14 @@ export const REQUIRED_PERMISSIONS = 'onepos:requiredPermissions';
  */
 export const RequirePermissions = (...perms: PermissionCode[]) => SetMetadata(REQUIRED_PERMISSIONS, perms);
 
+export const API_KEY_PERMISSIONS = 'onepos:apiKeyPermissions';
+/**
+ * What an API key (ADR-0019) needs on a route every member may read (no `@RequirePermissions`), such
+ * as the business's details and branding (audit 45 #21): members are not asked, a key must hold these
+ * scopes. A route with neither this nor `@RequirePermissions` relies on its service's own check.
+ */
+export const ApiKeyRequires = (...perms: PermissionCode[]) => SetMetadata(API_KEY_PERMISSIONS, perms);
+
 export const ALLOW_READ_ONLY_BUSINESS = 'onepos:allowReadOnlyBusiness';
 /**
  * A write that a suspended business, or one whose subscription lapsed, may still make: getting a copy

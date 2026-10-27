@@ -12,7 +12,7 @@ import type pg from 'pg';
  *                        that document's movements, and goods in transit clear when received;
  *   payables:            per supplier invoice, the books owe what it still owes and cleared the GRNI its receipts held;
  *   sub-ledgers:         per legal entity, store credit 2300 holds what
- *                        its sub-ledger rows add up to;
+ *                        its sub-ledger rows add up to, and GRNI 2010 what open receipts hold;
  *   expiry lots:         a lot = Σ its lot movements, and an item's lots ≤ max(on hand, 0) per branch.
  *
  * Also used against the dev database after migrations (scripts in the exit review).
@@ -140,6 +140,28 @@ export const TRACEABILITY_CHECKS: Record<string, string> = {
     SELECT coalesce(g.system_key, s.system_key) AS account, coalesce(g.legal_entity_id, s.legal_entity_id) AS legal_entity_id,
            coalesce(g.balance, 0)::text AS books, coalesce(s.balance, 0)::text AS sub_ledger
       FROM gl g FULL JOIN sub s ON s.system_key = g.system_key AND s.legal_entity_id = g.legal_entity_id
+     WHERE coalesce(g.balance, 0) <> coalesce(s.balance, 0)`,
+  // GRNI 2010 (audit 2026-10-27 #10): per legal entity, the books hold what goods receipts put on at cost,
+  // less what returns against a receipt credited back, less what live invoices matched, plus what credit
+  // notes cleared of a receipt's returns after its invoice. A return tied to no receipt is not in the
+  // sub-ledger: its debit would sit on GRNI with nothing to clear it, so the books differ (refused since then).
+  'GRNI ≠ open receipts (per legal entity)': `
+    WITH gl AS (
+      SELECT a.legal_entity_id, sum(l.credit - l.debit) AS balance
+        FROM journal_lines l JOIN accounts a ON a.id = l.account_id
+       WHERE a.system_key = 'GRNI' GROUP BY 1),
+    sub AS (
+      SELECT b.legal_entity_id, round(sum(x.amount), 4) AS balance FROM (
+        SELECT r.branch_id, round(l.quantity * l.unit_cost, 4) AS amount
+          FROM goods_receipt_lines l JOIN goods_receipts r ON r.id = l.goods_receipt_id
+        UNION ALL SELECT r.branch_id, -round(l.quantity * l.credit_unit_cost, 4)
+          FROM supplier_return_lines l JOIN supplier_returns r ON r.id = l.supplier_return_id WHERE r.goods_receipt_id IS NOT NULL
+        UNION ALL SELECT i.branch_id, -i.matched_amount FROM supplier_invoices i WHERE i.status <> 'CANCELLED'
+        UNION ALL SELECT n.branch_id, n.grni_cleared FROM supplier_notes n) x
+        JOIN branches b ON b.id = x.branch_id GROUP BY 1)
+    SELECT coalesce(g.legal_entity_id, s.legal_entity_id) AS legal_entity_id,
+           coalesce(g.balance, 0)::text AS books, coalesce(s.balance, 0)::text AS receipts
+      FROM gl g FULL JOIN sub s ON s.legal_entity_id = g.legal_entity_id
      WHERE coalesce(g.balance, 0) <> coalesce(s.balance, 0)`,
   // Expiry lots (ADR-0020): a lot holds what its movements put in and took out, and the lots of an item
   // never hold more than the branch has on hand (nothing when it is below zero).

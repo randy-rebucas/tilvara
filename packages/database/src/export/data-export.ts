@@ -13,12 +13,22 @@ export const EXPORT_EXCLUDED_TABLES: Record<string, string> = {
   webhook_deliveries: 'delivery queue of the worker; each carries an event of ids only, already in the records',
 };
 
-/** Columns never exported (the worker has no grant on them either). */
+/** Columns never exported (the worker has no grant on them either), with why (`EXPORT_COLUMN_REASONS`). */
 export const EXPORT_SECRET_COLUMNS: Record<string, readonly string[]> = {
   terminals: ['credential_hash'],
   member_invitations: ['token_hash'],
   api_keys: ['key_hash'],
   webhook_endpoints: ['signing_salt'],
+  // Tilvara support's own words when ops records a payment or voids a bill (staff login, reason, ticket; audit 45 #6).
+  // The business sees "Tilvara support" in the app; the words stay in Tilvara's records.
+  billing_payments: ['note', 'recorded_by'],
+  billing_bills: ['void_reason'],
+};
+
+/** Why each table's columns in EXPORT_SECRET_COLUMNS are left out (the export's README says it). */
+export const EXPORT_COLUMN_REASONS: Record<string, string> = {
+  billing_payments: "Tilvara support's internal notes on payments it recorded",
+  billing_bills: "Tilvara support's internal reason for voiding a bill",
 };
 
 export const EXPORT_FORMAT_VERSION = 1;
@@ -195,7 +205,7 @@ function readme(
     '',
     'Left out on purpose',
     ...Object.entries(EXPORT_EXCLUDED_TABLES).map(([t, why]) => `  ${t}: ${why}`),
-    ...Object.entries(EXPORT_SECRET_COLUMNS).map(([t, cols]) => `  ${t}.${cols.join(', ')}: secret credential hashes`),
+    ...Object.entries(EXPORT_SECRET_COLUMNS).map(([t, cols]) => `  ${t}.${cols.join(', ')}: ${EXPORT_COLUMN_REASONS[t] ?? 'secret credential hashes'}`),
     '  Passwords, two-step sign-in secrets and sessions belong to each person\'s account, not to the business.',
     '',
     'Row counts',

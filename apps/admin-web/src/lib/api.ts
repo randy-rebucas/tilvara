@@ -283,13 +283,70 @@ export interface Terminal {
 }
 export interface Subscription {
   /** `extensions`: the codes a business on this plan may switch on (ADR-0026). */
-  plan: { code: string; name: string; limits: Record<string, number>; features: string[]; extensions: string[] };
+  plan: { code: string; name: string; limits: Record<string, number>; features: string[]; extensions: string[]; monthlyPrice?: string; currency?: string };
   status: string;
   access: 'FULL' | 'READ_ONLY';
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
   graceEndsAt: string | null;
   usage: Record<string, number>;
+  /** ADR-0027: a plan costing no more, starting at the next renewal; and a stop asked for at the period end. */
+  scheduledPlan?: { code: string; name: string } | null;
+  cancelAtPeriodEnd?: boolean;
+  /** The open bill to pay next (not an upgrade the owner just asked for). */
+  openBill?: { id: string; number: string; amount: string; currency: string; dueAt: string } | null;
+}
+/** A plan on offer (GET /subscription/plans, ADR-0027). */
+export interface PlanOffer {
+  code: string;
+  name: string;
+  monthlyPrice: string;
+  currency: string;
+  limits: Record<string, number>;
+  features: string[];
+  current: boolean;
+  /** Plans priced 0 are never billed (prices not set yet). */
+  priced: boolean;
+  /** Limits the business already exceeds on that plan. */
+  overLimits: string[];
+}
+/** What the business owes Tilvara for a period (GET /subscription/bills). */
+export interface Bill {
+  id: string;
+  number: string;
+  kind: 'START' | 'RENEWAL' | 'UPGRADE';
+  planCode: string;
+  planName: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: string;
+  /** The 12% VAT inside `amount`. */
+  vatAmount: string;
+  currency: string;
+  status: 'OPEN' | 'PAID' | 'VOID';
+  issuedAt: string;
+  dueAt: string;
+  paidAt: string | null;
+  voidReason: string | null;
+  payments: { amount: string; method: string; reference: string; applied: boolean; receivedAt: string }[];
+  /** The system-generated receipt for the payment that settled it. */
+  receipt?: { id: string; number: string } | null;
+}
+/** A system-generated receipt for a subscription payment (GET /subscription/receipts/:id). */
+export interface BillingReceipt {
+  id: string;
+  number: string;
+  issuedAt: string;
+  seller: { registeredName: string; tradeName: string | null; tin: string | null; address: string | null; vatRegistered: boolean; permitNote: string | null };
+  buyer: { businessName: string; registeredName: string | null; tradeName: string | null; tin: string | null; address: string | null };
+  description: string;
+  amount: string;
+  vatableAmount: string;
+  vatAmount: string;
+  currency: string;
+  method: string;
+  reference: string;
+  billNumber: string;
 }
 export interface Product {
   id: string;
@@ -363,6 +420,8 @@ export interface ItemLocation {
 export interface StockByBranch {
   branches: { id: string; code: string; name: string }[];
   data: { variantId: string; sku: string; name: string; total: string; branches: Record<string, { quantity: string; available: string }> }[];
+  /** More than 2,000 items: active items first, by SKU. */
+  truncated?: boolean;
 }
 export interface PromotionsReport {
   data: { promotionId: string; name: string; kind: PromotionKind; salesCount: number; netQuantity: string; discount: string; netSales: string }[];
@@ -1061,6 +1120,8 @@ export interface Account {
   type: AccountType;
   systemKey: string | null;
   archivedAt: string | null;
+  /** Whether a manual journal entry may post to it (audit 2026-10-27 #11). */
+  manualAllowed?: boolean;
 }
 export interface JournalRow {
   id: string;

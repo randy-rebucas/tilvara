@@ -6,6 +6,16 @@ export const amountSchema = z
   .trim()
   .regex(/^\d{1,16}(\.\d{1,4})?$/, 'Use a plain decimal string such as "49.75"');
 
+/**
+ * Money that changes hands (cash tendered, store credit, card/QR amounts, pay in/out, float, counted
+ * cash): centavos at most, so a drawer or credit balance never holds half-centavos (audit 45 #13).
+ * Prices and costs keep `amountSchema`'s 4 places.
+ */
+export const money2Schema = z
+  .string()
+  .trim()
+  .regex(/^\d{1,16}(\.\d{1,2})?$/, 'Use pesos and centavos such as "49.75" (at most 2 decimal places)');
+
 const name = z.string().trim().min(1).max(200);
 const code = (max: number) =>
   z

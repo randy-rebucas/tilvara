@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isPositiveDecimal } from './decimal.js';
 import { amountSchema } from './catalog.js';
 import { quantitySchema } from './tax.js';
 
@@ -116,9 +117,9 @@ export const createGoodsReceiptSchema = z
   })
   .superRefine((v, ctx) => {
     v.lines.forEach((l, i) => {
-      const rejected = Number(l.rejectedQuantity ?? '0');
-      if (Number(l.quantity) + rejected <= 0) ctx.addIssue({ code: 'custom', path: ['lines', i, 'quantity'], message: 'Receive or reject a quantity' });
-      if (rejected > 0 && !l.rejectionReason) ctx.addIssue({ code: 'custom', path: ['lines', i, 'rejectionReason'], message: 'Say why it was rejected' });
+      const rejected = isPositiveDecimal(l.rejectedQuantity);
+      if (!isPositiveDecimal(l.quantity) && !rejected) ctx.addIssue({ code: 'custom', path: ['lines', i, 'quantity'], message: 'Receive or reject a quantity' });
+      if (rejected && !l.rejectionReason) ctx.addIssue({ code: 'custom', path: ['lines', i, 'rejectionReason'], message: 'Say why it was rejected' });
       if (!l.purchaseOrderLineId && l.unitCost === undefined) ctx.addIssue({ code: 'custom', path: ['lines', i, 'unitCost'], message: 'Cost is required for an item not on the order' });
       if (l.lotCode && !l.expiresOn) ctx.addIssue({ code: 'custom', path: ['lines', i, 'expiresOn'], message: 'A lot needs its expiry date' });
       if (l.purchaseOrderLineId && !v.purchaseOrderId) ctx.addIssue({ code: 'custom', path: ['lines', i, 'purchaseOrderLineId'], message: 'Order lines need the purchase order' });
@@ -268,7 +269,7 @@ export const createSupplierNoteSchema = z
     vatAmount: peso,
     reason: z.string().trim().min(1).max(500),
   })
-  .refine((v) => Number(v.netAmount) + Number(v.vatAmount) > 0, { message: 'More than zero', path: ['netAmount'] });
+  .refine((v) => isPositiveDecimal(v.netAmount) || isPositiveDecimal(v.vatAmount), { message: 'More than zero', path: ['netAmount'] });
 export type CreateSupplierNoteInput = z.infer<typeof createSupplierNoteSchema>;
 
 export const payablesAgingQuerySchema = z.object({ legalEntityId: z.uuid(), asOf: z.iso.date().optional() });

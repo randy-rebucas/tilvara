@@ -77,12 +77,14 @@ try {
   await fill('password', PASSWORD);
   await b.finishSteps();
   await waitFor(`location.pathname === '/'`);
+  const tk = (await fetch(`${API}/v1/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: PASSWORD }) }).then((r) => r.json())).tokens.accessToken;
+  const apiGet = async (path) => ({ body: await fetch(API + path, { headers: { authorization: `Bearer ${tk}` } }).then((r) => r.json()) });
   const entity = await bff('POST', '/api/v1/legal-entities', { registeredName: 'Nena Reyes Trading', tin: '123-456-789', vatStatus: 'NON_VAT' }, true);
   const branch = await bff('POST', '/api/v1/branches', { legalEntityId: entity.body.id, code: 'QC-01', name: 'Cubao' }, true);
   const register = await bff('POST', '/api/v1/registers', { branchId: branch.body.id, code: 'R1', name: 'Counter 1' }, true);
   check('review fixture: entity, branch, register created', [entity, branch, register].every((r) => r.status === 201));
-  const uoms = await bff('GET', '/api/v1/uoms');
-  const taxes = await bff('GET', '/api/v1/tax-categories');
+  const uoms = await apiGet('/v1/uoms');
+  const taxes = await apiGet('/v1/tax-categories');
   const pc = uoms.body.data.find((u) => u.code === 'PC').id;
   const vat = taxes.body.data.find((x) => x.code === 'VAT_EXEMPT').id;
   for (const [name, sku, price] of [['Pandesal (10 pcs)', 'PDS-10', '35.00'], ['Kape barako 250g', 'KB-250', '180.00'], ['Itlog (tray)', 'EGG-30', null]]) {
@@ -118,7 +120,7 @@ try {
   await both('not-found', () => go('/this-page-does-not-exist'));
 
   // Phase 3: purchasing, inventory and books, with their panels open
-  const variants = (await bff('GET', '/api/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
+  const variants = (await apiGet('/v1/products?limit=50')).body.data.flatMap((p) => p.variants);
   const kape = variants.find((v) => v.sku === 'KB-250').id;
   const pandesal = variants.find((v) => v.sku === 'PDS-10').id;
   const supplier = await bff('POST', '/api/v1/suppliers', { code: 'NESTLE', name: 'Nestlé Philippines', paymentTermsDays: 30 }, true);
@@ -181,7 +183,7 @@ try {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email: `owner-${slug}@example.ph`, password: PASSWORD, displayName: 'Ramon Cruz', businessName: 'Cruz Hardware & Trading', tenantSlug: `${slug}-b` }),
   }).then((r) => r.json());
-  const me = await bff('GET', '/api/v1/me');
+  const me = await apiGet('/v1/me');
   const owner = new pg.Pool({ connectionString: process.env.DATABASE_MIGRATOR_URL, max: 1 });
   const c = await owner.connect();
   try {

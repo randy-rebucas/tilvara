@@ -1,12 +1,12 @@
 import { toDec } from '@1pos/money';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { openDrawerFor } from '../lib/drawer';
 import { parseAmount } from '../lib/money';
 import { useTill } from '../lib/till';
 import type { PaymentIntent } from '../types';
-import { errorText } from './Payment';
+import { errorText, unanswered } from './Payment';
 import type { Shift } from './Registers';
 import { Callout, Field, methodLabel, Money, Note, PaymentTag } from './ui';
 
@@ -17,6 +17,8 @@ interface SessionView {
   /** SUPPLIER_PAYMENT: a supplier paid from this drawer in the back office (or that cash put back on a void). */
   payInOut?: { id: string; type: 'PAY_IN' | 'PAY_OUT' | 'SUPPLIER_PAYMENT'; amount: string; reason: string | null }[];
 }
+
+type PayInOutBody = { type: 'PAY_IN' | 'PAY_OUT'; amount: string; reason: string };
 
 /**
  * Cash put into or taken out of the drawer during the shift (change fund top-up, a supplier paid
@@ -29,25 +31,47 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
   const [key, setKey] = useState(uuid);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | undefined>();
+  /**
+   * The last entry got no answer, so it may be recorded (audit 2026-10-27 #34). Until a final answer
+   * comes, the form is locked as it was sent and only "Record again" is offered: the same body under the
+   * same key, which never records twice.
+   */
+  const [unknown, setUnknown] = useState<PayInOutBody | null>(null);
+  const busy = useRef(false);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (busy.current) return;
     const form = e.currentTarget;
-    const f = new FormData(form);
-    const amount = parseAmount(String(f.get('pioAmount') ?? ''));
-    if (!amount || toDec(amount).isZero()) return setFieldError(t('register.floatInvalid'));
-    setFieldError(undefined);
+    let body: PayInOutBody;
+    if (unknown) body = unknown;
+    else {
+      const f = new FormData(form);
+      const amount = parseAmount(String(f.get('pioAmount') ?? ''));
+      if (!amount || toDec(amount).isZero()) return setFieldError(t('register.floatInvalid'));
+      setFieldError(undefined);
+      body = { type: f.get('pioType') === 'PAY_OUT' ? 'PAY_OUT' : 'PAY_IN', amount, reason: String(f.get('pioReason') ?? '').trim() };
+    }
+    busy.current = true;
     try {
-      await api('POST', `/v1/cashier-sessions/${sessionId}/movements`, { type: f.get('pioType'), amount, reason: String(f.get('pioReason') ?? '').trim() }, { 'idempotency-key': key });
+      await api('POST', `/v1/cashier-sessions/${sessionId}/movements`, body, { 'idempotency-key': key });
       setKey(uuid());
+      setUnknown(null);
       setError(null);
       form.reset();
       // Cash goes in or out: open the drawer (best effort, after it is recorded).
       openDrawerFor(till.drawer, true);
       onRecorded();
     } catch (err) {
-      if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) return setError(errorText(err, t('common.error'), t('payio.unconfirmed')));
+      if (unanswered(err)) {
+        // Same key, same body next time: never rotate the key while the outcome is unknown.
+        setUnknown(body);
+        return setError(errorText(err, t('common.error'), t('payio.unconfirmed')));
+      }
       setKey(uuid());
+      setUnknown(null);
       setError(errorText(err, t('common.error'), t('common.network')));
+    } finally {
+      busy.current = false;
     }
   }
   return (
@@ -64,19 +88,22 @@ function PayInOut({ sessionId, items, onRecorded }: { sessionId: string; items: 
         </ul>
       )}
       <form className="grid gap-3 sm:grid-cols-[auto_1fr]" onSubmit={submit}>
-        <div className="field">
-          <label htmlFor="pioType">{t('payio.kind')}</label>
-          <select id="pioType" name="pioType" className="input">
-            <option value="PAY_IN">{t('payio.in')}</option>
-            <option value="PAY_OUT">{t('payio.out')}</option>
-          </select>
-        </div>
-        <Field id="pioAmount" name="pioAmount" inputMode="decimal" className="input-money" label={t('payio.amount')} error={fieldError} placeholder="0.00" />
+        {/* Locked as sent while the outcome is unknown: the values stay on screen, the body sent is the one kept. */}
+        <fieldset disabled={!!unknown} className="m-0 grid min-w-0 gap-3 border-0 p-0 sm:col-span-2 sm:grid-cols-[auto_1fr]">
+          <div className="field">
+            <label htmlFor="pioType">{t('payio.kind')}</label>
+            <select id="pioType" name="pioType" className="input">
+              <option value="PAY_IN">{t('payio.in')}</option>
+              <option value="PAY_OUT">{t('payio.out')}</option>
+            </select>
+          </div>
+          <Field id="pioAmount" name="pioAmount" inputMode="decimal" className="input-money" label={t('payio.amount')} error={fieldError} placeholder="0.00" />
+          <div className="sm:col-span-2">
+            <Field id="pioReason" name="pioReason" required label={t('history.reason')} />
+          </div>
+        </fieldset>
         <div className="sm:col-span-2">
-          <Field id="pioReason" name="pioReason" required label={t('history.reason')} />
-        </div>
-        <div className="sm:col-span-2">
-          <button className="btn">{t('payio.record')}</button>
+          <button className="btn">{t(unknown ? 'payio.again' : 'payio.record')}</button>
         </div>
       </form>
       {error && <Callout kind="error">{error}</Callout>}
@@ -117,7 +144,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
     if (!engine) return;
     setSending(true);
     try {
-      await engine.drain();
+      await engine.sendNow();
     } finally {
       setWaiting(await engine.pendingFor(shift.sessionId).catch(() => waiting));
       void till.refresh();
@@ -134,7 +161,7 @@ export function CloseShift({ shift, onClosed }: { shift: Shift; onClosed: () => 
     void api<{ data: unknown[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`).then((r) => setHeldCount(r.data.length)).catch(() => undefined);
   }, [shift.register.id]);
 
-  const reload = () => api<SessionView>('GET', `/v1/cashier-sessions/${shift.sessionId}`).then(setView).catch(() => setError(t('common.error')));
+  const reload = () => api<SessionView>('GET', `/v1/cashier-sessions/${shift.sessionId}`).then(setView).catch((err) => setError(errorText(err, t('common.error'), t('common.network'))));
   useEffect(() => {
     void reload();
   }, [shift.sessionId]);

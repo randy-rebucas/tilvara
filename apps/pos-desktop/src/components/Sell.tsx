@@ -123,9 +123,17 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   /** One Idempotency-Key per open "Hold sale" form: a hold whose answer was lost, sent again, is not held twice. */
   const [holdKey, setHoldKey] = useState(uuid);
 
+  /**
+   * A resume whose answer was lost (audit 2026-10-27 #32): its key and the cart as listed. The cart may
+   * already be resumed, so the list keeps showing it; "Resume" again sends the same key and gets its lines.
+   */
+  const resumeKeys = useRef(new Map<string, { key: string; cart: HeldCart }>());
   const loadHeld = () =>
     api<{ data: HeldCart[] }>('GET', `/v1/held-carts?registerId=${shift.register.id}`)
-      .then((r) => setHeld(r.data))
+      .then((r) => {
+        const listed = new Set(r.data.map((c) => c.id));
+        setHeld([...r.data, ...[...resumeKeys.current.values()].filter((p) => !listed.has(p.cart.id)).map((p) => p.cart)]);
+      })
       .catch(() => undefined);
   useEffect(() => {
     if (!offline) void loadHeld();
@@ -399,8 +407,11 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   async function resume(id: string) {
     if (frozen) return;
+    const pending = resumeKeys.current.get(id);
+    const key = pending?.key ?? uuid();
     try {
-      const r = await api<{ lines: HeldLine[]; beneficiaries: Beneficiary[] }>('POST', `/v1/held-carts/${id}/resume`, { cashierSessionId: shift.sessionId });
+      const r = await api<{ lines: HeldLine[]; beneficiaries: Beneficiary[] }>('POST', `/v1/held-carts/${id}/resume`, { cashierSessionId: shift.sessionId }, { 'idempotency-key': key });
+      resumeKeys.current.delete(id);
       setCart(r.lines.map((l) => ({
         id: l.id ?? uuid(), variantId: l.variantId, sku: l.sku, name: l.name, quantity: l.quantity, wholeUnits: l.wholeUnits ?? false,
         ...(l.statutory && { statutory: l.statutory }),
@@ -415,7 +426,12 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
       void loadHeld();
       focusScan();
     } catch (err) {
-      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.unconfirmed')) });
+      // No answer: the cart may be back already (and gone from the list). Keep the key and the cart, so
+      // "Resume" again gets the same lines; any final answer forgets them.
+      const cart = held.find((c) => c.id === id);
+      if (unanswered(err) && cart) resumeKeys.current.set(id, { key, cart });
+      else resumeKeys.current.delete(id);
+      setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('hold.resumeUnconfirmed')) });
       void loadHeld();
     }
   }

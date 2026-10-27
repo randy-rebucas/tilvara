@@ -12,6 +12,7 @@ export * from './inventory.js';
 export * from './accounting.js';
 export * from './sync.js';
 export * from './support.js';
+export * from './billing.js';
 export * from './integrations.js';
 export * from './extensions.js';
 export * from './branding.js';

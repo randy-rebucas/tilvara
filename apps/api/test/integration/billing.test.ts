@@ -205,8 +205,9 @@ describe('plan features (session 21 decision)', () => {
     const branchId = (await http().post('/v1/branches').set(bearer(t.access)).send({ legalEntityId: entityId, code: 'B1', name: 'B' }).expect(201)).body.id as string;
     const day = new Date().toISOString().slice(0, 10);
     const range = `branchId=${branchId}&from=${day}&to=${day}`;
-    const analysis = [`by-category?${range}`, `by-branch?from=${day}&to=${day}`, `discounts?${range}`, `purchases-by-supplier?${range}`, `payment-exceptions?branchId=${branchId}`];
-    const everyday = [`sales-summary?${range}`, `by-product?${range}`, `tax-summary?${range}`, `statutory-book?${range}`, `refund-watch?${range}`];
+    const analysis = [`by-category?${range}`, `by-branch?from=${day}&to=${day}`, `discounts?${range}`, `purchases-by-supplier?${range}`];
+    // Payment exceptions are a safety tool, on every plan (audit 2026-10-27 #39).
+    const everyday = [`sales-summary?${range}`, `by-product?${range}`, `tax-summary?${range}`, `statutory-book?${range}`, `refund-watch?${range}`, `payment-exceptions?branchId=${branchId}`];
     await setSubscription(t, 'starter', 'ACTIVE');
     for (const path of analysis) {
       const res = await http().get(`/v1/reports/${path}`).set(bearer(t.access));

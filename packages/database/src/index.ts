@@ -6,4 +6,5 @@ export * from './platform.js';
 export { runMigrations, expectedMigrationHead, MIGRATIONS_FOLDER, type MigrationHead } from './migrate.js';
 export * from './export/index.js';
 export * from './stock-alerts.js';
+export * from './billing-mail.js';
 export * from './webhooks.js';

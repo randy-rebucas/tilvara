@@ -1,6 +1,7 @@
-import { eq, expiredSoldMail, exportKey, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
+import { billingContacts, billingMail, eq, expiredSoldMail, exportKey, expiryAlertMail, stockAlertMail, stockKeepers, users, withTenant, writeDataExport, WEBHOOK_TOPICS, type FileStorage } from '@1pos/database';
 import { maskEmail } from '@1pos/observability';
 import type { Pool } from 'pg';
+import { checkoutExpiredHandler, DevCheckoutExpirer, type CheckoutExpirer } from './billing-checkouts.js';
 import type { Logger, OutboxHandler, OutboxHandlerFn } from './outbox-processor.js';
 
 export interface WorkerMailer {
@@ -26,7 +27,7 @@ export interface ExportOptions {
 }
 
 
-export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Record<string, OutboxHandler> {
+export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions, billing: { checkouts?: CheckoutExpirer; logger?: Logger } = {}): Record<string, OutboxHandler> {
   return withWebhooks({
     /** Welcome email to the owner. RLS guarantees we can only read users of this event's tenant. */
     'tenant.onboarded': async (event, db) => {
@@ -58,6 +59,16 @@ export function buildHandlers(mailer: WorkerMailer, exports?: ExportOptions): Re
         await mailer.send({ to: k.email, template: 'stock.expired_sold', ...mail });
       }
     },
+    // Subscription billing (ADR-0027), from the hourly pass and the owner's choices: the owners hear of it.
+    'billing.bill_issued': billingHandler(mailer, 'billing.bill_issued'),
+    'billing.reminder': billingHandler(mailer, 'billing.reminder'),
+    'billing.receipt_issued': billingHandler(mailer, 'billing.receipt_issued'),
+    'billing.past_due': billingHandler(mailer, 'billing.past_due'),
+    'billing.canceled': billingHandler(mailer, 'billing.canceled'),
+    // A scheduled cheaper plan the business no longer fits at renewal (audit 45 #17): it stays on its plan.
+    'billing.downgrade_dropped': billingHandler(mailer, 'billing.downgrade_dropped'),
+    // A voided or paid bill's other payment pages, closed at the provider (audit 45 #3).
+    'billing.checkout_expired': checkoutExpiredHandler(billing.checkouts ?? new DevCheckoutExpirer(), billing.logger),
     // `appointment.reminder` events still queued from before 0112 removed appointments have no handler:
     // like any topic without a consumer they are acknowledged and kept (nothing is sent).
     ...(exports ? { 'data_export.requested': dataExportHandler(exports) } : {}),
@@ -80,6 +91,16 @@ export function withWebhooks(handlers: Record<string, OutboxHandler>): Record<st
     out[topic] = inner && typeof inner !== 'function' ? { isolation: inner.isolation, run: fanOut } : fanOut;
   }
   return out;
+}
+
+function billingHandler(mailer: WorkerMailer, topic: string): OutboxHandler {
+  return async (event, _db, { client }) => {
+    const mail = await billingMail(client, topic, event.payload);
+    if (!mail) return; // paid, voided or renewed since: nothing left to say
+    for (const c of await billingContacts(client)) {
+      await mailer.send({ to: c.email, template: topic, ...mail });
+    }
+  };
 }
 
 /**

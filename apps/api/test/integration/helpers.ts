@@ -59,6 +59,18 @@ export function ownerPool(): pg.Pool {
 
 export const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
+/** Test prices for the plans (the migrations ship them at 0, which is never billed; ADR-0027). */
+export const PLAN_PRICES = { starter: '499.00', growth: '1499.00', enterprise: '4999.00' } as const;
+
+export async function ensurePlanPrices(owner: pg.Pool): Promise<void> {
+  for (const [plan, price] of Object.entries(PLAN_PRICES)) {
+    await owner.query(
+      `SELECT platform_set_plan_price($1, $2, 'tests', 'test plan prices') FROM plans WHERE code = $1 AND monthly_price <> $2::numeric`,
+      [plan, price],
+    );
+  }
+}
+
 /** Arrange a member with a system role at a scope (invitation API not built yet). */
 export async function addMember(
   owner: pg.Pool,

@@ -5,11 +5,11 @@ import { UserMenu } from '@/components/user-menu';
 import { api, apiOrNull, type Me, type Subscription } from '@/lib/api';
 import { getT } from '@/i18n/server';
 import { Callout } from '@/components/note';
-import { formatDateTime } from '@/lib/format';
+import { formatDateTime, peso } from '@/lib/format';
 import { LeaveSupportButton } from '../(auth)/support/open-grant';
 import { brandImageUrl, brandVars } from '@/lib/brand';
 import { SUPPORT_EMAIL } from '@/lib/config';
-import { trialEndingSoon } from '@/lib/subscription';
+import { billDueSoon, trialEndingSoon } from '@/lib/subscription';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const me = await api<Me>('/me');
@@ -28,7 +28,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const sub = await apiOrNull<Subscription>('/subscription');
   const suspended = me.activeTenant.status === 'SUSPENDED';
   const readOnly = !suspended && (me.activeTenant.access ?? sub?.access) === 'READ_ONLY';
-  const trialEnds = sub && !suspended ? trialEndingSoon(sub) : null;
+  // An open bill due within a week (or overdue, still in grace) is the owner's reminder; it says more than the trial's end.
+  const billDue = sub && !suspended ? billDueSoon(sub) : null;
+  const trialEnds = sub && !suspended && !billDue ? trialEndingSoon(sub) : null;
   // Until online billing (D6) an owner renews by writing to support (`ONEPOS_SUPPORT_EMAIL`).
   const contact = SUPPORT_EMAIL ? (
     <>
@@ -84,12 +86,21 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Callout>
         </div>
       )}
-      {(suspended || readOnly || trialEnds) && (
+      {(suspended || readOnly || billDue || trialEnds) && (
         <div className="mx-auto max-w-[1440px] px-4 pt-4 sm:px-7 print:hidden" data-testid="subscription-notice">
           {suspended ? (
             <Callout tone="warn">{sub ? <>{t('sub.suspendedOwner')}{contact}</> : t('sub.suspended')}</Callout>
           ) : readOnly ? (
             <Callout tone="warn">{sub ? <>{t('sub.readOnly')}{contact}</> : t('sub.readOnlyMember')}</Callout>
+          ) : billDue ? (
+            <Callout tone={new Date(billDue.dueAt).getTime() < Date.now() ? 'warn' : 'info'}>
+              {t(new Date(billDue.dueAt).getTime() < Date.now() ? 'sub.billOverdue' : 'sub.billDue', {
+                number: billDue.number,
+                amount: peso(billDue.amount),
+                date: formatDateTime(billDue.dueAt, lang),
+              })}{' '}
+              <a href="/subscription" className="font-semibold underline" data-testid="bill-due-link">{t('sub.billPayLink')}</a>
+            </Callout>
           ) : (
             <Callout tone="info">{t('sub.trialEnding', { date: formatDateTime(trialEnds, lang) })}{contact}</Callout>
           )}

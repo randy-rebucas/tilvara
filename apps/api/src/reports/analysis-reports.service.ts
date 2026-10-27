@@ -22,8 +22,9 @@ const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a.plus((r[k] as st
  * still need someone. Same rules as the other reports: local business days of each branch, sales
  * counted when completed and returns when processed, every figure traceable to its rows.
  *
- * These are the plan's `advanced_reports` (session 21 decision: Growth and Enterprise). The everyday
- * and statutory reports (sales, items, cashiers, tenders, tax, sales book, stock, Z/X) stay on every plan.
+ * These are the plan's `advanced_reports` (session 21 decision: Growth and Enterprise), except payment
+ * exceptions, which every plan has. The everyday and statutory reports (sales, items, cashiers, tenders,
+ * tax, sales book, stock, Z/X) stay on every plan.
  */
 @Injectable()
 export class AnalysisReportsService extends ReportsService {
@@ -37,6 +38,11 @@ export class AnalysisReportsService extends ReportsService {
       await assertFeature(db, 'advanced_reports');
       return fn(db);
     });
+  }
+
+  /** The base read without the plan check, for the one report here that every plan has (payment exceptions). */
+  private readOnEveryPlan<T>(auth: AuthContext, fn: (db: Database) => Promise<T>): Promise<T> {
+    return super.read(auth, fn);
   }
 
   /**
@@ -236,10 +242,11 @@ export class AnalysisReportsService extends ReportsService {
   /**
    * Card/QR payments of this branch that still need someone, on any shift (open or closed): no answer
    * (UNKNOWN), still waiting (PROCESSING), or approved but in no sale. Oldest first, with the shift's
-   * register and cashier, so a manager can check or cancel them (ADR-0010).
+   * register and cashier, so a manager can check or cancel them (ADR-0010). A safety tool, not analysis:
+   * on every plan (audit 2026-10-27 #39), with the same permission checks.
    */
   paymentExceptions(auth: AuthContext, branchId: string) {
-    return this.read(auth, async (db) => {
+    return this.readOnEveryPlan(auth, async (db) => {
       const [branch] = await db.select().from(branches).where(eq(branches.id, branchId));
       if (!branch) throw notFound('Branch');
       const scope = { branchId: branch.id, legalEntityId: branch.legalEntityId };

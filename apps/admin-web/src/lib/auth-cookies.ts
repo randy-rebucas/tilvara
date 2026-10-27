@@ -11,7 +11,7 @@ export interface TokenSet {
 
 const base = { httpOnly: true, secure: SECURE_COOKIES, sameSite: 'lax' as const, path: '/' };
 
-/** Store tokens as httpOnly cookies on a response. The refresh token is scoped to the auth routes. */
+/** Store tokens as httpOnly cookies on a response. Every cookie is on path `/`: the proxy needs the refresh token on every page. */
 export function writeAuthCookies(res: NextResponse, tokens: TokenSet, tenantId: string | null | undefined): void {
   res.cookies.set(ACCESS_COOKIE, tokens.accessToken, { ...base, expires: new Date(tokens.accessTokenExpiresAt) });
   res.cookies.set(ACCESS_EXP_COOKIE, String(new Date(tokens.accessTokenExpiresAt).getTime()), {

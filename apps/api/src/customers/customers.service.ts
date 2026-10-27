@@ -38,6 +38,8 @@ type CustomerRow = typeof customers.$inferSelect;
 const money = (v: string) => toDec(v).toFixed(2);
 /** A business-wide record: a grant at any scope opens it (like the catalog; ADR-0018). */
 const holds = (auth: AuthContext, perm: 'customers.read' | 'customers.manage') => tenantOf(auth).grants.some((g) => g.permission === perm);
+/** A cashier opens the sales they rang; an API key answers as the person who made it, so never (audit 2026-10-27 #21). */
+const ownSale = (auth: AuthContext, cashierUserId: string) => !auth.apiKey && cashierUserId === auth.userId;
 
 /** Load a customer for a sale or a refund as store credit (404 across tenants, 409 archived). */
 export async function activeCustomer(db: Database, id: string) {
@@ -234,7 +236,7 @@ export class CustomersService extends TenantService {
         .where(and(eq(sales.customerId, id), q.cursor ? sql`${sales.id} < ${q.cursor}` : undefined))
         .orderBy(desc(sales.id))
         .limit(q.limit + 1);
-      const visible = rows.filter(({ sale: s }) => s.cashierUserId === auth.userId || hasPermission(tenantOf(auth).grants, 'sales.read', { legalEntityId: s.legalEntityId, branchId: s.branchId, registerId: s.registerId }));
+      const visible = rows.filter(({ sale: s }) => ownSale(auth, s.cashierUserId) || hasPermission(tenantOf(auth).grants, 'sales.read', { legalEntityId: s.legalEntityId, branchId: s.branchId, registerId: s.registerId }));
       return {
         data: visible.slice(0, q.limit).map(({ sale: s, registerCode }) => ({
           id: s.id, saleNumber: s.saleNumber, reference: `${registerCode}-${String(s.saleNumber).padStart(6, '0')}`, branchId: s.branchId,
@@ -257,10 +259,10 @@ export class CustomersService extends TenantService {
       const [consents, credit, bought] = await inSequence(
         () => db.select().from(customerConsentEvents).where(eq(customerConsentEvents.customerId, id)).orderBy(asc(customerConsentEvents.recordedAt)),
         () => db.select().from(customerCreditEntries).where(eq(customerCreditEntries.customerId, id)).orderBy(asc(customerCreditEntries.createdAt)),
-        () => db.select({ sale: sales, registerCode: registers.code }).from(sales).innerJoin(registers, eq(registers.id, sales.registerId)).where(eq(sales.customerId, id)).orderBy(asc(sales.completedAt)),
+        () => db.select({ sale: sales, registerCode: registers.code }).from(sales).innerJoin(registers, eq(registers.id, sales.registerId)).where(eq(sales.customerId, id)).orderBy(asc(sales.completedAt), asc(sales.saleNumber), asc(sales.id)),
       );
       const lines = bought.length
-        ? await db.select().from(saleLines).where(inArray(saleLines.saleId, bought.map((b) => b.sale.id))).orderBy(saleLines.lineNo)
+        ? await db.select().from(saleLines).where(inArray(saleLines.saleId, bought.map((b) => b.sale.id))).orderBy(asc(saleLines.saleId), asc(saleLines.lineNo))
         : [];
       await this.audit(db, auth, 'customer.exported', 'customer', id);
       return {
@@ -298,7 +300,7 @@ export class CustomersService extends TenantService {
         .limit(q.limit + 1);
       const page = rows.slice(0, q.limit);
       const canOpen = (s: (typeof rows)[number]['sale']) =>
-        !!s && (s.cashierUserId === auth.userId || hasPermission(tenantOf(auth).grants, 'sales.read', { legalEntityId: s.legalEntityId, branchId: s.branchId, registerId: s.registerId }));
+        !!s && (ownSale(auth, s.cashierUserId) || hasPermission(tenantOf(auth).grants, 'sales.read', { legalEntityId: s.legalEntityId, branchId: s.branchId, registerId: s.registerId }));
       return {
         data: page.map(({ e, sale }) => ({
           id: e.id, legalEntityId: e.legalEntityId, branchId: e.branchId, kind: e.kind, amount: money(e.amount), saleId: e.saleId, saleReturnId: e.saleReturnId, createdAt: e.createdAt,

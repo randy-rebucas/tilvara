@@ -210,9 +210,12 @@ describe('supplier returns', () => {
     const shown = (await http().get(`/v1/goods-receipts/${r2.id}`).set(s.auth).expect(200)).body;
     expect(shown.lines[0]).toMatchObject({ quantity: '10', returnedQuantity: '3' });
     expect(shown.returns).toMatchObject([{ id: doc.id, returnNumber: 1, reason: 'Leaking' }]);
-    const loose = (await ret({ reason: 'Short-dated', lines: [{ variantId: s.cola, quantity: '1' }] }).expect(201)).body;
-    expect(loose.lines[0]).toMatchObject({ creditUnitCost: '12.0000' });
-    await ret({ reason: 'x', lines: [{ variantId: s.cola, quantity: '1' }] }).set(s.manager).expect(403);
+    // Stocked goods go back against a receipt (audit 2026-10-27 #10); a line not on it is credited at the current average.
+    const loose = await ret({ reason: 'Short-dated', lines: [{ variantId: s.cola, quantity: '1' }] }).expect(422);
+    expect(loose.body.error).toMatchObject({ code: 'GOODS_RECEIPT_REQUIRED', details: { variantIds: [s.cola] } });
+    const unlinked = (await ret({ goodsReceiptId: r2.id, reason: 'Short-dated', lines: [{ variantId: s.cola, quantity: '1' }] }).expect(201)).body;
+    expect(unlinked.lines[0]).toMatchObject({ creditUnitCost: '12.0000' });
+    await ret({ goodsReceiptId: r2.id, reason: 'x', lines: [{ variantId: s.cola, quantity: '1' }] }).set(s.manager).expect(403);
     expect((await http().get('/v1/supplier-returns').query({ branchId: s.branchId }).set(s.auth).expect(200)).body.data).toHaveLength(2);
     await http().get(`/v1/supplier-returns/${doc.id}`).set(s.manager).expect(200);
     await http().get(`/v1/supplier-returns/${doc.id}`).set(s.cashier).expect(403);

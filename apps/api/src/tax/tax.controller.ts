@@ -6,7 +6,7 @@ import {
   type CreateTaxProfileInput,
   type TaxQuoteInput,
 } from '@1pos/validation';
-import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { TaxService } from './tax.service.js';
@@ -30,6 +30,8 @@ export class TaxController {
     return this.tax.createProfile(auth, legalEntityId, body);
   }
 
+  // Every member reads them (the till prices with them); a key needs a scope (#21).
+  @ApiKeyRequires('catalog.read')
   @Get('discount-schemes')
   listSchemes(@Auth() auth: AuthContext) {
     return this.tax.listSchemes(auth);

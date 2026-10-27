@@ -23,6 +23,7 @@ import { TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { emitEvent } from '../outbox/outbox.js';
+import { productsWithStock } from './stock-held.js';
 
 export type ImportAction = 'CREATE' | 'ADD_VARIANT' | 'UPDATE' | 'UNCHANGED' | 'ERROR';
 
@@ -272,6 +273,11 @@ export class ProductImportService extends TenantService {
 
     // Each product as a whole: the fields an existing one cannot change, and the rules a new one must follow.
     const newCategoryPaths = new Map<string, string[]>();
+    // Products the file stops tracking that still have stock somewhere (they must keep tracking it).
+    const stocked = await productsWithStock(
+      db,
+      [...targets.values()].filter((t) => t.existing?.trackInventory && t.wanted.trackInventory === false).map((t) => t.existing!.id),
+    );
     for (const target of targets.values()) {
       const first = target.rows[0]!;
       const w = target.wanted;
@@ -304,6 +310,7 @@ export class ProductImportService extends TenantService {
       const tracksExpiry = w.tracksExpiry ?? p?.tracksExpiry ?? false;
       if (productType !== 'STANDARD' && trackInventory) at('trackInventory').result.errors.push({ code: 'INVALID_STATE', message: 'Services cannot track inventory' });
       if (tracksExpiry && !trackInventory) at('tracksExpiry').result.errors.push({ code: 'EXPIRY_NEEDS_STOCK', message: 'Expiry dates need stock that is counted' });
+      if (p && stocked.has(p.id)) at('trackInventory').result.errors.push({ code: 'HAS_STOCK', message: 'This product has stock: count or write it off at every branch before it stops tracking stock' });
       if (!p) {
         const uom = w.uomId ? uoms.find((u) => u.id === w.uomId) : uoms.find((u) => u.code === 'PC');
         if (!uom) first.result.errors.push({ code: 'UNKNOWN_UNIT', message: 'Give the unit (there is no PC unit)' });

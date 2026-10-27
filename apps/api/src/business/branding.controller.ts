@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Put, Res } from '@nestjs/common';
 import { brandImageSchema, brandingUpdateSchema, tenantSlugSchema, type BrandImageInput, type BrandingUpdateInput } from '@1pos/validation';
 import type { Response } from 'express';
-import { Auth, Public, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, Public, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { RateLimit } from '../infrastructure/rate-limit.guard.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { imageHeaders } from './branding.js';
@@ -13,6 +13,7 @@ import { BrandingService } from './branding.service.js';
 export class BrandingController {
   constructor(@Inject(BrandingService) private readonly branding: BrandingService) {}
 
+  @ApiKeyRequires('org.read')
   @Get()
   get(@Auth() auth: AuthContext) {
     return this.branding.get(auth);
@@ -33,12 +34,14 @@ export class BrandingController {
     return this.branding.setImage(auth, 'BACKGROUND', body);
   }
 
+  @ApiKeyRequires('org.read')
   @Get('logo')
   async logo(@Auth() auth: AuthContext, @Res() res: Response): Promise<void> {
     const img = await this.branding.image(auth, 'LOGO');
     res.status(200).set(imageHeaders(img, 'private')).end(img.bytes);
   }
 
+  @ApiKeyRequires('org.read')
   @Get('background')
   async background(@Auth() auth: AuthContext, @Res() res: Response): Promise<void> {
     const img = await this.branding.image(auth, 'BACKGROUND');

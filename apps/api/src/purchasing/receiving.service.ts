@@ -189,6 +189,15 @@ export class ReceivingService extends TenantService {
       await activeSupplier(db, input.supplierId);
       await assertVariants(db, input.lines.map((l) => l.variantId));
       const tenantId = tenantOf(auth).tenantId;
+      // The return's credit comes off GRNI; only a receipt it is tied to clears that again (an invoice or
+      // credit note counts the receipt's returns), so stocked goods go back against the receipt they came in on.
+      if (!input.goodsReceiptId) {
+        const tracked = await tracking(db, input.lines.map((l) => l.variantId));
+        const stocked = input.lines.filter((l) => tracked.get(l.variantId)).map((l) => l.variantId);
+        if (stocked.length) {
+          throw unprocessable('GOODS_RECEIPT_REQUIRED', 'Return stocked items against the goods receipt they came in on', { variantIds: [...new Set(stocked)] });
+        }
+      }
 
       const credit = new Map<number, string>();
       if (input.goodsReceiptId) {

@@ -46,3 +46,36 @@ Migrations 0060 (DDL) and 0061 (hand-written). Decision 8 is replaced by:
     - Posting (`inventory.adjust`, Idempotency-Key required) writes one ordinary stock count whose lines carry `expected_quantity`; for such a line the trigger moves `counted − expected` instead of `counted − on hand`. Stock that moved since the freeze (sales while people counted) therefore stays on the books: frozen 10, 2 sold, 9 counted → −1 → 7 on hand. Uncounted lines are not posted. The sheet view shows each line's net movement since the freeze so the reviewer sees what the posting keeps.
     - Known limit: a sale whose transaction started before the freeze and committed after it is in neither the frozen quantity nor "moved since the freeze" (its `created_at` is its transaction start). Freeze when the tills are quiet.
     - `inventory.count` is held by the owner and admin templates (back-filled into every business by 0061) and can be put in custom roles (e.g. a stock counter). Branch lists and the Inventory tab open for it.
+
+## Amendment 3 (audit 45, 2026-10-27): count sheets post against the book when counted
+Migrations 0134 (DDL) and 0135. Replaces the posting rule and the known limit of decision 10 above (the session-16
+amendment's count sheets; this is the third change to the costing rules, after the original decisions and that
+amendment).
+
+- **Why.** "Counted − frozen" assumed a count tells what was on the shelf at the freeze. It tells what is on the
+  shelf when the line is counted. Frozen 10, one sold after the freeze, the shelf counted 9: the old rule posted −1
+  as shrink on top of the sale (the unit left twice). Offline sales rung before the freeze but delivered after it
+  were in neither number.
+- **Order of movements.** The costing trigger numbers each balance's movements under the balance lock
+  (`stock_balances.movement_seq`, copied to `stock_movements.balance_seq`; NULL for movements before 0134). The
+  freeze locks the balances (`app_lock_stock_balances`) and keeps the number on each line (`frozen_seq`), so a
+  movement in flight is either in the frozen quantity (it committed first) or numbered after it. The old known
+  limit (a sale starting before the freeze and committing after it) is gone.
+- **Rule.** Posting locks the balances again and posts, for each counted line,
+  `counted − (frozen + Σ movements with balance_seq > frozen_seq whose stock moved by counted_at)`; that book
+  quantity is the count line's `expected_quantity` (the trigger is unchanged: `counted − expected`). "When the
+  stock moved" is the sale's `completed_at` for a sale and for packs a sale opened (an offline sale counts when it
+  was rung, not when it was delivered), else when the movement was recorded.
+  - A sale after the freeze and before the count: in the book, deducted once (frozen 10, 1 sold, counted 9 → 0).
+  - An offline sale rung before the freeze, delivered after it: never in the frozen figure, rung before the count,
+    so in the book (frozen 10 though the shelf had 9, counted 9 → 0).
+  - A sale rung after the count (delivered before the posting or not): not in the book; its own movement takes
+    the unit off (counted 9 → +0, then −1).
+  - Limit: a sale rung before the count but delivered after the sheet posts cannot be known then: it shows as
+    shrink at the count and is deducted again when it arrives. Post a sheet once the tills have synced.
+  - Lines frozen before 0134 (`frozen_seq` NULL) use the movements recorded after the sheet's freeze.
+- **What the reviewer sees.** The sheet view's "moved since the freeze" is the same sum up to when the line was
+  counted (up to now for a line not counted yet), and its variance is `counted − frozen − moved`, the number
+  posting will use. The count document's "system quantity" is that book quantity.
+- **Locks.** Adding an item to an open sheet takes the branch's counting lock first, like a quick count, so a quick
+  count of the same item either finishes first (and is in the frozen figure) or sees the item on the sheet.

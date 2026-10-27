@@ -3,7 +3,7 @@
  * what it sends back (offline sale envelopes) and what each envelope became (results). Shared by the
  * API and the POS offline engine; no runtime dependencies beyond zod.
  */
-import { amountSchema, quantitySchema } from '@1pos/validation';
+import { amountSchema, money2Schema, quantitySchema } from '@1pos/validation';
 import type { Promotion } from '@1pos/pricing';
 import { z } from 'zod';
 
@@ -50,8 +50,12 @@ export interface Snapshot {
   terminal: { id: string; name: string; credentialHint: string };
   register: { id: string; code: string; name: string };
   branch: { id: string; code: string; name: string; timezone: string };
-  /** `receiptTin`: the TIN as receipts print it (with this branch's BIR branch code), e.g. 123-456-789-00000. */
-  legalEntity: { id: string; registeredName: string; tradeName: string | null; tin: string | null; receiptTin: string | null };
+  /**
+   * `receiptTin`: the TIN as receipts print it (with this branch's BIR branch code), e.g. 123-456-789-00000.
+   * `receiptAddress`: the address receipts print (the branch's, else the entity's registered one); absent
+   * from older servers and snapshots (audit 2026-10-27 #33), then the offline receipt prints none.
+   */
+  legalEntity: { id: string; registeredName: string; tradeName: string | null; tin: string | null; receiptTin: string | null; receiptAddress?: string | null };
   currency: string;
   /** The tax profile in force (ADR-0008), exactly as `@1pos/tax` takes it. */
   taxProfile: { id: string; effectiveFrom: string; vatStatus: 'VAT' | 'NON_VAT'; vatRate: string; roundingMode: 'HALF_UP' | 'HALF_EVEN' };
@@ -165,9 +169,12 @@ export const offlineSaleSchema = z.object({
     .min(1)
     .max(200),
   prescriptions: retired('Prescriptions'),
-  /** Cash only; an envelope with any other tender is quarantined as unreadable (VALIDATION_FAILED). */
+  /**
+   * Cash only, in pesos and centavos (as at the counter, audit 2026-10-27 #13); an envelope with any other
+   * tender, or more than 2 decimal places, is quarantined as unreadable (VALIDATION_FAILED).
+   */
   tenders: z
-    .array(z.object({ method: z.literal('CASH'), tendered: amountSchema }))
+    .array(z.object({ method: z.literal('CASH'), tendered: money2Schema }))
     .min(1)
     .max(10),
   /** The total the terminal computed and collected; the server must reproduce it exactly. */

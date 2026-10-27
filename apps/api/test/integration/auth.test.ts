@@ -96,8 +96,12 @@ describe('login', () => {
     for (let i = 0; i < 5; i++) {
       await http().post('/v1/auth/login').send({ email: s.email, password: 'wrong password!!' }).expect(401);
     }
-    const locked = await login(s.email).expect(429);
-    expect(locked.body.error.code).toBe('TOO_MANY_ATTEMPTS');
+    // Locked: even the right password is refused, answered exactly like a wrong one (audit 45 #24).
+    const locked = await login(s.email).expect(401);
+    const unknown = await http().post('/v1/auth/login').send({ email: `${uniq('ghost')}@example.ph`, password: 'whatever12345' }).expect(401);
+    expect(locked.body.error).toEqual({ ...unknown.body.error, correlationId: locked.body.error.correlationId });
+    expect(locked.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(locked.body.error.details?.retryAfterSeconds).toBeUndefined();
   });
 
   it('refuses to activate a tenant the user does not belong to', async () => {

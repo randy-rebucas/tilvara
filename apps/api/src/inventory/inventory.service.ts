@@ -51,10 +51,35 @@ import { stockChangePosting, transferDispatchPosting, transferReceiptPosting } f
 import { post } from '../accounting/ledger.js';
 
 const MAX_SHEET_LINES = 5000;
+/** Items listed by Stock by branch. */
+const MAX_STOCK_ITEMS = 2000;
 const sheetClosed = (status: string) =>
   new AppError('COUNT_SHEET_CLOSED', `This count sheet is ${status.toLowerCase()}`, HttpStatus.CONFLICT, { status });
 
 /** Opening a count sheet and posting a quick count at a branch take turns (the open-sheet checks cannot race). */
+/**
+ * Net stock of the count-sheet line `l` (SQL alias) that moved after it was frozen and by `until` (ADR-0012
+ * amendment 3, audit 45 #7):
+ * - after the freeze: numbered after `l.frozen_seq` by the costing trigger, i.e. not in the frozen quantity,
+ *   whenever it was rung (lines frozen before migration 0134: recorded after the sheet's freeze);
+ * - by `until`: when the stock physically moved, i.e. the sale's time for a sale and for packs a sale opened (an
+ *   offline sale delivered late counts when it was rung), else when it was recorded.
+ * So an offline sale rung before the count but delivered after the freeze is in the book the count is compared
+ * with (it was never in the frozen figure, and the shelf no longer holds it); one rung after the count is not (the
+ * counter still saw that stock, and its own movement takes it off). A sale rung before the count but delivered
+ * after the sheet posts cannot be known then: it shows as shrink at the count and leaves again with its sale.
+ * The sheet's own COUNT movement is never part of it.
+ */
+const movedSinceFreeze = (sheet: { branchId: string; frozenAt: Date; stockCountId: string | null }, until: ReturnType<typeof sql>) => sql`
+  coalesce((SELECT sum(m.quantity) FROM stock_movements m
+              LEFT JOIN sales s ON s.tenant_id = m.tenant_id AND s.id = m.sale_id
+              LEFT JOIN pack_openings po ON po.tenant_id = m.tenant_id AND po.id = m.pack_opening_id
+              LEFT JOIN sales ps ON ps.tenant_id = po.tenant_id AND ps.id = po.sale_id
+             WHERE m.tenant_id = l.tenant_id AND m.branch_id = ${sheet.branchId} AND m.variant_id = l.variant_id
+               AND CASE WHEN l.frozen_seq IS NULL THEN m.created_at > ${sheet.frozenAt} ELSE m.balance_seq > l.frozen_seq END
+               AND coalesce(s.completed_at, ps.completed_at, m.created_at) <= ${until}
+               ${sheet.stockCountId ? sql`AND (m.stock_count_line_id IS NULL OR m.stock_count_line_id NOT IN (SELECT cl.id FROM stock_count_lines cl WHERE cl.stock_count_id = ${sheet.stockCountId}))` : sql``}), 0)`;
+
 const lockCounting = (db: Database, branchId: string) => db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`count-sheet:${branchId}`}, 0))`);
 
 const byVariant = <T extends { variantId: string }>(a: T, b: T) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
@@ -140,6 +165,8 @@ export class InventoryService extends TenantService {
       // Received by the destination branch.
       this.assertCan(auth, 'inventory.transfer', to.scope);
       if (transfer.status !== 'DISPATCHED') throw new AppError('ALREADY_RECEIVED', 'This transfer was already received', HttpStatus.CONFLICT);
+      // Stock received into an archived branch could never be adjusted, counted or sent on (archiving refuses open transfers).
+      if (to.branch.archivedAt) throw new AppError('BRANCH_ARCHIVED', 'The destination branch is archived', HttpStatus.CONFLICT);
       const lines = await db.select().from(stockTransferLines).where(eq(stockTransferLines.stockTransferId, id));
       for (const given of input.lines) {
         if (!lines.some((l) => l.id === given.transferLineId)) throw new AppError('NOT_FOUND', 'Transfer line not found', HttpStatus.NOT_FOUND, { transferLineId: given.transferLineId });
@@ -383,9 +410,9 @@ export class InventoryService extends TenantService {
           sku: r.sku,
           name: r.name,
           countedQuantity: toDec(r.counted).toString(),
-          /** On hand when the count was posted, or when its count sheet was frozen. */
+          /** On hand when the count was posted; from a count sheet, the book when the line was counted (ADR-0012 amendment 3). */
           systemQuantity: toDec(r.counted).minus(variance).toString(),
-          /** From a count sheet: the variance is against this frozen quantity. */
+          /** From a count sheet: the variance is against the book when the line was counted, not on hand at posting. */
           frozen: r.expected !== null,
           varianceQuantity: variance.toString(),
           varianceValue: toDec(r.value ?? '0').toFixed(2),
@@ -437,11 +464,17 @@ export class InventoryService extends TenantService {
     });
   }
 
+  /**
+   * Freezes on hand under the balance lock (audit 45 #7): a movement in flight is either in the frozen quantity
+   * (it committed first) or numbered after it (`frozen_seq`), never lost between the two.
+   */
   private async freezeLines(db: Database, tenantId: string, sheetId: string, branchId: string, ids: string[]) {
+    const list = sql`ARRAY[${sql.join([...ids].sort().map((id) => sql`${id}`), sql`, `)}]::uuid[]`;
+    await db.execute(sql`SELECT count(*) FROM app_lock_stock_balances(${branchId}, ${list})`);
     await db.execute(sql`
-      INSERT INTO stock_count_sheet_lines (tenant_id, sheet_id, variant_id, expected_quantity)
-      SELECT ${tenantId}, ${sheetId}, x.id, coalesce(b.quantity, 0)
-        FROM unnest(ARRAY[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[]) AS x(id)
+      INSERT INTO stock_count_sheet_lines (tenant_id, sheet_id, variant_id, expected_quantity, frozen_seq)
+      SELECT ${tenantId}, ${sheetId}, x.id, coalesce(b.quantity, 0), coalesce(b.movement_seq, 0)
+        FROM unnest(${list}) AS x(id)
         LEFT JOIN stock_balances b ON b.tenant_id = ${tenantId} AND b.branch_id = ${branchId} AND b.variant_id = x.id`);
   }
 
@@ -480,6 +513,8 @@ export class InventoryService extends TenantService {
       const { scope } = await branchScope(db, sheet.branchId);
       if (!this.can(auth, 'inventory.count', scope)) this.assertCan(auth, 'inventory.adjust', scope);
       if (sheet.status !== 'OPEN') throw sheetClosed(sheet.status);
+      // Before reading what is on the sheet: a quick count of an item being added here waits, or sees it on the sheet.
+      await lockCounting(db, sheet.branchId);
       const tenantId = tenantOf(auth).tenantId;
       const existing = await db.select({ variantId: stockCountSheetLines.variantId }).from(stockCountSheetLines).where(eq(stockCountSheetLines.sheetId, id));
       const added = input.lines.filter((l) => !existing.some((e) => e.variantId === l.variantId));
@@ -505,8 +540,9 @@ export class InventoryService extends TenantService {
   }
 
   /**
-   * Posts the counted lines as one stock count: variance = counted − frozen, so what sold or arrived
-   * while people counted stays on the books. Lines left uncounted are not posted (and say so).
+   * Posts the counted lines as one stock count: variance = counted − the book quantity when the line was
+   * counted (frozen + what moved after the freeze and by then, `movedSinceFreeze`), so what sold or arrived
+   * while people counted stays on the books once. Lines left uncounted are not posted (and say so).
    */
   postCountSheet(auth: AuthContext, id: string) {
     return this.mutate(auth, async (db) => {
@@ -519,11 +555,18 @@ export class InventoryService extends TenantService {
       const lines = await db.select().from(stockCountSheetLines).where(eq(stockCountSheetLines.sheetId, id));
       const counted = lines.filter((l) => l.countedQuantity !== null);
       if (counted.length === 0) throw unprocessable('NOTHING_COUNTED', 'Enter at least one count before posting');
+      // Under the balance lock, so no movement lands between reading the book and posting against it.
+      const ids = counted.map((l) => l.variantId).sort();
+      await db.execute(sql`SELECT count(*) FROM app_lock_stock_balances(${branch.id}, ARRAY[${sql.join(ids.map((v) => sql`${v}`), sql`, `)}]::uuid[])`);
+      const { rows: book } = await db.execute<{ variant_id: string; book: string }>(sql`
+        SELECT l.variant_id, (l.expected_quantity + ${movedSinceFreeze(sheet, sql`l.counted_at`)})::text AS book
+          FROM stock_count_sheet_lines l WHERE l.sheet_id = ${id} AND l.counted_quantity IS NOT NULL`);
+      const bookOf = new Map(book.map((b) => [b.variant_id, b.book]));
       const count = await this.postCount(
         db,
         auth,
         branch,
-        counted.map((l) => ({ variantId: l.variantId, countedQuantity: l.countedQuantity!, expectedQuantity: l.expectedQuantity })),
+        counted.map((l) => ({ variantId: l.variantId, countedQuantity: l.countedQuantity!, expectedQuantity: bookOf.get(l.variantId)! })),
         sheet.notes,
       );
       const [posted] = await db
@@ -573,9 +616,7 @@ export class InventoryService extends TenantService {
     const { rows } = await db.execute<{ id: string; variant_id: string; sku: string; name: string; expected: string; counted: string | null; counted_by: string | null; counted_at: string | null; moved: string; location: string | null }>(sql`
       SELECT l.id, l.variant_id, v.sku, p.name, il.location, l.expected_quantity::text AS expected, l.counted_quantity::text AS counted,
              u.display_name AS counted_by, l.counted_at,
-             coalesce((SELECT sum(m.quantity) FROM stock_movements m
-                        WHERE m.tenant_id = l.tenant_id AND m.branch_id = ${sheet.branchId} AND m.variant_id = l.variant_id
-                          AND m.created_at > ${sheet.frozenAt} ${sheet.closedAt ? sql`AND m.created_at < ${sheet.closedAt}` : sql``}), 0)::text AS moved
+             ${movedSinceFreeze(sheet, sql`coalesce(l.counted_at, ${sheet.closedAt ?? sql`now()`})`)}::text AS moved
         FROM stock_count_sheet_lines l
         JOIN product_variants v ON v.tenant_id = l.tenant_id AND v.id = l.variant_id
         JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
@@ -606,8 +647,12 @@ export class InventoryService extends TenantService {
         countedAt: r.counted_at ? new Date(r.counted_at).toISOString() : null,
         ...(reveal && {
           expectedQuantity: toDec(r.expected).toString(),
-          varianceQuantity: r.counted === null ? null : toDec(r.counted).minus(r.expected).toString(),
-          /** Net stock moved since the freeze (sales, receipts…): kept on the books when the sheet posts. */
+          /** Against the book when the line was counted (frozen + moved since the freeze by then), as posting does. */
+          varianceQuantity: r.counted === null ? null : toDec(r.counted).minus(r.expected).minus(r.moved).toString(),
+          /**
+           * Net stock moved since the freeze (sales, receipts…) up to when the line was counted (up to now for a line
+           * not counted yet): part of the book the count is compared with. What moves after the count stays on the books.
+           */
           movedSinceFreeze: toDec(r.moved).toString(),
         }),
       })),
@@ -721,10 +766,6 @@ export class InventoryService extends TenantService {
   }
 
   /**
-   * Stock of every branch the person may read inventory at, item by item (ADR-0021 §5): items with a
-   * balance at one of those branches, active ones first by SKU. At most 2,000 items.
-   */
-  /**
    * Whether the business uses dated stock (an item keeping expiry dates, or lots and holds from before) and
    * packs (a pack link or an opening). The admin shows the Expiry, Lot holds, Batch trace and Packs tabs
    * only when they are, so a shop without them is not shown four empty tabs.
@@ -743,6 +784,10 @@ export class InventoryService extends TenantService {
     });
   }
 
+  /**
+   * Stock of every branch the person may read inventory at, item by item (ADR-0021 §5): items with a
+   * balance at one of those branches, active ones first by SKU. At most 2,000 items (`truncated` when more exist).
+   */
   stockByBranch(auth: AuthContext) {
     return this.read(auth, async (db) => {
       const all = await db.select({ id: branches.id, code: branches.code, name: branches.name, legalEntityId: branches.legalEntityId }).from(branches).where(isNull(branches.archivedAt));
@@ -753,9 +798,13 @@ export class InventoryService extends TenantService {
       const ids = mine.map((b) => b.id);
       const { rows } = await db.execute<{ variant_id: string; sku: string; name: string; branch_id: string; quantity: string; reserved: string }>(sql`
         WITH items AS (
-          SELECT DISTINCT b.variant_id FROM stock_balances b
-           WHERE b.branch_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
-           LIMIT 2000)
+          -- The first 2,000 in the order shown (active first, then SKU), plus one to tell whether more exist.
+          SELECT v.id AS variant_id, v.archived_at IS NOT NULL AS gone, v.sku
+            FROM product_variants v
+           WHERE EXISTS (SELECT 1 FROM stock_balances b
+                          WHERE b.variant_id = v.id AND b.branch_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}))
+           ORDER BY gone, v.sku, v.id
+           LIMIT ${MAX_STOCK_ITEMS + 1})
         SELECT v.id AS variant_id, v.sku, CASE WHEN v.name IS NULL THEN p.name ELSE p.name || ' — ' || v.name END AS name,
                b.branch_id, b.quantity::text AS quantity,
                coalesce((SELECT sum(r.quantity) FROM stock_reservations r
@@ -765,7 +814,7 @@ export class InventoryService extends TenantService {
           JOIN product_variants v ON v.id = i.variant_id
           JOIN products p ON p.id = v.product_id
           JOIN stock_balances b ON b.variant_id = i.variant_id AND b.branch_id IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
-         ORDER BY (v.archived_at IS NOT NULL), v.sku`);
+         ORDER BY i.gone, i.sku, i.variant_id`);
       const byItem = new Map<string, { variantId: string; sku: string; name: string; total: Dec; branches: Record<string, { quantity: string; available: string }> }>();
       for (const r of rows) {
         const item = byItem.get(r.variant_id) ?? { variantId: r.variant_id, sku: r.sku, name: r.name, total: new Dec(0), branches: {} };
@@ -773,9 +822,12 @@ export class InventoryService extends TenantService {
         item.total = item.total.plus(r.quantity);
         byItem.set(r.variant_id, item);
       }
+      const items = [...byItem.values()];
       return {
         branches: mine.map(({ legalEntityId: _e, ...b }) => b),
-        data: [...byItem.values()].map((i) => ({ ...i, total: i.total.toString() })),
+        data: items.slice(0, MAX_STOCK_ITEMS).map((i) => ({ ...i, total: i.total.toString() })),
+        /** More items have stock at these branches than are listed. */
+        truncated: items.length > MAX_STOCK_ITEMS,
       };
     });
   }

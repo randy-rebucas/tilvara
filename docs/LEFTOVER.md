@@ -20,7 +20,8 @@ Built: `tenant_branding` + `brand_assets` (migrations 0122–0123), `GET|PUT /v1
 
 ## Second tenant audit (session 42, 2026-10-27)
 Fixed: see STATUS session 42 (migrations 0125–0126). Left:
-- ⬜ The desktop till's re-pairing rule is unit-tested only (pos-offline); run `pnpm test:e2e:desktop` and try a re-pair to another business with a sale waiting on a real build.
+- ✅ (session 46) Re-pairing seen on a real build: `pnpm test:e2e:desktop` step 7 (36/36). A sale waits → Disconnect → another business refused → the old terminal revoked and a new one of the register delivers the sale → moved to the other business, none of the first one's items offline. It found and fixed: sales backed off during an outage (up to 5 min) kept waiting after the connection came back, and "Send now" skipped them; a successful snapshot and "Send now" now end the wait (`OfflineEngine.sendNow`, `LocalStore.makeDue`).
+- ⬜ The till and the server disagree on taking over a register's waiting sales: the till hands them to any new terminal of the same register (and its Disconnect message says so), the server accepts another terminal's snapshot only if that terminal is REVOKED (`SyncService.snapshotFor`). Set up with a second key while the first is still live, the sale is quarantined `UNKNOWN_SNAPSHOT`; it is recovered by revoking the old terminal, then "Record again". Decide: the server accepts a live terminal of the register too (dedupe already by transaction id), or the till's words say "revoke the old terminal first".
 - ⬜ A disconnected till keeps the old business's data on disk until it is set up again (only the set-up screen shows it). Proposed if it matters: wipe on "Disconnect" when nothing is waiting.
 - ⬜ The hand-off code still reaches the browser's JavaScript on the main address (`redirect` with `#code=`). Bound to its business and parent session now; an opaque server-side nonce would keep it out of JS entirely.
 - ⬜ The customer display's last state is not cleared on sign-out (same-origin channel; names, quantities, totals only).
@@ -135,8 +136,18 @@ The user audits one area at a time for what does not fit a retail shop.
 - ⬜ Branch-scoped managers: `/me` lists codes at any scope, so the admin may still offer a team action the API refuses for another branch (the refusal now reads in words).
 - ⬜ Not seen on real hardware: the cash drawer opening after a cash sale/refund/pay in-out (best effort, errors swallowed).
 - ✅ Subscriptions, functional audit (session 43): every member told when read-only or suspended (`/me` → `access`), the owner how to renew (`ONEPOS_SUPPORT_EMAIL`) and when a trial ends; "Trial ended"; the till's red line and refusals in words; `support subscription-set|show` audited (0127); webhooks stop without `api_access`; the band fits a long name at 390px.
-- ⬜ Kept until billing (D6): an ACTIVE subscription ignores `current_period_end` (nothing would renew it); the CLI records it. `platform_set_subscription` (billing and tests) still accepts PAST_DUE without grace or ACTIVE without a date; ops uses the CLI, which refuses them.
-- ⬜ No e-mail before a trial ends (only the 3-day notice to owners/admins): needs a scheduled job in the worker.
+- ✅ Subscription billing (session 44, ADR-0027): an ACTIVE subscription now ends a week past its paid-until date; the hourly pass bills renewals, mails the owners and makes the subscription past due or canceled; a trial gets its first bill (and mail) three days before it ends.
+- ⬜ `platform_set_subscription` (tests only now) still accepts PAST_DUE without grace or ACTIVE without a date; billing and ops use the checked paths.
+- ✅ First prices (Starter ₱999, Growth ₱2,499, Enterprise ₱5,999, VAT included; migration 0133) and system-generated receipts, mailed and kept in the app (session 44).
+- ✅ Billing decisions (session 44): Tilvara is VAT-registered (bills show the 12% VAT inside, 0130–0131); the owner returns to the shop's own address (`SHOP_DOMAIN`); no partial payments; reminders three days and one day before the due date, and above every page from a week before.
+- ⏳ Billing, still open (ADR-0027 "Not done"):
+  - a run against the real PayMongo sandbox (D6 keys);
+  - Tilvara's real registration on receipts (`support billing-seller`: TIN, address, permit line), and whether the system-generated receipts meet the BIR's rules for Tilvara's own sales (its accountant);
+  - receipts are mailed as text (no PDF attachment); the PDF is the app's Print page;
+  - automatic charging of a saved card;
+  - refunds through the provider (ops refunds in the dashboard);
+  - the webhook not re-confirming a payment with the provider's API (THREAT_MODEL T6);
+  - billing mails go through the dev mailer until D2.
 - ⬜ Production needs `ONEPOS_SUPPORT_EMAIL` set on the admin server; without it the notices name Tilvara support without an address.
 - ⬜ Not seen: the desktop till's red line from its snapshot (`businessWritable`); the browser till's was.
 - ⬜ Next areas to audit: the user's call (every area ✅ twice).
@@ -207,7 +218,7 @@ The user removed the GROCERY, SALON, PHARMACY and HYBRID business types (migrati
 ## Phase 1 — Platform foundation
 - ⏳ Real email provider (prod boot refuses the dev mailer; invitations and password reset use DevMailer) — D2
 - ⬜ Catalog: bundles/composites; product images (needs S3 adapter); serial tracking and UoM conversions (see Phase 3)
-- ⏳ Billing: PayMongo billing integration (grant `platform_set_subscription` to it) — D6; feature flags enforced once multi-entity features exist; per-tenant entitlement overrides
+- ✅ Billing integration built (session 44, ADR-0027; PayMongo adapter tested against a stand-in, sandbox run waits on D6). ⬜ Feature flags enforced once multi-entity features exist; per-tenant entitlement overrides
 - ⏳ Filipino copy review by a native speaker (VAT status and subscription states are translated since session 10; everyday loanwords such as Journal entry, Debit/Credit, Draft are kept in English on purpose until reviewed)
 - ⏳ OTel SDK + exporter — D1 (hosting)
 - ⬜ Typed OpenAPI response schemas
@@ -284,7 +295,7 @@ Slice 2 (platform hardening):
 
 Slice 3 (monitoring):
 - ✅ Backup-age metric and alert (slice 4, session 11)
-- ⬜ Billing failure metrics (no billing integration yet, D6)
+- ✅ Billing failure metrics (session 44): `onepos_billing_events_total` and three alerts (OneposBillingPaymentNotApplied, OneposBillingWebhookRefused, OneposBillingCheckoutFailing)
 - ⏳ OTel traces/exporter — D1
 - ⏳ DEAD letters are a CLI only: a screen needs a platform console for Tilvara operators, which does not exist (the user's decision)
 

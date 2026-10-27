@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Inject, Param, Post, Query } from '@nestjs/common';
 import { createPaymentIntentSchema, idParamSchema, type CreatePaymentIntentInput } from '@1pos/validation';
 import { z } from 'zod';
-import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { PaymentsService } from './payments.service.js';
@@ -27,6 +27,8 @@ export class PaymentsController {
     return this.payments.create(auth, body, key.toLowerCase());
   }
 
+  // Its own shift's payments are open to the cashier; a key answers as its maker, so it needs the scope (#21).
+  @ApiKeyRequires('sales.read')
   @Get()
   list(@Auth() auth: AuthContext, @Query(sessionQuery) q: { cashierSessionId: string }) {
     return this.payments.list(auth, q.cashierSessionId);

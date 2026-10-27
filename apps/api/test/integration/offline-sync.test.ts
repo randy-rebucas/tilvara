@@ -254,7 +254,7 @@ describe('sync', () => {
       ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
       ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
       UPDATE product_prices SET effective_from = effective_from - interval '1 day', created_at = created_at - interval '1 day';
-      UPDATE tax_profiles SET effective_from = effective_from - interval '1 day';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '1 day', created_at = created_at - interval '1 day';
       UPDATE terminal_snapshots SET as_of = now() - interval '20 seconds' WHERE id = '${snap.snapshotId}';
       ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
       ALTER TABLE tax_profiles ENABLE TRIGGER tax_profiles_append_only;
@@ -291,7 +291,7 @@ describe('sync', () => {
       ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
       ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
       UPDATE product_prices SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
-      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
       UPDATE terminal_snapshots SET as_of = now() - interval '23 hours' WHERE id = '${inside.snapshotId}';
       UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${outside.snapshotId}';
       ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
@@ -321,7 +321,7 @@ describe('a business that lapsed or was suspended while the till was offline (se
       ALTER TABLE tax_profiles DISABLE TRIGGER tax_profiles_append_only;
       ALTER TABLE terminal_snapshots DISABLE TRIGGER terminal_snapshots_append_only;
       UPDATE product_prices SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
-      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days';
+      UPDATE tax_profiles SET effective_from = effective_from - interval '2 days', created_at = created_at - interval '2 days';
       UPDATE terminal_snapshots SET as_of = now() - interval '25 hours' WHERE id = '${old.snapshotId}';
       ALTER TABLE product_prices ENABLE TRIGGER product_prices_append_only;
       ALTER TABLE tax_profiles ENABLE TRIGGER tax_profiles_append_only;
@@ -702,5 +702,76 @@ describe('reports date an offline sale’s cost with its revenue', () => {
     expect(moves.find((m) => m.variantId === s.cola)).toMatchObject({ opening: { quantity: '0' }, movements: { SALE: { quantity: '-2', value: '-30.00' } }, closing: { quantity: '18' } });
     const after = (await report('stock-movements', later)).body.data as { variantId: string; opening: { quantity: string }; movements: Record<string, unknown> }[];
     expect(after.find((m) => m.variantId === s.cola)).toMatchObject({ opening: { quantity: '18' }, movements: {} });
+  });
+});
+
+describe('audit 2026-10-27 fixes', () => {
+  it('#1 a batch of about 150 kB (50 sales of 40 lines) is accepted, not refused as too large', async () => {
+    const s = await shop('off-big');
+    const snap = await snapshot(s);
+    const lines = Array.from({ length: 40 }, () => ({ variantId: s.cola, quantity: '1' }));
+    const batch = Array.from({ length: 50 }, () => sale(s, snap, { lines, amountDue: '896.00', tenders: [{ method: 'CASH', tendered: '900.00' }] }));
+    const bytes = Buffer.byteLength(JSON.stringify({ sales: batch }));
+    expect(bytes).toBeGreaterThan(140_000);
+    const res = await sync(s.t1, batch).expect(200);
+    // Answered (the oldest part at least, within the time budget); none refused for its size.
+    expect(res.body.results.length).toBeGreaterThan(0);
+    expect(res.body.results.every((r: { status: string }) => r.status === 'RECORDED')).toBe(true);
+  }, 120_000);
+
+  it('#13 cash tendered with more than centavos is quarantined VALIDATION_FAILED alone; the rest of the batch is recorded', async () => {
+    const s = await shop('off-cents');
+    const snap = await snapshot(s);
+    const ok = sale(s, snap);
+    const odd = sale(s, snap, { tenders: [{ method: 'CASH', tendered: '50.0001' }] });
+    const res = (await sync(s.t1, [odd, ok]).expect(200)).body.results as { deviceSeq: number; status: string; code?: string }[];
+    expect(res.map((r) => [r.deviceSeq, r.status, r.code])).toEqual([[ok.deviceSeq, 'RECORDED', undefined], [odd.deviceSeq, 'QUARANTINED', 'VALIDATION_FAILED']]);
+    const [stored] = await sql<{ error_detail: { details: { issues: { path: string }[] } } }>(s, `SELECT error_detail FROM terminal_transactions WHERE terminal_txn_id = $1`, [odd.terminalTxnId]);
+    expect(stored!.error_detail.details.issues.map((i) => i.path)).toEqual(['tenders.0.tendered']);
+  });
+
+  it('#33 the snapshot gives the address receipts print: the branch’s, else the registered one', async () => {
+    const s = await shop('off-address');
+    expect((await snapshot(s)).legalEntity.receiptAddress ?? null).toBeNull();
+    await sql(s, `UPDATE legal_entities SET registered_address = 'Head office, Makati'`);
+    expect((await snapshot(s)).legalEntity.receiptAddress).toBe('Head office, Makati');
+    await sql(s, `UPDATE branches SET address = '12 Aurora Blvd, Cubao' WHERE id = $1`, [s.branchId]);
+    expect((await snapshot(s)).legalEntity.receiptAddress).toBe('12 Aurora Blvd, Cubao');
+  });
+
+  it('#26 concurrent retries of one quarantined sale record it once and never stamp a failure on the recorded row', async () => {
+    const s = await shop('off-retry-race');
+    const snap = await snapshot(s);
+    await http().post(`/v1/members/${s.cashierMembership}/suspend`).set(s.auth).expect(200);
+    const env = sale(s, snap);
+    expect((await sync(s.t1, [env]).expect(200)).body.results[0]).toMatchObject({ status: 'QUARANTINED', code: 'CASHIER_NOT_AUTHORIZED' });
+    await http().post(`/v1/members/${s.cashierMembership}/reactivate`).set(s.auth).expect(200);
+    const [q] = await sql<{ id: string }>(s, `SELECT id FROM terminal_transactions WHERE status = 'QUARANTINED'`);
+    const answers = await Promise.all(Array.from({ length: 4 }, () => http().post(`/v1/sync/transactions/${q!.id}/retry`).set(s.manager)));
+    for (const a of answers) {
+      // Recorded (by this retry or a concurrent one), or already no longer waiting: never "still quarantined".
+      if (a.status === 200) expect(a.body.status).toBe('RECORDED');
+      else expect([a.status, a.body.error.code]).toEqual([409, 'NOT_QUARANTINED']);
+    }
+    expect(answers.some((a) => a.status === 200)).toBe(true);
+    expect(await sql(s, `SELECT status, error_code FROM terminal_transactions WHERE id = $1`, [q!.id])).toEqual([{ status: 'RECORDED', error_code: null }]);
+    expect(await sql(s, `SELECT count(*)::int AS n FROM sales`)).toEqual([{ n: 1 }]);
+    expect(await sql(s, `SELECT count(*)::int AS n FROM audit_logs WHERE action = 'offline_sale.retry_failed'`)).toEqual([{ n: 0 }]);
+  });
+
+  it('#26 a lapsed business can still dismiss a quarantined sale and record a retry failure (to close its shift)', async () => {
+    const s = await shop('off-lapse-dismiss');
+    const snap = await snapshot(s);
+    const wrong = sale(s, snap, { amountDue: '40.00', tenders: [{ method: 'CASH', tendered: '40.00' }] });
+    expect((await sync(s.t1, [wrong]).expect(200)).body.results[0]).toMatchObject({ status: 'QUARANTINED', code: 'TOTAL_MISMATCH' });
+    const [q] = await sql<{ id: string }>(s, `SELECT id FROM terminal_transactions WHERE status = 'QUARANTINED'`);
+    await owner.query(`SELECT platform_set_subscription($1, 'growth', 'CANCELED', null, null)`, [s.tenantId]);
+    try {
+      expect((await http().post(`/v1/sync/transactions/${q!.id}/retry`).set(s.manager).expect(409)).body.error).toMatchObject({ code: 'STILL_QUARANTINED', details: { code: 'TOTAL_MISMATCH' } });
+      expect(await sql(s, `SELECT attempts FROM terminal_transactions WHERE id = $1`, [q!.id])).toEqual([{ attempts: 2 }]);
+      expect((await http().post(`/v1/sync/transactions/${q!.id}/dismiss`).set(s.manager).send({ reason: 'Counted in the drawer variance' }).expect(200)).body.status).toBe('DISMISSED');
+    } finally {
+      await owner.query(`SELECT platform_set_subscription($1, 'growth', 'ACTIVE', null, null)`, [s.tenantId]);
+    }
   });
 });

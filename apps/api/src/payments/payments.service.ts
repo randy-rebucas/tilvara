@@ -1,7 +1,7 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import type { ServerEnv } from '@1pos/config';
 import { and, desc, eq, inArray, paymentEvents, paymentIntents, type Database } from '@1pos/database';
-import { toDec } from '@1pos/money';
+import { isCurrencyCode, Money, toDec } from '@1pos/money';
 import type { CreatePaymentIntentInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
@@ -16,6 +16,18 @@ type IntentRow = typeof paymentIntents.$inferSelect;
 type Outcome = AuthorizeResult | { status: 'UNKNOWN' };
 
 const conflict = (code: string, message: string) => new AppError(code, message, HttpStatus.CONFLICT);
+
+/**
+ * An intent's amount in its currency's minor units, through `@1pos/money` (audit 45 #13). The schema
+ * takes centavos at most, so an amount finer than that is never rounded here (the provider would charge
+ * one figure while the intent records another): it is refused.
+ */
+function intentMoney(amount: string, currency: string): Money {
+  if (!isCurrencyCode(currency)) throw new AppError('VALIDATION_FAILED', `Unsupported currency ${currency}`, HttpStatus.UNPROCESSABLE_ENTITY);
+  const m = Money.of(amount, currency);
+  if (!m.equals(m.round())) throw new AppError('VALIDATION_FAILED', 'A payment amount has at most two decimal places', HttpStatus.UNPROCESSABLE_ENTITY);
+  return m;
+}
 
 /**
  * Non-cash payments (ADR-0010): commit the intent, call the provider outside any transaction,
@@ -60,6 +72,7 @@ export class PaymentsService extends TenantService {
       this.assertCan(auth, 'sales.create', scope);
       if (session.status !== 'OPEN') throw conflict('SESSION_NOT_OPEN', 'This cashier session is not open');
       if (session.openedBy !== auth.userId) throw new AppError('NOT_SESSION_OWNER', 'Take payments on your own cashier session', HttpStatus.FORBIDDEN);
+      intentMoney(input.amount, session.currency); // refused before anything is recorded
       const [row] = await db
         .insert(paymentIntents)
         .values({
@@ -87,7 +100,7 @@ export class PaymentsService extends TenantService {
     let outcome: Outcome;
     try {
       outcome = await this.provider.authorize(
-        { intentId: intent.id, amount: toDec(intent.amount).toFixed(2), currency: intent.currency, method: intent.method as 'CARD' },
+        { intentId: intent.id, amount: intentMoney(intent.amount, intent.currency).toFixed(), currency: intent.currency, method: intent.method as 'CARD' },
         AbortSignal.timeout(this.env.PAYMENT_TIMEOUT_MS),
       );
     } catch {
@@ -199,6 +212,6 @@ export class PaymentsService extends TenantService {
   }
 
   private view(r: IntentRow) {
-    return { ...r, amount: toDec(r.amount).toFixed(2) };
+    return { ...r, amount: isCurrencyCode(r.currency) ? Money.of(r.amount, r.currency).toFixed() : r.amount };
   }
 }

@@ -131,7 +131,7 @@ export function TillSettings({ onBack }: { onBack: () => void }) {
         )}
         {status?.snapshot?.expired && <Callout kind="warn">{t('till.priceListExpired', { when: when(status.snapshot.validUntil) })}</Callout>}
         {status?.authState === 'REVOKED' && <Callout kind="error">{t('till.revoked')}. {t('till.revokedHelp')}</Callout>}
-        <button className="btn justify-self-start" onClick={() => void till.engine?.drain().finally(() => void till.refresh())}>{t('till.syncNow')}</button>
+        <button className="btn justify-self-start" onClick={() => void till.engine?.sendNow().finally(() => void till.refresh())}>{t('till.syncNow')}</button>
       </Note>
 
       <Note className="p-5">
@@ -211,6 +211,7 @@ export function OfflineReceipt({ data }: { data: OfflineReceiptData }) {
           {brandHeader(data.branding).map((l, i) => <p key={`b${i}`} className="font-semibold">{l}</p>)}
           <p className="text-[1.0625rem] font-semibold">{data.seller.name}</p>
           <p>{data.seller.registeredName}</p>
+          {data.seller.address && <p>{data.seller.address}</p>}
           {data.seller.tin && <p className="serial">{isVat ? 'VAT REG TIN' : 'NON-VAT REG TIN'} {data.seller.tin}</p>}
           <p className="serial mt-2 font-semibold">{data.notice}</p>
         </header>

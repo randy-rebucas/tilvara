@@ -23,6 +23,8 @@ export const NON_TENANT_TABLES: Record<string, string> = {
   worker_heartbeats: 'one row per outbox worker; no runtime access, only worker_heartbeat* and platform_metrics()',
   backup_runs: 'successful backups and restore drills; no runtime access, only platform_record_backup() and platform_metrics()',
   platform_staff: 'Tilvara support staff; no runtime access, only the support_* / auth_staff_active / auth_resolve_support functions',
+  billing_provider_events: 'payment provider webhook events, once each (ADR-0027); no runtime access, only billing_apply_provider_payment()',
+  billing_seller: 'Tilvara as issuer of receipts to the businesses, one row (ADR-0027); no runtime access, only billing_issue_receipt() and the support CLI',
 };
 
 /** Tenant tables whose tenant_id may be NULL; such rows match no tenant policy (fail closed). */
@@ -37,6 +39,8 @@ export const FORCED_NON_TENANT_TABLES = [
   'worker_heartbeats',
   'backup_runs',
   'platform_staff',
+  'billing_provider_events',
+  'billing_seller',
   'user_sessions',
   'user_mfa_factors',
   'user_mfa_recovery_codes',

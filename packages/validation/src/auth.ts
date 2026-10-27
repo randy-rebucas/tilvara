@@ -36,6 +36,17 @@ export function isSubdomainSlug(slug: string): boolean {
 }
 
 /**
+ * A business's own address (session 40): `<slug>.<domain>` with the scheme and port of the main admin
+ * address, or null when addresses are off or the slug cannot be a subdomain. Shared by the admin (its
+ * proxy and hand-off) and the API (where the payment page sends the owner back, ADR-0027).
+ */
+export function shopAddress(slug: string, domain: string | null | undefined, adminUrl: string | null | undefined): string | null {
+  if (!domain || !adminUrl || !isSubdomainSlug(slug)) return null;
+  const main = new URL(adminUrl);
+  return `${main.protocol}//${slug}.${domain}${main.port ? `:${main.port}` : ''}`;
+}
+
+/**
  * What the business does (`tenants.business_type`). Retail only for now: GROCERY, SALON, PHARMACY and
  * HYBRID were removed on 2026-10-25 (migration 0112), after RESTAURANT, LODGING and LAUNDRY (0110–0111).
  */

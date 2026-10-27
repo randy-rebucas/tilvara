@@ -1,4 +1,4 @@
-import { isSubdomainSlug } from '@1pos/validation';
+import { isSubdomainSlug, shopAddress } from '@1pos/validation';
 import type { PublicShop } from './api';
 import { API_URL } from './config';
 
@@ -39,9 +39,7 @@ export const mainUrl = (path: string): string => `${ADMIN_URL ?? ''}${path}`;
 
 /** A shop's own address (scheme and port as the main admin's), or null when addresses are off. */
 export function shopOrigin(slug: string, domain: string | null = SHOP_DOMAIN, adminUrl: string | null = ADMIN_URL): string | null {
-  if (!domain || !adminUrl || !isSubdomainSlug(slug)) return null;
-  const main = new URL(adminUrl);
-  return `${main.protocol}//${slug}.${domain}${main.port ? `:${main.port}` : ''}`;
+  return shopAddress(slug, domain, adminUrl);
 }
 const TTL_MS = 60_000;
 /** A miss is kept briefly, so a page just switched on answers within seconds. */

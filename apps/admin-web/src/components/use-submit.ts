@@ -39,7 +39,7 @@ export function useSubmit() {
   const [error, setError] = useState<ApiFailure | null>(null);
 
   async function submit<T>(
-    method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+    method: 'POST' | 'PATCH' | 'PUT',
     url: string,
     body?: unknown,
     /** `refreshOnError`: the server records something even when it refuses (e.g. a counted attempt). */
@@ -54,7 +54,9 @@ export function useSubmit() {
       const ref = (r.error.status >= 500 || r.error.status === 0) && r.error.correlationId;
       // A known refusal reads in the person's language (the API's message is English).
       const known = !ref && refusalKey(r.error.code, r.error.message);
-      setError(ref ? { ...r.error, message: t('error.reference', { message: r.error.message, ref }) } : known ? { ...r.error, message: t(known) } : r.error);
+      // No answer at all: the client's own words are English, so the person's language takes over here.
+      const message = r.error.status === 0 ? t('error.network') : r.error.message;
+      setError(ref ? { ...r.error, message: t('error.reference', { message, ref }) } : known ? { ...r.error, message: t(known) } : r.error);
       if (opts.refreshOnError) router.refresh();
     } else if (opts.refresh !== false) router.refresh();
     return r;

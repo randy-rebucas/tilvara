@@ -20,7 +20,7 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: ApiFailure }
  * resubmit after "no answer" replays the first outcome instead of posting a second document.
  */
 export async function send<T>(
-  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  method: 'POST' | 'PATCH' | 'PUT',
   url: string,
   body?: unknown,
   opts: { idempotent?: boolean; idempotencyKey?: string } = {},

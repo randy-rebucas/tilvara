@@ -10,7 +10,7 @@ import {
   type BranchQuery,
   type ReportRangeQuery,
 } from '@1pos/validation';
-import { Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
+import { ApiKeyRequires, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { ReportsService } from './reports.service.js';
 import { AnalysisReportsService } from './analysis-reports.service.js';
@@ -111,6 +111,8 @@ export class ReportsController {
     return this.reports.refundWatch(auth, q);
   }
 
+  // Its own shift is open to the cashier; a key answers as its maker, so it needs the scope (#21).
+  @ApiKeyRequires('reports.read')
   @Get('cashier-sessions/:id')
   session(@Auth() auth: AuthContext, @Param('id', id) sessionId: string) {
     return this.reports.session(auth, sessionId);

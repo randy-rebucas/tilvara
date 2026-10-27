@@ -111,7 +111,7 @@ try {
   await submitFormOf('name');
   check('sub-category listed under its parent', await waitFor(`[...document.querySelectorAll('[data-category]')].map((x) => x.dataset.category).join('|') === 'Groceries|Noodles'`).then(() => true, () => false));
   await shot('bo-categories.png');
-  const noodles = (await evaluate(`fetch('/api/v1/categories').then((r) => r.json())`)).data.find((c) => c.name === 'Noodles');
+  const noodles = (await call('GET', '/v1/categories', tk)).data.find((c) => c.name === 'Noodles');
   await go(`/products/${canton.id}`);
   check('product without a category says so', await shown('No category'));
   await clickText('Edit product');

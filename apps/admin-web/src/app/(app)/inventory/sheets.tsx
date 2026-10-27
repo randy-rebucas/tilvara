@@ -17,11 +17,13 @@ function StartSheetFields({ close, branchId }: { close: () => void; branchId: st
   const { t } = useT();
   const router = useRouter();
   const { pending, submit, error, fieldError } = useSubmit();
+  // One Idempotency-Key per open form, so a retry after no answer is the same request (replayed by the API, not done twice).
+  const formKey = useFormKey();
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const notes = String(f.get('notes') ?? '').trim();
-    const r = await submit<{ id: string }>('POST', '/api/v1/stock/count-sheets', { branchId, blind: f.get('blind') === 'on', ...(notes ? { notes } : {}) }, { refresh: false });
+    const r = await submit<{ id: string }>('POST', '/api/v1/stock/count-sheets', { branchId, blind: f.get('blind') === 'on', ...(notes ? { notes } : {}) }, { refresh: false, idempotencyKey: formKey });
     if (r.ok) {
       close();
       router.push(`/inventory/count-sheets/${r.data.id}`);
@@ -86,12 +88,14 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
     e.preventDefault();
     if (changed.length === 0) return;
     const sent = changed.map((l) => ({ variantId: l.variantId, countedQuantity: (edits[l.variantId] ?? '').trim() === '' ? null : edits[l.variantId]!.trim() }));
+    const typed = new Map(changed.map((l) => [l.variantId, edits[l.variantId]]));
     const r = await save.submit<CountSheet>('PUT', `/api/v1/stock/count-sheets/${sheet.id}/lines`, { lines: sent });
     if (r.ok) {
       // The saved lines show the server's numbers again (and pick up later counts by others).
       const answered = new Map(r.data.lines.map((l) => [l.variantId, l.countedQuantity]));
       setSaved((s) => ({ base: sheet, lines: { ...(s && s.base === sheet ? s.lines : {}), ...Object.fromEntries(sent.map((x) => [x.variantId, answered.get(x.variantId) ?? null])) } }));
-      setEdits((e) => Object.fromEntries(Object.entries(e).filter(([v]) => !sent.some((x) => x.variantId === v))));
+      // A count retyped while the save was on its way is kept: it is newer than what was sent.
+      setEdits((e) => Object.fromEntries(Object.entries(e).filter(([v, value]) => !typed.has(v) || value !== typed.get(v))));
     }
   }
 

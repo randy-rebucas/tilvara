@@ -44,7 +44,7 @@ Safeguards that apply to every activity, so they are not repeated in each row:
 | Source | The business's owner or admin |
 | Basis | Contract (Sec. 12(b)) |
 | Recipients | Owners and admins of that business; the business's data export (`members.csv`: email, name) |
-| Tables | `tenant_memberships`, `membership_roles`, `member_invitations`; `tenant_extensions.changed_by` (the member who last switched an extension, ADR-0026); `tenant_branding.updated_by`, `brand_assets.created_by` (who last changed the branding or uploaded an image, session 39) |
+| Tables | `tenant_memberships`, `membership_roles`, `member_invitations`; `tenant_extensions.changed_by` (the member who last switched an extension, ADR-0026); `tenant_branding.updated_by`, `brand_assets.created_by` (who last changed the branding or uploaded an image, session 39); `tenant_branding.contact_phone`, `contact_email`, `facebook`, `instagram`, `website` (the business's contact lines, which for a sole proprietor are their own: printed on receipts, shown on the customer display and the till, carried in the till snapshot and the data export) |
 
 ### 3. Sales and SC/PWD discount records — PIP
 | | |
@@ -145,9 +145,10 @@ Restaurants and counter service were removed on 2026-10-25 (migration 0111 dropp
 | | |
 |---|---|
 | Purpose | Set up and bill the business |
-| Data | Legal entity name, trade name, TIN, registered address (personal data when the business is a sole proprietor), branch addresses, plan and subscription status |
+| Data | Legal entity name, trade name, TIN, registered address (personal data when the business is a sole proprietor), branch addresses, plan and subscription status; Tilvara's bills to the business and the payments for them (amount, method, the bank's or provider's reference, who recorded it), ADR-0027. **No card number or wallet login ever reaches Tilvara**: the provider's page collects them |
 | Basis | Contract; legal obligation for receipts and tax |
-| Tables | `legal_entities`, `branches`, `tenants`, `subscriptions` |
+| Recipients | The payment provider (PayMongo) for subscription payments: bill number, amount and ids only. The owners get bill and past-due mails (D2) |
+| Tables | `legal_entities`, `branches`, `tenants`, `subscriptions`, `billing_bills`, `billing_payments`, `billing_checkouts`, `billing_receipts` (append-only or status-only changes; a receipt copies the business's registered name, TIN and address, personal data for a sole proprietor, and is mailed to the owners); `billing_provider_events` (event ids and outcomes, no personal data); `billing_seller` (Tilvara's own registration) |
 
 ### 15. Customers, their consent and store credit — PIP (session 20, ADR-0018)
 | | |

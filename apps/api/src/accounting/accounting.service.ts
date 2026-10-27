@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { reversalOf, type PostingLine } from '@1pos/accounting';
-import { accounts, and, asc, branches, desc, eq, journalEntries, journalLines, legalEntities, sql, type Database } from '@1pos/database';
+import { reversalOf, type PostingLine, type SystemAccount } from '@1pos/accounting';
+import { accounts, and, asc, branches, desc, eq, inArray, journalEntries, journalLines, legalEntities, sql, type Database } from '@1pos/database';
 import { Dec, toDec } from '@1pos/money';
 import type {
   AccountListQuery,
@@ -21,6 +21,19 @@ import { unprocessable } from '../tax/tax.service.js';
 import { post } from './ledger.js';
 
 const money = (v: string | null | undefined) => toDec(v ?? '0').toFixed(2);
+
+/**
+ * The system accounts a manual entry may name (audit 2026-10-27 #11). Every other system account is kept
+ * by documents and checked against them: Inventory 1200 and In transit 1210 against stock value, GRNI 2010
+ * and Accounts payable 2000 against receipts and supplier invoices, Customer store credit 2300 against its
+ * sub-ledger, VAT, sales, COGS and the variance accounts against the documents that post them. A manual
+ * line there would make the books stop matching, mostly unseen. What is left is cash moved by hand: cash
+ * on hand 1010 (funding or emptying the cash box), cash in bank 1030 (deposits, bank charges) and cash
+ * fund transfers 3900 (the owner putting money in or taking it out). The business's own accounts (no
+ * system key) are always allowed.
+ */
+export const MANUAL_SYSTEM_ACCOUNTS: ReadonlySet<string> = new Set<SystemAccount>(['CASH_ON_HAND', 'CASH_IN_BANK', 'CASH_TRANSFERS']);
+const manualAllowed = (systemKey: string | null) => !systemKey || MANUAL_SYSTEM_ACCOUNTS.has(systemKey);
 /** Most lines one export returns (a busy shop's year is far below this). */
 const LINES_CAP = 50_000;
 
@@ -42,7 +55,9 @@ export class AccountingService extends TenantService {
   listAccounts(auth: AuthContext, q: AccountListQuery) {
     return this.read(auth, async (db) => {
       await this.entity(db, auth, q.legalEntityId, 'accounting.read');
-      return { data: await db.select().from(accounts).where(eq(accounts.legalEntityId, q.legalEntityId)).orderBy(asc(accounts.code)) };
+      const rows = await db.select().from(accounts).where(eq(accounts.legalEntityId, q.legalEntityId)).orderBy(asc(accounts.code));
+      // `manualAllowed`: whether a manual entry may name it (archived ones are refused apart, ACCOUNT_ARCHIVED).
+      return { data: rows.map((a) => ({ ...a, manualAllowed: manualAllowed(a.systemKey) })) };
     });
   }
 
@@ -158,6 +173,19 @@ export class AccountingService extends TenantService {
         if (!row) throw notFound('Branch');
         if (row.legalEntityId !== input.legalEntityId) throw unprocessable('BRANCH_OF_OTHER_ENTITY', 'The branch belongs to another legal entity', { branchId: b });
       }
+      const named = [...new Set(input.lines.map((l) => l.accountId))];
+      const kept = (
+        await db
+          .select({ id: accounts.id, systemKey: accounts.systemKey })
+          .from(accounts)
+          .where(and(eq(accounts.legalEntityId, input.legalEntityId), inArray(accounts.id, named)))
+      ).filter((a) => !manualAllowed(a.systemKey));
+      if (kept.length) {
+        throw unprocessable('SYSTEM_ACCOUNT_NOT_ALLOWED', 'The books keep these accounts from their documents: a manual entry cannot post to them', {
+          accounts: kept.map((a) => a.id),
+          systemKeys: kept.map((a) => a.systemKey),
+        });
+      }
       const entry = await post(db, {
         tenantId: tenantOf(auth).tenantId,
         legalEntityId: input.legalEntityId,
@@ -203,6 +231,8 @@ export class AccountingService extends TenantService {
         reversesEntryId: entry.id,
         memo: input.memo,
         lines: reversalOf(posting),
+        // Undoing a manual entry must stay possible after one of its accounts was archived.
+        allowArchived: true,
         createdBy: auth.userId,
       });
       await this.audit(db, auth, 'journal.reversed', 'journal_entry', entry.id, { reversalId: reversal!.id, memo: input.memo });

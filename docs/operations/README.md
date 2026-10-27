@@ -14,6 +14,7 @@ ADR-0016), the runbook says so instead of inventing the step.
 | A release went wrong, or wrong records were written | [rollback-recovery.md](rollback-recovery.md) |
 | Card/QR payments without an outcome, end-of-day drawer and tender checks | [payment-reconciliation.md](payment-reconciliation.md) |
 | A till lost its connection, broke, or was stolen | [offline-terminal-recovery.md](offline-terminal-recovery.md) |
+| A business's bill, a bank-transfer payment, money that settled no bill, plan prices, switching PayMongo on | [billing.md](billing.md) |
 | A business leaves Tilvara | [tenant-offboarding.md](tenant-offboarding.md) |
 | Tilvara support needs to look at a business | [support-access.md](support-access.md) |
 | An owner or member lost their authenticator | [support-mfa-reset.md](support-mfa-reset.md) |

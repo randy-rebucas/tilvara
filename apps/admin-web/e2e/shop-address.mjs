@@ -40,6 +40,11 @@ async function goto(url) {
   await waitFor(`document.readyState === 'complete'`);
   await sleep(400);
 }
+// Which business this browser's session on the current address is in: the band names it (the proxy
+// forwards no GET of /me, only what the browser loads itself).
+const bandName = () => evaluate(`document.querySelector('[data-testid="band-name"]')?.textContent ?? null`);
+/** The hand-off page redeems its code only on a click (audit 2026-10-27 #23). */
+const continueHandoff = () => evaluate(`[...document.querySelectorAll('button.btn-primary')].filter((x) => x.getClientRects().length).at(-1)?.click()`);
 async function signIn(who) {
   await fill('email', who);
   await fill('password', PASSWORD);
@@ -87,8 +92,7 @@ try {
   await signIn(email);
   await waitFor(`location.pathname === '/'`, 15000);
   check('a member lands in the back office on the own address', (await at()) === `${shopUrl}/`);
-  const me = await bff('GET', '/api/v1/me');
-  check('…signed in to this business', me.body.activeTenant?.tenantId === owner.activeTenantId);
+  check('…signed in to this business', (await bandName()) === `Reyes Hardware ${stamp}`);
   check('the band names the business, not Tilvara (session 41)', (await evaluate(`document.querySelector('[data-testid="band-name"]')?.textContent`)) === `Reyes Hardware ${stamp}`);
   const sw = await bff('POST', '/api/auth/switch', { tenantId: other.activeTenantId });
   check('switching to another business is refused here', sw.status === 403);
@@ -101,19 +105,26 @@ try {
   check('a shop header from the browser is ignored', viaHeader.status === 200 && viaHeader.body.activeTenantId === other.activeTenantId);
 
   await goto(`${shopUrl}/`);
-  check('the own address kept its own session', (await at()) === `${shopUrl}/` && (await bff('GET', '/api/v1/me')).body.activeTenant?.tenantId === owner.activeTenantId);
+  check('the own address kept its own session', (await at()) === `${shopUrl}/` && (await bandName()) === `Reyes Hardware ${stamp}`);
 
   // Session 41: signing in on the main address continues on the business's own address, signed in there.
   await bff('POST', '/api/auth/logout', {});
   await goto(`${BASE}/sign-in?next=/products`);
   await signIn(email);
+  check('the own address asks before taking the sign-in over', await waitFor(`location.href.startsWith(${JSON.stringify(`${shopUrl}/handoff`)})`, 15000).then(() => true, () => false) && (await shown('Continue to', 8000)));
+  check('…with the code already out of the address', !(await at()).includes('code='));
+  await shot('shop-address-handoff-confirm');
+  await continueHandoff();
   check('a sign-in on the main address lands on the own address', await waitFor(`location.href === ${JSON.stringify(`${shopUrl}/products`)}`, 15000).then(() => true, () => false));
   check('…without the code left in the address', !(await at()).includes('code='));
-  check('…signed in there to this business', (await bff('GET', '/api/v1/me')).body.activeTenant?.tenantId === owner.activeTenantId);
+  check('…signed in there to this business', (await bandName()) === `Reyes Hardware ${stamp}`);
   await goto(`${shopUrl}/handoff#code=${'x'.repeat(43)}`);
+  check('a hand-off while signed in here names who is signed in', await shown('You are signed in here as Lito Reyes', 8000));
+  await continueHandoff();
   check('a spent or made-up code asks to sign in', await shown('expired or was already used', 8000));
   await shot('shop-address-handoff-failed');
   await goto(`${BASE}/handoff#code=${'x'.repeat(43)}`);
+  await continueHandoff();
   check('…and the main address takes no code', await shown('expired or was already used', 8000));
   await goto(`${BASE}/`);
   check('the main address keeps its own session', (await at()) === `${BASE}/`);

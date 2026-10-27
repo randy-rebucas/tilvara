@@ -158,9 +158,10 @@ describe('opening packs', () => {
     const moved = await q<{ type: string; quantity: string; value: string }>(s, `SELECT type, quantity::text, value::text FROM stock_movements WHERE pack_opening_id = $1 ORDER BY type`, [opening.id]);
     expect(moved).toEqual([{ type: 'UNPACK_IN', quantity: '20.0000', value: '200.0000' }, { type: 'UNPACK_OUT', quantity: '-1.0000', value: '-200.0000' }]);
 
-    // Under BLOCK, never more packs than are there.
+    // Never more packs than are there, under ALLOW as under BLOCK (audit 2026-10-27 #35).
+    expect((await open({ packs: '3' }).expect(409)).body.error).toMatchObject({ code: 'PACKS_NOT_ON_HAND', details: { lines: [{ available: '2', requested: '3' }] } });
     await setPolicy(s, 'BLOCK');
-    expect((await open({ packs: '3' }).expect(409)).body.error).toMatchObject({ code: 'INSUFFICIENT_STOCK', details: { lines: [{ available: '2', requested: '3' }] } });
+    expect((await open({ packs: '3' }).expect(409)).body.error).toMatchObject({ code: 'PACKS_NOT_ON_HAND', details: { lines: [{ available: '2', requested: '3' }] } });
     expect(await onHand(s, pack)).toBe('2');
 
     // DB guards: openings are append-only; movements must match their opening.

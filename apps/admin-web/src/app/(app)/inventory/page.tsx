@@ -186,6 +186,7 @@ async function AllBranches({ branches, branch }: { branches: Awaited<ReturnType<
       <section>
         <h2 className="section-title mb-1">{t('shelf.allTitle')}</h2>
         <p className="mb-3 max-w-[68ch] text-[0.875rem] text-muted">{t('shelf.allLede')}</p>
+        {stock?.truncated && <p className="mb-3 max-w-[68ch] text-[0.875rem] text-muted">{t('shelf.allTruncated')}</p>}
         <Note denom="gold" className="pr-2">
           {stock && stock.data.length > 0 ? (
             <RecordTable

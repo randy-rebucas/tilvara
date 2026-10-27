@@ -88,6 +88,13 @@ try {
   check('refunded from today’s drawer', await shown('Refund ₱45.00 in cash', 10000));
   check('the server agrees: one return on the old sale, cash out of this shift', (await call('GET', `/v1/sales/${sale.id}`, tk)).lines[0].returnedQuantity === '1' && (await shiftView(shiftId)).expectedCash === '1005.00');
   await shot('earlier-sale-return.png', false);
+  // Instead of a Void button the earlier sale says why it cannot be voided (session 38).
+  await tab('This shift');
+  await fill('findNumber', String(sale.saleNumber));
+  await clickText('Find');
+  await shown('Iced tea', 10000);
+  check('an earlier shift’s sale says why it cannot be voided', (await shown('Only a sale of this shift can be voided')) || (await shown('can no longer be voided')));
+  await shot('earlier-sale-no-void.png', false);
   b.close();
 } catch (e) {
   console.error(e);

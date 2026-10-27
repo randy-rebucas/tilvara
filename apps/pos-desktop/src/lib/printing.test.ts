@@ -75,6 +75,17 @@ describe('receipt for a thermal printer', () => {
     expect(text).toContain('THIS IS NOT AN OFFICIAL INVOICE');
     expect(text).toContain('OFFLINE SALE');
     expect(text).toContain('Change                  PHP 5.20');
+    expect(doc.header).toEqual(['Tindahan ni Nena', 'Nena Trading', 'VAT REG TIN 123-456-789-00000']); // no address kept: none printed
+  });
+
+  it('prints the address on an offline receipt where online receipts print it, after the registered name (audit 2026-10-27 #33)', () => {
+    const doc = offlineReceiptToPrintable({
+      localReference: 'R1-TAbCd-000044', occurredAt: '2026-10-17T02:00:00.000Z', register: { code: 'R1', name: 'Front' }, branch: { name: 'Cubao' },
+      seller: { name: 'Tindahan ni Nena', registeredName: 'Nena Trading', address: '12 Aurora Blvd, Cubao, Quezon City', tin: '123-456-789-00000', vatStatus: 'VAT' }, cashierName: 'Maria',
+      lines: [], totals: { gross: '0.00', vatableSales: '0.00', vatAmount: '0.00', vatExemptSales: '0.00', zeroRatedSales: '0.00', percentageTaxSales: '0.00', amountDue: '0.00' },
+      tendered: '0.00', change: '0.00', notice: 'n',
+    }, '10/17/2026, 10:00:00');
+    expect(doc.header).toEqual(['Tindahan ni Nena', 'Nena Trading', '12 Aurora Blvd, Cubao, Quezon City', 'VAT REG TIN 123-456-789-00000']);
   });
 
   it('prints a promotion on an offline sale as a Discount total and the VAT row with its rate, like online receipts', () => {
