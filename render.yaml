@@ -1,0 +1,147 @@
+# Render Blueprint: a Tilvara STAGING environment (docs/operations/render.md).
+#
+# Not production: NODE_ENV=production refuses to boot while the mailer, file storage and card/QR payments
+# have only their dev adapters (docs/operations/deployment.md). Here NODE_ENV=development, so the dev
+# simulators run, and every key must be a test key.
+#
+# Migrations are not run by Render: ops applies them from their own machine with the migrator login
+# (render.md section 4), then deploys by hand. Auto-deploy is off so a build never goes out ahead of its
+# migrations (readiness would refuse it anyway).
+#
+# Values marked sync: false are asked for when the Blueprint is first created, then set in the dashboard.
+
+databases:
+  - name: tilvara-db
+    region: singapore
+    plan: 0.5c-1g
+    postgresMajorVersion: "18"
+    databaseName: onepos
+    # The provider's admin login, used only to create the Tilvara roles (render.md section 3). Ops only.
+    user: onepos_owner
+    # No external connections. Ops adds their own address while migrating, then removes it (render.md 4).
+    ipAllowList: []
+
+services:
+  - type: keyvalue
+    name: tilvara-redis
+    region: singapore
+    plan: starter
+    # Rate-limit counters only; they all carry a TTL.
+    maxmemoryPolicy: volatile-lru
+    ipAllowList: []
+
+  - type: web
+    name: tilvara-api
+    runtime: node
+    region: singapore
+    plan: starter
+    numInstances: 1
+    buildCommand: npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile && pnpm turbo run build --filter=@1pos/api...
+    # Not `pnpm start`: it needs a .env file. Render passes the environment itself.
+    startCommand: node apps/api/dist/main.js
+    healthCheckPath: /v1/health/ready
+    autoDeployTrigger: "off"
+    buildFilter:
+      paths: [apps/api/**, packages/**, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, turbo.json]
+    envVars:
+      - { key: NODE_ENV, value: development }
+      - { key: NODE_VERSION, value: "24" }
+      - { key: LOG_LEVEL, value: info }
+      - { key: PORT, value: "10000" }
+      - { key: API_PORT, value: "10000" }
+      - { key: API_HOST, value: 0.0.0.0 }
+      # Render's load balancer is the one proxy in front of the API.
+      - { key: TRUST_PROXY_HOPS, value: "1" }
+      # postgres://onepos_app:<password>@<internal host>:5432/onepos (internal URL, no sslmode; render.md 3).
+      - { key: DATABASE_URL, sync: false }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: tilvara-redis, property: connectionString }
+      - { key: JWT_ACCESS_SECRET, generateValue: true }
+      # 32 random bytes, base64: generateValue gives exactly that. Never regenerate it (render.md 6).
+      - { key: MFA_ENCRYPTION_KEY, generateValue: true }
+      - { key: BFF_SHARED_SECRET, generateValue: true }
+      - { key: WEBHOOK_SIGNING_KEY, generateValue: true }
+      - { key: WEBHOOK_ALLOW_INSECURE, value: "false" }
+      - { key: RATE_LIMITS_ENABLED, value: "true" }
+      # https://<admin host>,http://tauri.localhost (the desktop till)
+      - { key: CORS_ORIGINS, sync: false }
+      # https://<admin host> and https://<api host>
+      - { key: APP_PUBLIC_URL, sync: false }
+      - { key: API_PUBLIC_URL, sync: false }
+      - { key: BILLING_PROVIDER, value: dev }
+      - { key: PAYMENT_PROVIDER, value: dev }
+      - { key: MAILER_DRIVER, value: dev }
+      - { key: FILE_STORAGE_DRIVER, value: dev }
+      # Metrics on the private network only (Render exposes PORT alone to the internet).
+      - { key: METRICS_HOST, value: 0.0.0.0 }
+      - { key: API_METRICS_PORT, value: "4329" }
+      - { key: METRICS_TOKEN, generateValue: true }
+
+  - type: worker
+    name: tilvara-worker
+    runtime: node
+    region: singapore
+    plan: starter
+    buildCommand: npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile && pnpm turbo run build --filter=@1pos/workers...
+    startCommand: node apps/workers/dist/main.js
+    autoDeployTrigger: "off"
+    buildFilter:
+      paths: [apps/workers/**, packages/**, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, turbo.json]
+    envVars:
+      - { key: NODE_ENV, value: development }
+      - { key: NODE_VERSION, value: "24" }
+      - { key: LOG_LEVEL, value: info }
+      # Both the same onepos_worker URL (the worker needs DATABASE_URL to be set as well).
+      - { key: DATABASE_URL, sync: false }
+      - { key: WORKER_DATABASE_URL, sync: false }
+      - key: WEBHOOK_SIGNING_KEY
+        fromService: { type: web, name: tilvara-api, envVarKey: WEBHOOK_SIGNING_KEY }
+      - { key: WEBHOOK_ALLOW_INSECURE, value: "false" }
+      - { key: BILLING_PROVIDER, value: dev }
+      - { key: MAILER_DRIVER, value: dev }
+      - { key: FILE_STORAGE_DRIVER, value: dev }
+      - { key: METRICS_HOST, value: 0.0.0.0 }
+      - { key: WORKER_METRICS_PORT, value: "4339" }
+      - key: METRICS_TOKEN
+        fromService: { type: web, name: tilvara-api, envVarKey: METRICS_TOKEN }
+
+  - type: web
+    name: tilvara-admin
+    runtime: node
+    region: singapore
+    plan: starter
+    numInstances: 1
+    buildCommand: npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile && pnpm turbo run build --filter=@1pos/admin-web...
+    # The package script binds 127.0.0.1; Render needs 0.0.0.0 on $PORT.
+    startCommand: pnpm --filter @1pos/admin-web exec next start -p $PORT -H 0.0.0.0
+    healthCheckPath: /sign-in
+    autoDeployTrigger: "off"
+    buildFilter:
+      paths: [apps/admin-web/**, packages/**, package.json, pnpm-lock.yaml, pnpm-workspace.yaml, turbo.json]
+    envVars:
+      - { key: NODE_VERSION, value: "24" }
+      - { key: PORT, value: "10000" }
+      # The API over the private network, WITH /v1: http://<tilvara-api internal host>:10000/v1
+      - { key: ONEPOS_API_URL, sync: false }
+      - key: ONEPOS_BFF_SECRET
+        fromService: { type: web, name: tilvara-api, envVarKey: BFF_SHARED_SECRET }
+      - { key: ONEPOS_TRUST_PROXY_HOPS, value: "1" }
+      # https://<till host>, for the overview's "First sale" button
+      - { key: ONEPOS_POS_URL, sync: false }
+
+  # The browser till (ADR-0006). It calls /v1 on its own origin, rewritten to the API.
+  # Desktop tills do not need it: they are pointed at the API's address at set-up.
+  - type: web
+    name: tilvara-till
+    runtime: static
+    buildCommand: npm install -g pnpm@10.33.0 && pnpm install --frozen-lockfile && pnpm turbo run build --filter=@1pos/pos-desktop...
+    staticPublishPath: apps/pos-desktop/dist
+    autoDeployTrigger: "off"
+    buildFilter:
+      paths: [apps/pos-desktop/src/**, apps/pos-desktop/*.json, apps/pos-desktop/*.ts, apps/pos-desktop/index.html, packages/**, pnpm-lock.yaml]
+    routes:
+      # Change to the API's real address (render.md section 5) before the first deploy.
+      - { type: rewrite, source: /v1/*, destination: https://tilvara-api.onrender.com/v1/* }
+      - { type: rewrite, source: /*, destination: /index.html }
+    headers:
+      - { path: /index.html, name: Cache-Control, value: no-cache }

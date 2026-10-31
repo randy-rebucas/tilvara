@@ -10,6 +10,7 @@ ADR-0016), the runbook says so instead of inventing the step.
 | An account, secret, till or business may be compromised, or data may have leaked | [security-incident.md](security-incident.md), then [the breach procedure](../compliance/privacy/breach-procedure.md) when personal data is involved |
 | An alert fired | [monitoring.md](monitoring.md) (one section per alert) |
 | Backups, the monthly restore drill, restoring for real | [backup-restore.md](backup-restore.md) |
+| Setting up the servers, their configuration, releasing a build, building the desktop till | [deployment.md](deployment.md); on Render (staging, `render.yaml`): [render.md](render.md) |
 | Changing the database schema | [database-migrations.md](database-migrations.md) |
 | A release went wrong, or wrong records were written | [rollback-recovery.md](rollback-recovery.md) |
 | Card/QR payments without an outcome, end-of-day drawer and tender checks | [payment-reconciliation.md](payment-reconciliation.md) |
