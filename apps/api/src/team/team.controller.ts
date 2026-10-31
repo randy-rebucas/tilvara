@@ -92,12 +92,14 @@ export class TeamController {
   }
 
   /** A member who lost their phone and recovery codes: clear their two-step sign-in (audited). */
+  @RequireTenant()
   @HttpCode(200)
   @Post('members/:id/reset-mfa')
   resetMfa(@Auth() auth: AuthContext, @Param('id', id) membershipId: string, @Body(new ZodPipe(resetMemberMfaSchema)) body: ResetMemberMfaInput) {
     return this.team.resetMemberMfa(auth, membershipId, body.reason);
   }
 
+  @RequireTenant()
   @Get('members/mfa')
   membersMfa(@Auth() auth: AuthContext) {
     return this.team.membersMfa(auth);

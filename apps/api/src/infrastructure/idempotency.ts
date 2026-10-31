@@ -81,8 +81,25 @@ export async function claimIdempotency(db: Database): Promise<IdempotencyContext
   return ctx;
 }
 
+/** Answer fields that hold a secret shown once (an API key, a signing secret, a terminal credential). */
+export const SECRET_RESPONSE_FIELDS: readonly string[] = ['key', 'secret', 'credential', 'token', 'refreshToken', 'accessToken', 'recoveryCodes', 'password'];
+
+/**
+ * The stored answer is kept 24 hours and replayed: one carrying a secret would put it in plain text in
+ * `idempotency_records` (audit 47 #3). Such a route must not be @Idempotent; this refuses it outright,
+ * rolling the change back, so the mistake shows up in the first test that calls the route.
+ */
+export function assertStorableResponse(body: unknown): void {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return;
+  const found = SECRET_RESPONSE_FIELDS.filter((f) => Object.hasOwn(body, f));
+  if (found.length > 0) {
+    throw new Error(`An @Idempotent route answered a secret field (${found.join(', ')}); it must not be stored for replay`);
+  }
+}
+
 /** Store the response in the same transaction as the business change. */
 export async function completeIdempotency(db: Database, ctx: IdempotencyContext, body: unknown): Promise<void> {
+  assertStorableResponse(body);
   const json = body === undefined ? null : JSON.parse(JSON.stringify(body));
   await db
     .update(idempotencyRecords)

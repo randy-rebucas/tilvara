@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useT, type MessageKey } from '../i18n';
 import { api, ApiFailure, uuid } from '../lib/api';
 import { openDrawerFor } from '../lib/drawer';
@@ -7,7 +7,7 @@ import { RETIRED_TENDERS } from '../lib/printing';
 import { leftOn, returnOptions } from '../lib/return-options';
 import { shiftSales } from '../lib/shift-sales';
 import { useTill } from '../lib/till';
-import { errorText } from './Payment';
+import { beforeReplay, errorText, unanswered } from './Payment';
 import type { Receipt as ReceiptData, SaleDetail, SaleSummary, Workstation } from '../types';
 import type { ExchangeStart } from './CounterTools';
 import type { Shift } from './Registers';
@@ -19,6 +19,14 @@ const METHOD: Record<string, MessageKey> = {
   CASH: 'pay.cash', CARD: 'pay.card', QR: 'pay.qr', EWALLET: 'pay.qr', STORE_CREDIT: 'pay.storeCredit',
   ROOM_CHARGE: 'pay.roomCharge', JOB_DEPOSIT: 'pay.jobDeposit',
 };
+/** A void or return as sent to `POST /v1/sales/:id/returns`. */
+interface ReturnBody {
+  cashierSessionId: string;
+  kind: 'VOID' | 'RETURN';
+  reason: string;
+  lines?: { saleLineId: string; quantity: string; disposition: 'RESTOCK' | 'DAMAGED' }[];
+  refundTo?: 'STORE_CREDIT';
+}
 const timeAt = (iso: string, timeZone: string) => new Intl.DateTimeFormat('en-PH', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 
 /**
@@ -39,6 +47,13 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
   const [findRegister, setFindRegister] = useState(shift.register.id);
   const [message, setMessage] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
   const [key, setKey] = useState(uuid);
+  /**
+   * The last void or return got no answer, so it may be recorded (audit 2026-10-31 #4). Until a final
+   * answer comes, the form is locked as it was sent and only "Refund again" (or "Void again") is offered:
+   * the same body under the same key, which never refunds twice. Nothing else can be opened meanwhile.
+   */
+  const [unknown, setUnknown] = useState<{ saleId: string; body: ReturnBody } | null>(null);
+  const busy = useRef(false);
   const canVoid = permissions.includes('sales.void');
   const canReturn = permissions.includes('sales.refund');
   const canExchange = canReturn && permissions.includes('sales.create') && Boolean(onExchange);
@@ -96,7 +111,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!selected || !mode) return;
+    if (!selected || !mode || busy.current) return;
     const f = new FormData(e.currentTarget);
     const lines =
       mode !== 'void'
@@ -116,22 +131,27 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       }
       return;
     }
+    // While the outcome is unknown, the body as sent (the form is locked; its disabled fields read empty).
+    const saleId = unknown?.saleId ?? selected.detail.id;
+    const body: ReturnBody = unknown?.body ?? {
+      cashierSessionId: shift.sessionId, kind: mode === 'void' ? 'VOID' : 'RETURN', reason: String(f.get('reason') ?? ''), ...(lines && { lines }),
+      // A sale with a customer can be refunded as their store credit instead of cash (ADR-0018).
+      ...(f.get('toCredit') === 'on' && { refundTo: 'STORE_CREDIT' as const }),
+    };
+    busy.current = true;
     try {
       const r = await api<{ id: string; amountDue: string; returnNumber: number; refundMethod?: string; refunds?: { method: string; amount: string }[] }>(
         'POST',
-        `/v1/sales/${selected.detail.id}/returns`,
-        {
-          cashierSessionId: shift.sessionId, kind: mode === 'void' ? 'VOID' : 'RETURN', reason: String(f.get('reason') ?? ''), ...(lines && { lines }),
-          // A sale with a customer can be refunded as their store credit instead of cash (ADR-0018).
-          ...(f.get('toCredit') === 'on' && { refundTo: 'STORE_CREDIT' }),
-        },
+        `/v1/sales/${saleId}/returns`,
+        body,
         { 'idempotency-key': key },
       );
       setKey(uuid());
-      await open(selected.detail.id);
+      setUnknown(null);
+      await open(saleId);
       // After reloading the sale (which clears messages), confirm the refund and show its slip to hand over.
       // A sale paid with store credit gives that share back to the credit, the rest in cash (ADR-0018).
-      const parts = r.refunds?.length ? r.refunds : [{ method: f.get('toCredit') === 'on' ? 'STORE_CREDIT' : (r.refundMethod ?? 'CASH'), amount: r.amountDue }];
+      const parts = r.refunds?.length ? r.refunds : [{ method: body.refundTo ?? r.refundMethod ?? 'CASH', amount: r.amountDue }];
       const refunded = parts.map((p) => t(p.method === 'STORE_CREDIT' ? 'history.creditGiven' : 'history.refund', { amount: peso(p.amount) })).join(' · ');
       setMessage({ kind: 'info', text: refunded });
       // Cash went out of the drawer: open it (best effort, after the refund is recorded).
@@ -139,13 +159,28 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
       void api<ReceiptData>('GET', `/v1/sale-returns/${r.id}/receipt`).then(setSlip).catch(() => undefined);
       void load();
     } catch (err) {
-      // No answer or a server failure: the refund may have been recorded. Keep the key so
-      // submitting again replays it instead of refunding twice.
-      if (err instanceof ApiFailure && (err.error.status === 0 || err.error.status >= 500)) {
+      if (unanswered(err)) {
+        // No answer or a server failure: the refund may have been recorded. Same key, same body next time.
+        setUnknown({ saleId, body });
         return setMessage({ kind: 'error', text: errorText(err, t('common.error'), t('history.unconfirmed')) });
       }
+      if (beforeReplay(err)) {
+        // Refused before the server looked the key up (sign-in, permission, rate limit, a read-only
+        // business): it says nothing of an earlier attempt, so the key and the lock stay as they were.
+        return setMessage({ kind: 'error', text: readError(err) });
+      }
       setKey(uuid());
+      setUnknown(null);
+      if (err instanceof ApiFailure && err.error.code === 'IDEMPOTENCY_KEY_REUSED') {
+        // Something was recorded under this key with other details: never offer to start again blind.
+        // Reload the sale, which shows what was returned, and say so.
+        await open(saleId);
+        void load();
+        return setMessage({ kind: 'error', text: t('history.alreadyRecorded') });
+      }
       setMessage({ kind: 'error', text: readError(err) });
+    } finally {
+      busy.current = false;
     }
   }
 
@@ -167,7 +202,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
             )}
             <div className="flex items-end gap-2">
               <Field id="findNumber" name="findNumber" inputMode="numeric" label={t('history.findNumber')} placeholder="000123" />
-              <button className="btn mb-[2px]">{t('history.find')}</button>
+              <button className="btn mb-[2px]" disabled={!!unknown}>{t('history.find')}</button>
             </div>
           </form>
         )}
@@ -175,7 +210,7 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
         <ul>
           {sales?.map((s) => (
             <li key={s.id} className="row-rule">
-              <button className="row-pick flex w-full items-center justify-between px-3 py-3 text-left" aria-current={selected?.detail.id === s.id ? 'true' : undefined} onClick={() => open(s.id)}>
+              <button className="row-pick flex w-full items-center justify-between px-3 py-3 text-left" disabled={!!unknown} aria-current={selected?.detail.id === s.id ? 'true' : undefined} onClick={() => open(s.id)}>
                 <span>
                   <span className="serial block">#{String(s.saleNumber).padStart(6, '0')}</span>
                   {/* Time tells two similar amounts apart before a void; the tender, how it was paid. */}
@@ -206,9 +241,9 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
             ) : (
             <div className="no-print grid gap-2">
               <div className="flex flex-wrap gap-2">
-                {offerVoid && <button className="btn btn-danger" aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
-                {offerReturn && <button className="btn" aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
-                {offerExchange && <button className="btn" aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
+                {offerVoid && <button className="btn btn-danger" disabled={!!unknown} aria-pressed={mode === 'void'} onClick={() => setMode('void')}>{t('history.void')}</button>}
+                {offerReturn && <button className="btn" disabled={!!unknown} aria-pressed={mode === 'return'} onClick={() => { setMode('return'); setPreview(null); }}>{t('history.return')}</button>}
+                {offerExchange && <button className="btn" disabled={!!unknown} aria-pressed={mode === 'exchange'} onClick={() => setMode('exchange')}>{t('history.exchange')}</button>}
               </div>
               {!canVoid && !canReturn && <Callout kind="info">{t('history.managerOnly')}</Callout>}
               {reasons.length > 0 && (
@@ -221,6 +256,8 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
             {mode && !retired && ((mode === 'void' && offerVoid) || (mode === 'return' && offerReturn) || (mode === 'exchange' && offerExchange)) && (
               <Note className="no-print p-5">
                 <form className="grid gap-3" onSubmit={submit}>
+                  {/* Locked as sent while the outcome is unknown: the values stay on screen, the body sent is the one kept. */}
+                  <fieldset disabled={!!unknown} className="m-0 grid min-w-0 gap-3 border-0 p-0">
                   {mode !== 'void' &&
                     // Only lines with something left to give back.
                     selected.detail.lines.filter((l) => leftOn(l).gt(0)).map((l) => (
@@ -243,9 +280,10 @@ export function History({ shift, permissions, onExchange }: { shift: Shift; perm
                       <input type="checkbox" name="toCredit" /> {t('history.toCredit')}
                     </label>
                   )}
+                  </fieldset>
                   <div>
                     <button className={`btn ${mode === 'void' ? 'btn-danger' : mode === 'exchange' ? '' : 'btn-primary'}`}>
-                      {mode === 'void' ? t('history.void') : mode === 'exchange' ? t('history.previewRefund') : t('history.return')}
+                      {mode === 'void' ? t(unknown ? 'history.voidAgain' : 'history.void') : mode === 'exchange' ? t('history.previewRefund') : t(unknown ? 'history.refundAgain' : 'history.return')}
                     </button>
                   </div>
                 </form>

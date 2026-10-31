@@ -133,6 +133,7 @@ export default async function BatchTracePage({ searchParams }: { searchParams: P
                   ) : (
                     <Empty>{t('lot.traceNoMoves')}</Empty>
                   )}
+                  {trace.truncated && <p className="text-[0.875rem] text-muted">{t('lot.traceTruncated')}</p>}
                 </Note>
               </section>
             </>

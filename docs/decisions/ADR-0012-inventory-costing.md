@@ -74,6 +74,9 @@ amendment).
   - Limit: a sale rung before the count but delivered after the sheet posts cannot be known then: it shows as
     shrink at the count and is deducted again when it arrives. Post a sheet once the tills have synced.
   - Lines frozen before 0134 (`frozen_seq` NULL) use the movements recorded after the sheet's freeze.
+  - The numbering is not a history: movements from before 0134 keep `balance_seq` NULL, and their balances started
+    counting at 0 then. Compare numbers only with each other (`balance_seq > frozen_seq`); never read
+    `movement_seq` as a count of movements or expect every movement to have a number (audit 2026-10-31).
 - **What the reviewer sees.** The sheet view's "moved since the freeze" is the same sum up to when the line was
   counted (up to now for a line not counted yet), and its variance is `counted − frozen − moved`, the number
   posting will use. The count document's "system quantity" is that book quantity.

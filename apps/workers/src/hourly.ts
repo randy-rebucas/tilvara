@@ -32,8 +32,9 @@ export async function runHourly(pool: Pool, storage: FileStorage, monitor: Worke
   await step('billing_tick', async () => {
     const { rows: [billing] } = await pool.query<{ r: Record<string, number> }>('SELECT platform_billing_tick() AS r');
     const r = billing?.r ?? {};
-    // Skipped: another worker is running the pass right now, which is as good as running it.
-    monitor.lastBillingTick.set(undefined, now() / 1000);
+    // Only a pass that ran counts as done: a worker that skipped (another holds the lock) must not hide a pass
+    // that hangs there from OneposWorkerHourlyPassFailing (audit 47 #15).
+    if (!r.skipped) monitor.lastBillingTick.set(undefined, now() / 1000);
     if (r.errors) {
       monitor.hourlyFailed('billing_business', r.errors);
       logger.error('billing pass skipped businesses (see the database log WARNINGs)', { count: r.errors });

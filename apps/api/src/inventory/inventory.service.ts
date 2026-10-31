@@ -10,8 +10,6 @@ import {
   isNull,
   itemLocations,
   or,
-  productVariants,
-  products,
   reorderPoints,
   sql,
   stockCountLines,
@@ -84,13 +82,18 @@ const lockCounting = (db: Database, branchId: string) => db.execute(sql`SELECT p
 
 const byVariant = <T extends { variantId: string }>(a: T, b: T) => (a.variantId < b.variantId ? -1 : a.variantId > b.variantId ? 1 : 0);
 
-/** Only stock-tracked items can be transferred or counted. */
+/**
+ * Only stock-tracked items can be transferred, received or counted. Takes a share lock on the products' rows until
+ * the end of the transaction: stopping tracking (`productsWithStock` with `lock`) waits for this document, then
+ * sees its transfer or sheet; or this check waits for it, then sees the change (audit 2026-10-31 #7).
+ */
 async function assertStocked(db: Database, variantIds: string[]) {
-  const rows = await db
-    .select({ id: productVariants.id, track: products.trackInventory })
-    .from(productVariants)
-    .innerJoin(products, eq(products.id, productVariants.productId))
-    .where(inArray(productVariants.id, variantIds));
+  if (!variantIds.length) return;
+  const { rows } = await db.execute<{ id: string; track: boolean }>(sql`
+    SELECT v.id, p.track_inventory AS track FROM product_variants v
+      JOIN products p ON p.tenant_id = v.tenant_id AND p.id = v.product_id
+     WHERE v.id IN (${sql.join([...new Set(variantIds)].sort().map((v) => sql`${v}::uuid`), sql`, `)})
+     ORDER BY p.id FOR SHARE OF p`);
   const untracked = rows.filter((r) => !r.track).map((r) => r.id);
   if (untracked.length) throw unprocessable('NOT_STOCKED', 'These items do not track stock', { variantIds: untracked });
 }
@@ -171,6 +174,8 @@ export class InventoryService extends TenantService {
       for (const given of input.lines) {
         if (!lines.some((l) => l.id === given.transferLineId)) throw new AppError('NOT_FOUND', 'Transfer line not found', HttpStatus.NOT_FOUND, { transferLineId: given.transferLineId });
       }
+      // An item that stopped tracking stock since the dispatch cannot take it in (audit 2026-10-31 #7).
+      await assertStocked(db, lines.map((l) => l.variantId));
       const tenantId = tenantOf(auth).tenantId;
       const received = lines.map((l) => {
         const given = input.lines.find((g) => g.transferLineId === l.id);
@@ -555,6 +560,8 @@ export class InventoryService extends TenantService {
       const lines = await db.select().from(stockCountSheetLines).where(eq(stockCountSheetLines.sheetId, id));
       const counted = lines.filter((l) => l.countedQuantity !== null);
       if (counted.length === 0) throw unprocessable('NOTHING_COUNTED', 'Enter at least one count before posting');
+      // An item that stopped tracking stock since it was put on the sheet cannot be counted (audit 2026-10-31 #7).
+      await assertStocked(db, counted.map((l) => l.variantId));
       // Under the balance lock, so no movement lands between reading the book and posting against it.
       const ids = counted.map((l) => l.variantId).sort();
       await db.execute(sql`SELECT count(*) FROM app_lock_stock_balances(${branch.id}, ARRAY[${sql.join(ids.map((v) => sql`${v}`), sql`, `)}]::uuid[])`);

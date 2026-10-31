@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import type { ServerEnv } from '@1pos/config';
-import { and, desc, eq, inArray, paymentEvents, paymentIntents, type Database } from '@1pos/database';
+import { and, desc, eq, inArray, isNull, paymentEvents, paymentIntents, sql, type Database } from '@1pos/database';
 import { isCurrencyCode, Money, toDec } from '@1pos/money';
 import type { CreatePaymentIntentInput } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
@@ -135,12 +135,28 @@ export class PaymentsService extends TenantService {
       // A payment of a purpose no longer offered (a laundry down payment before 0110, a folio payment before 0111) was settled by its own document.
       if (row.purpose !== 'SALE') throw conflict('PAYMENT_CONSUMED', 'This payment was settled by a document of a feature no longer offered');
       if (row.status === 'PROCESSING' || row.status === 'UNKNOWN') throw conflict('RECONCILE_FIRST', 'Reconcile this payment before cancelling it');
-      if (row.status === 'SUCCEEDED') await this.event(db, auth, id, 'CANCEL_REQUESTED', null);
+      if (row.status === 'SUCCEEDED') {
+        // Marked before the provider is called, guarded on no sale having taken it meanwhile (record() locks the
+        // intent and refuses a marked one): a cancel and a sale can no longer both use the same charge.
+        const [marked] = await db
+          .update(paymentIntents)
+          .set({ cancelRequestedAt: sql`coalesce(${paymentIntents.cancelRequestedAt}, now())` })
+          .where(and(eq(paymentIntents.id, id), eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId)))
+          .returning({ id: paymentIntents.id });
+        if (!marked) throw conflict('PAYMENT_CONSUMED', 'This payment is part of a completed sale; refund the sale instead');
+        await this.event(db, auth, id, 'CANCEL_REQUESTED', null);
+      }
       return row;
     });
     if (intent.status !== 'SUCCEEDED') return this.view(intent);
     const result = await this.provider.cancel(id);
-    if (result.status !== 'CANCELED') throw conflict('CANCEL_FAILED', `The provider refused the cancellation (${result.failureCode})`);
+    if (result.status !== 'CANCELED') {
+      // The provider kept the charge: the payment can pay for the sale again.
+      await this.tenantDb.run(auth, (db) =>
+        db.update(paymentIntents).set({ cancelRequestedAt: null }).where(and(eq(paymentIntents.id, id), eq(paymentIntents.status, 'SUCCEEDED'), isNull(paymentIntents.saleId))),
+      );
+      throw conflict('CANCEL_FAILED', `The provider refused the cancellation (${result.failureCode})`);
+    }
     return this.tenantDb.run(auth, async (db) => {
       const [row] = await db
         .update(paymentIntents)

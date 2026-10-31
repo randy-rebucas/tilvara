@@ -1,12 +1,13 @@
 import { HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import type { ServerEnv } from '@1pos/config';
-import type { MfaStatus, PasswordResetConfirmInput } from '@1pos/validation';
+import { isPrivilegedSet, type MfaStatus, type PasswordResetConfirmInput } from '@1pos/validation';
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabasePool } from '../infrastructure/database.provider.js';
 import { ENV } from '../infrastructure/env.provider.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { Mailer } from '../notifications/mailer.js';
 import type { AuthContext } from './auth-context.js';
+import { loadGrants } from './auth.guard.js';
 import { AuthService, type RequestMeta } from './auth.service.js';
 import { PasswordService } from './password.service.js';
 import { base32Encode, hashRecoveryCode, matchTotp, newRecoveryCodes, newTotpSecret, otpauthUri, SecretBox } from './totp.js';
@@ -72,9 +73,13 @@ export class AccountSecurityService {
     return { recoveryCodes };
   }
 
-  /** Needs the password and a current code; refused while the active business requires it. */
+  /**
+   * Needs the password and a current code. Refused while any business the person is in requires it,
+   * not only the one this token names (audit 47 #16: a token with no business, after a refresh without
+   * one, escaped the check). Every session loses its two-step mark (`auth_mfa_disable`, migration 0136).
+   */
   async disable(auth: AuthContext, password: string, code: string): Promise<void> {
-    if (auth.mfa.required) {
+    if (auth.mfa.required || (await this.privilegedAnywhere(auth.userId))) {
       throw new AppError('MFA_REQUIRED_FOR_ROLE', 'Your role in this business requires two-step sign-in', HttpStatus.CONFLICT);
     }
     await this.checkPassword(auth.userId, password);
@@ -82,8 +87,23 @@ export class AccountSecurityService {
     if (!f?.confirmed || !f.secret_ciphertext) throw new AppError('MFA_NOT_ENABLED', 'Two-step sign-in is not on', HttpStatus.CONFLICT);
     const step = matchTotp(this.secrets.open(f.secret_ciphertext), code);
     const spent = step !== null && (await this.scalar<boolean>('SELECT auth_mfa_use_step($1, $2) AS v', [auth.userId, step]));
-    if (!spent) throw wrongCode();
+    if (!spent) await this.refuseCode(auth.userId);
     await this.database.pool.query('SELECT auth_mfa_disable($1, $2)', [auth.userId, auth.correlationId ?? null]);
+  }
+
+  /** Whether the person holds a permission that requires two-step sign-in in any business they are in now. */
+  private async privilegedAnywhere(userId: string): Promise<boolean> {
+    for (const m of await this.auth.memberships(userId)) {
+      const grants = await loadGrants(this.database.pool, m.tenantId, m.membershipId, userId);
+      if (isPrivilegedSet(grants.map((g) => g.permission))) return true;
+    }
+    return false;
+  }
+
+  /** A wrong authenticator code on a re-authentication counts towards the sign-in lock, as at sign-in (audit 47 #17). */
+  private async refuseCode(userId: string): Promise<never> {
+    await this.database.pool.query('SELECT auth_record_login_result($1, false)', [userId]);
+    throw wrongCode();
   }
 
   /**
@@ -95,7 +115,7 @@ export class AccountSecurityService {
     const f = await this.auth.mfaFactor(auth.userId);
     if (!f?.confirmed || !f.secret_ciphertext) throw new AppError('MFA_NOT_ENABLED', 'Two-step sign-in is not on', HttpStatus.CONFLICT);
     const step = matchTotp(this.secrets.open(f.secret_ciphertext), code);
-    if (step === null) throw wrongCode();
+    if (step === null) await this.refuseCode(auth.userId);
     const recoveryCodes = newRecoveryCodes();
     const done = await this.scalar<boolean>('SELECT auth_mfa_regenerate_recovery($1, $2, $3, $4) AS v', [
       auth.userId,
@@ -103,7 +123,7 @@ export class AccountSecurityService {
       recoveryCodes.map(hashRecoveryCode),
       auth.correlationId ?? null,
     ]);
-    if (!done) throw wrongCode();
+    if (!done) await this.refuseCode(auth.userId);
     return { recoveryCodes };
   }
 
@@ -156,7 +176,7 @@ export class AccountSecurityService {
       }
       const step = matchTotp(this.secrets.open(f.secret_ciphertext), code);
       const spent = step !== null && (await this.scalar<boolean>('SELECT auth_mfa_use_step($1, $2) AS v', [userId, step]));
-      if (!spent) throw wrongCode();
+      if (!spent) await this.refuseCode(userId);
     }
     return email;
   }

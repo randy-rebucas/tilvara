@@ -5,7 +5,8 @@ import type { CreateReservationInput, ReleaseReservationInput, ReservationListQu
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { activeCustomer } from '../customers/customers.service.js';
 import { dbNow } from '../common/clock.js';
-import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
+import { archived, notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
+import { expiredStockRule, unsellableAt } from './expiry.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { unprocessable } from '../tax/tax.service.js';
@@ -52,11 +53,12 @@ export class ReservationsService extends TenantService {
       const scope = await this.scope(db, input.branchId);
       this.assertMay(auth, scope);
       const [item] = await db
-        .select({ track: products.trackInventory, archivedAt: productVariants.archivedAt })
+        .select({ track: products.trackInventory, archivedAt: sql<string | null>`coalesce(${productVariants.archivedAt}, ${products.archivedAt})` })
         .from(productVariants)
         .innerJoin(products, eq(products.id, productVariants.productId))
         .where(eq(productVariants.id, input.variantId));
       if (!item) throw notFound('Item');
+      if (item.archivedAt) throw archived('Item');
       if (!item.track) throw unprocessable('NOT_TRACKED', 'Only items whose stock is counted can be reserved');
       if (input.customerId) await activeCustomer(db, input.customerId);
       if (input.expiresAt && new Date(input.expiresAt).getTime() <= (await dbNow(db)).getTime()) {
@@ -68,9 +70,14 @@ export class ReservationsService extends TenantService {
       );
       const onHand = toDec(rows[0]?.quantity ?? '0');
       const reserved = (await reservedAt(db, input.branchId, [input.variantId])).get(input.variantId) ?? new Dec(0);
-      const available = onHand.minus(reserved);
+      // Held lots are never sold, nor expired ones where the branch blocks them: they cannot be set aside either (audit 2026-10-31 #24).
+      const rule = await expiredStockRule(db, input.branchId);
+      const unsellable = (await unsellableAt(db, input.branchId, [input.variantId], { expired: rule === 'BLOCK' })).get(input.variantId) ?? new Dec(0);
+      const available = onHand.minus(reserved).minus(unsellable);
       if (toDec(input.quantity).gt(available)) {
-        throw new AppError('INSUFFICIENT_STOCK', 'Not that much is available to reserve', HttpStatus.CONFLICT, { onHand: onHand.toString(), reserved: reserved.toString(), available: Dec.max(available, 0).toString() });
+        throw new AppError('INSUFFICIENT_STOCK', 'Not that much is available to reserve', HttpStatus.CONFLICT, {
+          onHand: onHand.toString(), reserved: reserved.toString(), unsellable: unsellable.toString(), available: Dec.max(available, 0).toString(),
+        });
       }
       const [row] = await db
         .insert(stockReservations)

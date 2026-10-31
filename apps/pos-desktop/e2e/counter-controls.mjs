@@ -113,7 +113,7 @@ try {
   await fill('approverEmail', managerEmail);
   await fill('approverPassword', 'not the password');
   await submitFormOf('approverEmail');
-  check('a wrong manager password is refused, the cashier stays signed in', await shown('Email or password is incorrect', 10000) && (await evaluate(`document.getElementById('scan') !== null`)));
+  check('a wrong manager password is refused, the cashier stays signed in', await shown('The approver’s email or password is incorrect.', 10000) && (await evaluate(`document.getElementById('scan') !== null`)));
   await fill('approverPassword', PASSWORD);
   await submitFormOf('approverEmail');
   check('the approved price is on the line, with who approved it', await shown('approved by Jun Santos', 10000) && await totalShows('₱20.00'));

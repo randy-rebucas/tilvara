@@ -8,12 +8,18 @@ const SECRET = process.env.ONEPOS_BFF_SECRET && process.env.ONEPOS_BFF_SECRET.le
 
 /**
  * Proxies in front of this server that append to X-Forwarded-For (a load balancer: 1). With none, Next
- * sets the header to the socket's address only when the browser sent none, so 0 is for development only.
+ * sets the header to the socket's address only when the browser sent none, so 0 is for development only:
+ * in production 0 sends no address at all (audit 47 #18), since a browser's own X-Forwarded-For would
+ * otherwise be the address the API counts, and a visitor could rotate it past every per-IP limit. The
+ * API then counts this server's address. The balancer must append to the header, never pass the
+ * browser's through as its last entry.
  */
 const HOPS = Math.min(5, Math.max(0, Number.parseInt(process.env.ONEPOS_TRUST_PROXY_HOPS ?? '0', 10) || 0));
+const PRODUCTION = process.env.NODE_ENV === 'production';
 
 /** The visitor's address from X-Forwarded-For: the entry the nearest trusted proxy (or Next itself) wrote. */
-export function visitorIp(forwardedFor: string | null, hops = HOPS): string | null {
+export function visitorIp(forwardedFor: string | null, hops = HOPS, production = PRODUCTION): string | null {
+  if (production && hops < 1) return null;
   const chain = (forwardedFor ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   return chain[chain.length - Math.max(1, hops)] ?? null;
 }

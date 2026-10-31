@@ -38,6 +38,7 @@ import type {
 } from '@1pos/validation';
 import { tenantOf, type AuthContext } from '../auth/auth-context.js';
 import { post } from '../accounting/ledger.js';
+import { localToday } from '../accounting/today.js';
 import { nextNumber } from '../common/sequence.js';
 import { notFound, TenantService, type ConflictMap } from '../common/tenant-service.js';
 import { AppError } from '../infrastructure/http-error.filter.js';
@@ -60,12 +61,6 @@ async function findSupplier(db: Database, id: string) {
   const [row] = await db.select().from(suppliers).where(eq(suppliers.id, id));
   if (!row) throw notFound('Supplier');
   return row;
-}
-
-/** Branch-local today (the calendar `post()` dates entries by). */
-async function localToday(db: Database, timezone: string) {
-  const { rows } = await db.execute<{ d: string }>(sql`SELECT (now() AT TIME ZONE ${timezone})::date::text AS d`);
-  return rows[0]!.d;
 }
 
 /**

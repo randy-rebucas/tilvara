@@ -100,15 +100,38 @@ function apiActions(): Set<string> {
   return found;
 }
 
+/**
+ * The rows the migrations insert into a business's audit log: each `( … )` after `VALUES` in an
+ * `INSERT INTO audit_logs` (the whole statement when it inserts a SELECT), leaving out the rows whose
+ * tenant is NULL: an account or platform event outside any business, even in a statement that also
+ * writes a business's row (`platform_change_subscription`, migration 0137).
+ */
+function tenantRows(src: string): string[] {
+  const rows: string[] = [];
+  for (const m of src.matchAll(/INSERT INTO audit_logs\b[\s\S]*?;/gi)) {
+    const stmt = m[0];
+    const values = /\bVALUES\s*\(/i.exec(stmt);
+    if (!values) {
+      rows.push(stmt);
+      continue;
+    }
+    let i = values.index + values[0].length - 1;
+    while (stmt[i] === '(') {
+      const body = callBody(stmt, i);
+      if (!/^NULL$/i.test(topLevelArgs(body)[0] ?? '')) rows.push(body);
+      i += body.length + 2;
+      const next = /^\s*,\s*/.exec(stmt.slice(i));
+      if (!next) break;
+      i += next[0].length;
+    }
+  }
+  return rows;
+}
+
 function sqlActions(): Set<string> {
   const found = new Set<string>();
   for (const path of files(MIGRATIONS, '.sql')) {
-    const src = readFileSync(path, 'utf8');
-    for (const m of src.matchAll(/INSERT INTO audit_logs\b[\s\S]*?;/gi)) {
-      const values = /\bVALUES\s*\(\s*([^,]+)/i.exec(m[0]);
-      if (values && /^NULL$/i.test(values[1]!.trim())) continue; // an account event outside any business
-      for (const a of literals(m[0])) if (!(a in NOT_ACTIONS)) found.add(a);
-    }
+    for (const row of tenantRows(readFileSync(path, 'utf8'))) for (const a of literals(row)) if (!(a in NOT_ACTIONS)) found.add(a);
   }
   return found;
 }
@@ -125,5 +148,70 @@ describe('audit log actions', () => {
   it('words every action in English and Filipino', () => {
     const missing = actions.filter((a) => !(`audit.action.${a}` in en) || !(fil as Record<string, string>)[`audit.action.${a}`]);
     expect(missing).toEqual([]);
+  });
+});
+
+/**
+ * The details of the rows the business cannot trace to a person of its own (billing, subscription,
+ * data export): every key they write has words (`audit.key.<key>`), and every reason code
+ * (`'PAID_UNTIL_REACHED'`) has words (`audit.reason.<code>`), in English and Filipino (audit 2026-10-31 #25).
+ */
+const WORDED_FAMILIES = /^(billing|subscription|data_export)\./;
+const worded = (key: string) => key in en && !!(fil as Record<string, string>)[key];
+
+function sqlDetails(): { keys: Set<string>; reasons: Set<string> } {
+  const keys = new Set<string>();
+  const reasons = new Set<string>();
+  for (const path of files(MIGRATIONS, '.sql')) {
+    const src = readFileSync(path, 'utf8');
+    // The codes a function turns older words into (`billing_reason_code`, migration 0137).
+    for (const f of src.matchAll(/FUNCTION billing_reason_code\b[\s\S]*?\$\$;/gi)) for (const r of f[0].matchAll(/THEN '([A-Z][A-Z_]+)'/g)) reasons.add(r[1]!);
+    for (const row of tenantRows(src)) {
+      if (!literals(row).some((a) => WORDED_FAMILIES.test(a))) continue;
+      for (const b of row.matchAll(/jsonb_build_object\(/gi)) {
+        const args = topLevelArgs(callBody(row, b.index + b[0].length - 1));
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          const key = /^'([A-Za-z]\w*)'$/.exec(args[i]!)?.[1];
+          if (!key) continue;
+          keys.add(key);
+          if (key === 'reason') for (const r of args[i + 1]!.matchAll(/'([A-Z][A-Z_]+)'/g)) reasons.add(r[1]!);
+        }
+      }
+    }
+  }
+  return { keys, reasons };
+}
+
+function apiDetailKeys(): Set<string> {
+  const keys = new Set<string>();
+  for (const path of files(API_SRC, '.ts')) {
+    const src = readFileSync(path, 'utf8');
+    for (const m of src.matchAll(/\baudit\(/g)) {
+      const before = src.slice(Math.max(0, m.index - 30), m.index);
+      if (/(function|async|protected|private)\s*$/.test(before)) continue;
+      const args = topLevelArgs(callBody(src, m.index + m[0].length - 1));
+      if (!literals(args[2] ?? '').some((a) => WORDED_FAMILIES.test(a))) continue;
+      const meta = args[5]?.trim();
+      if (!meta?.startsWith('{')) continue;
+      for (const k of meta.slice(1, -1).matchAll(/(?:^|,)\s*([A-Za-z]\w*)\s*(?=[:,]|$)/g)) keys.add(k[1]!);
+    }
+  }
+  return keys;
+}
+
+describe('audit log details of billing, subscription and data export rows', () => {
+  const sql = sqlDetails();
+  const keys = [...new Set([...sql.keys, ...apiDetailKeys()])].sort();
+
+  it('finds the details where rows are written', () => {
+    expect(keys).toEqual(expect.arrayContaining(['fromPlan', 'periodEnd', 'number', 'sizeBytes', 'effect']));
+  });
+
+  it('words every key in English and Filipino', () => {
+    expect(keys.filter((k) => !worded(`audit.key.${k}`))).toEqual([]);
+  });
+
+  it('words every reason code in English and Filipino', () => {
+    expect([...sql.reasons].sort().filter((r) => !worded(`audit.reason.${r}`))).toEqual([]);
   });
 });

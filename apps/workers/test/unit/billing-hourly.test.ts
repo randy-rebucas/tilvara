@@ -88,4 +88,12 @@ describe('the hourly pass (audit 45 #5)', () => {
     expect(monitor.lastBillingTick.get()).toBe(1_800_000_000);
     expect(monitor.registry.names()).toEqual(expect.arrayContaining(['onepos_worker_hourly_errors_total', 'onepos_worker_billing_tick_last_success_timestamp_seconds']));
   });
+
+  it('a pass skipped because another worker holds the lock is not a success (audit 47 #15)', async () => {
+    const skipped = pool([], { skipped: 1 });
+    const monitor = new WorkerMonitor(skipped.pool, 'w', 'test');
+    await runHourly(skipped.pool, storage, monitor, quiet, () => 1_800_000_000_000);
+    expect(monitor.lastBillingTick.get()).toBeUndefined();
+    expect(monitor.hourlyErrors.get({ step: 'billing_tick' })).toBe(0);
+  });
 });

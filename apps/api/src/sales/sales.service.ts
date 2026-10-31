@@ -408,6 +408,8 @@ export class SalesService extends TenantService {
       if (p.status !== 'SUCCEEDED') {
         throw new AppError('PAYMENT_NOT_SUCCEEDED', `This payment is ${p.status.toLowerCase()}`, HttpStatus.CONFLICT, { paymentIntentId: pid, status: p.status });
       }
+      // A cancel already sent to the provider (audit 47 #5): the charge is being voided, so no sale may use it.
+      if (p.cancelRequestedAt) throw new AppError('PAYMENT_CANCELLING', 'This payment is being cancelled', HttpStatus.CONFLICT, { paymentIntentId: pid });
       if (p.cashierSessionId !== session.id || p.clientTransactionId !== input.clientTransactionId || p.currency !== priced.currency) {
         throw unprocessable('PAYMENT_MISMATCH', 'This payment was taken for a different checkout', { paymentIntentId: pid });
       }

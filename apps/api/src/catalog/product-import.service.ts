@@ -112,7 +112,7 @@ export class ProductImportService extends TenantService {
     return this.mutate(auth, async (db) => {
       // One import at a time per business, so two files cannot both make the same SKU's product.
       await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(app_current_tenant_id()::text || ':product-import'))`);
-      const plan = await this.plan(db, auth, input.rows);
+      const plan = await this.plan(db, auth, input.rows, true);
       if (plan.view.summary.errors > 0) {
         throw new AppError('IMPORT_INVALID', 'Some rows cannot be imported; nothing was changed', HttpStatus.UNPROCESSABLE_ENTITY, {
           rows: plan.view.rows.filter((r) => r.action === 'ERROR'),
@@ -125,7 +125,8 @@ export class ProductImportService extends TenantService {
   }
 
   // ---------------------------------------------------------------- planning
-  private async plan(db: Database, auth: AuthContext, rows: ProductImportRow[]): Promise<Plan> {
+  /** `lock` when committing: the stock checks then lock the products and their balances (`productsWithStock`). */
+  private async plan(db: Database, auth: AuthContext, rows: ProductImportRow[], lock = false): Promise<Plan> {
     const skus = [...new Set(rows.map((r) => lower(r.sku)))];
     const codes = [...new Set(rows.flatMap((r) => r.barcodes))];
     const uoms = await db.select().from(unitsOfMeasure).where(isNull(unitsOfMeasure.archivedAt));
@@ -273,10 +274,11 @@ export class ProductImportService extends TenantService {
 
     // Each product as a whole: the fields an existing one cannot change, and the rules a new one must follow.
     const newCategoryPaths = new Map<string, string[]>();
-    // Products the file stops tracking that still have stock somewhere (they must keep tracking it).
+    // Products the file stops tracking that still have stock somewhere, in transit or on an open count sheet (they must keep tracking it).
     const stocked = await productsWithStock(
       db,
       [...targets.values()].filter((t) => t.existing?.trackInventory && t.wanted.trackInventory === false).map((t) => t.existing!.id),
+      { lock },
     );
     for (const target of targets.values()) {
       const first = target.rows[0]!;
@@ -310,7 +312,16 @@ export class ProductImportService extends TenantService {
       const tracksExpiry = w.tracksExpiry ?? p?.tracksExpiry ?? false;
       if (productType !== 'STANDARD' && trackInventory) at('trackInventory').result.errors.push({ code: 'INVALID_STATE', message: 'Services cannot track inventory' });
       if (tracksExpiry && !trackInventory) at('tracksExpiry').result.errors.push({ code: 'EXPIRY_NEEDS_STOCK', message: 'Expiry dates need stock that is counted' });
-      if (p && stocked.has(p.id)) at('trackInventory').result.errors.push({ code: 'HAS_STOCK', message: 'This product has stock: count or write it off at every branch before it stops tracking stock' });
+      const held = p ? stocked.get(p.id) : undefined;
+      if (held) {
+        at('trackInventory').result.errors.push({
+          code: 'HAS_STOCK',
+          message:
+            held === 'STOCK' ? 'This product has stock: count or write it off at every branch before it stops tracking stock'
+            : held === 'IN_TRANSIT' ? 'This product is in transit: receive its transfers before it stops tracking stock'
+            : 'This product is on an open count sheet: post or cancel the sheet before it stops tracking stock',
+        });
+      }
       if (!p) {
         const uom = w.uomId ? uoms.find((u) => u.id === w.uomId) : uoms.find((u) => u.code === 'PC');
         if (!uom) first.result.errors.push({ code: 'UNKNOWN_UNIT', message: 'Give the unit (there is no PC unit)' });

@@ -170,7 +170,7 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
                   );
                 },
               },
-              { header: t('audit.details'), cell: (r) => <span className="text-[0.8125rem] text-muted">{auditDetails(t, r.metadata)}</span> },
+              { header: t('audit.details'), cell: (r) => <span className="text-[0.8125rem] text-muted">{auditDetails(t, r.metadata, lang)}</span> },
             ]}
             stacked={{
               title: (r) => what(r.action),

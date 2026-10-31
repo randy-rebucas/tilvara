@@ -56,6 +56,9 @@ export function StartSheetForm({ branchId }: { branchId: string }) {
 
 // ---------------------------------------------------------------- counting
 
+/** Count lines per save request: the API's cap (`countSheetLinesSchema`, packages/validation). */
+const SAVE_CHUNK = 1000;
+
 /**
  * One field per item. Only the fields this person typed in are kept here (`edits`); every other field
  * shows what the server has, so a colleague's counts appear after a refresh and are never sent back.
@@ -71,6 +74,8 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
   const post = useSubmit();
   const cancel = useSubmit();
   const [edits, setEdits] = useState<Record<string, string>>({});
+  // True through every part of a save (each part is its own request; `save.pending` drops between them).
+  const [saving, setSaving] = useState(false);
   // What the last save answered, shown until the refreshed sheet arrives (then the sheet itself is newer).
   const [saved, setSaved] = useState<{ base: CountSheet; lines: Record<string, string | null> } | null>(null);
   const justSaved = saved && saved.base === sheet ? saved.lines : {};
@@ -86,16 +91,30 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
-    if (changed.length === 0) return;
+    if (changed.length === 0 || saving) return;
     const sent = changed.map((l) => ({ variantId: l.variantId, countedQuantity: (edits[l.variantId] ?? '').trim() === '' ? null : edits[l.variantId]!.trim() }));
-    const typed = new Map(changed.map((l) => [l.variantId, edits[l.variantId]]));
-    const r = await save.submit<CountSheet>('PUT', `/api/v1/stock/count-sheets/${sheet.id}/lines`, { lines: sent });
-    if (r.ok) {
-      // The saved lines show the server's numbers again (and pick up later counts by others).
-      const answered = new Map(r.data.lines.map((l) => [l.variantId, l.countedQuantity]));
-      setSaved((s) => ({ base: sheet, lines: { ...(s && s.base === sheet ? s.lines : {}), ...Object.fromEntries(sent.map((x) => [x.variantId, answered.get(x.variantId) ?? null])) } }));
-      // A count retyped while the save was on its way is kept: it is newer than what was sent.
-      setEdits((e) => Object.fromEntries(Object.entries(e).filter(([v, value]) => !typed.has(v) || value !== typed.get(v))));
+    setSaving(true);
+    try {
+      // The API takes at most 1,000 lines a request (countSheetLinesSchema) and a sheet holds up to 5,000:
+      // one request per 1,000, one after the other. Each line sets a count outright, so a part that was
+      // saved before a later part failed stays saved, and saving again resends only what still differs.
+      for (let i = 0; i < sent.length; i += SAVE_CHUNK) {
+        const part = sent.slice(i, i + SAVE_CHUNK);
+        const last = i + SAVE_CHUNK >= sent.length;
+        const r = await save.submit<CountSheet>('PUT', `/api/v1/stock/count-sheets/${sheet.id}/lines`, { lines: part }, { refresh: last });
+        if (!r.ok) {
+          if (i > 0) router.refresh(); // the parts already saved show the server's numbers
+          return;
+        }
+        const typed = new Map(part.map((x) => [x.variantId, edits[x.variantId]]));
+        // The saved lines show the server's numbers again (and pick up later counts by others).
+        const answered = new Map(r.data.lines.map((l) => [l.variantId, l.countedQuantity]));
+        setSaved((s) => ({ base: sheet, lines: { ...(s && s.base === sheet ? s.lines : {}), ...Object.fromEntries(part.map((x) => [x.variantId, answered.get(x.variantId) ?? null])) } }));
+        // A count retyped while the save was on its way is kept: it is newer than what was sent.
+        setEdits((e) => Object.fromEntries(Object.entries(e).filter(([v, value]) => !typed.has(v) || value !== typed.get(v))));
+      }
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -163,7 +182,7 @@ export function SheetCounter({ sheet, canPost }: { sheet: CountSheet; canPost: b
         </ul>
         {open && (
           <div className="sticky bottom-0 -mx-2 flex flex-wrap items-center gap-2 border-t border-hair-soft bg-paper px-2 py-3">
-            <button className="btn btn-primary" disabled={save.pending || changed.length === 0}>
+            <button className="btn btn-primary" disabled={saving || save.pending || changed.length === 0}>
               {changed.length ? t('sheet.save', { n: changed.length }) : t('sheet.saved')}
             </button>
             <FormError message={save.error?.code === 'VALIDATION_FAILED' ? t('sheet.badNumber') : save.error?.message} />

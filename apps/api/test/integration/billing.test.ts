@@ -129,7 +129,7 @@ describe('ops changes a subscription (support subscription-set, migration 0127)'
     expect((await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body).toMatchObject({ plan: { code: 'growth' }, status: 'TRIALING' });
   });
 
-  it('changes the plan and status, and writes it in the business’s own audit log', async () => {
+  it('changes the plan and status, and writes it in the business’s own audit log (as Tilvara support, audit 2026-10-31 #1)', async () => {
     const t = await signup(app, 'subops2');
     const slug = await slugOf(t);
     await change(slug, 'growth', 'CANCELED', {}, 'Owner asked to leave');
@@ -143,10 +143,11 @@ describe('ops changes a subscription (support subscription-set, migration 0127)'
     expect((await http().get('/v1/subscription').set(bearer(t.access)).expect(200)).body).toMatchObject({ status: 'TRIALING', access: 'FULL' });
 
     const log = (await http().get('/v1/audit-logs?action=subscription').set(bearer(t.access)).expect(200)).body.data as { action: string; actorType: string; metadata: Record<string, unknown> }[];
-    expect(log.map((r) => [r.action, r.actorType, r.metadata.fromStatus, r.metadata.status, r.metadata.plan, r.metadata.reason, r.metadata.ticket])).toEqual([
-      ['subscription.changed', 'SYSTEM', 'ACTIVE', 'TRIALING', 'growth', 'Trial extended for the pilot', 'T-1'],
-      ['subscription.changed', 'SYSTEM', 'CANCELED', 'ACTIVE', 'starter', 'Paid by bank transfer', 'T-1'],
-      ['subscription.changed', 'SYSTEM', 'TRIALING', 'CANCELED', 'growth', 'Owner asked to leave', 'T-1'],
+    // Ops' login, reason and ticket stay in the platform log; the business reads "Tilvara support".
+    expect(log.map((r) => [r.action, r.actorType, r.metadata.fromStatus, r.metadata.status, r.metadata.plan, r.metadata.actor, r.metadata.reason, r.metadata.ticket])).toEqual([
+      ['subscription.changed', 'SYSTEM', 'ACTIVE', 'TRIALING', 'growth', 'support', 'CHANGED_BY_SUPPORT', undefined],
+      ['subscription.changed', 'SYSTEM', 'CANCELED', 'ACTIVE', 'starter', 'support', 'CHANGED_BY_SUPPORT', undefined],
+      ['subscription.changed', 'SYSTEM', 'TRIALING', 'CANCELED', 'growth', 'support', 'CHANGED_BY_SUPPORT', undefined],
     ]);
   });
 });

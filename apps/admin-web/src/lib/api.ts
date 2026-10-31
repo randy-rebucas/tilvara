@@ -1219,6 +1219,8 @@ export interface LotTrace {
   lotCode: string;
   /** Whether this person may place a hold at every branch. */
   canHoldEverywhere?: boolean;
+  /** More than 5,000 movements: the oldest 5,000 are listed. */
+  truncated?: boolean;
   movements: {
     at: string;
     branchId: string;

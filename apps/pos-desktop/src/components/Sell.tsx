@@ -140,10 +140,17 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
   }, [shift.register.id, offline]);
 
   // An emptied cart is a new checkout: the next cart gets its own transaction id and key, so it can
-  // never be answered with (or recorded as) the one before. Kept while card/QR payments wait on it.
+  // never be answered with (or recorded as) the one before. Kept while card/QR payments wait on it;
+  // declined or cancelled ones charged nothing, so they are dropped and do not keep it (audit 2026-10-31 #19).
   useEffect(() => {
-    if (cart.length === 0 && pay.intents.length === 0 && !pay.unknown) pay.resetIds();
+    if (cart.length > 0) return;
+    pay.dropSpent();
+    if (pay.liveIntents.length === 0 && !pay.unknown) pay.resetIds();
   }, [cart.length]);
+  // Going offline: a declined or cancelled card/QR payment must not stand in the way of a cash sale.
+  useEffect(() => {
+    if (offline) pay.dropSpent();
+  }, [offline]);
 
   const focusScan = () => requestAnimationFrame(() => scanRef.current?.focus());
   useEffect(() => {
@@ -447,7 +454,8 @@ export function Sell({ shift, cashierUserId, active = true, permissions = [], ex
 
   async function completeOffline() {
     // Card/QR taken while online cannot be part of an offline sale: check or cancel them once the connection is back.
-    if (pay.intents.length > 0) return setNotice({ kind: 'warn', text: t('till.offlineIntents') });
+    // Only those that went through or have no answer yet: a declined or cancelled one charged nothing (audit 2026-10-31 #19).
+    if (pay.liveIntents.length > 0) return setNotice({ kind: 'warn', text: t('till.offlineIntents') });
     if (!pay.cashAmount) return;
     try {
       const { receipt: kept } = await till.engine!.ringUp({

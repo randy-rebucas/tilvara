@@ -150,7 +150,9 @@ export class ReceivingService extends TenantService {
         .filter((l) => toDec(l.quantity).gt(0) && track.get(l.variantId))
         .map((l) => ({ tenantId, branchId: branch.id, variantId: l.variantId, quantity: l.quantity, unitCost: l.unitCost, type: 'RECEIPT', goodsReceiptLineId: l.id, expiresOn: l.expiresOn, lotCode: l.lotCode, createdBy: auth.userId }))
         .sort(byVariant);
-      const moved = moves.length ? await db.insert(stockMovements).values(moves).returning({ value: stockMovements.value }) : [];
+      // One statement per movement, in variant order (audit 2026-10-31 #21): the expiry-lot trigger runs after each
+      // row and reads the item's balance, so an item on two dated lines must reach it one movement at a time.
+      const moved = await mapInSequence(moves, async (m) => (await db.insert(stockMovements).values(m).returning({ value: stockMovements.value }))[0]!);
 
       // Books: inventory (ledger value) and the liability at cost; non-stock lines to purchases (ADR-0013).
       const atCost = (stocked: boolean) =>

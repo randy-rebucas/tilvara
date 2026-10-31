@@ -11,12 +11,27 @@ pnpm --filter @1pos/database support <command> …
 ## 1. How it runs by itself
 - **The worker's hourly pass** (`platform_billing_tick()`):
   - issues a renewal bill a week before a business's paid-until date;
-  - issues a first bill three days before a trial ends;
+  - issues a first bill three days before a trial ends (a trial that lapsed more than a week ago gets none: its
+    owner chooses a plan when they come back);
   - at the paid-until date, makes the subscription past due with a week of grace, or ends it if the owner asked to stop;
   - mails the owners about each of these.
+  - It runs once at a time (a second worker skips it) and each business on its own savepoint: a business it
+    cannot process is skipped, logged as a database `WARNING`, counted (`onepos_worker_hourly_errors_total{step="billing_business"}`)
+    and tried again next hour. Alert: `OneposWorkerHourlyPassFailing` (monitoring.md).
+- **Billing periods** end on the first period's day of the month in Philippine time (`subscriptions.billing_anchor_at`):
+  Jan 31 → Feb 28 → Mar 31. A late payment (more than a week after the period began) starts a new month from that day.
+- **A cheaper plan chosen for the next renewal** is checked again when the renewal bill is issued: if the business
+  has grown past that plan's limits since, the renewal is on its current plan, the move is dropped and the owners
+  get a mail (`billing.downgrade_dropped`).
+- **Upgrades** are billed for the rest of the running period plus, when the next period was already paid, that whole
+  period (the difference in price).
+- **Payment pages close with their bill:** when a bill is cancelled (another plan chosen, ops void) or paid, its
+  other open pages are marked expired and the worker expires them at PayMongo (`billing.checkout_expired`), so an
+  owner cannot pay a bill that no longer stands. Choosing the same upgrade twice keeps the bill and page already open.
 - **The owner pays** in the back office: Subscription → Plan → Pay. The payment provider's page takes card,
   GCash, Maya, GrabPay or QR Ph. The provider's webhook pays the bill.
-- **Plans priced 0 are never billed.** The migrations ship 0. Set real prices before switching billing on (§2).
+- **Plans priced 0 are never billed.** Migration 0133 sets the first prices (999 / 2,499 / 5,999); change them with
+  `support plan-price` (§2a).
 - **What owners can do without help:** choose a plan, upgrade (billed for the rest of the period), move to a
   cheaper plan (from the next renewal), stop at the end of the paid period, and renew after a lapse.
 - **What a business keeps when it lapses:** its records stay readable and it can export them; nothing is deleted.
@@ -89,6 +104,9 @@ support billing-void --slug <address> --bill B-000003 --reason "Waived for the p
    - create a webhook to `https://<api host>/v1/billing/webhooks/paymongo` for the event `checkout_session.payment.paid`;
    - copy its signing secret (`whsk_…`).
 2. Set `BILLING_PROVIDER=paymongo`, `PAYMONGO_SECRET_KEY` and `PAYMONGO_WEBHOOK_SECRET` in the API's secret manager. The API refuses to start with `paymongo` without both, and production refuses `dev`.
+   Set `BILLING_PROVIDER=paymongo` and `PAYMONGO_SECRET_KEY` for the **worker** too: it expires the payment pages of
+   cancelled and paid bills (`POST /checkout_sessions/{id}/expire`); it refuses `paymongo` without the key, and `dev`
+   in production. A failed call is retried by the outbox; a page PayMongo already closed counts as done.
 3. Set the return addresses:
    - `APP_PUBLIC_URL` must be the admin's public address.
    - `SHOP_DOMAIN` must equal the admin's `ONEPOS_SHOP_DOMAIN`.

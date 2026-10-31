@@ -21,6 +21,14 @@ describe('refusals in the cashier’s language (audit 2026-10-27 #29)', () => {
     ]) expect(REFUSALS[code], code).toBeDefined();
   });
 
+  it('covers signing in, choosing a business, approvals and a payment being cancelled (audit 2026-10-31 #5, #26)', () => {
+    for (const code of [
+      'INVALID_CREDENTIALS', 'TOO_MANY_ATTEMPTS', 'RATE_LIMITED', 'NOT_A_MEMBER', 'APPROVER_INVALID_CREDENTIALS', 'APPROVER_INVALID_CODE', 'APPROVER_CODE_REQUIRED', 'PAYMENT_CANCELLING',
+    ]) expect(REFUSALS[code], code).toBeDefined();
+    expect(refusalText('INVALID_CREDENTIALS', undefined, fil)).toBe('Mali ang email o password.');
+    expect(refusalText('PAYMENT_CANCELLING', {}, en)).toBe('This payment is being cancelled. Wait for it, then take payment again.');
+  });
+
   it('fills in the figures from the error details, as money and quantities from decimal strings', () => {
     expect(refusalText('INSUFFICIENT_STOCK', { lines: [{ name: 'Cola', onHand: '2.0000' }, { name: 'Rice', onHand: '0' }] }, en))
       .toBe('Not enough stock for: Cola (2), Rice (0). Change the quantity or remove the item.');

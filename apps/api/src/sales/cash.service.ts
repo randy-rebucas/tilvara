@@ -77,6 +77,15 @@ export class CashService extends TenantService {
       const { register, scope } = await registerScope(db, input.registerId);
       this.assertCan(auth, 'cash.session', scope);
       if (register.archivedAt) throw archived('Register');
+      // Today's Z-reading closes the register's day: sales after it would be in no reading, since readings only go
+      // forward (audit 47 #6). The Z-reading's own lock, so a reading and an opening cannot pass each other.
+      await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`z-reading:${register.id}`}, 0))`);
+      const { rows: [taken] } = await db.execute<{ business_day: string }>(sql`
+        SELECT z.business_day::text AS business_day FROM z_readings z JOIN branches b ON b.id = ${register.branchId}
+         WHERE z.register_id = ${register.id} AND z.business_day >= (now() AT TIME ZONE b.timezone)::date LIMIT 1`);
+      if (taken) {
+        throw new AppError('Z_READING_TAKEN', 'This register has its Z-reading for today; it can open again tomorrow', HttpStatus.CONFLICT, { businessDay: taken.business_day });
+      }
       const tenantId = tenantOf(auth).tenantId;
       const [session] = await db
         .insert(cashierSessions)

@@ -7,6 +7,9 @@ import type { MessageKey } from '../i18n/messages';
  */
 const BY_MESSAGE: Record<string, MessageKey> = {
   'Archive its branches first': 'refusal.archiveBranchesFirst',
+  // HAS_STOCK: what keeps the item from being untracked (audit 47 #7).
+  'Receive its transfers in transit first': 'refusal.hasStockInTransit',
+  'Post or cancel the open count sheets listing it first': 'refusal.hasStockOnSheet',
   'Archive its registers first': 'refusal.archiveRegistersFirst',
   'Revoke its terminals first': 'refusal.revokeTerminalsFirst',
   'Move or archive its products first': 'refusal.moveProductsFirst',
@@ -45,6 +48,9 @@ const BY_CODE: Record<string, MessageKey> = {
   BRANCH_ARCHIVED: 'refusal.branchArchived',
   GOODS_RECEIPT_REQUIRED: 'refusal.goodsReceiptRequired',
   PACKS_NOT_ON_HAND: 'refusal.packsNotOnHand',
+  DATE_IN_FUTURE: 'refusal.dateInFuture',
+  REVERSAL_BEFORE_ORIGINAL: 'refusal.reversalBeforeOriginal',
+  NOT_STOCKED: 'refusal.notStocked',
 };
 
 /** The copy key for a refusal, or null to show the API's own message. */

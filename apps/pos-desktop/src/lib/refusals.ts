@@ -56,10 +56,21 @@ export const REFUSALS: Readonly<Record<string, Refusal>> = {
   SESSION_NOT_OPEN: { key: 'refusal.sessionNotOpen' },
   NOT_SESSION_OWNER: { key: 'refusal.notSessionOwner' },
   SESSION_ALREADY_OPEN: { key: 'refusal.sessionAlreadyOpen' },
+  Z_READING_TAKEN: { key: 'refusal.zReadingTaken' },
   WRONG_REGISTER: { key: 'refusal.wrongRegister' },
   HELD_CART_CLOSED: { key: 'refusal.heldCartClosed' },
   IDEMPOTENCY_KEY_REUSED: { key: 'refusal.keyReused' },
   PERIOD_CLOSED: { key: 'refusal.periodClosed' },
+  PAYMENT_CANCELLING: { key: 'refusal.paymentCancelling' },
+  // Signing in, choosing a business and a second person's approval (audit 2026-10-31 #26).
+  INVALID_CREDENTIALS: { key: 'refusal.invalidCredentials' },
+  TOO_MANY_ATTEMPTS: { key: 'refusal.tooManyAttempts' },
+  RATE_LIMITED: { key: 'refusal.rateLimited' },
+  NOT_A_MEMBER: { key: 'refusal.notAMember' },
+  TENANT_ACCESS_REVOKED: { key: 'refusal.notAMember' },
+  APPROVER_INVALID_CREDENTIALS: { key: 'refusal.approverInvalidCredentials' },
+  APPROVER_INVALID_CODE: { key: 'refusal.approverInvalidCode' },
+  APPROVER_CODE_REQUIRED: { key: 'price.needCode' },
 };
 
 /**

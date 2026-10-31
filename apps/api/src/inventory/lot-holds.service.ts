@@ -36,6 +36,9 @@ type TraceRow = {
  * Batches (ADR-0025 §5, kept for every shop): holds that keep a lot off sale (a recall) and the trace of
  * where a lot came from and went (from the trigger-kept lot draws; no ledger of its own).
  */
+/** Most lot movements a batch trace lists (oldest first). */
+const TRACE_LIMIT = 5000;
+
 @Injectable()
 export class LotHoldsService extends TenantService {
   protected readonly conflicts: ConflictMap = {
@@ -148,7 +151,10 @@ export class LotHoldsService extends TenantService {
           LEFT JOIN stock_transfer_lines tl ON tl.id = m.stock_transfer_line_id
          WHERE l.variant_id IN (SELECT variant_id FROM chain) AND upper(btrim(l.lot_code)) = upper(btrim(${q.lotCode}))
          ORDER BY lm.created_at, lm.id
-         LIMIT 5000`);
+         LIMIT ${TRACE_LIMIT + 1}`);
+      // Oldest first; past the limit the newest are left out and the answer says so (audit 2026-10-31).
+      const truncated = rows.length > TRACE_LIMIT;
+      if (truncated) rows.length = TRACE_LIMIT;
       const { rows: left } = await db.execute<{ branch_id: string; branch: string; variant_id: string; sku: string; name: string; expires_on: string; quantity: string }>(sql`
         WITH RECURSIVE chain(variant_id, depth) AS (
           SELECT ${q.variantId}::uuid, 0
@@ -173,6 +179,8 @@ export class LotHoldsService extends TenantService {
           reason: r.reason,
         })),
         onHand: left.filter((r) => sees(r.branch_id)).map((r) => ({ branchId: r.branch_id, branch: r.branch, variantId: r.variant_id, sku: r.sku, name: r.name, expiresOn: r.expires_on, quantity: toDec(r.quantity).toString() })),
+        /** More draws than `TRACE_LIMIT` were found: the newest are not listed. */
+        truncated,
         /** Whether this person may place a hold at every branch (as on the holds list). */
         canHoldEverywhere: this.can(auth, 'inventory.adjust'),
       };

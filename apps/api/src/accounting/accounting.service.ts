@@ -19,6 +19,7 @@ import { AppError } from '../infrastructure/http-error.filter.js';
 import { TenantDb } from '../infrastructure/tenant-db.service.js';
 import { unprocessable } from '../tax/tax.service.js';
 import { post } from './ledger.js';
+import { entityToday, localToday } from './today.js';
 
 const money = (v: string | null | undefined) => toDec(v ?? '0').toFixed(2);
 
@@ -186,6 +187,9 @@ export class AccountingService extends TenantService {
           systemKeys: kept.map((a) => a.systemKey),
         });
       }
+      // A typo such as 2062 would open that far period and sit in every report until then (audit 2026-10-31 #23).
+      const today = await entityToday(db, input.legalEntityId);
+      if (input.entryDate > today) throw unprocessable('DATE_IN_FUTURE', 'The entry date is after today', { today });
       const entry = await post(db, {
         tenantId: tenantOf(auth).tenantId,
         legalEntityId: input.legalEntityId,
@@ -222,11 +226,25 @@ export class AccountingService extends TenantService {
       }
       const lines = await db.select().from(journalLines).where(eq(journalLines.journalEntryId, id));
       const posting: PostingLine[] = lines.map((l) => ({ account: l.accountId, debit: l.debit, credit: l.credit, branchId: l.branchId, memo: l.memo }));
+      const branchId = lines.find((l) => l.branchId)?.branchId ?? null;
+      // Not before its original, and not after today unless on the original's own date (an entry dated ahead
+      // before this rule can still be undone on its date) (audit 2026-10-31 #23).
+      let entryDate = input.entryDate;
+      if (entryDate) {
+        if (entryDate < entry.entryDate) throw unprocessable('REVERSAL_BEFORE_ORIGINAL', 'A reversal cannot be dated before the entry it reverses', { originalDate: entry.entryDate });
+        const today = await entityToday(db, entry.legalEntityId);
+        if (entryDate > today && entryDate !== entry.entryDate) throw unprocessable('DATE_IN_FUTURE', 'The reversal date is after today', { today });
+      } else {
+        // Today, as post() would date it; an original dated ahead is reversed on its own date.
+        const [b] = branchId ? await db.select({ tz: branches.timezone }).from(branches).where(eq(branches.id, branchId)) : [];
+        const today = await localToday(db, b?.tz ?? 'Asia/Manila');
+        if (today < entry.entryDate) entryDate = entry.entryDate;
+      }
       const reversal = await post(db, {
         tenantId: entry.tenantId,
         legalEntityId: entry.legalEntityId,
-        branchId: lines.find((l) => l.branchId)?.branchId ?? null,
-        ...(input.entryDate && { entryDate: input.entryDate }),
+        branchId,
+        ...(entryDate && { entryDate }),
         sourceType: 'REVERSAL',
         reversesEntryId: entry.id,
         memo: input.memo,
@@ -256,10 +274,8 @@ export class AccountingService extends TenantService {
       await this.entity(db, auth, input.legalEntityId, 'accounting.post');
       const startsOn = `${input.month}-01`;
       // The latest local date among the entity's branches (default Manila): today's month stays open.
-      const { rows: [now] } = await db.execute<{ month: string }>(sql`
-        SELECT to_char(coalesce(max((now() AT TIME ZONE b.timezone)::date), (now() AT TIME ZONE 'Asia/Manila')::date), 'YYYY-MM') AS month
-          FROM branches b WHERE b.legal_entity_id = ${input.legalEntityId}`);
-      if (input.month >= now!.month) throw unprocessable('PERIOD_IN_PROGRESS', 'Only a month that has ended can be closed', { currentMonth: now!.month });
+      const currentMonth = (await entityToday(db, input.legalEntityId)).slice(0, 7);
+      if (input.month >= currentMonth) throw unprocessable('PERIOD_IN_PROGRESS', 'Only a month that has ended can be closed', { currentMonth });
       await db.execute(sql`
         INSERT INTO accounting_periods (tenant_id, legal_entity_id, starts_on, status, closed_by, closed_at)
         VALUES (${tenantOf(auth).tenantId}, ${input.legalEntityId}, ${startsOn}, 'CLOSED', ${auth.userId}, now())

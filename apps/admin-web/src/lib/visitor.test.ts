@@ -13,4 +13,11 @@ describe('visitorIp (session 40)', () => {
     expect(visitorIp('', 1)).toBeNull();
     expect(visitorIp('203.0.113.7', 2)).toBeNull();
   });
+
+  it('in production trusts the header only behind a proxy (audit 47 #18)', () => {
+    // No proxy: the browser's own X-Forwarded-For would be believed, so nothing is sent.
+    expect(visitorIp('6.6.6.6', 0, true)).toBeNull();
+    expect(visitorIp('6.6.6.6, 203.0.113.7', 1, true)).toBe('203.0.113.7');
+    expect(visitorIp('6.6.6.6', 0, false)).toBe('6.6.6.6');
+  });
 });

@@ -1,0 +1,1 @@
+ALTER TABLE "payment_intents" ADD COLUMN "cancel_requested_at" timestamp with time zone;

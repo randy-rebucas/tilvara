@@ -198,8 +198,8 @@ fails is counted in `onepos_worker_hourly_errors_total{step}` and the others sti
 each business on its own savepoint: a business it could not process is rolled back alone, logged by Postgres as a
 `WARNING: billing pass: business <id>: …` and counted as `step="billing_business"`. The rule fires when any step
 failed in the last 2 hours, or when no worker has completed a billing pass for 2 hours
-(`onepos_worker_billing_tick_last_success_timestamp_seconds`; a pass skipped because another worker holds it counts
-as done).
+(`onepos_worker_billing_tick_last_success_timestamp_seconds`; a pass skipped because another worker holds the lock
+does not count, so a pass hanging on one worker shows here even while the others keep skipping).
 1. The worker log says `hourly step failed` with the step and the database error, or `billing pass skipped
    businesses` with a count. For `billing_business`, find the business ids in the database log WARNINGs.
 2. A grant or function error after a migration: check the migration ran on this database and the worker role's

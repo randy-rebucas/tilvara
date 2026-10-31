@@ -42,7 +42,7 @@ function KeyFields({ close, scopes }: { close: () => void; scopes: readonly (typ
       name: String(f.get('keyName') ?? '').trim(),
       scopes: scopes.filter((s) => f.get(`scope-${s}`) === 'on'),
       ...(days > 0 && { expiresAt: new Date(Date.now() + days * 86_400_000).toISOString() }),
-    }, { idempotent: true });
+    });
     if (r.ok) setMade(r.data.key);
   }
   if (made) return <ShownOnce label={t('int.keyMade')} value={made} onDone={close} />;
@@ -90,7 +90,7 @@ function WebhookFields({ close }: { close: () => void }) {
       url: String(f.get('hookUrl') ?? '').trim(),
       topics: TOPICS.filter((x) => f.get(`topic-${x}`) === 'on'),
       ...(description && { description }),
-    }, { idempotent: true });
+    });
     if (r.ok) setMade(r.data.secret);
   }
   if (made) return <ShownOnce label={t('int.secretMade')} value={made} onDone={close} />;

@@ -9,7 +9,6 @@ import {
   type UpdateWebhookInput,
 } from '@1pos/validation';
 import { AllowReadOnlyBusiness, Auth, RequireTenant, type AuthContext } from '../auth/auth-context.js';
-import { Idempotent } from '../infrastructure/idempotency.js';
 import { ZodPipe } from '../infrastructure/zod-validation.pipe.js';
 import { IntegrationsService } from './integrations.service.js';
 
@@ -26,7 +25,7 @@ export class IntegrationsController {
     return this.integrations.listKeys(auth);
   }
 
-  @Idempotent()
+  /** Not @Idempotent: the answer holds the key, which must never be stored for replay (audit 47 #3). */
   @Post('api-keys')
   createKey(@Auth() auth: AuthContext, @Body(new ZodPipe(createApiKeySchema)) body: CreateApiKeyInput) {
     return this.integrations.createKey(auth, body);
@@ -45,7 +44,7 @@ export class IntegrationsController {
     return this.integrations.listWebhooks(auth);
   }
 
-  @Idempotent()
+  /** Not @Idempotent: the answer holds the signing secret (audit 47 #3). */
   @Post('webhooks')
   createWebhook(@Auth() auth: AuthContext, @Body(new ZodPipe(createWebhookSchema)) body: CreateWebhookInput) {
     return this.integrations.createWebhook(auth, body);

@@ -26,6 +26,7 @@ export function TakeZReading({ registerId, today }: { registerId: string; today:
         <input id="z-day" type="date" className="input" value={day} onChange={(e) => setDay(e.target.value)} />
       </div>
       <button className="btn btn-primary" disabled={pending}>{t('z.take')}</button>
+      {day === today && <p className="w-full text-sm text-muted">{t('z.todayNote')}</p>}
       <FormError message={error?.message} />
     </form>
   );

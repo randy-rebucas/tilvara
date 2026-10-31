@@ -4,6 +4,7 @@ import { useT } from '../i18n';
 import { ApiFailure, signIn, switchTenant, verifyMfa, type SignInResult } from '../lib/api';
 import type { Me } from '../types';
 import { AuthStub } from './AuthNote';
+import { errorText } from './Payment';
 import { Callout, Field } from './ui';
 
 export function SignIn({ onDone }: { onDone: (activeTenantId: string | null) => void }) {
@@ -23,7 +24,8 @@ export function SignIn({ onDone }: { onDone: (activeTenantId: string | null) => 
     if (!(err instanceof ApiFailure) || err.error.status === 0) return t('common.network');
     if (err.error.code === 'INVALID_MFA_CODE') return t('signin.mfaInvalid');
     if (err.error.code === 'INVALID_MFA_CHALLENGE') return t('signin.mfaExpired');
-    return err.error.message;
+    // Wrong password, a lockout, a rate limit: in the cashier's language (audit 2026-10-31 #26).
+    return errorText(err, t('common.error'), t('common.network'));
   }
 
   async function run(fn: () => Promise<SignInResult>) {
@@ -107,7 +109,7 @@ export function BusinessPicker({ me, onDone }: { me: Me; onDone: () => void }) {
                 await switchTenant(m.tenantId);
                 onDone();
               } catch (err) {
-                setError(err instanceof ApiFailure ? err.error.message : t('common.error'));
+                setError(errorText(err, t('common.error'), t('common.network')));
               }
             }}
           >

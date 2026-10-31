@@ -198,10 +198,12 @@ describe('a paid period: upgrades, downgrades, renewals, grace and cancellation'
     expect(late).toMatchObject({ status: 'PAST_DUE', access: 'FULL' });
     expect(Math.abs(days(late.graceEndsAt, inDays(7)))).toBeLessThan(0.01);
     await http().post('/v1/categories').set(bearer(t.access)).send({ name: 'x' }).expect(201);
-    // Paid within grace: the period runs from the old paid-until date, on the new plan.
+    // Paid within grace: the period runs from the bill's start, on the new plan. The test moved the paid-until
+    // date back by hand after the bill was issued, so the bill's period has not started yet: Starter waits for it
+    // (a bill paid ahead keeps the plan in force until its period starts, audit 2026-10-31 #10).
     await payByPage(t, renewal!.id);
     const after = await sub(t);
-    expect(after).toMatchObject({ plan: { code: 'starter' }, status: 'ACTIVE', scheduledPlan: null, graceEndsAt: null });
+    expect(after).toMatchObject({ plan: { code: 'growth' }, status: 'ACTIVE', scheduledPlan: { code: 'starter' }, graceEndsAt: null });
     expect(new Date(after.currentPeriodEnd).getTime()).toBe(new Date(renewal!.periodEnd).getTime());
     const mails = await asOwnerInTenant(owner, t.tenantId, async (c) => (await c.query<{ topic: string }>(`SELECT topic FROM outbox_events WHERE topic LIKE 'billing.%' ORDER BY created_at`)).rows.map((r) => r.topic));
     expect(mails).toEqual(['billing.bill_issued', 'billing.past_due', 'billing.receipt_issued']);

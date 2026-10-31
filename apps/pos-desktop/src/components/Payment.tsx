@@ -29,6 +29,9 @@ export const errorText = (err: unknown, fallback: string, network: string) =>
     ? unanswered(err) ? withReference(network, err) : (refusalText(err.error.code, err.error.details, translate) ?? err.error.message)
     : fallback;
 
+/** A card/QR payment that charged nothing: declined, or cancelled. */
+const spent = (i: PaymentIntent) => i.status === 'FAILED' || i.status === 'CANCELED';
+
 /** What recording this payment's sale gave: the sale, and whether it is an earlier version of the cart (see `submit`). */
 export interface Recorded {
   id: string;
@@ -53,6 +56,11 @@ export function usePayment({ shift, due, setNotice }: {
   const [cash, setCash] = useState('');
   const [submitting, setSubmitting] = useState(false);
   /**
+   * A check or cancel of a card/QR payment is on its way (audit 2026-10-31 #5): until it answers,
+   * "Complete sale" is disabled, so a sale can never use a payment the provider is voiding.
+   */
+  const [settling, setSettling] = useState(false);
+  /**
    * The last "record the sale" got no answer, so it may be recorded. Until a final answer comes, the cart
    * and the payment stay as they were sent (the counter locks them) and only "Complete sale again" is
    * offered: the same body under the same key, which can never record twice.
@@ -69,6 +77,8 @@ export function usePayment({ shift, due, setNotice }: {
   const cashDue = remaining;
   const cashAmount = parseAmount(cash);
   const covered = isZero(cashDue) || (cashAmount !== null && gte(cashAmount, cashDue));
+  // Card/QR payments still standing (charged, or not answered yet): a declined or cancelled one charged nothing.
+  const liveIntents = intents.filter((i) => !spent(i));
   const pendingIntent = intents.some((i) => i.status === 'UNKNOWN' || i.status === 'PROCESSING');
   // Why the submit button is disabled, in words (only for things the cashier can act on).
   const blocker: MessageKey | null = pendingIntent ? 'pay.needCheck' : !covered ? 'pay.needCash' : null;
@@ -111,6 +121,9 @@ export function usePayment({ shift, due, setNotice }: {
   }
 
   async function settleIntent(id: string, action: 'reconcile' | 'cancel') {
+    if (busy.current) return;
+    busy.current = true;
+    setSettling(true);
     try {
       const updated = await api<PaymentIntent>('POST', `/v1/payment-intents/${id}/${action}`);
       setIntents((xs) => xs.map((i) => (i.id === id ? updated : i)));
@@ -118,7 +131,19 @@ export function usePayment({ shift, due, setNotice }: {
     } catch (err) {
       // A cancel with no answer may have gone through: say so, never "nothing was recorded".
       setNotice({ kind: 'error', text: errorText(err, t('common.error'), t('common.unconfirmed')) });
+    } finally {
+      busy.current = false;
+      setSettling(false);
     }
+  }
+
+  /**
+   * Forget declined and cancelled card/QR payments (audit 2026-10-31 #19): nothing was charged, so they
+   * neither hold the checkout open nor stop an offline cash sale. Ones that went through or have no
+   * answer yet stay.
+   */
+  function dropSpent() {
+    setIntents((xs) => (xs.some(spent) ? xs.filter((i) => !spent(i)) : xs));
   }
 
   /**
@@ -226,8 +251,8 @@ export function usePayment({ shift, due, setNotice }: {
   }
 
   return {
-    txId, intents, cash, setCash: (v: string) => { if (!unknown) setCash(v); }, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, unknown,
-    takeElectronic, settleIntent, submit, reset, resetIds,
+    txId, intents, liveIntents, cash, setCash: (v: string) => { if (!unknown) setCash(v); }, remaining, cashDue, cashAmount, covered, pendingIntent, blocker, submitting, settling, unknown,
+    takeElectronic, settleIntent, dropSpent, submit, reset, resetIds,
   };
 }
 
@@ -256,10 +281,10 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
             {waiting && (
               <>
                 <Callout kind="warn">{t('pay.unknown')}</Callout>
-                <button className="btn w-full" onClick={() => pay.settleIntent(i.id, 'reconcile')}>{t('pay.check')}</button>
+                <button className="btn w-full" disabled={pay.settling} onClick={() => pay.settleIntent(i.id, 'reconcile')}>{t('pay.check')}</button>
               </>
             )}
-            {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger justify-self-end" disabled={pay.unknown} onClick={() => pay.settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
+            {i.status === 'SUCCEEDED' && <button className="btn btn-sm btn-danger justify-self-end" disabled={pay.unknown || pay.settling} onClick={() => pay.settleIntent(i.id, 'cancel')}>{t('pay.cancelPayment')}</button>}
           </div>
         );
       })}
@@ -314,7 +339,7 @@ export function PaymentPanel({ pay, priced, submitLabel, onSubmit, canSubmit, ca
         </>
       )}
       {priced && pay.blocker && <p className="text-[0.875rem] text-muted">{t(cashOnly && pay.blocker === 'pay.needCash' ? 'till.needCash' : pay.blocker)}</p>}
-      <button id="pay-submit" className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || pay.blocker !== null || pay.submitting} onClick={onSubmit}>
+      <button id="pay-submit" className="btn btn-primary min-h-14 w-full text-[1.0625rem]" disabled={!canSubmit || !priced || pay.blocker !== null || pay.submitting || pay.settling} onClick={onSubmit}>
         {submitLabel}
       </button>
     </Note>

@@ -138,7 +138,7 @@ try {
   await shown('1 of 2 items counted');
   await evaluate(`[...document.querySelectorAll('label')].find((l) => l.textContent.includes('Show expected quantities')).querySelector('input').click()`);
   const coke = await lineText('Coke Mismo');
-  check('review: expected 10, the 2 sold since the freeze shown, counted 9 against a book of 8: variance +1', coke.includes('expected 10') && /variance\s*\+?1/.test(coke) && /[−-]2 moved since the freeze/.test(coke));
+  check('review: expected 10, the 2 sold since the freeze shown, counted 9 against a book of 8: variance +1', coke.includes('expected 10') && /variance\s*\+?1\b/.test(coke) && /[−-]2 moved since the freeze/.test(coke));
   await clickText('Post 1 counted items');
   await waitFor(`location.pathname.startsWith('/inventory/counts/')`);
   check('posting opens the count: the column says Expected, Coke 8 → 9', (await shown('Expected')) && await has('Coke Mismo 290ml'));

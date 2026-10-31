@@ -67,7 +67,7 @@ export class LotsService extends TenantService {
       const branch = await this.branch(db, q.branchId);
       this.assertCan(auth, 'inventory.read', { branchId: branch.id, legalEntityId: branch.legalEntityId });
       const { rows: [s] } = await db.execute<{ days: number }>(sql`SELECT expiry_alert_days AS days FROM inventory_settings WHERE branch_id = ${branch.id}`);
-      const withinDays = q.withinDays ?? (s?.days || 30);
+      const withinDays = q.withinDays ?? (s?.days ?? 30);
       // Held lots (a recall, ADR-0025 §5) are listed whatever their date, so they can be written off here.
       const rows = await this.lots(db, branch.id, branch.timezone, sql`AND (l.expires_on <= (now() AT TIME ZONE ${branch.timezone})::date + ${withinDays}::int
         OR ${HELD})`);

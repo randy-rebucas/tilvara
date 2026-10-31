@@ -422,6 +422,8 @@ export const paymentIntents = pgTable(
     saleId: uuid('sale_id'),
     /** What the charge pays for: a sale (other values are history of removed features, NOT VALID in 0111–0112). */
     purpose: text('purpose').notNull().default('SALE'),
+    /** Set when a cancel is sent to the provider; a sale no longer takes this payment (audit 47 #5). */
+    cancelRequestedAt: timestamp('cancel_requested_at', { withTimezone: true }),
     createdBy: uuid('created_by').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -18,6 +18,13 @@ Built: `tenant_branding` + `brand_assets` (migrations 0122–0123), `GET|PUT /v1
 - ✅ A subdomain per shop (session 40): `<slug>.<ONEPOS_SHOP_DOMAIN>`, see "Shop address and tenant audit" below.
 - ⏳ A custom domain per shop (shop.example.ph, not under our domain) still waits on hosting (D1): TLS per domain, an ownership check, a host → business table.
 
+## Fourth full audit (session 47, 2026-10-31)
+Fixed: see STATUS session 47 and `docs/AUDIT-2026-10-31.md` §5 (migrations 0136–0137). Left:
+- ⬜ `costing.test.ts` "selling short…" failed once in the full integration run (the movements list put the sale before the later adjustment) and passed alone twice. Watch for it; if it repeats, order `/v1/stock/movements` by the balance's movement number as a tiebreak.
+- ⬜ Not yet seen in a browser: the till's "Refund again" lock after a lost return answer, offline cash after a declined card, count-sheet saves over 1,000 lines. Run `test:e2e:pos`, `test:e2e:pos:retail`, `test:e2e:web:backoffice`, `test:e2e:web:packs` and `test:e2e:web:integrations` against this build.
+- ⏳ PayMongo sandbox (D6): confirm the minimum charge behind the ₱20 rule for unbilled small upgrades, and how long checkout pages stay payable.
+- ⬜ Data export is `@Idempotent` and returns a URL with a short-lived signed token, which is stored for replay. It expires on its own; noted by the auth fix, not changed.
+
 ## Second tenant audit (session 42, 2026-10-27)
 Fixed: see STATUS session 42 (migrations 0125–0126). Left:
 - ✅ (session 46) Re-pairing seen on a real build: `pnpm test:e2e:desktop` step 7 (36/36). A sale waits → Disconnect → another business refused → the old terminal revoked and a new one of the register delivers the sale → moved to the other business, none of the first one's items offline. It found and fixed: sales backed off during an outage (up to 5 min) kept waiting after the connection came back, and "Send now" skipped them; a successful snapshot and "Send now" now end the wait (`OfflineEngine.sendNow`, `LocalStore.makeDue`).
@@ -26,7 +33,7 @@ Fixed: see STATUS session 42 (migrations 0125–0126). Left:
 - ⬜ The hand-off code still reaches the browser's JavaScript on the main address (`redirect` with `#code=`). Bound to its business and parent session now; an opaque server-side nonce would keep it out of JS entirely.
 - ⬜ The customer display's last state is not cleared on sign-out (same-origin channel; names, quantities, totals only).
 - ⬜ `/v1/public/shops/:slug` still returns `tenantId` (kept, session 40); `platform_metrics()` aggregates stay readable by the API role (metrics port internal).
-- ⏳ Hosting (D1): make `ONEPOS_TRUST_PROXY_HOPS` a required production setting (with 0 the browser's own X-Forwarded-For is believed, development only).
+- ⏳ Hosting (D1): set `ONEPOS_TRUST_PROXY_HOPS` (≥ 1) on the admin, behind a load balancer that **appends** the client's address to X-Forwarded-For (never passes the browser's header through as it came). Since session 47 a production admin with hops 0 sends no visitor IP at all, so per-IP limits count the admin itself until it is set.
 
 ## Shop address and tenant audit (session 40, 2026-10-27)
 Built: a business's own address `<slug>.<ONEPOS_SHOP_DOMAIN>` (needs `ONEPOS_ADMIN_URL` too), its sign-in page at `/sign-in` there, the session pinned to that business, the address on Branding, reserved/non-DNS slugs refused at sign-up (`SLUG_RESERVED`). API keys refused on routes that need no business (`/me`, account MFA/closure and staff support grants answered as the key's creator).

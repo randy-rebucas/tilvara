@@ -1,7 +1,7 @@
 # Tilvara — Prioritized Backlog (open items only)
 
 Legend: 🟡 partial · ⬜ not started · ⏳ waiting on a decision or someone else. Update this file at the end of every session.
-Only work that is not done lives here. Finished phases and slices are recorded in [STATUS.md](STATUS.md) and the git history (the full backlog up to 2026-10-27 is in commit `5e826bc`). Detail on each open item is in [LEFTOVER.md](LEFTOVER.md); the second full audit's open items are in [OPEN-ITEMS-2026-10-27.md](OPEN-ITEMS-2026-10-27.md).
+Only work that is not done lives here. Finished phases and slices are recorded in [STATUS.md](STATUS.md) and the git history (the full backlog up to 2026-10-27 is in commit `5e826bc`). Detail on each open item is in [LEFTOVER.md](LEFTOVER.md); the second full audit's open items are in [OPEN-ITEMS-2026-10-27.md](OPEN-ITEMS-2026-10-27.md), the third's in [OPEN-ITEMS-AUDIT-2026-10-27.md](OPEN-ITEMS-AUDIT-2026-10-27.md); the fourth audit ([AUDIT-2026-10-31.md](AUDIT-2026-10-31.md), session 47) left nothing open of its own.
 
 ## Decisions waiting on the user
 - ⏳ D1 hosting provider/region · D2 email provider · D4 pilot businesses · D5 invoicing during the pilot (tax adviser) · D6 PayMongo keys.
@@ -21,7 +21,7 @@ Only work that is not done lives here. Finished phases and slices are recorded i
 
 ## Phase 5 — Offline & integrations
 - ⬜ Slice 6 — PayMongo adapter + webhooks for sale payments; invoice transmission (deferred by the user; needs D5, D6).
-- ⏳ Subscription billing: PayMongo sandbox run (D6).
+- ⏳ Subscription billing: PayMongo sandbox run (D6), including the provider's minimum amount (the ₱20 threshold for unbilled small upgrades, audit 2026-10-31 #13) and how long checkout pages live (#12).
 
 ## Phase 6 — Pilot readiness
 - ⬜ Slice 7 — deployment (needs D1, D3): Dockerfiles, container scan, CI, staging, secrets manager, migration procedure.
